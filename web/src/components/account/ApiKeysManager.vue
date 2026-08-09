@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -268,12 +269,18 @@ const selectClass =
         </div>
       </div>
 
+      <!-- A failed *background* refetch keeps the keys it couldn't refresh (issue #622). -->
+      <StaleNotice
+        v-if="keysQuery.isRefetchError.value"
+        label="Couldn't refresh — showing your last loaded keys."
+      />
+
       <!-- Loading -->
       <p v-if="keysQuery.isPending.value" class="text-muted-foreground text-sm">Loading keys…</p>
 
       <!-- Error -->
       <p
-        v-else-if="keysQuery.isError.value"
+        v-else-if="keysQuery.isLoadingError.value"
         class="text-destructive flex items-center gap-1.5 text-sm"
         role="alert"
       >

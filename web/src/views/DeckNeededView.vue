@@ -5,6 +5,7 @@ import { ArrowLeft, Layers, ShoppingCart } from '@lucide/vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardTile from '@/components/cards/CardTile.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { useNeededCardsQuery } from '@/composables/useDecks'
 import type { NeedMode } from '@/lib/api'
@@ -110,8 +111,13 @@ const summaryLine = computed(() => {
       </header>
       <p class="text-muted-foreground -mt-3 mb-5 text-xs">{{ activeHint }}</p>
 
+      <StaleNotice
+        v-if="neededQuery.isRefetchError.value"
+        label="Couldn't refresh — showing the last list worked out."
+      />
+
       <LoadingRow v-if="neededQuery.isPending.value" label="Checking your decks…" />
-      <p v-else-if="neededQuery.isError.value" class="text-destructive py-8">
+      <p v-else-if="neededQuery.isLoadingError.value" class="text-destructive py-8">
         Couldn't work out what your decks need. Please retry.
       </p>
       <p v-else-if="needed.length === 0" class="text-muted-foreground py-16 text-center">

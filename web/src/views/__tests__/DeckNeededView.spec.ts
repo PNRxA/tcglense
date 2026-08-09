@@ -35,7 +35,10 @@ vi.mock('@/composables/useDecks', async () => {
       return {
         data: vueRef({ data: [entry] }),
         isPending: vueRef(false),
-        isError: vueRef(false),
+        // The view splits a failure with nothing loaded from one over cached data (issue #622),
+        // so the mock carries both of query-core's predicates.
+        isLoadingError: vueRef(false),
+        isRefetchError: vueRef(false),
       }
     },
   }

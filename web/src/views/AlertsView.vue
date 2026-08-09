@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Bell } from '@lucide/vue'
 import { Skeleton } from '@/components/ui/skeleton'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import AlertChannelsCard from '@/components/alerts/AlertChannelsCard.vue'
 import AlertRow from '@/components/alerts/AlertRow.vue'
 import { useAlertsQuery } from '@/composables/useAlerts'
@@ -33,12 +34,18 @@ const alerts = computed(() => alertsQuery.data.value?.data ?? [])
       <section>
         <h2 class="mb-3 text-lg font-semibold">Your alerts</h2>
 
+        <!-- A failed *background* refetch keeps the alerts it couldn't refresh (issue #622). -->
+        <StaleNotice
+          v-if="alertsQuery.isRefetchError.value"
+          label="Couldn't refresh — showing your last loaded alerts."
+        />
+
         <div v-if="alertsQuery.isPending.value" class="grid gap-2">
           <Skeleton v-for="n in 3" :key="n" class="h-20 w-full rounded-lg" />
         </div>
 
         <p
-          v-else-if="alertsQuery.isError.value"
+          v-else-if="alertsQuery.isLoadingError.value"
           class="text-destructive rounded-lg border p-4 text-sm"
         >
           Could not load your alerts. Please try again.
