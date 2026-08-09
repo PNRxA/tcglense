@@ -74,9 +74,17 @@ export function flushDeferredHoldingRefetches(qc: QueryClient): void {
   for (const queryKey of keys) void qc.refetchQueries({ queryKey, type: 'active' })
 }
 
-/** `refetchOnWindowFocus` for a holdings list query: refetch as usual, unless a control
- * anchored to the grid is open — then defer it rather than resorting under the open panel. */
-export function refetchOnFocusUnlessFrozen(query: { queryKey: QueryKey }): boolean {
+/** Drop-in for `refetchOnWindowFocus` / `refetchOnReconnect` on any query whose result
+ * re-lays-out a holdings grid: refetch as usual, unless a control anchored to that grid is
+ * open — then defer it rather than reflowing under the open panel, and replay it on close.
+ *
+ * Deliberately trigger-agnostic, and it belongs on EVERY grid-shaped key `invalidate`
+ * freezes, not just the flat list. The two are one guarantee: freezing the write path while
+ * leaving a background trigger unguarded means tabbing away and back — or a phone's
+ * offline→online blip — resorts the grid anyway. (query-core reduces both triggers to
+ * `isStale`, and the freeze's own `refetchType: 'none'` invalidation is precisely what makes
+ * these queries stale, so they always qualify.) */
+export function refetchUnlessFrozen(query: { queryKey: QueryKey }): boolean {
   if (!isHoldingListFrozen()) return true
   deferHoldingRefetch(query.queryKey)
   return false

@@ -17,7 +17,7 @@ import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables
 import {
   deferHoldingRefetch,
   isHoldingListFrozen,
-  refetchOnFocusUnlessFrozen,
+  refetchUnlessFrozen,
 } from '@/composables/holdingListFreeze'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
@@ -278,8 +278,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       // under an open panel, and it's exactly when the user is reaching for a stepper. Deferred,
       // not dropped — `useHoldingListFreeze` replays it when the popover closes.
       ...(cfg.deferListRefetch
-        ? { refetchOnWindowFocus: false as const }
-        : { refetchOnWindowFocus: refetchOnFocusUnlessFrozen }),
+        ? { refetchOnWindowFocus: false as const, refetchOnReconnect: refetchUnlessFrozen }
+        : { refetchOnWindowFocus: refetchUnlessFrozen, refetchOnReconnect: refetchUnlessFrozen }),
     }
     return useAuthedQuery<CollectionPage>(options)
   }
@@ -305,6 +305,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionDropGroupPage>(options)
   }
@@ -329,6 +331,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionSubtypeGroupPage>(options)
   }
@@ -361,6 +365,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
             bulkMaxCents.value,
           ),
         enabled: opts.enabled,
+        refetchOnWindowFocus: refetchUnlessFrozen,
+        refetchOnReconnect: refetchUnlessFrozen,
       }
       return useAuthedQuery<CollectionSummary>(options)
     }
@@ -369,6 +375,8 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       queryFn: (token: string) =>
         cfg.getSummary(token, game.value, setCode.value || undefined, includeRelated.value),
       enabled: opts.enabled,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<CollectionSummary>(options)
   }
@@ -383,12 +391,16 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
       const options = {
         queryKey: [`${prefix}-sets`, game, bulkMaxCents],
         queryFn: (token: string) => cfg.getSets(token, game.value, bulkMaxCents.value),
+        refetchOnWindowFocus: refetchUnlessFrozen,
+        refetchOnReconnect: refetchUnlessFrozen,
       }
       return useAuthedQuery<{ data: CollectionSet[] }>(options)
     }
     const options = {
       queryKey: [`${prefix}-sets`, game],
       queryFn: (token: string) => cfg.getSets(token, game.value),
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<{ data: CollectionSet[] }>(options)
   }

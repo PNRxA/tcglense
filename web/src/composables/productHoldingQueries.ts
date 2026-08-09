@@ -12,7 +12,7 @@ import { useBatchCounts, type SetHoldingVars } from '@/composables/holdingQuerie
 import {
   deferHoldingRefetch,
   isHoldingListFrozen,
-  refetchOnFocusUnlessFrozen,
+  refetchUnlessFrozen,
 } from '@/composables/holdingListFreeze'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
@@ -58,9 +58,10 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
           set: set?.value,
         }),
       placeholderData: keepPreviousData,
-      // Never re-lay the grid out under an open quick-add popover: a refocus refetch is
+      // Never re-lay the grid out under an open quick-add popover: a background refetch is
       // deferred while one is open and replayed when it closes (see `holdingListFreeze`).
-      refetchOnWindowFocus: refetchOnFocusUnlessFrozen,
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<ProductHoldingPage>(options)
   }
@@ -73,6 +74,8 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
     const options = {
       queryKey: [listKey, game, 'sets'],
       queryFn: (token: string) => cfg.getListSets(token, game.value),
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<{ data: ProductHoldingSet[] }>(options)
   }
@@ -95,6 +98,8 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
     const options = {
       queryKey: [listKey, game, 'summary'],
       queryFn: (token: string) => cfg.getSummary(token, game.value),
+      refetchOnWindowFocus: refetchUnlessFrozen,
+      refetchOnReconnect: refetchUnlessFrozen,
     }
     return useAuthedQuery<ProductHoldingSummary>(options)
   }

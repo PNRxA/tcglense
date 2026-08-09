@@ -14,16 +14,21 @@ const props = withDefaults(
      * `'center'` (the default) is the shadcn placement: pinned to the viewport's midpoint,
      * so the panel grows equally in both directions.
      *
-     * `'top'` pins the panel's TOP EDGE instead, and it is the right choice for any dialog
-     * whose content arrives asynchronously or paginates. A centred panel re-centres itself
-     * every time its height changes, which moves *everything already on screen* by half the
-     * delta: a late-loading section at the bottom of the card modal silently slides the
-     * collection steppers up under the user's finger, so a tap meant for "Regular +" lands
-     * on "Foil +" a row below — one of the "sometimes my touch is off" mis-taps. It also
-     * settles the panel on mobile, where a centred `position: fixed` box shifts whenever the
-     * URL bar hides or reveals (the viewport it is centred in changes height; a pinned top
-     * edge doesn't move). Growth then only ever extends downward, past content the user is
-     * already looking at.
+     * `'top'` pins the panel's TOP EDGE instead — the right choice for a dialog whose
+     * content arrives asynchronously or paginates. A centred panel re-centres itself every
+     * time its height changes, moving *everything already on screen* by half the delta, so
+     * late content slides the controls a user is reaching for out from under their finger.
+     * Pinned at the top, growth only ever extends downward, past what they are looking at.
+     *
+     * Scope, measured rather than assumed: a panel only drifts while its content is SHORTER
+     * than its own max-height. Instrumenting the card modal (per-frame `getBoundingClientRect`
+     * with its sections' fetches held back) showed 0px of movement at both 1280x900 and
+     * 390x844 — it is clamped to `max-h-[90svh]` from the first paint (content 1656px / 2648px
+     * against 810px / 760px of room), so late sections only extend its internal scroll. So
+     * this is a guard for the cases that are NOT clamped — a short card on a tall window, a
+     * printing picker with three results — plus mobile, where a centred `position: fixed` box
+     * shifts whenever the URL bar hides or reveals and a pinned top edge does not. Don't cite
+     * it as the fix for a specific reported mis-tap without re-measuring.
      *
      * Panels whose height is fixed by their content (a confirm prompt, the image lightbox)
      * have nothing to gain and stay centred.

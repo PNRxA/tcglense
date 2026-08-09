@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { h, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { QueryClient, QueryObserver } from '@tanstack/vue-query'
+import { onlineManager, QueryClient, QueryObserver } from '@tanstack/vue-query'
 import {
   deferHoldingRefetch,
   flushDeferredHoldingRefetches,
   freezeHoldingLists,
   isHoldingListFrozen,
-  refetchOnFocusUnlessFrozen,
+  refetchUnlessFrozen,
   useHoldingListFreeze,
 } from '@/composables/holdingListFreeze'
 import { invalidateCollectionData, invalidateCollectionProducts } from '@/composables/useCollection'
@@ -102,17 +102,66 @@ describe('holding list freeze', () => {
     const queryKey = ['collection', 'mtg', undefined, '', 'updated:desc', 1, false]
 
     // Nothing open: refocusing the tab refetches as usual.
-    expect(refetchOnFocusUnlessFrozen({ queryKey })).toBe(true)
+    expect(refetchUnlessFrozen({ queryKey })).toBe(true)
 
     const release = freeze()
     // Coming back to the app with the quick-add popover open is the most common way the grid
     // used to resort under the panel — and exactly when a stepper is being aimed at.
-    expect(refetchOnFocusUnlessFrozen({ queryKey })).toBe(false)
+    expect(refetchUnlessFrozen({ queryKey })).toBe(false)
 
     // Deferred, not dropped: closing the popover settles the list.
     release()
     flushDeferredHoldingRefetches(qc)
     expect(refetchQueries).toHaveBeenCalledWith({ queryKey, type: 'active' })
+  })
+
+  it('suppresses a RECONNECT refetch too, not just window focus', async () => {
+    // The guard has to be trigger-agnostic. Freezing the write path while leaving
+    // `refetchOnReconnect` at its default meant a phone's offline→online blip resorted the
+    // grid under the open panel anyway — and query-core reduces the trigger to `isStale`,
+    // which the freeze's own `refetchType: 'none'` invalidation guarantees. Driven through a
+    // real observer + onlineManager rather than by calling the helper, so the wiring this
+    // exercises is the one query-core actually consults.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // `mount()` is what subscribes the client to focusManager/onlineManager. Without it the
+    // online event never reaches the query and the two "did not refetch" assertions below
+    // would pass for the wrong reason — which is why the replay assertion at the end is
+    // load-bearing: it only holds if the guard actually ran and recorded the key.
+    qc.mount()
+    const queryKey = ['collection', 'mtg', undefined, '', 'updated:desc', 1, false]
+    const queryFn = vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: [], total: 0 })
+    const observer = new QueryObserver(qc, {
+      queryKey,
+      queryFn,
+      staleTime: Infinity,
+      refetchOnReconnect: refetchUnlessFrozen,
+    })
+    const unsub = observer.subscribe(() => {})
+    await flushPromises()
+    expect(queryFn).toHaveBeenCalledTimes(1)
+    queryFn.mockClear()
+
+    const release = freeze()
+    // A write while the panel is open marks it stale without refetching…
+    qc.invalidateQueries({ queryKey: ['collection', 'mtg'], refetchType: 'none' })
+    await flushPromises()
+    expect(queryFn).not.toHaveBeenCalled()
+
+    // …and the network coming back must not be the thing that resorts it.
+    onlineManager.setOnline(false)
+    onlineManager.setOnline(true)
+    await flushPromises()
+    expect(queryFn).not.toHaveBeenCalled()
+
+    // Still deferred rather than dropped.
+    release()
+    flushDeferredHoldingRefetches(qc)
+    await flushPromises()
+    expect(queryFn).toHaveBeenCalled()
+
+    unsub()
+    qc.unmount()
+    onlineManager.setOnline(true)
   })
 })
 

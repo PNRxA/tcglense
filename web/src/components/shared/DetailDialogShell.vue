@@ -188,11 +188,12 @@ function onOpenChange(value: boolean) {
     <!-- Top-anchored, not centred (see DialogContent's `anchor`): this body fills in over
       several independent fetches — art tags, the price chart, other printings, sealed
       products, rulings — and a centred panel re-centres on every one of them, sliding the
-      left rail's collection/wish-list steppers up by half the delta. That is a mis-tap
-      waiting to happen: "Regular +" moves out from under a finger already on its way to it
-      and the tap lands on "Foil +", the row directly below. Pinned at the top, late content
-      only ever extends downward, below everything already on screen — and the panel also
-      stops drifting when a mobile URL bar hides or reveals. -->
+      left rail's steppers by half the delta. Measured, this panel does NOT drift in practice:
+      per-frame sampling with those fetches held back showed 0px at both 1280x900 and 390x844,
+      because the content (1656px / 2648px) exceeds `max-h-[90svh]` from the first paint and
+      the panel is clamped. The anchor is kept for the cases the clamp doesn't cover — a
+      sparse card on a tall window, and mobile, where a centred fixed box shifts as the URL
+      bar hides or reveals — not because it was the fix for a reported mis-tap. -->
     <DialogContent
       v-if="game && itemId"
       anchor="top"

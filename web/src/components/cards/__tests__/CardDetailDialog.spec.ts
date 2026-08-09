@@ -5,6 +5,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import CardDetailDialog from '../CardDetailDialog.vue'
 import { useCardNavStore } from '@/stores/cardNav'
+import { isHoldingListFrozen } from '@/composables/holdingListFreeze'
 
 let wrapper: VueWrapper
 
@@ -293,5 +294,65 @@ describe('CardDetailDialog game resolution (issue #394)', () => {
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({ product: 'x', game: 'mtg' })
     expect(router.currentRoute.value.path).toBe('/u/alice/decks/5')
+  })
+})
+
+describe('CardDetailDialog holds the browse grid still while it is open', () => {
+  let localWrapper: VueWrapper | undefined
+
+  // The modal overlays a browse grid and its body carries the collection/wish-list
+  // steppers, so editing counts in here would otherwise refetch and resort that
+  // recency-sorted grid underneath — dropping the user onto a rearranged list the moment
+  // they close it. `holdingListFreeze.spec.ts` pins the composable; only this pins that
+  // the shell takes the hold, and that a URL-driven close (or an unmount mid-open, which
+  // is how a route change ends this modal) always gives it back.
+  async function mountAt(fullPath: string) {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/cards/:game', component: { template: '<div />' } },
+        { path: '/cards/:game/cards/:id', component: { template: '<div />' } },
+      ],
+    })
+    const pinia: Pinia = createPinia()
+    setActivePinia(pinia)
+    await router.push(fullPath)
+    await router.isReady()
+    localWrapper = mount(CardDetailDialog, {
+      attachTo: document.body,
+      global: { plugins: [router, pinia], stubs: { CardDetailContent: true } },
+    })
+    await flushPromises()
+    return router
+  }
+
+  afterEach(() => {
+    localWrapper?.unmount()
+    localWrapper = undefined
+    document.body.innerHTML = ''
+  })
+
+  it('freezes only while a card is open, and releases when the URL drops it', async () => {
+    // Mounted with no `?card=` — the wrapper lives on every page, so a resting modal must
+    // never hold the grid.
+    const router = await mountAt('/cards/mtg')
+    expect(isHoldingListFrozen()).toBe(false)
+
+    await router.push('/cards/mtg?card=c1')
+    await flushPromises()
+    expect(isHoldingListFrozen()).toBe(true)
+
+    await router.push('/cards/mtg')
+    await flushPromises()
+    expect(isHoldingListFrozen()).toBe(false)
+  })
+
+  it('releases the freeze when unmounted with a card still open', async () => {
+    await mountAt('/cards/mtg?card=c1')
+    expect(isHoldingListFrozen()).toBe(true)
+
+    localWrapper!.unmount()
+    localWrapper = undefined
+    expect(isHoldingListFrozen()).toBe(false)
   })
 })
