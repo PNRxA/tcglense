@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { FolderPlus, Layers, Plus, ShoppingCart } from '@lucide/vue'
+import { FolderPlus, Layers, Plus, ShoppingCart, TriangleAlert } from '@lucide/vue'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -64,11 +64,47 @@ const decks = useStableOrder(
 )
 const folders = computed(() => foldersQuery.data.value?.data ?? [])
 
-// Decks grouped: one bucket per folder (even empty ones), then the loose decks.
-const looseDecks = computed(() => decks.value.filter((d) => d.folder_id == null))
+// Decks grouped: one bucket per folder (even empty ones), then the loose decks — partitioned
+// in ONE pass, so every deck lands in exactly one bucket by construction. The two buckets used
+// to be independent filters (`folder_id === folderId` and `folder_id == null`), which left a
+// deck whose folder isn't in `folders` matching NEITHER: it rendered nowhere while the header
+// above kept counting it (issue #622).
+//
+// That gap isn't hypothetical — the two queries settle at different times. Deleting a folder
+// invalidates `['deck-folders', game]` and `['decks', game]` as two independent refetches, and
+// the decks response is deterministically the slower one (it runs `deck_headers` with the
+// per-deck facet scans, and sea-orm pins the default SQLite backend to a single connection), so
+// in that window the folder's section is already gone while the cached decks still carry its
+// id. Same shape when a folder is deleted in another tab, and when the folders query itself
+// fails while the decks query succeeds.
+//
+// Treating an unknown folder as loose is what the server will say once its response lands, so
+// the tiles stay put and settle in place instead of vanishing and popping back a row lower.
+const grouped = computed(() => {
+  const byFolder = new Map<number, Deck[]>(folders.value.map((f) => [f.id, []]))
+  const loose: Deck[] = []
+  for (const deck of decks.value) {
+    const bucket = deck.folder_id == null ? undefined : byFolder.get(deck.folder_id)
+    if (bucket) bucket.push(deck)
+    else loose.push(deck)
+  }
+  return { byFolder, loose }
+})
+const looseDecks = computed(() => grouped.value.loose)
 function decksInFolder(folderId: number): Deck[] {
-  return decks.value.filter((d) => d.folder_id === folderId)
+  return grouped.value.byFolder.get(folderId) ?? []
 }
+
+// query-core's error reducer sets `status: 'error'` on ANY failed fetch while KEEPING the
+// cached `data`, and this list carries the default 5-minute `staleTime` plus
+// `refetchOnWindowFocus` — so gating the list on bare `isError` swapped a perfectly good list
+// for "Couldn't load your decks" the first time a background refetch hiccuped (issue #622).
+// TanStack already splits the two cases, so use its own predicates rather than re-deriving
+// them: `isLoadingError` is a failure with nothing ever loaded (the page genuinely has nothing
+// to show), `isRefetchError` is a failure over data that's still cached (keep showing it, and
+// say so quietly beside the count).
+const listFailed = computed(() => decksQuery.isLoadingError.value)
+const refreshFailed = computed(() => decksQuery.isRefetchError.value)
 
 // Folder creation is shared: the standalone New-folder dialog and the New-deck dialog's
 // "+ New folder…" option both mint folders through this one mutation.
@@ -218,7 +254,22 @@ function removeFolder(folderId: number, name: string) {
       >
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">{{ gameName }} decks</h1>
-          <p class="text-muted-foreground text-sm">{{ decks.length }} deck(s)</p>
+          <p class="text-muted-foreground text-sm">
+            {{ decks.length }} deck(s)
+            <!-- A failed *background* refetch keeps the list it couldn't refresh, so name the
+                 staleness beside the count rather than replacing the page — the same
+                 non-destructive, in-the-count-line cue `UpdatingCue` establishes for the
+                 browse views. -->
+            <template v-if="refreshFailed">
+              ·
+              <span class="text-destructive" aria-live="polite">
+                <TriangleAlert
+                  class="mr-1 inline size-3.5 align-[-0.15em]"
+                  aria-hidden="true"
+                />Couldn't refresh — showing your last loaded decks.
+              </span>
+            </template>
+          </p>
         </div>
         <!-- Wrap on narrow screens so the action buttons never run off-screen. -->
         <div class="flex flex-wrap gap-2">
@@ -306,7 +357,7 @@ function removeFolder(folderId: number, name: string) {
         v-if="decksQuery.isPending.value || foldersQuery.isPending.value"
         label="Loading decks…"
       />
-      <p v-else-if="decksQuery.isError.value" class="text-destructive py-8">
+      <p v-else-if="listFailed" class="text-destructive py-8">
         Couldn't load your decks. Please retry.
       </p>
       <p
