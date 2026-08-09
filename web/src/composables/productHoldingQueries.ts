@@ -9,6 +9,11 @@ import type {
   ProductHoldingSummary,
 } from '@/lib/api'
 import { useBatchCounts, type SetHoldingVars } from '@/composables/holdingQueries'
+import {
+  deferHoldingRefetch,
+  isHoldingListFrozen,
+  refetchOnFocusUnlessFrozen,
+} from '@/composables/holdingListFreeze'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 export const PRODUCT_HOLDING_PAGE_SIZE = 60
@@ -53,6 +58,9 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
           set: set?.value,
         }),
       placeholderData: keepPreviousData,
+      // Never re-lay the grid out under an open quick-add popover: a refocus refetch is
+      // deferred while one is open and replayed when it closes (see `holdingListFreeze`).
+      refetchOnWindowFocus: refetchOnFocusUnlessFrozen,
     }
     return useAuthedQuery<ProductHoldingPage>(options)
   }
@@ -96,7 +104,17 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
   }
 
   function invalidate(qc: QueryClient, game: string, opts: { entryId?: string } = {}) {
-    qc.invalidateQueries({ queryKey: [listKey, game] })
+    // `[listKey, game]` prefix-covers the grid, its set tiles and its summary — everything a
+    // refetch re-lays-out. While a quick-add popover is open over one of those tiles, mark it
+    // stale but skip the refetch and replay it on close: a grid that reflows under an anchored
+    // panel drags it out from under the finger already reaching for a stepper. The
+    // order-independent counts/entry keys repaint in place, so they always refetch.
+    const frozen = isHoldingListFrozen()
+    qc.invalidateQueries({
+      queryKey: [listKey, game],
+      ...(frozen ? { refetchType: 'none' as const } : {}),
+    })
+    if (frozen) deferHoldingRefetch([listKey, game])
     qc.invalidateQueries({ queryKey: [countsKey, game] })
     qc.invalidateQueries({
       queryKey: opts.entryId ? [entryKey, game, opts.entryId] : [entryKey, game],
