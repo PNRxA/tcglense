@@ -451,18 +451,13 @@ function discardAndReturn() {
           />
         </div>
 
-        <details class="group rounded-xl border" :open="unrecognized || undefined">
-          <summary
-            class="hover:bg-muted/50 flex min-h-11 cursor-pointer list-none items-center px-3 text-sm font-medium [&::-webkit-details-marker]:hidden"
-          >
-            Can't scan this card? Add it by name
-            <span class="text-muted-foreground ml-auto text-xs group-open:hidden">Show</span>
-            <span class="text-muted-foreground ml-auto hidden text-xs group-open:inline">Hide</span>
-          </summary>
-          <div class="border-t p-3">
-            <QuickAddBox :game="game" />
-          </div>
-        </details>
+        <!-- The manual fallback stays on screen rather than behind a disclosure: the moment it
+             is needed is the moment a card just failed to scan, and making the user find and
+             open a panel then is exactly the wrong time to hide it. -->
+        <div class="rounded-xl border p-3">
+          <h2 class="mb-2 text-sm font-medium">Can't scan this card? Add it by name</h2>
+          <QuickAddBox :game="game" />
+        </div>
       </section>
     </div>
   </div>
