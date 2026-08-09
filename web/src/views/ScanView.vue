@@ -167,9 +167,14 @@ onBeforeUnmount(() => {
 // screen can be written at all, and an unwanted add is one tap of Undo in the session log.
 // Best-effort by nature — the panel is only cleared if the save actually landed, so a card
 // that couldn't be written is still there (with its error) when the user comes back.
+// Clear only the card this finalize actually saved. Unlike Stop and route-leave, this can run
+// with a capture in flight (tap Scan, then leave), and that capture's handleCapture swaps a
+// brand-new match in while the save settles — discarding "whatever is on screen now" would
+// wipe a card that was scanned but never written.
 onPageHidden(() => {
+  const pending = match.value
   void finalizeCurrent().then((saved) => {
-    if (saved) discardCurrent()
+    if (saved && match.value === pending) discardCurrent()
   })
 })
 

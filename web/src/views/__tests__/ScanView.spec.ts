@@ -225,6 +225,26 @@ describe('ScanView leaving the page', () => {
     expect(H.discardCurrent).toHaveBeenCalledOnce()
   })
 
+  it('clears only the card it saved, never one a capture swapped in mid-save', async () => {
+    // The one path that can finalize with a capture in flight: the user taps Scan and leaves
+    // before the match request answers. That capture's handleCapture commits the settled card
+    // and puts a NEW match on screen while this save settles — clearing "whatever is there
+    // now" would silently drop a card that was scanned but never written.
+    const nextMatch = { ...A_MATCH, name: 'Llanowar Elves' }
+    matchRef().value = A_MATCH
+    H.finalizeCurrent.mockImplementation(async () => {
+      matchRef().value = nextMatch
+      return true
+    })
+    shallowMount(ScanView)
+
+    hidePage()
+    await flushPromises()
+
+    expect(H.discardCurrent).not.toHaveBeenCalled()
+    expect(matchRef().value).toStrictEqual(nextMatch)
+  })
+
   it('keeps the match on screen when that save failed, so it can be retried', async () => {
     H.finalizeCurrent.mockResolvedValue(false)
     matchRef().value = A_MATCH

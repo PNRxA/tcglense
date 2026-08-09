@@ -470,3 +470,69 @@ describe('useScanSession foil detection', () => {
     expect(session.target.foil_quantity).toBe(1)
   })
 })
+
+describe('useScanSession repeat commits', () => {
+  /** Mount a session holding one settled match: a single loaded printing, nothing owned yet. */
+  async function captureOne() {
+    const target = makeCard('neo-printing', { set_code: 'neo' })
+    picker.printings.value = [target]
+    picker.hasNextPage.value = false
+    mocks.useScanMutation.mockReturnValue({
+      mutateAsync: vi
+        .fn<(...args: unknown[]) => Promise<{ data: Array<{ card: Card; distance: number }> }>>()
+        .mockResolvedValue({ data: [{ card: target, distance: 0 }] }),
+    })
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'NEO • EN',
+      foil: false,
+    })
+    await flushPromises()
+    return target
+  }
+
+  // A page-hide finalize and the auto-advance commit inside handleCapture both call
+  // commitCurrent for the same on-screen match. They share `commitInFlight` only while one is
+  // actually in flight; once it settles, the second call is a fresh commit of a panel whose
+  // counts are already written. It must not write — or log — that card a second time.
+  it('is a no-op once the match on screen has already been written', async () => {
+    await captureOne()
+    expect(session.ready.value).toBe(true)
+    expect(session.target.quantity).toBe(1)
+
+    expect(await session.commitCurrent()).toBe(true)
+    expect(save).toHaveBeenCalledOnce()
+    expect(session.log.value).toHaveLength(1)
+
+    // Same untouched panel: the counts on screen are exactly what was written.
+    expect(await session.commitCurrent()).toBe(false)
+    expect(save).toHaveBeenCalledOnce()
+    expect(session.log.value).toHaveLength(1)
+  })
+
+  it('still writes when the user adjusts the counts after a commit', async () => {
+    const target = await captureOne()
+    await session.commitCurrent()
+    save.mockClear()
+
+    session.adjust('quantity', 1)
+    expect(await session.commitCurrent()).toBe(true)
+
+    // The new entry's Undo must restore the previously committed count, not the count from
+    // before the first commit — the baseline moved with the write.
+    expect(save).toHaveBeenCalledExactlyOnceWith({
+      game: 'mtg',
+      id: target.id,
+      quantity: 2,
+      foil_quantity: 0,
+    })
+    expect(session.log.value[0]?.previous).toEqual({ quantity: 1, foil_quantity: 0 })
+  })
+})

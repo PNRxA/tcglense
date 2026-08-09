@@ -338,6 +338,15 @@ export function useScanSession(game: Ref<string>) {
           foil_quantity: foilQuantity,
         })
         commitError.value = false
+        // The written counts are this panel's baseline now. Without the rebase, a second
+        // commit of the same untouched match would write the identical absolute counts again
+        // and log a second entry for one physical card — reachable because the auto-advance
+        // commit and a Stop/page-hide finalize both target the on-screen match and only share
+        // `commitInFlight` while one is actually in flight. Rebased, the both-equal guard
+        // above turns that repeat into a no-op (and an entry logged after a later edit undoes
+        // to the count that was really there before it, not the count from two writes ago).
+        seedBase.quantity = quantity
+        seedBase.foil_quantity = foilQuantity
         log.value.unshift({
           id: nextEntryId++,
           card,

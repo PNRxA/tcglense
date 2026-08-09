@@ -1336,7 +1336,14 @@ catalog) is planned but not implemented.
   matters *more* here, because a backgrounded mobile tab can be discarded by the OS without
   ever firing unmount, making the hidden event the last moment that card can be written at
   all. It stays best-effort: a save that fails leaves the match on screen to retry, and an
-  unwanted add is one tap of Undo in the session log. The same hidden event also cancels an
+  unwanted add is one tap of Undo in the session log. Unlike Stop and route-leave, this
+  finalize can run **with a capture in flight** (tap Scan, then leave) — which is why it clears
+  only the match it actually saved (`match.value === pending`, or the capture's own
+  `startMatch` swap lands first and a card that was scanned but never written gets wiped), and
+  why a successful `commitCurrent` **rebases `seedBase` to the counts it just wrote** in
+  `useScanSession` — the auto-advance commit and this one target the same panel and share
+  `commitInFlight` only while one is in flight, so without the rebase the second writes the
+  same absolute counts again and logs a second entry for one physical card. The same hidden event also cancels an
   in-flight `getUserMedia` (via the existing generation counter), so a permission grant that
   lands after the user left stops its own orphaned stream instead of going live on a page
   nobody is looking at.
