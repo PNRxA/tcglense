@@ -22,6 +22,7 @@ import {
 import DeckTile from '@/components/decks/DeckTile.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckImportDialog from '@/components/decks/DeckImportDialog.vue'
+import CountLineCue from '@/components/cards/CountLineCue.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
 import {
@@ -263,10 +264,10 @@ function removeFolder(folderId: number, name: string) {
             <template v-if="refreshFailed">
               ·
               <span class="text-destructive" aria-live="polite">
-                <TriangleAlert
-                  class="mr-1 inline size-3.5 align-[-0.15em]"
-                  aria-hidden="true"
-                />Couldn't refresh — showing your last loaded decks.
+                <CountLineCue
+                  :icon="TriangleAlert"
+                  label="Couldn't refresh — showing your last loaded decks."
+                />
               </span>
             </template>
           </p>
