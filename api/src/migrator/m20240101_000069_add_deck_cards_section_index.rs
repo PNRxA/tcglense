@@ -4,7 +4,7 @@ use sea_orm_migration::prelude::*;
 /// Index `deck_cards` on `section_id` — the column the deck list's derived facets select
 /// on, and the one column of that table no index led with.
 ///
-/// `handlers::decks::facets::deck_facets_by_deck` (issue #609) scopes both of its card
+/// `handlers::decks::facets::deck_facets_by_deck` (#609) scopes both of its card
 /// scans by section id alone, deliberately: a section belongs to exactly one deck, so
 /// binding the deck ids a second time would be redundant. But `m..043` ships
 /// `(deck_id, card_id, section_id)` and `(deck_id)`, and neither can serve a predicate

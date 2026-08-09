@@ -8,7 +8,7 @@ use sea_orm_migration::prelude::*;
 ///
 /// The filter compiles to a correlated `EXISTS (… card_art_tags.illustration_id =
 /// cards.illustration_id)` (`scryfall::search::compile::tags`), and `cards` carried no
-/// index on `illustration_id` at all — nine `idx_cards_*` indexes, none of them this one.
+/// index on `illustration_id` at all — every `idx_cards_*` leads with another column.
 /// So Postgres had exactly one way to answer an art-tag search: drive from `cards`.
 /// Combined with the listing's `ORDER BY name, set_code, collector_number_int, id` +
 /// `LIMIT`, the planner walked `idx_cards_game_name` in sort order probing the mapping
