@@ -166,7 +166,7 @@ const rows = computed(() => [
             <span class="flex items-center gap-1.5 text-sm">
               <component :is="row.icon" v-if="row.icon" class="size-3.5" aria-hidden="true" />
               {{ row.label }}
-              <span v-if="row.was > 0" class="text-muted-foreground text-xs"
+              <span v-if="ready && row.was > 0" class="text-muted-foreground text-xs"
                 >(had {{ row.was }})</span
               >
             </span>
@@ -183,12 +183,22 @@ const rows = computed(() => [
               >
                 <Minus />
               </Button>
+              <!-- `target` still carries the previous card's counts until the new printing's
+                 holding settles and re-seeds it, so show a spinner rather than a number that
+                 is about to change under the user. Same aria-live element either way, so the
+                 settled count is announced as an update instead of a fresh region. -->
               <span
-                class="w-8 text-center text-sm font-medium tabular-nums"
+                class="flex w-8 items-center justify-center text-center text-sm font-medium tabular-nums"
                 aria-live="polite"
-                :aria-label="`${row.label}: ${row.value}`"
-                >{{ row.value }}</span
+                :aria-label="ready ? `${row.label}: ${row.value}` : `${row.label}: reading count`"
               >
+                <Loader2
+                  v-if="!ready"
+                  class="text-muted-foreground size-4 animate-spin"
+                  aria-hidden="true"
+                />
+                <template v-else>{{ row.value }}</template>
+              </span>
               <Button
                 variant="outline"
                 size="icon"
