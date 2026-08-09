@@ -1347,6 +1347,39 @@ catalog) is planned but not implemented.
   in-flight `getUserMedia` (via the existing generation counter), so a permission grant that
   lands after the user left stops its own orphaned stream instead of going live on a page
   nobody is looking at.
+- **The session log is the record of what the session wrote — every writer feeds it.** The
+  scan page has two ways to add a card: the camera, and the add-by-name box that exists
+  precisely because some cards won't scan. Both write the same absolute counts to the same
+  collection, so a log that only knew about the camera made the running tally read short and
+  left the manual add as the one add in the session with no one-tap Undo. The quick-add
+  surface therefore reports each landed write upward as an optional `saved` event (tile →
+  dialog → box; every other host simply ignores it) and `useScanSession.logManualEntry`
+  files it. Three things make that safe to rely on. **(1) `previous` is the burst's baseline,
+  not the last tap's.** `useOwnedCountEditor` debounces, so three taps on `+` are ONE write;
+  reporting the count from before the last tap would give the row an Undo that walks back a
+  third of what it added. The editor snapshots the counts on the first adjustment after a
+  clean state and clears that snapshot only when a save no later edit has overtaken lands —
+  so an edit that arrives mid-save makes BOTH of that burst's writes report the same
+  baseline, rather than the second appearing to start from nowhere. **(2) The log folds a
+  burst into one row.** A write continuing the newest row — starting where it ended, or
+  where it started (case 1's overlap) — updates that row instead of stacking, so "undo the
+  Sol Rings I just added" stays one tap; a burst that walks itself back to its start drops
+  the row entirely rather than leaving an Undo that restores what is already on screen. Only
+  a `manual` row is folded into: a scanned row is its own physical card. **(3) A manual write
+  rebases the tentative match**, the same way Undo does, through the one `rebaseTentative`
+  seam — writes are ABSOLUTE, so a quick-add to the printing the panel is holding would
+  otherwise be silently overwritten when that panel commits. A failed save reports nothing,
+  so the log never offers to undo counts the server never took.
+- **Which number a scan went into is stated, not inferred.** The finish is decided visually,
+  off a printed ★ the detector can miss or imagine, and it is the one part of a match the
+  user is most likely to need to correct. So the match panel says it in words before the card
+  commits ("Adding 1 foil copy") and tints the row it lands on, and each history row carries
+  the same change as a chip — foil in amber, regular in the primary hue, worded by the one
+  `lib/holdingDelta.ts` seam so the tentative panel and the committed row can't describe the
+  same card differently. The delta is `target − owned` and is suppressed until the holding has
+  seeded, for the same reason `(had N)` is: until then `target` still carries the *previous*
+  card's counts, and a delta across two cards is fiction. History rows price the copy through
+  `finishUsdPrice`, so a foil add shows the foil price rather than the tile-style regular one.
 - **Detector readiness is explicit.** The npm-bundled OpenCV runtime is a multi-megabyte
   payload that compiles embedded WASM on the main thread. The dedicated scanner route starts
   warming it as soon as the page mounts, overlapping that cost with reading and camera

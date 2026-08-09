@@ -56,6 +56,7 @@ const PassThrough = { template: '<div><slot /></div>' }
 const TileStub = {
   name: 'QuickAddPrintTile',
   props: ['game', 'card', 'seed', 'ready', 'list'],
+  emits: ['saved'],
   template: '<span class="pid">{{ card.id }}</span>',
 }
 
@@ -198,6 +199,24 @@ describe('QuickAddPrintDialog held-first ordering', () => {
     const wrapper = mountDialog('wishlist')
     await nextTick()
     expect(order(wrapper)).toEqual(['old', 'new', 'mid'])
+    wrapper.unmount()
+  })
+
+  it('relays a tile\u2019s landed write to the host page', async () => {
+    // The dialog is a pass-through here, but it is one of three hops between the tile that
+    // saves and the page that logs the add \u2014 a silent break in any of them loses the
+    // manual add from the scan page's session history with nothing to show for it.
+    const wrapper = mountDialog()
+    await nextTick()
+    const write = {
+      id: 'new',
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+      card: CARDS[0]!,
+    }
+    wrapper.findComponent(TileStub).vm.$emit('saved', write)
+    expect(wrapper.emitted('saved')).toEqual([[write]])
     wrapper.unmount()
   })
 })

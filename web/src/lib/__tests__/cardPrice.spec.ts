@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import type { CardPrices } from '../api'
-import { displayUsdPrice } from '../cardPrice'
+import { displayUsdPrice, finishUsdPrice } from '../cardPrice'
 
 function prices(p: Partial<CardPrices>): CardPrices {
   return { usd: null, usd_foil: null, eur: null, tix: null, ...p }
@@ -44,5 +44,42 @@ describe('displayUsdPrice', () => {
       foil: false,
     })
     expect(displayUsdPrice({ usd: null, usd_foil: null })).toBeNull()
+  })
+})
+
+describe('finishUsdPrice', () => {
+  it('prices a foil copy at the foil price, not the regular one', () => {
+    expect(finishUsdPrice(prices({ usd: '5.00', usd_foil: '50.00' }), true)).toEqual({
+      amount: '50.00',
+      foil: true,
+    })
+  })
+
+  it('prices a regular copy the same way a tile does, even when a foil price exists', () => {
+    expect(finishUsdPrice(prices({ usd: '5.00', usd_foil: '50.00' }), false)).toEqual({
+      amount: '5.00',
+      foil: false,
+    })
+  })
+
+  it('falls back to the regular price for a foil copy of an unfoiled printing', () => {
+    // Better a number, correctly flagged as the regular price, than a blank row — the flag
+    // is what stops the fallback reading as the foil price it is not.
+    expect(finishUsdPrice(prices({ usd: '2.00', usd_foil: null }), true)).toEqual({
+      amount: '2.00',
+      foil: false,
+    })
+  })
+
+  it('falls back to the foil price for a regular copy of a foil-only printing', () => {
+    expect(finishUsdPrice(prices({ usd: null, usd_foil: '19.99' }), false)).toEqual({
+      amount: '19.99',
+      foil: true,
+    })
+  })
+
+  it('returns null when the printing carries no USD price at all', () => {
+    expect(finishUsdPrice(prices({}), true)).toBeNull()
+    expect(finishUsdPrice(prices({}), false)).toBeNull()
   })
 })

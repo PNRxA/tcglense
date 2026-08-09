@@ -11,6 +11,7 @@ import {
   QUICK_ADD_MIN_CHARS,
   useCardNameSuggestions,
   useProductSuggestions,
+  type QuickAddSaved,
 } from '@/composables/useQuickAdd'
 import { productTypeLabel } from '@/lib/productType'
 import type { Product } from '@/lib/api'
@@ -37,6 +38,11 @@ const props = withDefaults(
   defineProps<{ game: string; list?: CardListTarget; kind?: 'card' | 'product' }>(),
   { list: 'collection', kind: 'card' },
 )
+// Card-mode only: each landed write from the step-two print dialog, relayed to the host page.
+// Optional — the landings ignore it; the scan page uses it to file a manual add in the
+// session history beside the scanned cards (see `QuickAddSaved`).
+const emit = defineEmits<{ saved: [QuickAddSaved] }>()
+
 const game = toRef(props, 'game')
 const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
 const isProduct = props.kind === 'product'
@@ -310,6 +316,7 @@ function onKeydown(event: KeyboardEvent) {
       :name="selectedName"
       :list="list"
       @close-auto-focus="onDialogCloseAutoFocus"
+      @saved="emit('saved', $event)"
     />
     <QuickAddProductDialog
       v-else

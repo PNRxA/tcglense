@@ -3,18 +3,31 @@ import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import { makeCard } from '@/test/fixtures'
 
-const adjust = vi.hoisted(() => vi.fn<(which: 'quantity' | 'foil', delta: number) => void>())
+const H = vi.hoisted(() => ({
+  adjust: vi.fn<(which: 'quantity' | 'foil', delta: number) => void>(),
+  // The editor's landed-write callback, captured so a test can fire one without a network.
+  onSaved: undefined as ((write: unknown) => void) | undefined,
+}))
+const adjust = H.adjust
 
 vi.mock('@/composables/useOwnedCountEditor', async () => {
   const { ref } = await import('vue')
   return {
-    useOwnedCountEditor: () => ({
-      adjust,
-      regular: ref(2),
-      foil: ref(1),
-      saving: ref(false),
-      saveError: ref(false),
-    }),
+    useOwnedCountEditor: (
+      _game: unknown,
+      _cardId: unknown,
+      _seed: unknown,
+      opts?: { onSaved?: (write: unknown) => void },
+    ) => {
+      H.onSaved = opts?.onSaved
+      return {
+        adjust,
+        regular: ref(2),
+        foil: ref(1),
+        saving: ref(false),
+        saveError: ref(false),
+      }
+    },
   }
 })
 
@@ -55,5 +68,35 @@ describe('QuickAddPrintTile action adapter', () => {
 
     expect(adjust).toHaveBeenNthCalledWith(1, 'quantity', 1)
     expect(adjust).toHaveBeenNthCalledWith(2, 'foil', 1)
+  })
+
+  it('reports a landed write upward with the printing it was for', () => {
+    // The tile is the only place that knows *which card* the editor's id belongs to, so it
+    // is what turns a write into something a host page can log (the scan page files it in
+    // the session history, undo and all).
+    const card = makeCard('island')
+    const wrapper = mount(QuickAddPrintTile, {
+      props: { game: 'mtg', card, seed: { quantity: 2, foil_quantity: 1 }, ready: true },
+      global: { stubs: { Button: ButtonStub, PrintingTile: PrintingTileStub } },
+    })
+
+    H.onSaved!({
+      id: 'island',
+      quantity: 3,
+      foil_quantity: 1,
+      previous: { quantity: 2, foil_quantity: 1 },
+    })
+
+    expect(wrapper.emitted('saved')).toEqual([
+      [
+        {
+          id: 'island',
+          quantity: 3,
+          foil_quantity: 1,
+          previous: { quantity: 2, foil_quantity: 1 },
+          card,
+        },
+      ],
+    ])
   })
 })

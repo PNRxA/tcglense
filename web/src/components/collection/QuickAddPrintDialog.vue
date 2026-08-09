@@ -13,6 +13,7 @@ import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
 import { usePrintingPicker } from '@/composables/usePrintings'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
+import type { QuickAddSaved } from '@/composables/useQuickAdd'
 import type { Card } from '@/lib/api'
 import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
@@ -25,10 +26,11 @@ const props = withDefaults(
   { list: 'collection' },
 )
 const open = defineModel<boolean>('open', { required: true })
-// Forwarded to the parent so it can return focus to the quick-add box on close (this
-// dialog is opened programmatically, without a trigger, so reka has no element to
-// restore focus to and would otherwise drop it to <body>).
-const emit = defineEmits<{ closeAutoFocus: [Event] }>()
+// `closeAutoFocus` is forwarded to the parent so it can return focus to the quick-add box on
+// close (this dialog is opened programmatically, without a trigger, so reka has no element to
+// restore focus to and would otherwise drop it to <body>). `saved` relays each tile's landed
+// write on up to the host page (see `QuickAddSaved`).
+const emit = defineEmits<{ closeAutoFocus: [Event]; saved: [QuickAddSaved] }>()
 
 const game = toRef(props, 'game')
 const name = computed(() => props.name ?? '')
@@ -157,6 +159,7 @@ const heldFirstLabel = computed(() =>
             :seed="seedFor(printing)"
             :ready="seedReady"
             :list="list"
+            @saved="emit('saved', $event)"
           />
         </template>
       </PrintingPickerGrid>

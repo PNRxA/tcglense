@@ -1,9 +1,19 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getCardNames, listProducts, type ProductPage } from '@/lib/api'
+import { getCardNames, listProducts, type Card, type ProductPage } from '@/lib/api'
+import type { OwnedCountWrite } from '@/composables/useOwnedCountEditor'
 
 /** Public suggestion queries for the collection/wish-list and deck quick-add boxes.
  * Exact-name printing discovery lives in `usePrintings`, shared with replacement/scanner. */
+
+/** What a quick-add print tile reports once one of its saves lands: the write itself plus
+ * the printing it was for. It bubbles tile → dialog → box (an optional `saved` event every
+ * other host simply ignores) so a page can react to a card added *by name*. The scan page
+ * listens: a manual add is written to the same collection the scanner writes to, so it
+ * belongs in the same session history, with the same one-tap undo. */
+export interface QuickAddSaved extends OwnedCountWrite {
+  card: Card
+}
 
 /** Minimum characters before the quick-add box queries for name hints — short
  * enough to feel responsive, long enough to keep the suggestion set tight. */

@@ -73,6 +73,7 @@ const {
   setName,
   adjust,
   undo,
+  logManualEntry,
   retryOwned,
   retryPrintings,
   pickCandidate,
@@ -475,10 +476,13 @@ function discardAndReturn() {
 
         <!-- The manual fallback stays on screen rather than behind a disclosure: the moment it
              is needed is the moment a card just failed to scan, and making the user find and
-             open a panel then is exactly the wrong time to hide it. -->
+             open a panel then is exactly the wrong time to hide it. Its saves are filed in the
+             session history too — they write to the same collection the scanner does, so the
+             running tally would otherwise undercount the session, and the card added by name
+             would be the one card missing a one-tap undo. -->
         <div class="rounded-xl border p-3">
           <h2 class="mb-2 text-sm font-medium">Can't scan this card? Add it by name</h2>
-          <QuickAddBox :game="game" />
+          <QuickAddBox :game="game" @saved="logManualEntry" />
         </div>
       </section>
     </div>

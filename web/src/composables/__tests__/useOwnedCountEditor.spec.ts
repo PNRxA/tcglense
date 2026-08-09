@@ -7,6 +7,7 @@ import {
   useOwnedCountEditor,
   type CardListTarget,
   type OwnedCountSeed,
+  type OwnedCountWrite,
 } from '@/composables/useOwnedCountEditor'
 import { useAuthStore } from '@/stores/auth'
 
@@ -52,6 +53,7 @@ function mountEditor(
   cardId: Ref<string> = ref('card-a'),
   list?: CardListTarget,
   kind?: 'card' | 'product',
+  onSaved?: (write: OwnedCountWrite) => void,
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -59,7 +61,7 @@ function mountEditor(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const game = ref('mtg')
   const host = defineComponent({
-    setup: () => useOwnedCountEditor(game, cardId, seed, { list, kind }),
+    setup: () => useOwnedCountEditor(game, cardId, seed, { list, kind, onSaved }),
     render: () => null,
   })
   const wrapper = mount(host, {
@@ -153,6 +155,64 @@ describe('useOwnedCountEditor', () => {
     expect(calls).toHaveLength(2)
     expect(calls[1]!.url).toContain('/api/wishlist/mtg/cards/card-a')
     expect(calls[1]!.body).toEqual({ quantity: 1, foil_quantity: 0 })
+  })
+
+  it('reports each landed write with the counts the whole burst started from', async () => {
+    // A listener that logs the change so it can be undone (the scanner's session history)
+    // needs the count from before the burst: the debounce means three taps are ONE write, and
+    // reporting "previous" as of the last tap would undo only the last tap.
+    const saved: OwnedCountWrite[] = []
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 1, foil_quantity: 0 }),
+      ref('card-a'),
+      undefined,
+      undefined,
+      (write) => saved.push(write),
+    )
+    await flushPromises()
+
+    editor.adjust('quantity', 1)
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+    expect(saved).toEqual([
+      { id: 'card-a', quantity: 3, foil_quantity: 0, previous: { quantity: 1, foil_quantity: 0 } },
+    ])
+
+    // A later burst starts from what the first one left behind, not from the original seed.
+    editor.adjust('foil', 1)
+    await settle()
+    await flushPromises()
+    expect(saved[1]).toEqual({
+      id: 'card-a',
+      quantity: 3,
+      foil_quantity: 1,
+      previous: { quantity: 3, foil_quantity: 0 },
+    })
+  })
+
+  it('reports nothing for a write that failed', async () => {
+    // The counts never moved on the server, so a listener must not log an add — nor an undo
+    // that would then write counts the failed save never established.
+    fetchMock.mockImplementation(async () => ({
+      ok: false,
+      status: 500,
+      text: async () => '',
+    }))
+    const saved: OwnedCountWrite[] = []
+    const editor = mountEditor(
+      ref<OwnedCountSeed | undefined>({ quantity: 0, foil_quantity: 0 }),
+      ref('card-a'),
+      undefined,
+      undefined,
+      (write) => saved.push(write),
+    )
+    await flushPromises()
+
+    editor.adjust('quantity', 1)
+    await settle()
+    await flushPromises()
+    expect(saved).toEqual([])
   })
 
   it('never goes below zero and does not save a clamped no-op', async () => {

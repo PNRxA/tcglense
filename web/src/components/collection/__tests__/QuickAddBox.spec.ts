@@ -54,7 +54,7 @@ import QuickAddBox from '../QuickAddBox.vue'
 const DialogStub = {
   name: 'QuickAddPrintDialog',
   props: ['open', 'game', 'name', 'list'],
-  emits: ['update:open'],
+  emits: ['update:open', 'saved'],
   template: '<div class="dialog-stub" :data-open="String(open)">{{ name }}</div>',
 }
 
@@ -104,6 +104,27 @@ describe('QuickAddBox', () => {
     expect(options.every((o) => o.attributes('tabindex') === '-1')).toBe(true)
     // Card-name suggestions have no single representative art, so no thumbnail (#462).
     expect(wrapper.find('.product-image-stub').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('relays the print picker\u2019s landed write to the host page', async () => {
+    // The scan page binds `@saved` here to file a card added by name in the same session
+    // history a scanned card lands in. Nothing else listens, so only this pins the hop.
+    const wrapper = mountBox()
+    await wrapper.find('input').setValue('li')
+    await flushPromises()
+    await wrapper.findAll('[role="option"]')[0]!.trigger('click')
+    await flushPromises()
+
+    const write = {
+      id: 'bolt-1',
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+      card: { id: 'bolt-1', name: 'Lightning Bolt' },
+    }
+    wrapper.findComponent(DialogStub).vm.$emit('saved', write)
+    expect(wrapper.emitted('saved')).toEqual([[write]])
     wrapper.unmount()
   })
 
