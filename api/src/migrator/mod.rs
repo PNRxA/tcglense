@@ -67,6 +67,8 @@ mod m20240101_000064_create_life_counter_tables;
 mod m20240101_000065_add_life_seat_commander;
 mod m20240101_000066_add_card_art_tags_illustration_index;
 mod m20240101_000067_add_life_event_counters;
+mod m20240101_000068_add_cards_illustration_index;
+mod m20240101_000069_add_deck_cards_section_index;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -144,6 +146,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000065_add_life_seat_commander::Migration),
             Box::new(m20240101_000066_add_card_art_tags_illustration_index::Migration),
             Box::new(m20240101_000067_add_life_event_counters::Migration),
+            Box::new(m20240101_000068_add_cards_illustration_index::Migration),
+            Box::new(m20240101_000069_add_deck_cards_section_index::Migration),
         ]
     }
 }

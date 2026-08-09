@@ -424,6 +424,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   A line that *did* name a printing must stay unmatched when it doesn't resolve — never fall back
   to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
   columns are user-selectable), same refusal Moxfield's `Foil` column gets.
+- **A search leaf that joins another table needs an index on *both* sides.** The catalog
+  listing pairs a filter with `ORDER BY name, set_code, collector_number_int, id` + `LIMIT`,
+  and Postgres will happily answer that by walking `idx_cards_game_name` in sort order,
+  applying the filter per row, betting the page fills early. For a *selective* filter that
+  bet loses and it walks the whole game partition: the `art:` leaf's semi-join
+  (`scryfall::search::compile::tags`) was indexed on `card_art_tags` (`m..063`, `m..066`)
+  but not on `cards`, and one page fetch took **86 s** in production (fixed by `m..068`,
+  which measures it). The planner only stops making that bet when it has a way to drive
+  from the *other* side, so a new leaf that probes a second table lands with the matching
+  `cards` index in the same change. Same shape one level down: `deck_cards` had no index
+  leading with `section_id`, which is all `decks::facets` selects on (`m..069`).
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
   image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
   image path** — the one sanctioned exception is the opt-in fingerprint build
