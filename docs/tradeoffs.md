@@ -1317,6 +1317,29 @@ catalog) is planned but not implemented.
   guard reads it as the viewport), so a crisp printed inner frame there can win — the
   guard cannot be removed without breaking the hole-contour mechanism on portrait
   phones, where the closed texture blob legitimately fills the frame.
+- **A hidden page holds no camera.** Leaving the scanner without stopping it — switching tabs,
+  pressing home, the app switcher, a screen lock, closing the browser — used to leave the
+  camera open: the capture indicator kept burning behind an app that was, as far as anyone
+  looking at the phone could tell, filming from the background; the stream kept costing
+  battery; and the detection loop's `setTimeout` chain was throttled to a crawl by the
+  background tab, so the resumed viewfinder showed a stale frame anyway. So `useCardScanner`
+  releases the stream on the first sign the page stopped being visible, through the shared
+  `composables/usePageHidden.ts` seam. Three parts of that are load-bearing. **(1) It is two
+  events, latched.** `visibilitychange` alone misses a teardown that goes straight to
+  `pagehide` (and mobile backgrounding fires both), so both are listened to behind a
+  fire-once latch that re-arms on `pageshow` — an un-latched pair double-releases the camera
+  and double-submits the tentative card. **(2) Resuming is a tap, never automatic.** Camera
+  permission is already granted at that point, so re-opening on `visible` would silently film
+  a user who came back to the tab for something else; the idle surface instead says why the
+  camera went off (`interrupted`) and offers "Resume scanning". **(3) The tentative card is
+  saved on the way out**, the same loss-prevention contract Stop and route-leave follow — it
+  matters *more* here, because a backgrounded mobile tab can be discarded by the OS without
+  ever firing unmount, making the hidden event the last moment that card can be written at
+  all. It stays best-effort: a save that fails leaves the match on screen to retry, and an
+  unwanted add is one tap of Undo in the session log. The same hidden event also cancels an
+  in-flight `getUserMedia` (via the existing generation counter), so a permission grant that
+  lands after the user left stops its own orphaned stream instead of going live on a page
+  nobody is looking at.
 - **Detector readiness is explicit.** The npm-bundled OpenCV runtime is a multi-megabyte
   payload that compiles embedded WASM on the main thread. The dedicated scanner route starts
   warming it as soon as the page mounts, overlapping that cost with reading and camera

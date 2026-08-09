@@ -64,16 +64,29 @@ function mountScanner(video: Ref<HTMLVideoElement | null> = ref(null)) {
 }
 
 function mockCamera() {
-  const fakeStream = { getTracks: () => [], getVideoTracks: () => [] }
+  const track = {
+    stop: vi.fn<() => void>(),
+    addEventListener: vi.fn<() => void>(),
+    removeEventListener: vi.fn<() => void>(),
+  }
+  const fakeStream = { getTracks: () => [track], getVideoTracks: () => [track] }
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
       getUserMedia: vi.fn<() => Promise<typeof fakeStream>>(async () => fakeStream),
     },
   })
+  return { track }
+}
+
+/** jsdom's visibilityState is read-only, so drive it through the prototype like the browser. */
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: state })
+  document.dispatchEvent(new Event('visibilitychange'))
 }
 
 afterEach(() => {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   vi.restoreAllMocks()
   vi.clearAllMocks()
   mocks.loadOpenCv.mockImplementation(() => new Promise<never>(() => {}))
@@ -141,6 +154,84 @@ describe('useCardScanner OCR worker', () => {
     wrapper.unmount()
     await flushPromises()
     expect(mocks.worker.terminate).toHaveBeenCalled()
+  })
+})
+
+describe('useCardScanner hidden page', () => {
+  it('releases the camera when the page is hidden, and resumes only on a deliberate start', async () => {
+    const { track } = mockCamera()
+    const { scanner, wrapper } = mountScanner()
+    await scanner.start()
+    await flushPromises()
+    expect(scanner.status.value).toBe('ready')
+
+    // Tab switch / app switcher / screen lock: the camera must not stay open behind a page
+    // the user can't see.
+    setVisibility('hidden')
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(scanner.status.value).toBe('idle')
+    expect(scanner.interrupted.value).toBe(true)
+
+    // Coming back does NOT silently re-open the camera (permission is already granted, so
+    // that would film a user who returned for something else) — the next start does.
+    setVisibility('visible')
+    expect(scanner.status.value).toBe('idle')
+    await scanner.start()
+    await flushPromises()
+    expect(scanner.status.value).toBe('ready')
+    expect(scanner.interrupted.value).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('leaves an idle scanner alone — nothing to release, nothing to explain', async () => {
+    const { track } = mockCamera()
+    const { scanner, wrapper } = mountScanner()
+
+    setVisibility('hidden')
+
+    expect(track.stop).not.toHaveBeenCalled()
+    expect(scanner.status.value).toBe('idle')
+    expect(scanner.interrupted.value).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('drops a camera granted after the page was already hidden mid-start', async () => {
+    const track = {
+      stop: vi.fn<() => void>(),
+      addEventListener: vi.fn<() => void>(),
+      removeEventListener: vi.fn<() => void>(),
+    }
+    const media = { getTracks: () => [track], getVideoTracks: () => [track] }
+    let grant!: () => void
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn<() => Promise<typeof media>>(
+          () =>
+            new Promise((resolve) => {
+              grant = () => resolve(media)
+            }),
+        ),
+      },
+    })
+    const { scanner, wrapper } = mountScanner()
+    const starting = scanner.start()
+    await flushPromises()
+    expect(scanner.status.value).toBe('starting')
+
+    // Left while the permission prompt / camera warm-up was still in flight: getUserMedia
+    // can't be cancelled, so the stream it eventually hands over is an orphan to stop.
+    setVisibility('hidden')
+    grant()
+    await starting
+
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(scanner.status.value).toBe('idle')
+    expect(scanner.interrupted.value).toBe(true)
+
+    wrapper.unmount()
   })
 })
 
@@ -252,6 +343,23 @@ describe('useCardScanner live detection loop', () => {
     }
     // …the fourth clears the outline.
     vi.advanceTimersByTime(120)
+    expect(scanner.detectedQuad.value).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('stops the loop when the page is hidden, so a backgrounded tab does no camera work', async () => {
+    vi.useFakeTimers()
+    const { scanner, wrapper } = await startLive()
+    mocks.detectCardQuadCv.mockReturnValue(null)
+
+    vi.advanceTimersByTime(120)
+    expect(mocks.detectCardQuadCv).toHaveBeenCalledTimes(1)
+
+    setVisibility('hidden')
+    vi.advanceTimersByTime(600)
+
+    expect(mocks.detectCardQuadCv).toHaveBeenCalledTimes(1)
     expect(scanner.detectedQuad.value).toBeNull()
 
     wrapper.unmount()

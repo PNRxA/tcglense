@@ -19,6 +19,7 @@ function mountSurface(overrides: Partial<InstanceType<typeof ScanCameraSurface>[
       errorMessage: null,
       ocrLoading: false,
       cvStatus: 'ready',
+      interrupted: false,
       detectedQuad: null,
       captureEnabled: false,
       captureLabel: 'Scan card',
@@ -76,6 +77,19 @@ describe('ScanCameraSurface', () => {
     expect(wrapper.text()).toContain(
       'Basic detection active — use a plain, contrasting background.',
     )
+  })
+
+  it('explains an idle camera that was switched off by leaving the page', async () => {
+    const wrapper = mountSurface()
+    expect(wrapper.text()).toContain('Camera access is needed to scan')
+    expect(wrapper.get('button').text()).toContain('Start scanning')
+
+    // Without this the camera going dark on return from another app reads as a bug rather
+    // than the deliberate release it is.
+    await wrapper.setProps({ interrupted: true })
+    expect(wrapper.text()).toContain('Scanning stopped when you left the page')
+    expect(wrapper.text()).not.toContain('Camera access is needed to scan')
+    expect(wrapper.get('button').text()).toContain('Resume scanning')
   })
 
   it('resynchronizes the camera aspect when mobile video dimensions change', async () => {

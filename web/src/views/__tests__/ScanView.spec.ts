@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, shallowMount } from '@vue/test-utils'
 import type { Ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import ScanView from '@/views/ScanView.vue'
@@ -10,7 +10,6 @@ import { useScanPreferencesStore } from '@/stores/scanPreferences'
 
 // Typed mock helpers (the repo's lint requires a type parameter on vi.fn()).
 const voidFn = () => vi.fn<() => void>()
-const asyncTrue = () => vi.fn<() => Promise<boolean>>(async () => true)
 
 // The scanner + session composables are mocked to controllable refs so the test drives the
 // auto-scroll decision directly, without a real camera / OpenCV / network. Each field ScanView
@@ -22,6 +21,7 @@ const H = vi.hoisted(() => ({
   handleCapture: vi.fn<() => Promise<string>>(),
   confirmCurrent: vi.fn<() => Promise<void>>(),
   discardCurrent: vi.fn<() => void>(),
+  finalizeCurrent: vi.fn<() => Promise<boolean>>(),
 }))
 
 vi.mock('@/lib/seo', () => ({ usePageMeta: () => {} }))
@@ -33,6 +33,7 @@ vi.mock('@/composables/useCardScanner', async () => {
   H.scanner.errorMessage = ref(null)
   H.scanner.ocrLoading = ref(false)
   H.scanner.cvStatus = ref('ready')
+  H.scanner.interrupted = ref(false)
   H.scanner.detectedQuad = ref({
     a: { x: 0, y: 0 },
     b: { x: 1, y: 0 },
@@ -81,7 +82,7 @@ vi.mock('@/composables/useScanSession', async () => {
     useScanSession: () => ({
       ...s,
       handleCapture: H.handleCapture,
-      finalizeCurrent: asyncTrue(),
+      finalizeCurrent: H.finalizeCurrent,
       confirmCurrent: H.confirmCurrent,
       discardCurrent: H.discardCurrent,
       selectId: voidFn(),
@@ -128,6 +129,9 @@ beforeEach(() => {
   H.discardCurrent.mockImplementation(() => {
     matchRef().value = null
   })
+  H.finalizeCurrent.mockReset()
+  H.finalizeCurrent.mockResolvedValue(true)
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   Element.prototype.scrollIntoView = scrollIntoView
   HTMLElement.prototype.focus = focus
   window.matchMedia = vi.fn<(query: string) => MediaQueryList>().mockImplementation(
@@ -144,6 +148,10 @@ beforeEach(() => {
       }) as unknown as MediaQueryList,
   )
 })
+
+// The view now listens on `document`/`window` (see onPageHidden), so a wrapper left mounted
+// would keep reacting to the next test's events.
+enableAutoUnmount(afterEach)
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -194,6 +202,40 @@ describe('ScanView auto-scroll to review', () => {
     await flushPromises()
     expect(scrollIntoView).toHaveBeenCalledOnce()
     expect(focus).toHaveBeenCalledOnce()
+  })
+})
+
+describe('ScanView leaving the page', () => {
+  /** jsdom's visibilityState is read-only, so drive it through the prototype like the browser. */
+  function hidePage() {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+
+  it('saves the tentative card and clears the panel when the page is hidden', async () => {
+    matchRef().value = A_MATCH
+    shallowMount(ScanView)
+
+    hidePage()
+    await flushPromises()
+
+    // A backgrounded mobile tab can be discarded without ever unmounting, so hiding is the
+    // last moment the card on screen can be written at all.
+    expect(H.finalizeCurrent).toHaveBeenCalledOnce()
+    expect(H.discardCurrent).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the match on screen when that save failed, so it can be retried', async () => {
+    H.finalizeCurrent.mockResolvedValue(false)
+    matchRef().value = A_MATCH
+    shallowMount(ScanView)
+
+    hidePage()
+    await flushPromises()
+
+    expect(H.finalizeCurrent).toHaveBeenCalledOnce()
+    expect(H.discardCurrent).not.toHaveBeenCalled()
+    expect(matchRef().value).toStrictEqual(A_MATCH)
   })
 })
 
