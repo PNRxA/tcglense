@@ -75,8 +75,16 @@ const verb = computed(() => (props.list === 'wishlist' ? 'want' : 'own'))
 
 <template>
   <Dialog v-model:open="open">
+    <!-- Placement and viewport unit match the card twin (QuickAddPrintDialog) rather than
+      being decided per file: these two are the same surface for two item kinds, so a
+      divergence here is the asymmetry the twin rule exists to prevent. `svh` is also the
+      correct unit on its own merits — `vh` measures the URL-bar-hidden height, so a `vh`-tall
+      panel can put the Done button below the visible viewport on a phone. This dialog's own
+      content is short and stable, so top-anchoring changes little here; consistency with the
+      twin is the point (see DialogContent's `anchor` for what it does buy). -->
     <DialogContent
-      class="bg-background flex max-h-[85vh] w-[min(94vw,28rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
+      anchor="top"
+      class="bg-background flex max-h-[85svh] w-[min(94vw,28rem)] flex-col overflow-hidden rounded-xl border p-6 shadow-xl"
       @close-auto-focus="emit('closeAutoFocus', $event)"
     >
       <DialogTitle class="text-lg font-semibold">
