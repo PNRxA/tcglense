@@ -4,6 +4,7 @@ import { HeartPulse, Repeat2, Swords, Zap } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import LifeSignInPrompt from '@/components/life/LifeSignInPrompt.vue'
 import NewGameDialog from '@/components/life/NewGameDialog.vue'
@@ -30,7 +31,10 @@ const router = useRouter()
 const gameName = useGameName(game)
 const setup = useLifeSetupStore()
 
-const { data, isPending, isError } = useLifeSessionsQuery(game)
+// `isLoadingError`/`isRefetchError` rather than bare `isError`: query-core keeps cached `data`
+// when a background refetch fails, so gating the list on `isError` would swap a loaded list for
+// the error paragraph on one transient failure (issue #622).
+const { data, isPending, isLoadingError, isRefetchError } = useLifeSessionsQuery(game)
 const sessions = computed(() => data.value?.data ?? [])
 const active = computed(() => sessions.value.filter((s) => s.status === 'active'))
 const finished = computed(() => sessions.value.filter((s) => s.status !== 'active'))
@@ -113,8 +117,13 @@ usePageMeta({
         {{ start.error.value.message }}
       </p>
 
+      <StaleNotice
+        v-if="isRefetchError"
+        label="Couldn't refresh — showing your last loaded games."
+      />
+
       <LoadingRow v-if="isPending" label="Loading your games…" />
-      <p v-else-if="isError" class="text-destructive py-12">
+      <p v-else-if="isLoadingError" class="text-destructive py-12">
         Couldn't load your games. Please retry.
       </p>
 

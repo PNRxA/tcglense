@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
@@ -168,7 +169,10 @@ function copyDeckList() {
     </div>
 
     <LoadingRow v-else-if="deckQuery.isPending.value" label="Loading deck…" />
-    <p v-else-if="deckQuery.isError.value" class="text-muted-foreground py-16 text-center">
+    <!-- `isLoadingError`, not `isError`: "couldn't be found" is the answer for a deck that never
+         loaded. A failed *background* refetch keeps `data`, and telling someone their open deck
+         doesn't exist because one refresh hiccuped is the worst version of issue #622. -->
+    <p v-else-if="deckQuery.isLoadingError.value" class="text-muted-foreground py-16 text-center">
       This deck couldn't be found.
       <RouterLink :to="`/decks/${game}`" class="text-primary underline"
         >Back to your decks</RouterLink
@@ -183,6 +187,11 @@ function copyDeckList() {
       >
         <ArrowLeft class="size-4" /> All decks
       </RouterLink>
+
+      <StaleNotice
+        v-if="deckQuery.isRefetchError.value"
+        label="Couldn't refresh — showing this deck as it last loaded."
+      />
 
       <header class="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
