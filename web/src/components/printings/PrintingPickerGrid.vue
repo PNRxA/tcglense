@@ -5,9 +5,15 @@ import { Button } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import type { Card } from '@/lib/api'
+import type { Card, OwnedCountsMap } from '@/lib/api'
 import type { SortOption } from '@/lib/cardSort'
-import { PRINTING_DEFAULT_SORT, PRINTING_SORT_OPTIONS, sortPrintings } from '@/lib/printingSort'
+import {
+  heldFirstSortOptions,
+  PRINTING_DEFAULT_SORT,
+  PRINTING_HELD_FIRST_SORT,
+  PRINTING_SORT_OPTIONS,
+  sortPrintings,
+} from '@/lib/printingSort'
 
 // Shared result-state shell for every visual printing picker. It renders the loading,
 // error, empty, filter, sort, accumulated-page count, load-more control, and responsive
@@ -25,6 +31,23 @@ const props = withDefaults(
     errorMessage?: string
     emptyMessage?: string
     sortOptions?: SortOption[]
+    /**
+     * Lead the sort menu with a held-first option and select it by default, so
+     * the printings the user already has sit at the top of the grid before any pick is made.
+     * Fixed for the component's lifetime (it seeds the initial sort), like the picker's other
+     * per-caller switches. Only a caller that can supply `ownership` should set it.
+     */
+    heldFirst?: boolean
+    /** The held-first option's label, naming the target list ("Owned first" / its wish-list
+     * wording) — the map below is whichever list the caller is adding to. */
+    heldFirstLabel?: string
+    /**
+     * Counts for the loaded printings on that list, used only by the held-first sort. Pass it
+     * as `undefined` until the counts are authoritative: the grid then holds the plain
+     * newest-first order rather than briefly reading a half-loaded map as "nothing held" and
+     * reshuffling underneath a click. Sorting settles in the same tick the tiles do.
+     */
+    ownership?: OwnedCountsMap
     /** Show the "In my collection" checkbox that narrows the loaded printings to owned ones. */
     collectionFilter?: boolean
     /** Whether that checkbox is currently on (v-model). */
@@ -43,6 +66,9 @@ const props = withDefaults(
     errorMessage: 'Could not load printings. Please try again.',
     emptyMessage: 'No printings found.',
     sortOptions: () => PRINTING_SORT_OPTIONS,
+    heldFirst: false,
+    heldFirstLabel: 'Owned first',
+    ownership: undefined,
     collectionFilter: false,
     collectionOnly: false,
     collectionLoading: false,
@@ -62,9 +88,16 @@ function onCollectionToggle(event: Event) {
 
 // Sort is a purely presentational reordering of the already-loaded printings, so it lives
 // here (grid-local) rather than being threaded through every caller like the filter: it
-// changes neither the loaded-page count nor which pages are fetched.
-const sort = ref(PRINTING_DEFAULT_SORT)
-const sortedPrintings = computed(() => sortPrintings(props.filteredPrintings, sort.value))
+// changes neither the loaded-page count nor which pages are fetched. A held-first caller
+// starts on that option (and is offered it in the menu); picking any other one is an
+// explicit choice and drops the grouping.
+const sort = ref(props.heldFirst ? PRINTING_HELD_FIRST_SORT : PRINTING_DEFAULT_SORT)
+const options = computed(() =>
+  props.heldFirst ? heldFirstSortOptions(props.heldFirstLabel) : props.sortOptions,
+)
+const sortedPrintings = computed(() =>
+  sortPrintings(props.filteredPrintings, sort.value, props.ownership),
+)
 
 const filterActive = computed(() => props.filter.trim().length > 0 || props.collectionOnly)
 const countLabel = computed(() => {
@@ -116,7 +149,7 @@ const emptyFilterMessage = computed(() => {
             aria-label="Filter loaded printings by set, number, or rarity"
             @update:model-value="emit('update:filter', $event)"
           />
-          <CardSortMenu v-model="sort" :options="sortOptions" />
+          <CardSortMenu v-model="sort" :options="options" />
         </template>
         <label
           v-if="collectionFilter"

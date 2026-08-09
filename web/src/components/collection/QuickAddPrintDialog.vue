@@ -57,6 +57,16 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
     ? (ownership.value[card.id] ?? { quantity: 0, foil_quantity: 0 })
     : undefined
 }
+
+// Held-first ordering: a card you're quick-adding is usually one you already
+// have a copy of, and its printings can run into the hundreds — so the ones on the target
+// list lead the grid instead of being hunted for behind a set filter. It rides the same
+// counts fetched above, handed over only once they're authoritative (`seedReady`), so the
+// order settles in the same tick the steppers unlock rather than reshuffling under a click.
+const heldOwnership = computed(() => (seedReady.value ? ownership.value : undefined))
+const heldFirstLabel = computed(() =>
+  props.list === 'wishlist' ? 'On my wish list first' : 'Owned first',
+)
 </script>
 
 <template>
@@ -79,6 +89,9 @@ function seedFor(card: Card): OwnedCountSeed | undefined {
       <PrintingPickerGrid
         v-model:filter="picker.filter.value"
         scrollable
+        held-first
+        :held-first-label="heldFirstLabel"
+        :ownership="heldOwnership"
         class="mt-4 min-h-0 flex-1"
         :printings="picker.printings.value"
         :filtered-printings="picker.filteredPrintings.value"

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
+import type { OwnedCountsMap } from '@/lib/api'
 import { makeCard } from '@/test/fixtures'
 
 const ButtonStub = defineComponent({
@@ -53,6 +54,9 @@ const defaults = {
   collectionFilter: false,
   collectionOnly: false,
   collectionLoading: false,
+  heldFirst: false,
+  heldFirstLabel: 'Owned first',
+  ownership: undefined as OwnedCountsMap | undefined,
 }
 
 function mountGrid(props: Partial<typeof defaults> = {}) {
@@ -169,5 +173,64 @@ describe('PrintingPickerGrid', () => {
 
     await wrapper.get('select[aria-label="Sort"]').setValue('released:asc')
     expect(renderedIds(wrapper)).toEqual(['old', 'mid', 'new'])
+  })
+
+  describe('held-first ordering', () => {
+    const cards = [
+      makeCard('old', { released_at: '2019-01-01' }),
+      makeCard('new', { released_at: '2024-01-01' }),
+      makeCard('mid', { released_at: '2021-01-01' }),
+    ]
+
+    it('defaults to the held-first option and offers it under the caller’s label', () => {
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+        heldFirstLabel: 'On my wish list first',
+        ownership: { old: { quantity: 1, foil_quantity: 0 } },
+      })
+
+      const select = wrapper.get('select[aria-label="Sort"]')
+      expect((select.element as HTMLSelectElement).value).toBe('held:desc')
+      expect(select.findAll('option').map((o) => o.text())[0]).toBe('On my wish list first')
+      expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
+    })
+
+    it('holds the plain order until the counts arrive, then regroups', async () => {
+      // `ownership` is withheld while the counts load, so the grid never briefly reads a
+      // half-loaded map as "nothing held" and reshuffles under a click.
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+      })
+      expect(renderedIds(wrapper)).toEqual(['new', 'mid', 'old'])
+
+      await wrapper.setProps({ ownership: { old: { quantity: 0, foil_quantity: 2 } } })
+      expect(renderedIds(wrapper)).toEqual(['old', 'new', 'mid'])
+    })
+
+    it('drops the grouping once another sort is chosen', async () => {
+      const wrapper = mountGrid({
+        printings: cards,
+        filteredPrintings: cards,
+        total: 3,
+        heldFirst: true,
+        ownership: { old: { quantity: 1, foil_quantity: 0 } },
+      })
+
+      await wrapper.get('select[aria-label="Sort"]').setValue('released:desc')
+      expect(renderedIds(wrapper)).toEqual(['new', 'mid', 'old'])
+    })
+
+    it('leaves a caller that does not opt in on the newest-first default', () => {
+      const wrapper = mountGrid({ printings: cards, filteredPrintings: cards, total: 3 })
+      const select = wrapper.get('select[aria-label="Sort"]')
+      expect((select.element as HTMLSelectElement).value).toBe('released:desc')
+      expect(select.findAll('option').map((o) => o.text())).not.toContain('Owned first')
+    })
   })
 })

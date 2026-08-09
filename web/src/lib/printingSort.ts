@@ -1,4 +1,4 @@
-import type { Card } from '@/lib/api'
+import type { Card, OwnedCountsMap } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { type SortOption, toSortParam } from '@/lib/cardSort'
 
@@ -25,6 +25,32 @@ export const PRINTING_SORT_OPTIONS: SortOption[] = [
  * and the picker's server order, so the default is a no-op reordering (a stable sort leaves
  * equal-date printings in the order the API returned them). */
 export const PRINTING_DEFAULT_SORT = 'released:desc'
+
+/**
+ * Held-first ordering: the printings the signed-in user already has on the
+ * target list float above the ones they don't, each group keeping the default newest-first
+ * order. It is a *sort option* rather than an unconditional reordering so an explicit pick
+ * from the sort menu (price, set, collector number…) still means exactly what it says.
+ *
+ * Only offered by a caller that can supply an ownership map — `sortPrintings` degrades to the
+ * plain newest-first default without one, so an unresolved (or still-loading) map orders the
+ * grid exactly as it did before rather than claiming nothing is held.
+ */
+export const PRINTING_HELD_FIRST_SORT = 'held:desc'
+
+/** `PRINTING_SORT_OPTIONS` led by the held-first option. `label` names the target list in the
+ * caller's words ("Owned first" for the collection, its wish-list wording on the twin), since
+ * the map handed to `sortPrintings` is whichever list that caller is adding to. */
+export function heldFirstSortOptions(label: string): SortOption[] {
+  return [{ value: PRINTING_HELD_FIRST_SORT, label }, ...PRINTING_SORT_OPTIONS]
+}
+
+/** 1 when the user holds at least one copy (either finish) of this printing, else 0. A
+ * printing absent from the map is unheld — the counts hooks omit zero holdings. */
+function heldRank(card: Card, ownership: OwnedCountsMap | undefined): number {
+  const held = ownership?.[card.id]
+  return held && held.quantity + held.foil_quantity > 0 ? 1 : 0
+}
 
 // Rarity low→high ordinal, mirroring the backend's `scryfall::search::RARITIES` so the client
 // sort and the API's `sort=rarity` agree. An unknown/absent rarity ranks last in either
@@ -79,8 +105,22 @@ function rarityRank(card: Card): number | null {
   return card.rarity ? (RARITY_RANK[card.rarity.toLowerCase()] ?? null) : null
 }
 
-function compareBy(field: string, dir: Dir, a: Card, b: Card): number {
+function compareBy(
+  field: string,
+  dir: Dir,
+  a: Card,
+  b: Card,
+  ownership: OwnedCountsMap | undefined,
+): number {
   switch (field) {
+    case 'held': {
+      // Held-first is a *grouping*, not a full order: within each group the printings keep
+      // the newest-first default, so the held block and the rest each read the way the
+      // unsorted list did. Without an ownership map every printing ranks equal and this
+      // collapses to exactly that default.
+      const cmp = compareNullable(heldRank(a, ownership), heldRank(b, ownership), dir)
+      return cmp !== 0 ? cmp : compareNullableStr(a.released_at, b.released_at, 'desc')
+    }
     case 'set':
       return compareNullableStr(a.set_code, b.set_code, dir)
     case 'number':
@@ -101,8 +141,11 @@ function compareBy(field: string, dir: Dir, a: Card, b: Card): number {
  * so printings tied on the sort key keep their incoming order — the API's order for the
  * picker, the `/prints` order for the card page. A blank/unknown value falls back to the
  * newest-first default.
+ *
+ * `ownership` is only read by `PRINTING_HELD_FIRST_SORT`; omitting it (every caller that
+ * can't know what the user holds) leaves that value ordering by the newest-first default.
  */
-export function sortPrintings(cards: Card[], value: string): Card[] {
+export function sortPrintings(cards: Card[], value: string, ownership?: OwnedCountsMap): Card[] {
   const { sort, dir } = toSortParam(value, PRINTING_DEFAULT_SORT)
-  return [...cards].sort((a, b) => compareBy(sort, dir, a, b))
+  return [...cards].sort((a, b) => compareBy(sort, dir, a, b, ownership))
 }
