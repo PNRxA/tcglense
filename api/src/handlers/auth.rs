@@ -105,6 +105,7 @@ pub struct ResetPasswordRequest {
 /// time the user makes a collection public, and `handle` is the formatted
 /// `username-0001` (or null until then) the SPA uses for `/u/{handle}/{game}` links.
 /// `currency` is the preferred ISO 4217 display currency; catalog prices remain USD.
+/// `accent` is the design system's brand-hue preset slug (`accent::SUPPORTED_ACCENTS`).
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "User"))]
 pub struct UserResponse {
@@ -115,6 +116,7 @@ pub struct UserResponse {
     pub discriminator: Option<i32>,
     pub handle: Option<String>,
     pub currency: String,
+    pub accent: String,
 }
 
 impl From<user::Model> for UserResponse {
@@ -129,6 +131,7 @@ impl From<user::Model> for UserResponse {
             discriminator: m.discriminator,
             handle,
             currency: m.currency,
+            accent: m.accent,
         }
     }
 }
@@ -677,6 +680,31 @@ pub async fn set_currency(
     let currency = crate::currency::validate(&payload.currency)?.to_string();
     let mut active: user::ActiveModel = user.into();
     active.currency = Set(currency);
+    active.updated_at = Set(Utc::now());
+    let user = active.update(&state.db).await?;
+    Ok((StatusCode::OK, Json(UserResponse::from(user))))
+}
+
+/// Body of `PUT /api/auth/accent`.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SetAccentRequest {
+    pub accent: String,
+}
+
+/// Persist the caller's UI accent-colour preset (the design system's brand hue), so the
+/// choice follows the account across devices. Only slugs from
+/// `accent::SUPPORTED_ACCENTS` are accepted — the SPA owns the actual colour values
+/// (`web/src/lib/accent.ts`, AA-validated pairs). A read-only API key cannot mutate
+/// account preferences.
+pub async fn set_accent(
+    State(state): State<AppState>,
+    WritableUser(user): WritableUser,
+    JsonBody(payload): JsonBody<SetAccentRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let accent = crate::accent::validate(&payload.accent)?.to_string();
+    let mut active: user::ActiveModel = user.into();
+    active.accent = Set(accent);
     active.updated_at = Set(Utc::now());
     let user = active.update(&state.db).await?;
     Ok((StatusCode::OK, Json(UserResponse::from(user))))

@@ -4,14 +4,21 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * TCGLense design system — "Ember & Nightfoil".
+ * TCGLense design system — "Nightfoil" neutrals + a switchable accent.
  *
  * The single source of truth for the app's look: every color below is a semantic
  * token consumed through Tailwind utilities (bg-primary, text-success, shadow-lift…).
  * Light mode is warm paper (card-stock whites, ink-brown foreground); dark mode is a
- * violet-cast near-black (the "nightfoil" canvas). The brand hue is ember orange —
- * the magnifying-lens warmth of the favicon's old #e8833a theme-color — used for
- * --primary and --ring, so links, buttons, focus rings and hover borders all carry it.
+ * violet-cast near-black (the "nightfoil" canvas).
+ *
+ * The brand hue (--primary/--ring: links, buttons, focus rings, hover borders, the
+ * wordmark) is an ACCENT PRESET: pink by default, overridden by the
+ * `[data-accent='<slug>']` blocks at the bottom, keyed off <html>'s data-accent
+ * attribute (stamped pre-paint by index.html's no-FOUC script and kept live by
+ * stores/accent.ts; the slug itself is an account setting — see lib/accent.ts and
+ * api/src/accent.rs). Every preset's four values are AA-checked in both roles
+ * (fill under its foreground, and as link text on the background); a new preset
+ * lands with those receipts or not at all.
  *
  * Rules, rationale, and the accessibility receipts (every pairing below passes WCAG
  * AA; the chart palette passes a CVD-separation validator in both modes) live in
@@ -93,7 +100,7 @@
   --card-foreground: oklch(0.19 0.015 57);
   --popover: oklch(0.994 0.003 85);
   --popover-foreground: oklch(0.19 0.015 57);
-  --primary: oklch(0.56 0.16 45);
+  --primary: oklch(0.56 0.2 356);
   --primary-foreground: oklch(0.984 0.012 80);
   --secondary: oklch(0.952 0.012 75);
   --secondary-foreground: oklch(0.279 0.02 50);
@@ -104,7 +111,7 @@
   --destructive: oklch(0.549 0.199 27);
   --border: oklch(0.899 0.012 80);
   --input: oklch(0.899 0.012 80);
-  --ring: oklch(0.64 0.15 48);
+  --ring: oklch(0.64 0.169 356);
   --chart-1: oklch(0.62 0.16 48);
   --chart-2: oklch(0.58 0.1 190);
   --chart-3: oklch(0.549 0.151 295);
@@ -122,12 +129,12 @@
   --rarity-mythic: oklch(0.551 0.17 40);
   --sidebar: oklch(0.97 0.007 85);
   --sidebar-foreground: oklch(0.19 0.015 57);
-  --sidebar-primary: oklch(0.56 0.16 45);
-  --sidebar-primary-foreground: oklch(0.984 0.012 80);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: oklch(0.945 0.018 70);
   --sidebar-accent-foreground: oklch(0.251 0.025 58);
   --sidebar-border: oklch(0.899 0.012 80);
-  --sidebar-ring: oklch(0.64 0.15 48);
+  --sidebar-ring: var(--ring);
   --surface-shadow: 0 1px 3px oklch(0.19 0.015 57 / 10%), 0 1px 2px oklch(0.19 0.015 57 / 6%);
   --surface-shadow-lift: 0 8px 20px oklch(0.19 0.015 57 / 14%), 0 2px 6px oklch(0.19 0.015 57 / 8%);
 }
@@ -139,8 +146,8 @@
   --card-foreground: oklch(0.955 0.007 89);
   --popover: oklch(0.204 0.016 285);
   --popover-foreground: oklch(0.955 0.007 89);
-  --primary: oklch(0.74 0.15 55);
-  --primary-foreground: oklch(0.171 0.029 56);
+  --primary: oklch(0.719 0.17 356);
+  --primary-foreground: oklch(0.172 0.03 357);
   --secondary: oklch(0.269 0.02 285);
   --secondary-foreground: oklch(0.955 0.007 89);
   --muted: oklch(0.26 0.015 285);
@@ -150,7 +157,7 @@
   --destructive: oklch(0.659 0.19 25);
   --border: oklch(0.92 0.03 290 / 13%);
   --input: oklch(0.92 0.03 290 / 16%);
-  --ring: oklch(0.68 0.14 50);
+  --ring: oklch(0.671 0.159 356);
   --chart-1: oklch(0.66 0.15 53);
   --chart-2: oklch(0.65 0.11 190);
   --chart-3: oklch(0.64 0.14 295);
@@ -168,14 +175,73 @@
   --rarity-mythic: oklch(0.719 0.16 45);
   --sidebar: oklch(0.204 0.016 285);
   --sidebar-foreground: oklch(0.955 0.007 89);
-  --sidebar-primary: oklch(0.74 0.15 55);
-  --sidebar-primary-foreground: oklch(0.171 0.029 56);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: oklch(0.279 0.031 290);
   --sidebar-accent-foreground: oklch(0.955 0.007 89);
   --sidebar-border: oklch(0.92 0.03 290 / 13%);
-  --sidebar-ring: oklch(0.68 0.14 50);
+  --sidebar-ring: var(--ring);
   --surface-shadow: 0 2px 8px rgb(0 0 0 / 60%);
   --surface-shadow-lift: 0 8px 24px rgb(0 0 0 / 85%);
+}
+
+/*
+ * Accent presets (slugs from lib/accent.ts / api/src/accent.rs). Pink is the default
+ * above; each preset overrides only the brand trio — everything else (neutrals, status,
+ * charts) is accent-invariant. Ordering is load-bearing: a preset's light block
+ * (:root[data-accent=…], specificity 0-2-0) outranks the bare .dark block (0-1-0), so
+ * its .dark[data-accent=…] twin must follow it to win dark mode back — keep every
+ * preset as a light-then-dark pair, and never add a light block without its twin.
+ */
+
+:root[data-accent='ember'] {
+  --primary: oklch(0.56 0.16 45);
+  --ring: oklch(0.64 0.15 48);
+}
+.dark[data-accent='ember'] {
+  --primary: oklch(0.74 0.15 55);
+  --primary-foreground: oklch(0.171 0.029 56);
+  --ring: oklch(0.68 0.141 50);
+}
+
+:root[data-accent='violet'] {
+  --primary: oklch(0.54 0.18 295);
+  --ring: oklch(0.621 0.149 295);
+}
+.dark[data-accent='violet'] {
+  --primary: oklch(0.719 0.14 295);
+  --primary-foreground: oklch(0.171 0.029 293);
+  --ring: oklch(0.67 0.129 295);
+}
+
+:root[data-accent='teal'] {
+  --primary: oklch(0.52 0.089 190);
+  --ring: oklch(0.599 0.09 190);
+}
+.dark[data-accent='teal'] {
+  --primary: oklch(0.719 0.11 190);
+  --primary-foreground: oklch(0.169 0.029 191);
+  --ring: oklch(0.671 0.1 190);
+}
+
+:root[data-accent='blue'] {
+  --primary: oklch(0.52 0.13 245);
+  --ring: oklch(0.599 0.13 245);
+}
+.dark[data-accent='blue'] {
+  --primary: oklch(0.699 0.12 245);
+  --primary-foreground: oklch(0.171 0.031 244);
+  --ring: oklch(0.651 0.11 245);
+}
+
+:root[data-accent='green'] {
+  --primary: oklch(0.521 0.121 150);
+  --ring: oklch(0.599 0.11 150);
+}
+.dark[data-accent='green'] {
+  --primary: oklch(0.721 0.131 152);
+  --primary-foreground: oklch(0.17 0.03 153);
+  --ring: oklch(0.67 0.119 152);
 }
 
 @layer base {

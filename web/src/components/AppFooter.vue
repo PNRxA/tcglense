@@ -41,7 +41,11 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
       <div class="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <div class="flex items-baseline gap-2">
-            <RouterLink to="/" class="text-lg font-semibold tracking-tight">TCGLense</RouterLink>
+            <!-- Same wordmark treatment as the header brand — the footer carries the
+              accent too. -->
+            <RouterLink to="/" class="font-heading text-lg font-bold tracking-tight"
+              >TCG<span class="text-primary">Lense</span></RouterLink
+            >
             <span class="text-muted-foreground text-xs font-medium">v{{ version }}</span>
           </div>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">

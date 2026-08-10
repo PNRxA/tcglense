@@ -52,6 +52,7 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
             username: Set(None),
             discriminator: Set(None),
             currency: Set("USD".into()),
+            accent: Set("pink".into()),
         }
         .insert(&db)
         .await
@@ -164,6 +165,7 @@ async fn wishlist_query_orders_by_total_copies() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -248,6 +250,7 @@ async fn summary_skips_rows_whose_card_row_is_missing() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -314,6 +317,7 @@ async fn wishlist_query_scopes_to_a_set() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -424,6 +428,7 @@ async fn wanted_cards_group_into_drops_with_counts() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -521,6 +526,7 @@ async fn wanted_products_query_scopes_by_user_and_sorts_by_recency() {
             username: Set(None),
             discriminator: Set(None),
             currency: Set("USD".into()),
+            accent: Set("pink".into()),
         }
         .insert(&db)
         .await
@@ -617,6 +623,7 @@ async fn wanted_products_query_returns_none_for_orphaned_products() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -688,6 +695,7 @@ async fn product_summary_counts_values_and_skips_orphans() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
@@ -771,6 +779,7 @@ async fn product_summary_value_is_null_when_nothing_priced_and_ignores_msrp() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await

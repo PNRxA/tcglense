@@ -1,4 +1,4 @@
-# Design system — "Ember & Nightfoil"
+# Design system — "Nightfoil" + a switchable accent
 
 The app's visual identity, defined entirely as design tokens in
 [`web/src/assets/main.css`](../web/src/assets/main.css) and consumed through ordinary
@@ -12,11 +12,12 @@ together.
   ink-brown foreground, warm gray borders. **Dark mode is "nightfoil"**: a violet-cast
   near-black canvas (hue ≈ 285) with the same warm foreground, so card artwork reads like
   foils on a dark table.
-- **The brand hue is ember orange** (`--primary`, hue ≈ 45–55) — the magnifying-lens warmth
-  of the old `#e8833a` PWA theme-color, now actually used: links, solid buttons, focus
-  rings (`--ring`), hover borders (`hover:border-ring/60`), the wordmark's "Lense", icon
-  wells, and the home page's tinted panels all pick it up through the tokens. Light mode
-  darkens it for AA text-on-white; dark mode brightens it and flips the foreground pair.
+- **The brand hue is a user-switchable accent, pink by default** (`--primary`/`--ring`):
+  links, solid buttons, focus rings, hover borders (`hover:border-ring/60`), the
+  wordmarks in header and footer, icon wells, and the home page's tinted panels all pick
+  it up through the tokens. Light mode runs each hue dark enough for AA text-on-white;
+  dark mode brightens it and flips the foreground pair. See "Accent presets" below for
+  how the choice flows.
 - **Type**: Inter Variable for UI/body (`--font-sans`), **Bricolage Grotesque Variable**
   for headings (`--font-heading`, applied to `h1–h4` in the base layer and to the
   wordmark via the `font-heading` utility). Both are self-hosted `@fontsource` packages
@@ -49,6 +50,44 @@ migration folded ~150 of those onto the tokens above. Deliberately still literal
 server-supplied MTG mana hexes (`DeckStatBars`), camera-overlay chrome
 (`ScanCameraSurface` — composited over live video, theme-independent), the footer's rose
 heart, and `KeywordKindChip`'s taxonomy hues (a candidate for `info`-family tokens later).
+
+## Accent presets
+
+The brand hue is a **server-side account setting** limited to a validated preset list —
+free-form colors are deliberately rejected, because every preset ships with the AA
+receipts below and an arbitrary hex could not.
+
+- **Vocabulary**: `pink` (default) · `ember` · `violet` · `teal` · `blue` · `green`,
+  defined twice and pinned by tests on both sides, like the life-counter layout slugs:
+  `api/src/accent.rs` (`SUPPORTED_ACCENTS`, what `PUT /api/auth/accent` accepts, 422
+  otherwise) and `web/src/lib/accent.ts` (`ACCENT_OPTIONS`, what the settings picker
+  offers and the store validates). A slug added on one side only is either rejected by
+  the API or renders as the default.
+- **Storage**: `users.accent` (migration 70, default `pink`), riding the `User` DTO like
+  `currency`; the update handler takes `WritableUser` (read-only API key = 403) and the
+  route is in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` allow-list with the other
+  account-preference flows.
+- **Application**: `stores/accent.ts` resolves account-accent-wins-over-local and stamps
+  `data-accent` on `<html>`; `main.css`'s `[data-accent='<slug>']` blocks override only
+  the brand trio (`--primary`, `--primary-foreground` in dark, `--ring`; the sidebar
+  mirrors reference `var(--primary)` so they follow for free). The resolved accent is
+  mirrored into `localStorage['tcglense_accent']`, which the `index.html` no-FOUC script
+  stamps pre-mount — signed-in users get their accent on first paint, before auth
+  restores. The picker lives on the authed settings page only; a device that has never
+  seen a signed-in accent shows the default, and the mirror deliberately survives
+  logout (like the theme choice), so the device keeps its last-seen look. The inline
+  no-FOUC slug list is a third copy of the vocabulary, pinned by `accent.spec.ts`.
+- **CSS ordering is load-bearing**: a preset's light block (`:root[data-accent=…]`,
+  specificity 0-2-0) outranks the bare `.dark` block (0-1-0), so every preset's
+  `.dark[data-accent=…]` twin must come after it — never add a light block without its
+  twin (the comment above the blocks says the same).
+- **Adding a preset** means: both slug lists (+ their pinning tests), a light/dark pair in
+  `main.css` proven AA in *both roles* (fill under its `--primary-foreground`, and as
+  link text on `--background` — the second one is the binding constraint, light hues
+  need L ≈ 0.52–0.56), a swatch hex in `ACCENT_OPTIONS`, and the receipts noted here.
+- **What the accent must never touch**: status tokens, rarity/foil, and the chart palette
+  — charts are CVD-validated as a fixed set (below), which a per-user hue swap would
+  silently invalidate.
 
 ## Accessibility receipts
 

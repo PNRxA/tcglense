@@ -6,9 +6,10 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="manifest" href="/site.webmanifest">
-    <!-- Brand-ember fallback for UIs that ignore the media-query pair below. Keep all
-         three theme-colors in sync with the tokens in src/assets/main.css. -->
-    <meta name="theme-color" content="#bd4d00">
+    <!-- Brand-pink (the default accent) fallback for UIs that ignore the media-query
+         pair below. Keep all three theme-colors in sync with the tokens in
+         src/assets/main.css. -->
+    <meta name="theme-color" content="#c72b78">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TCGLense</title>
     <!--
@@ -42,8 +43,9 @@
     >
     <meta name="twitter:image" content="/og-image.png">
     <!--
-      Apply the saved theme before first paint to avoid a flash of the wrong theme.
-      Keep this in sync with src/stores/theme.ts (STORAGE_KEY + resolution logic).
+      Apply the saved theme and accent before first paint to avoid a flash of the wrong
+      look. Keep the theme half in sync with src/stores/theme.ts and the accent half
+      with src/stores/accent.ts + src/lib/accent.ts (STORAGE_KEYs + validation).
     -->
     <script>
       ;(function () {
@@ -54,6 +56,10 @@
             theme === 'dark' ||
             (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
           document.documentElement.classList.toggle('dark', dark)
+          var accent = localStorage.getItem('tcglense_accent')
+          if (['pink', 'ember', 'violet', 'teal', 'blue', 'green'].indexOf(accent) !== -1) {
+            document.documentElement.setAttribute('data-accent', accent)
+          }
         } catch (e) {}
       })()
     </script>

@@ -111,6 +111,7 @@ describe('App', () => {
       discriminator: null,
       handle: null,
       currency: 'USD',
+      accent: 'pink',
     }
     const router = makeRouter()
     router.push('/')

@@ -16,6 +16,7 @@ const USER_A: User = {
   discriminator: null,
   handle: null,
   currency: 'USD',
+  accent: 'pink',
 }
 const USER_B: User = {
   id: 2,
@@ -25,6 +26,7 @@ const USER_B: User = {
   discriminator: null,
   handle: null,
   currency: 'AUD',
+  accent: 'pink',
 }
 
 // Seed a per-user (authed) query and a public one so we can assert the reset drops only

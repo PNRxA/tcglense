@@ -58,6 +58,7 @@ describe('UserMenu', () => {
       discriminator: 7,
       handle: 'Ash-0007',
       currency: 'USD',
+      accent: 'pink',
     }
     await wrapper.vm.$nextTick()
 

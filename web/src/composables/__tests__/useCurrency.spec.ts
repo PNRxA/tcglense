@@ -32,6 +32,7 @@ function user(currency: string): User {
     discriminator: null,
     handle: null,
     currency,
+    accent: 'pink',
   }
 }
 

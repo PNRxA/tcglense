@@ -6,5 +6,6 @@
  * time the user makes a collection public, and `handle` is the formatted
  * `username-0001` (or null until then) the SPA uses for `/u/{handle}/{game}` links.
  * `currency` is the preferred ISO 4217 display currency; catalog prices remain USD.
+ * `accent` is the design system's brand-hue preset slug (`accent::SUPPORTED_ACCENTS`).
  */
-export type User = { id: number, email: string, created_at: string, username: string | null, discriminator: number | null, handle: string | null, currency: string, };
+export type User = { id: number, email: string, created_at: string, username: string | null, discriminator: number | null, handle: string | null, currency: string, accent: string, };
