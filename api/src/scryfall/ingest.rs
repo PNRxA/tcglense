@@ -22,6 +22,7 @@ use sea_orm::{
 };
 
 use super::client;
+use super::client::BulkCatalog;
 use super::map;
 use super::model::{ScryfallCard, ScryfallSet};
 use super::progress::ImportProgress;
@@ -105,14 +106,18 @@ pub(super) struct IngestStateUpdate {
 
 /// Refresh MTG card data from Scryfall, recording status in `ingest_state`.
 ///
+/// `catalog` is the tick's shared bulk-data catalog (see [`BulkCatalog`]); this reads
+/// its own dataset entry out of it rather than fetching the document itself.
+///
 /// On error the state row is best-effort marked `"error"` so the next boot
 /// retries, and the error is returned for logging by the caller.
 pub async fn refresh(
     db: &DatabaseConnection,
     client: &Client,
     source: &SyncSource,
+    catalog: &BulkCatalog,
 ) -> Result<(), IngestError> {
-    match refresh_inner(db, client, source).await {
+    match refresh_inner(db, client, source, catalog).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = put_state(
@@ -134,14 +139,9 @@ async fn refresh_inner(
     db: &DatabaseConnection,
     client: &Client,
     source: &SyncSource,
+    catalog: &BulkCatalog,
 ) -> Result<(), IngestError> {
-    let entry = client::bulk_data(client, &source.scryfall_bulk_data_url())
-        .await?
-        .into_iter()
-        .find(|b| b.kind == DATASET)
-        .ok_or_else(|| {
-            IngestError::Other(format!("scryfall bulk dataset '{DATASET}' not found"))
-        })?;
+    let entry = catalog.entry(DATASET)?;
 
     // Skip if we already imported this exact version.
     let existing = IngestState::find()
@@ -204,7 +204,7 @@ async fn refresh_inner(
     progress.begin_cards(entry.transfer_size());
     // In mirror mode the bulk file streams from the mirror; upstream mode follows the
     // location the catalog entry advertises.
-    let download_url = client::file_url(source, DATASET, &entry)?;
+    let download_url = client::file_url(source, DATASET, entry)?;
     let cards_imported = import_cards(
         db,
         client,

@@ -26,6 +26,10 @@ const READ_BUFFER: usize = 64 * 1024;
 
 /// Fetch the bulk-data catalog (small JSON describing each downloadable file) from
 /// `url` — the upstream catalog or its mirror, per the dataset source.
+///
+/// Prefer [`BulkCatalog::fetch`] on the sync path: the tick's three datasets share one
+/// fetch. This stays public for the mirror handler, which re-serves the document itself
+/// and needs the raw entries.
 pub async fn bulk_data(client: &Client, url: &str) -> Result<Vec<BulkData>, IngestError> {
     let list: BulkDataList = client
         .get(url)
@@ -36,6 +40,45 @@ pub async fn bulk_data(client: &Client, url: &str) -> Result<Vec<BulkData>, Inge
         .json()
         .await?;
     Ok(list.data)
+}
+
+/// One sync tick's bulk-data catalog: every dataset entry, fetched once and lent out.
+///
+/// Cards, rulings and art tags each need exactly one entry from this same small JSON
+/// document. They used to fetch it independently — three identical requests per tick,
+/// each an independent chance for a transport blip to cost *that* dataset a whole sync
+/// interval, and each carrying its own copy of the same find-or-error lookup.
+/// [`crate::catalog::refresh_all`] now fetches once and passes a borrow to all three.
+#[derive(Debug)]
+pub struct BulkCatalog {
+    entries: Vec<BulkData>,
+}
+
+impl BulkCatalog {
+    /// Fetch the catalog from `url` — the upstream document or its mirror, per the
+    /// dataset source.
+    pub async fn fetch(client: &Client, url: &str) -> Result<Self, IngestError> {
+        Ok(Self {
+            entries: bulk_data(client, url).await?,
+        })
+    }
+
+    /// Borrow the entry describing `kind`'s downloadable file.
+    ///
+    /// A missing entry is an error, not an empty import: the consumer turns it into a
+    /// failed (retried) refresh rather than swapping in an empty table.
+    pub(super) fn entry(&self, kind: &str) -> Result<&BulkData, IngestError> {
+        self.entries
+            .iter()
+            .find(|entry| entry.kind == kind)
+            .ok_or_else(|| IngestError::Other(format!("scryfall bulk dataset '{kind}' not found")))
+    }
+
+    /// Build from fixed entries, for tests that drive a consumer without a network.
+    #[cfg(test)]
+    pub(super) fn from_entries(entries: Vec<BulkData>) -> Self {
+        Self { entries }
+    }
 }
 
 /// Fetch every set, following pagination (`has_more` / `next_page`) from the first
@@ -247,6 +290,52 @@ mod tests {
         let tag: crate::scryfall::model::ScryfallArtTag =
             serde_json::from_str(line).expect("first line is a tag object");
         assert!(tag.slug.is_some_and(|slug: String| !slug.is_empty()));
+    }
+
+    fn entry_named(kind: &str) -> BulkData {
+        BulkData {
+            kind: kind.to_string(),
+            updated_at: "2026-08-10T09:01:23.670+00:00".to_string(),
+            download_uri: None,
+            jsonl_download_uri: Some(format!("https://data.scryfall.io/{kind}/x.jsonl.gz")),
+            size: None,
+            compressed_size: Some(12_359_045),
+        }
+    }
+
+    /// The whole point of the shared catalog: every dataset the tick imports reads its
+    /// own entry out of one fetched document.
+    #[test]
+    fn catalog_lends_each_dataset_its_own_entry() {
+        let catalog = BulkCatalog::from_entries(vec![
+            entry_named(crate::scryfall::DATASET),
+            entry_named(crate::scryfall::DATASET_RULINGS),
+            entry_named(crate::scryfall::DATASET_ART_TAGS),
+        ]);
+
+        for kind in [
+            crate::scryfall::DATASET,
+            crate::scryfall::DATASET_RULINGS,
+            crate::scryfall::DATASET_ART_TAGS,
+        ] {
+            assert_eq!(catalog.entry(kind).expect("entry present").kind, kind);
+        }
+    }
+
+    /// A catalog that doesn't advertise the dataset is an error, not an empty import —
+    /// the consumer turns it into a failed (retried) refresh rather than swapping in an
+    /// empty table and version-locking it.
+    #[test]
+    fn catalog_missing_a_dataset_is_an_error() {
+        let catalog = BulkCatalog::from_entries(vec![entry_named(crate::scryfall::DATASET)]);
+
+        let err = catalog
+            .entry(crate::scryfall::DATASET_RULINGS)
+            .expect_err("a missing dataset is an error");
+        assert!(
+            matches!(&err, IngestError::Other(msg) if msg.contains(crate::scryfall::DATASET_RULINGS)),
+            "the error names the missing dataset, got: {err}"
+        );
     }
 
     #[test]

@@ -467,6 +467,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   is the one seam that sniffs the gzip magic byte and inflates, and every bulk consumer must
   read through it rather than wrapping the stream itself. `cargo test -- --ignored
   live_bulk_catalog` is the manual canary when an import starts failing with a decode error.
+  Those three consumers share **one fetch per tick**: `catalog::refresh_all` builds a
+  `client::BulkCatalog` and lends it to each, so a fourth dataset takes the borrow and reads
+  its entry via `BulkCatalog::entry` rather than adding a fourth identical request (they were
+  three, and each was its own chance for a transport blip to cost *that* dataset a full
+  `SYNC_INTERVAL_HOURS`). A failed catalog fetch skips all three and deliberately writes **no**
+  `ingest_state` error: no import was attempted, so each dataset stays legitimately `complete`
+  at its current version and the next tick's gate short-circuits instead of forcing a needless
+  re-download — a `mark_error` there would defeat the gate, since every version gate tests
+  `status == "complete"` *first*. Nothing in this path retries, and reqwest's own retry is
+  compiled out (`is_retryable_error` has bodies only under the `http2`/`http3` features, which
+  `Cargo.toml` doesn't enable), so a single lost packet is a lost sync interval.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling
