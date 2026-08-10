@@ -697,6 +697,72 @@ async fn foil_star_consolidation_folds_on_pg() {
 
 #[tokio::test]
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn foil_star_listing_fold_on_pg() {
+    // The catalog-listing twin of the fold above, on live Postgres: the two row predicates
+    // in `scryfall::foil_variants` are unbranched plain SQL, and every construct they lean
+    // on renders differently enough between the backends to be worth pinning here — the
+    // correlated `EXISTS` against a second alias of `cards`, `substr`/`length` and `||`
+    // over the multibyte `★`, and the `NOT (...)` wrapper the listings filter on.
+    use crate::entities::card;
+    use crate::entities::prelude::Card;
+    use sea_orm::IntoActiveModel;
+
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    let insert = |id: i32, number: &'static str, finishes: &'static str, oracle: &'static str| async move {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: "sld".into(),
+            collector_number: number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(conn)
+        .await
+        .expect("insert card");
+    };
+    // A folded pair, an ambiguous base + star (two real printings), and an orphan star.
+    insert(1, "1587", "nonfoil", "ora-shelter").await;
+    insert(2, "1587★", "foil", "ora-shelter").await;
+    insert(3, "33", "nonfoil,foil", "ora-proctor").await;
+    insert(4, "33★", "foil", "ora-proctor").await;
+    insert(5, "796★", "foil", "ora-vault").await;
+
+    let listed = |expr| async move {
+        let mut got: Vec<String> = Card::find()
+            .filter(expr)
+            .all(conn)
+            .await
+            .expect("filter cards")
+            .into_iter()
+            .map(|c| c.external_id)
+            .collect();
+        got.sort();
+        got
+    };
+
+    assert_eq!(
+        listed(crate::scryfall::not_folded_foil_variant()).await,
+        ["ext-1", "ext-3", "ext-4", "ext-5"],
+        "only the star with a purely-nonfoil base of the same identity is folded out"
+    );
+    assert_eq!(
+        listed(crate::scryfall::has_folded_foil_variant()).await,
+        ["ext-1"],
+        "and only its base answers is:foil on the strength of the fold"
+    );
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn price_snapshot_upsert_on_pg() {
     let Some(base) = test_pg_url() else {
         return;

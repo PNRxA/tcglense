@@ -469,6 +469,71 @@ async fn prints_query_returns_other_printings_newest_first() {
     assert!(none.is_empty());
 }
 
+/// `catalog_cards` — the base every card listing builds from — keeps a foil-★ variant that
+/// has been folded onto its nonfoil base out of the grid, while leaving every star the
+/// pairing rule deliberately spares. `prints_query` rides the same seam, so the folded star
+/// isn't offered as an "other printing" of the card it *is*.
+#[tokio::test]
+async fn catalog_listings_fold_a_foil_star_onto_its_nonfoil_base() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    for (id, cn, finishes, oracle) in [
+        (1, "1587", "nonfoil", "ora-shelter"),
+        (2, "1587★", "foil", "ora-shelter"),
+        // An orphan `…★` promo: no base sibling, so it is a printing in its own right.
+        (3, "796★", "foil", "ora-vault"),
+        // A reprint of the folded card in another set, so `prints_query` has something
+        // to return that isn't the star.
+        (4, "12", "nonfoil,foil", "ora-shelter"),
+    ] {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: if id == 4 { "who".into() } else { "sld".into() },
+            collector_number: cn.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&db)
+        .await
+        .expect("insert card");
+    }
+
+    let numbers = |rows: Vec<card::Model>| {
+        let mut v: Vec<String> = rows.into_iter().map(|c| c.collector_number).collect();
+        v.sort();
+        v
+    };
+
+    assert_eq!(
+        numbers(catalog_cards("mtg").all(&db).await.expect("listing")),
+        ["12", "1587", "796★"],
+        "the folded star is out; the orphan star and the foilable reprint stay"
+    );
+    assert_eq!(
+        numbers(
+            prints_query("mtg", "ora-shelter", 1)
+                .all(&db)
+                .await
+                .expect("prints")
+        ),
+        ["12"],
+        "the star is not an `other printing` of the base it was folded onto"
+    );
+
+    // `unique:` re-runs the whole filtered query as a grouping key (an IN-subquery on
+    // Postgres), so the fold must be idempotent under it — the two `ora-shelter` printings
+    // collapse to one, and the orphan star stays its own card.
+    let grouped = apply_unique(
+        catalog_cards("mtg"),
+        Some(crate::scryfall::search::UniqueMode::Cards),
+        Dialect::Sqlite,
+    );
+    assert_eq!(grouped.all(&db).await.expect("grouped").len(), 2);
+}
+
 #[test]
 fn exact_name_trims_and_blank_is_none() {
     let p = ListParams {

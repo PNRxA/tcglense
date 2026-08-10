@@ -403,6 +403,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   The holdings browse views gate the same way (`!grouped`), and additionally swap target
   per mode: held mode exports the holdings listing, show-ghosts mode *is* the catalog
   listing so it exports the public catalog search.
+- **A foil-★ variant is one card with its base, on every surface that *lists* cards.** Some
+  Secret Lair printings are two Scryfall objects sharing a gameplay identity — nonfoil `sld`
+  `1587` and foil `1587★` — and `scryfall::enrich_foil_variant_prices` already copies the star's
+  foil price onto the base, so listing both is one card shown twice. The pairing rule lives
+  **once**, in `scryfall::foil_variants`, and now has a fourth consumer beside the enrichment,
+  `collection_import::consolidate` and `m…023`: `handlers::catalog::catalog_cards` — the base
+  query **every** card grid must build from (all-cards search, set cards, by-drop, by-sub-type,
+  the exports riding those builders, other-printings). Keep the rule conservative (an orphan
+  `…★` promo, an ambiguous base's star and an etched star are real printings and stay listed),
+  and keep it a **presentation** fold: the star row stays in `cards` so its Scryfall id keeps
+  resolving by id — detail pages, holdings/deck/alert rows, provider imports — which is why
+  card-by-id lookups, sealed-product contents, the name autocomplete, the scan fingerprint
+  index and the sitemap are deliberately exempt. Two couplings: the base's `finishes` must stay
+  `nonfoil`-exactly (it's the load-bearing half of the rule in all four homes), so `is:foil`
+  ORs in `has_folded_foil_variant` rather than the base advertising foil — and `DropTable::drop_for`
+  re-tries a miss with a trailing `★` so a drop that lists only the star still claims the base
+  it was folded onto, instead of leaking it into the "Other" bucket.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard);
   **smart sync never deletes** upstream-removed cards — only a full replace does.
   Moxfield **URL** import is deliberately disabled

@@ -407,9 +407,38 @@ catalog) is planned but not implemented.
   once by the `m…023_consolidate_foil_star_holdings` **migration** (the same rule in
   cross-backend SQL, wrapped in a transaction so a crash-interrupted boot re-runs cleanly;
   irreversible, so `down` is a no-op) — belt-and-braces for a user who never re-imports; a
-  re-import folds them anyway via `fold_existing_star_holdings`. The star (`…★`) card stays
-  a browsable catalog entry — only the *holding* is consolidated, so a set's owned-card
-  badges show the count on the base card, not the star.
+  re-import folds them anyway via `fold_existing_star_holdings`.
+- **Foil-variant consolidation, catalog side:** the same fold now also applies to the public
+  card **listings**, for the same reason it applies to holdings — once the enrichment above has
+  copied the star's foil price onto the base, the star is a second, near-identical tile for one
+  card. "Secret Lair x Hatsune Miku: Sakura Superstar" listed six cards twice, the duplicate
+  showing the same foil price as the original, which is what surfaced this. `handlers::catalog::catalog_cards`
+  is the one base query every grid builds from (all-cards search, a set's cards, by-drop,
+  by-sub-type, the `.txt` exports built from those same builders, and a card's other printings)
+  and it filters on `scryfall::not_folded_foil_variant` — the identical conservative rule, so an
+  orphan `…★` promo, an ambiguous base's star, and an etched star all keep their own tile. Three
+  consequences worth knowing:
+  - It is a **presentation** fold, never a delete. The star row stays in `cards`, so its
+    Scryfall id keeps resolving everywhere a card is looked up **by id** — the detail page and
+    its prices/rulings/art-tags/sealed reads, existing collection/wishlist/deck/alert rows, and
+    provider imports that name the `…★` printing. Sealed-product contents, the name
+    autocomplete, the scanner's fingerprint index and the sitemap are exempt for the same
+    reason (each wants the star specifically, or names it in its own right).
+  - `finishes` on the base is deliberately **not** widened to `nonfoil,foil`: `nonfoil`-exactly
+    is the load-bearing half of the pairing rule in all of its homes (`ENRICH_SQL`,
+    `collection_import::consolidate`, `m…023`, and the predicates themselves), so widening it
+    would stop the enrichment and the holdings fold for the very cards it fixed. `is:foil`
+    instead ORs in the mirror predicate `scryfall::has_folded_foil_variant`, so a base whose
+    foil lives on a folded star still answers `set:sld is:foil`. That arm's `EXISTS` spells its
+    star test exactly as `m…044`'s partial predicate does, so the probe rides that 96 KB index
+    rather than seeking `m…024` across the whole catalog — it's the one shape here an `OR` can't
+    short-circuit, so it runs per nonfoil-only row.
+  - A drop whose snapshot entry names **only** the star (117 of the seeded snapshot's 120 `…★`
+    numbers list both, and the other three are genuine orphans with no base card at all) would
+    otherwise lose its card into the trailing "Other" bucket. `DropTable::drop_for` therefore
+    re-tries a miss with a trailing star appended, so drop membership follows the fold.
+  A set's owned-card badges have always shown the count on the base card rather than the star;
+  the grid now agrees with them.
 
 ## Decks (issue #363)
 

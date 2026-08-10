@@ -36,6 +36,10 @@ pub use dummy::seed;
 /// Copy each foil-★ variant's foil price onto its nonfoil base card (issue #209), so a
 /// consolidated foil holding values correctly; run every sync tick before the snapshot.
 pub(crate) use foil_variants::enrich_foil_variant_prices;
+/// The same pairing rule as row predicates, for the catalog-listing fold: hide a foil-★
+/// variant that has been folded onto its nonfoil base, and recognise that base as
+/// foil-available (`is:foil`). See [`foil_variants`].
+pub(crate) use foil_variants::{has_folded_foil_variant, not_folded_foil_variant};
 pub use ingest::refresh;
 /// Daily price-history capture, re-exported at the provider level so callers use
 /// `scryfall::snapshot_prices` / `scryfall::format_date` without reaching into the

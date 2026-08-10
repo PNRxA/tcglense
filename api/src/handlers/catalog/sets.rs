@@ -28,7 +28,7 @@ use crate::handlers::shared::{
 use crate::state::AppState;
 
 use super::image::is_allowed_image_url;
-use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
+use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique, catalog_cards};
 
 /// A set/expansion within a game.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -287,7 +287,7 @@ pub(super) async fn set_cards_query(
     let include_related = params.include_related.unwrap_or(false);
     let dialect = state.dialect();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game));
+    let mut query = catalog_cards(game);
     query = if include_related {
         // Resolve the group membership from the flat set list (one cheap query) via the
         // shared seam the collection include-related view also uses, so both span the
@@ -353,10 +353,9 @@ pub async fn list_set_drops(
 
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
-    // regardless of where the page boundary falls.
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    // regardless of where the page boundary falls. Folded foil-★ variants are out
+    // (`catalog_cards`), so a drop's `card_count` counts printings, not Scryfall objects.
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)
@@ -534,9 +533,7 @@ pub async fn list_set_subtypes(
     // One set's cards are bounded, so we pull the whole (optionally searched) set and group
     // + paginate by sub-type in memory — keeping every sub-type complete regardless of where
     // the page boundary falls (matching the by-drop handler).
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)

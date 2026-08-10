@@ -239,6 +239,48 @@ pub struct NameSuggestParams {
 
 // ---------- Shared card helpers ----------
 
+/// The base query **every public card listing** starts from: the game's cards, minus the
+/// foil-★ variants folded onto their nonfoil base.
+///
+/// Some Secret Lair printings are two Scryfall objects — a nonfoil `1587` and a foil `1587★`
+/// sharing one gameplay identity — and [`crate::scryfall::enrich_foil_variant_prices`] already
+/// copies the star's foil price onto the base, so listing both puts two near-identical tiles
+/// in the grid where one card exists (the "Hatsune Miku: Sakura Superstar" drop showed six
+/// such pairs). The fold is the catalog-side twin of the one the collection has always done
+/// (`collection_import::consolidate`), and it is deliberately a **presentation** fold: the star
+/// row stays in `cards`, so its Scryfall id keeps resolving on the card detail route, in
+/// holdings/deck/alert links, and in provider imports.
+///
+/// Conservative by construction — a `…★` promo with no base, a star whose base is itself
+/// foilable, and an etched star are all still listed. See
+/// [`crate::scryfall::not_folded_foil_variant`] for the rule and its cost.
+///
+/// Every card grid must build from here rather than a bare `Card::find()`, or that surface
+/// starts showing the duplicate again: the all-cards search, a set's cards, the by-drop and
+/// by-sub-type groupings, the `.txt` exports built from those same builders, and a card's
+/// other printings. Deliberately **not** applied to:
+///
+/// - **Anything that resolves a card by id**, which is what keeps this a presentation fold —
+///   [`crate::handlers::shared::load_card`] (card detail, prices, image, rulings, art tags,
+///   holdings GET/PUT, deck-card writes, alert creation), the holdings listings' joins, and
+///   the life counter's commander lookups. A star's Scryfall id is live in URLs, bookmarks,
+///   API-key clients and existing rows, and must keep resolving.
+/// - **Sealed-product contents** — a product's membership rows name the foil printing in its
+///   own right, with its own `foil` flag, so folding there would lose real information.
+/// - **The name autocomplete** — it returns distinct *names*, which a star never adds to.
+/// - **The scanner's fingerprint index** — a photographed foil legitimately matches the star.
+/// - **The sitemap** — the star's detail page still exists and is still worth indexing (and
+///   its chunking is a keyset walk over `cards.id`, so filtering would renumber every chunk).
+///
+/// The drop grouping has one more half: a drop whose snapshot entry names only the star still
+/// claims its base, via the star fallback in [`crate::scryfall::drops::DropTable::drop_for`] —
+/// without it, folding a star away could drop its card into the trailing "Other" bucket.
+fn catalog_cards(game: &str) -> Select<card::Entity> {
+    Card::find()
+        .filter(card::Column::Game.eq(game))
+        .filter(crate::scryfall::not_folded_foil_variant())
+}
+
 /// Query a card's **other** printings: same game and `oracle_id`, excluding the
 /// card itself (`exclude_id`). Ordered newest printing first (released date desc,
 /// nulls last), then set code and collector number, with a stable `id` tiebreaker
@@ -248,10 +290,10 @@ pub struct NameSuggestParams {
 /// Capped at `MAX_PAGE_SIZE` results: a handful of cards (e.g. basic lands) share
 /// one `oracle_id` across hundreds-to-thousands of printings, and this is a "see
 /// also" aid rather than an exhaustive listing, so it returns at most the newest
-/// `MAX_PAGE_SIZE` rather than an unbounded response.
+/// `MAX_PAGE_SIZE` rather than an unbounded response. Built on [`catalog_cards`], so a
+/// folded foil-★ variant isn't offered as a separate printing of its own base.
 fn prints_query(game: &str, oracle_id: &str, exclude_id: i32) -> Select<card::Entity> {
-    Card::find()
-        .filter(card::Column::Game.eq(game))
+    catalog_cards(game)
         .filter(card::Column::OracleId.eq(oracle_id))
         .filter(card::Column::Id.ne(exclude_id))
         .order_by_with_nulls(card::Column::ReleasedAt, Order::Desc, NullOrdering::Last)

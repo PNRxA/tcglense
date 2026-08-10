@@ -1,4 +1,4 @@
-//! Foil-variant price enrichment (issue #209).
+//! Foil-variant pairing: the price enrichment (issue #209) and the catalog-listing fold.
 //!
 //! Some sets — Secret Lair especially — model a card's **foil** printing as a *separate*
 //! Scryfall object whose collector number is the nonfoil's plus a star (U+2605): `sld` `741`
@@ -8,15 +8,27 @@
 //! The collection consolidates a foil-★ holding onto its nonfoil base as a foil copy (see
 //! `crate::collection_import::consolidate`), and collection valuation prices a foil copy from
 //! its card's `price_usd_foil` — which on the base is empty, so a folded foil would value at
-//! $0. This copies each foil-★ sibling's foil price onto its nonfoil base so the base carries
-//! **both** prices, and the folded foil values correctly (and the public catalog shows the
-//! base's foil price too). Runs on every sync tick, before the daily price snapshot, so the
-//! enriched price is captured into the base card's history like any other.
+//! $0. [`enrich_foil_variant_prices`] copies each foil-★ sibling's foil price onto its nonfoil
+//! base so the base carries **both** prices, and the folded foil values correctly (and the
+//! public catalog shows the base's foil price too). Runs on every sync tick, before the daily
+//! price snapshot, so the enriched price is captured into the base card's history like any
+//! other.
 //!
-//! Matches the consolidation rule exactly (foil-only star ↔ nonfoil base, same set + oracle id
-//! + collector number sans the star), so a card whose foil never folds is never touched.
+//! Because the base then carries both prices, the star is a **duplicate tile** in every card
+//! grid — "Secret Lair x Hatsune Miku: Sakura Superstar" listed `1587` and `1587★` side by
+//! side, both showing the same $12.33 foil. [`not_folded_foil_variant`] is the predicate the
+//! public catalog listings filter on so a folded star stays out of the grid (and out of a
+//! drop's `card_count`), and [`has_folded_foil_variant`] is its mirror, so `is:foil` still
+//! finds the base whose foil lives on a folded star. The star row itself is **kept**: its
+//! Scryfall id is a live wire id (card detail, collection/wishlist/deck/alert rows, provider
+//! imports all resolve it), so this is a presentation fold, never a delete.
+//!
+//! All three spellings in this module match the consolidation rule exactly (foil-only star ↔
+//! nonfoil base, same set + oracle id + collector number sans the star), so a card whose foil
+//! never folds is never touched — see [`SQL_STAR_IS_FOLDED`].
 
 use chrono::Utc;
+use sea_orm::sea_query::{Expr, SimpleExpr};
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 
 use super::ingest::IngestError;
@@ -78,6 +90,110 @@ WHERE star.finishes = 'foil'
   -- (≥ 3.39).
   AND base.price_usd_foil IS DISTINCT FROM star.price_usd_foil"#;
 
+// ---------- The catalog-listing fold ----------
+
+/// The pairing rule as a **row predicate on `cards`**, in the star's direction: true iff this
+/// row is a purely-foil `…★` printing whose purely-nonfoil base sibling exists — i.e. exactly
+/// the rows [`ENRICH_SQL`] copies a foil price *out of*, and exactly the rows
+/// `collection_import::consolidate` folds a holding *off*.
+///
+/// Deliberately the same conservative rule, spelled once here: a star whose base is itself
+/// foilable (`nonfoil,foil`), an `etched` star, and a standalone `…★` promo with no base
+/// sibling are all **not** folded — those are distinct printings, not a nonfoil card's foil
+/// counterpart.
+///
+/// Correlates on the outer table by its real name, `cards` — it has to, or the inner alias
+/// would shadow the outer row's columns. That holds because every consumer applies these
+/// predicates either to a `Card::find()` (the catalog listings) or, for the `is:foil` mirror,
+/// to a holdings query whose `find_also_related(Card)` renders an **unaliased** `LEFT JOIN
+/// "cards"`; `handlers::collection::tests` pins the joined case. The `COALESCE(…, '')`
+/// wrappers make the finish tests
+/// total (`finishes` is nullable) so the negated form in [`not_folded_foil_variant`] can't go
+/// three-valued and silently drop a NULL-finish row; they match no value a real star or base
+/// carries, so the rule itself is unchanged.
+///
+/// Cross-backend plain SQL, like `ENRICH_SQL`: `EXISTS`, `LIKE`, `COALESCE`, `substr`/`length`
+/// and `||` concat all render byte-identically on SQLite and Postgres, so there's no
+/// `db::Dialect` gate and no bound value to renumber.
+///
+/// **Cost.** This is a residual per-row filter, never a driving one. The two leading tests are
+/// column compares on a row the plan already has, and both backends short-circuit `AND`, so
+/// the correlated `EXISTS` only runs for the ~1,851 `…★` rows in a ~106k-row catalog — and
+/// when it does, it point-seeks the base through `idx_cards_game_set_code_collector_number`
+/// (`m..024`). Selectivity runs ~98% *true*, so the negated form barely perturbs the listing's
+/// `ORDER BY name, set_code, collector_number_int, id` + `LIMIT` estimate and can't tip it off
+/// the sort index — the opposite of the *selective* leaf that cost `m..068` 86 s in prod. It
+/// cannot be served *from* `idx_cards_foil_variant_star` (`m..044`): a partial index answers
+/// its own predicate, never that predicate's negation.
+///
+/// Note the inner finish test is plain equality while the outer one is `COALESCE`d: inside an
+/// `EXISTS` a NULL is already a non-match, so the wrapper would buy nothing and would only
+/// stop the planner proving an index predicate (see [`SQL_BASE_HAS_FOLDED_STAR`]).
+const SQL_STAR_IS_FOLDED: &str = "\
+COALESCE(cards.finishes, '') = 'foil' \
+AND cards.collector_number LIKE '%★' \
+AND EXISTS (SELECT 1 FROM cards AS fv \
+            WHERE fv.game = cards.game \
+              AND fv.set_code = cards.set_code \
+              AND fv.oracle_id = cards.oracle_id \
+              AND fv.finishes = 'nonfoil' \
+              AND fv.collector_number = \
+                  substr(cards.collector_number, 1, length(cards.collector_number) - 1))";
+
+/// The same pairing rule from the **base's** side: true iff this row is a purely-nonfoil
+/// printing whose foil lives on a folded `…★` sibling. The mirror of [`SQL_STAR_IS_FOLDED`] —
+/// a row satisfies one or the other, never both.
+///
+/// Re-appending the star (`|| '★'`) rather than stripping it keeps the probe an equality on
+/// `collector_number`; gated on the base's own nonfoil-only finish so the sub-select never
+/// runs for the foilable majority.
+///
+/// This is the more exposed of the two — `is:foil` ORs it in, and an `OR` can't short-circuit
+/// past its second arm, so the sub-select runs for every nonfoil-only row (~40k) on both
+/// halves of such a search. Hence the two apparently redundant conjuncts: spelling the star
+/// test exactly as `idx_cards_foil_variant_star`'s partial predicate does (`m..044`:
+/// `finishes = 'foil' AND collector_number LIKE '%★'`, un-`COALESCE`d so the implication is
+/// provable) lets Postgres serve the probe from that 96 KB / ~1,851-entry index instead of
+/// seeking `m..024` across the whole ~106k-row catalog. The `LIKE` is implied by the equality
+/// on any real data; it's there for the planner, not the semantics.
+const SQL_BASE_HAS_FOLDED_STAR: &str = "\
+COALESCE(cards.finishes, '') = 'nonfoil' \
+AND EXISTS (SELECT 1 FROM cards AS fv \
+            WHERE fv.game = cards.game \
+              AND fv.set_code = cards.set_code \
+              AND fv.oracle_id = cards.oracle_id \
+              AND fv.finishes = 'foil' \
+              AND fv.collector_number LIKE '%★' \
+              AND fv.collector_number = cards.collector_number || '★')";
+
+/// This row **is** a foil-★ variant folded onto its nonfoil base ([`SQL_STAR_IS_FOLDED`]).
+/// Exposed for the tests that pin the rule; listings want [`not_folded_foil_variant`].
+#[cfg(test)]
+pub(crate) fn folded_foil_variant() -> SimpleExpr {
+    Expr::cust(format!("({SQL_STAR_IS_FOLDED})"))
+}
+
+/// The public catalog listings' fold: keep every row **except** a foil-★ variant folded onto
+/// its nonfoil base. Applied by `handlers::catalog::catalog_cards`, the one base query every
+/// card grid starts from, so a printing shows up once — with both its prices — instead of as
+/// a base tile and a near-identical star tile.
+pub(crate) fn not_folded_foil_variant() -> SimpleExpr {
+    Expr::cust(format!("NOT ({SQL_STAR_IS_FOLDED})"))
+}
+
+/// This row is a nonfoil base whose foil printing is a folded `…★` sibling
+/// ([`SQL_BASE_HAS_FOLDED_STAR`]) — so it *is* obtainable in foil, even though its own
+/// `finishes` says `nonfoil`.
+///
+/// `is:foil` ORs this in: the star that used to answer that search is now folded out of the
+/// grid, and rewriting the base's `finishes` instead is not an option — `nonfoil`-exactly is
+/// the load-bearing half of the pairing rule in all three of its homes (`ENRICH_SQL`,
+/// `collection_import::consolidate`, and the `m..023` migration), so widening it would stop
+/// the very enrichment and consolidation that make the fold correct.
+pub(crate) fn has_folded_foil_variant() -> SimpleExpr {
+    Expr::cust(format!("({SQL_BASE_HAS_FOLDED_STAR})"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,9 +201,11 @@ mod tests {
     use crate::test_support::{card_model, migrated_memory_db};
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter};
 
-    async fn insert(
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_in_set(
         db: &DatabaseConnection,
         id: i32,
+        set_code: &str,
         collector_number: &str,
         finishes: &str,
         oracle_id: &str,
@@ -96,7 +214,7 @@ mod tests {
     ) {
         card::Model {
             external_id: format!("ext-{id}"),
-            set_code: "sld".into(),
+            set_code: set_code.into(),
             collector_number: collector_number.into(),
             finishes: Some(finishes.into()),
             oracle_id: Some(oracle_id.into()),
@@ -108,6 +226,28 @@ mod tests {
         .insert(db)
         .await
         .expect("insert card");
+    }
+
+    async fn insert(
+        db: &DatabaseConnection,
+        id: i32,
+        collector_number: &str,
+        finishes: &str,
+        oracle_id: &str,
+        usd: Option<&str>,
+        usd_foil: Option<&str>,
+    ) {
+        insert_in_set(
+            db,
+            id,
+            "sld",
+            collector_number,
+            finishes,
+            oracle_id,
+            usd,
+            usd_foil,
+        )
+        .await;
     }
 
     async fn fetch(db: &DatabaseConnection, external_id: &str) -> card::Model {
@@ -221,6 +361,128 @@ mod tests {
             foil_price(&db, "ext-1").await.as_deref(),
             Some("31.00"),
             "base tracks the new star price"
+        );
+    }
+
+    /// Every row a card grid could show, run through the two listing predicates. The set is
+    /// the same rule matrix `enrich_foil_variant_prices` obeys, so what the enrichment copies
+    /// a foil price *out of* is exactly what a listing hides, and exactly whose base answers
+    /// `is:foil` — the three spellings can't drift apart without failing here.
+    async fn matching(db: &DatabaseConnection, expr: SimpleExpr) -> Vec<String> {
+        use sea_orm::QueryOrder;
+        let mut ids: Vec<String> = card::Entity::find()
+            .filter(expr)
+            .order_by_asc(card::Column::Id)
+            .all(db)
+            .await
+            .expect("filter cards")
+            .into_iter()
+            .map(|c| c.external_id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn the_listing_fold_hides_only_a_star_folded_onto_a_nonfoil_base() {
+        let db = migrated_memory_db().await;
+        // The issue's case: a nonfoil base and the foil-only star Scryfall models separately.
+        insert(&db, 1, "1587", "nonfoil", "ora-shelter", Some("6.26"), None).await;
+        insert(&db, 2, "1587★", "foil", "ora-shelter", None, Some("12.33")).await;
+        // An ambiguous base — foilable in its own right — and its star: two real printings,
+        // so neither folds (matching the enrichment, which won't copy onto such a base).
+        insert(
+            &db,
+            3,
+            "33",
+            "nonfoil,foil",
+            "ora-proctor",
+            Some("1.00"),
+            Some("2.00"),
+        )
+        .await;
+        insert(&db, 4, "33★", "foil", "ora-proctor", None, Some("9.99")).await;
+        // A standalone `★` promo with no base sibling (the dummy catalog ships one).
+        insert(&db, 5, "★", "foil", "ora-promo", None, Some("4.00")).await;
+        // An etched star: a distinct finish, never a nonfoil card's foil counterpart.
+        insert(&db, 6, "900", "nonfoil", "ora-etched", Some("1.00"), None).await;
+        insert(&db, 7, "900★", "etched", "ora-etched", None, Some("8.00")).await;
+        // A star whose only same-numbered nonfoil card lives in another set.
+        insert_in_set(
+            &db,
+            8,
+            "sld",
+            "77★",
+            "foil",
+            "ora-split",
+            None,
+            Some("3.00"),
+        )
+        .await;
+        insert_in_set(
+            &db,
+            9,
+            "who",
+            "77",
+            "nonfoil",
+            "ora-split",
+            Some("2.00"),
+            None,
+        )
+        .await;
+        // A star sharing its base's number but not its gameplay identity.
+        insert(&db, 10, "500", "nonfoil", "ora-a", Some("1.00"), None).await;
+        insert(&db, 11, "500★", "foil", "ora-b", None, Some("7.00")).await;
+        // A plain card with no star at all.
+        insert(&db, 12, "100", "nonfoil", "ora-plain", Some("5.00"), None).await;
+
+        assert_eq!(
+            matching(&db, folded_foil_variant()).await,
+            vec!["ext-2"],
+            "only the star with a purely-nonfoil base of the same identity folds"
+        );
+        assert_eq!(
+            matching(&db, not_folded_foil_variant()).await,
+            vec![
+                "ext-1", "ext-10", "ext-11", "ext-12", "ext-3", "ext-4", "ext-5", "ext-6", "ext-7",
+                "ext-8", "ext-9"
+            ],
+            "every other row still lists, including the orphan/etched/cross-set stars"
+        );
+        assert_eq!(
+            matching(&db, has_folded_foil_variant()).await,
+            vec!["ext-1"],
+            "only the base that lost its star is foil-available without saying so"
+        );
+    }
+
+    /// A `finishes`-less row (the dummy seeder never sets the column, and Scryfall's field is
+    /// optional) must survive the *negated* predicate rather than vanishing into SQL's
+    /// three-valued logic — the reason both finish tests are `COALESCE`d.
+    #[tokio::test]
+    async fn a_null_finish_row_is_never_folded_away() {
+        let db = migrated_memory_db().await;
+        card::Model {
+            external_id: "ext-null".into(),
+            set_code: "sld".into(),
+            collector_number: "42★".into(),
+            oracle_id: Some("ora-null".into()),
+            ..card_model(1)
+        }
+        .into_active_model()
+        .insert(&db)
+        .await
+        .expect("insert card");
+        insert(&db, 2, "42", "nonfoil", "ora-null", Some("1.00"), None).await;
+
+        assert_eq!(
+            matching(&db, not_folded_foil_variant()).await,
+            vec!["ext-2", "ext-null"],
+            "a row with no finishes is listed, not silently dropped"
+        );
+        assert!(
+            matching(&db, has_folded_foil_variant()).await.is_empty(),
+            "and its base is not claimed to be foil-available"
         );
     }
 }

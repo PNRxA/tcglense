@@ -567,3 +567,99 @@ async fn art_tag_lookup_lists_and_ranks_tags() {
     let (status, _, _) = send(&app, get("/api/games/nope/art-tags")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// The catalog-listing foil-variant fold, end to end on the page that reported it
+/// (`/cards/mtg/sets/sld?drop=miku`).
+///
+/// Scryfall models six of "Hatsune Miku: Sakura Superstar"'s printings as a nonfoil card
+/// plus a separate foil object one star along (`1587` / `1587★`), and the drop snapshot
+/// lists both numbers — so the grid showed each card twice, the second tile carrying the
+/// same foil price the enrichment had already copied onto the first. The fold keeps one
+/// tile per printing while leaving every star that *isn't* a folded duplicate alone, and
+/// the star's own Scryfall id keeps resolving on the detail route.
+#[tokio::test]
+async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+    crate::test_support::card_set_model("sld")
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld set");
+
+    // 1587/1587★ ("Shelter") are both in the Sakura Superstar drop's snapshot entry; 796★
+    // ("Mana Vault", Fallout: Vault Boy) is a real orphan — `sld` has no 796 at all.
+    for (id, cn, finishes, oracle, usd, usd_foil) in [
+        (
+            1,
+            "1587",
+            "nonfoil",
+            "ora-shelter",
+            Some("6.26"),
+            Some("12.33"),
+        ),
+        (2, "1587★", "foil", "ora-shelter", None, Some("12.33")),
+        (3, "796★", "foil", "ora-vault", None, Some("40.00")),
+    ] {
+        crate::entities::card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: cn.into(),
+            collector_number_int: cn.trim_end_matches('★').parse().ok(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            price_usd: usd.map(str::to_string),
+            price_usd_foil: usd_foil.map(str::to_string),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert sld card");
+    }
+    let app = crate::build_router(state);
+
+    let numbers = |body: &serde_json::Value, path: &str| -> Vec<String> {
+        let mut got: Vec<String> = body[path]
+            .as_array()
+            .expect("cards")
+            .iter()
+            .map(|c| c["collector_number"].as_str().expect("number").to_string())
+            .collect();
+        got.sort();
+        got
+    };
+
+    // The set grid lists the base once; the orphan star is untouched.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/cards?page_size=50")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["1587", "796★"], "{body:?}");
+    assert_eq!(body["total"].as_u64(), Some(2), "{body:?}");
+
+    // So does the by-drop view the report came from — including its `card_count`, which
+    // used to count the star as a second card in the drop.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/sld/drops?page_size=50&drop=sakura"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+    assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
+    assert_eq!(groups[0]["card_count"].as_u64(), Some(1), "{body:?}");
+    assert_eq!(numbers(&groups[0], "cards"), ["1587"], "{body:?}");
+
+    // `is:foil` still finds the base: its foil is real, it just lives on the folded star.
+    // The orphan star answers it on its own `finishes`.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards?q=is%3Afoil")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["1587", "796★"], "{body:?}");
+
+    // Folding is presentation-only: the star's Scryfall id still resolves, so existing
+    // links, holdings and provider imports that name it keep working.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards/ext-2")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["collector_number"].as_str(), Some("1587★"), "{body:?}");
+}
