@@ -536,3 +536,201 @@ describe('useScanSession repeat commits', () => {
     expect(session.log.value[0]?.previous).toEqual({ quantity: 1, foil_quantity: 0 })
   })
 })
+
+describe('useScanSession manual adds', () => {
+  /** A session with nothing scanned — the state the page is in while the user falls back to
+   * the add-by-name box because a card wouldn't scan. */
+  function mountBare() {
+    mocks.useScanMutation.mockReturnValue({
+      mutateAsync: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+    })
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+  }
+
+  /** A session holding one settled match: a single loaded printing, nothing owned yet. */
+  async function captureSettled() {
+    const target = makeCard('neo-printing', { set_code: 'neo' })
+    picker.printings.value = [target]
+    picker.hasNextPage.value = false
+    mocks.useScanMutation.mockReturnValue({
+      mutateAsync: vi
+        .fn<(...args: unknown[]) => Promise<{ data: Array<{ card: Card; distance: number }> }>>()
+        .mockResolvedValue({ data: [{ card: target, distance: 0 }] }),
+    })
+    const Host = defineComponent({
+      setup() {
+        session = useScanSession(ref('mtg'))
+        return () => null
+      },
+    })
+    wrapper = mount(Host)
+    await session.handleCapture({
+      fingerprints: [new Uint8Array(32)],
+      setText: 'NEO • EN',
+      foil: false,
+    })
+    await flushPromises()
+    return target
+  }
+
+  const sol = makeCard('sol-ring', { set_code: 'c21' })
+
+  it('files a card added by name in the same history, with the counts it replaced', () => {
+    // A manual add writes to the same collection a scan does. Left out of the log it was
+    // invisible in the tally *and* the only add in the session with no one-tap undo.
+    mountBare()
+    session.logManualEntry({
+      card: sol,
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+
+    expect(session.addedCount.value).toBe(1)
+    expect(session.log.value[0]).toMatchObject({
+      card: sol,
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+      source: 'manual',
+    })
+  })
+
+  it('folds one editing burst into a single row that undoes the whole burst', async () => {
+    // The quick-add dialog debounces, so four taps on `+` can land as several writes. Each
+    // one stacking its own row would bury the log and make "undo what I just added" four taps.
+    mountBare()
+    const write = (quantity: number, previous: number) =>
+      session.logManualEntry({
+        card: sol,
+        quantity,
+        foil_quantity: 0,
+        previous: { quantity: previous, foil_quantity: 0 },
+      })
+    write(2, 0)
+    // A second burst starts where the first left off.
+    write(3, 2)
+    // An edit landing mid-save makes BOTH writes of that burst report its baseline. The
+    // second must supersede the row, not unshift a duplicate that overlaps it — which is
+    // what matching on the row's own `previous` did once the row had folded once already.
+    write(4, 3)
+    write(5, 3)
+
+    expect(session.log.value).toHaveLength(1)
+    expect(session.log.value[0]).toMatchObject({
+      quantity: 5,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+
+    await session.undo(0)
+    await flushPromises()
+    expect(save).toHaveBeenCalledExactlyOnceWith({
+      game: 'mtg',
+      id: sol.id,
+      quantity: 0,
+      foil_quantity: 0,
+    })
+    expect(session.log.value).toHaveLength(0)
+  })
+
+  it('starts a fresh row for a write that begins somewhere the newest row never was', () => {
+    // Not every same-card write continues the row: another surface (the card modal the
+    // history rows now open) can move the holding, and a burst starting from a count this
+    // row never held is a separate change with its own honest Undo.
+    mountBare()
+    session.logManualEntry({
+      card: sol,
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+    session.logManualEntry({
+      card: sol,
+      quantity: 8,
+      foil_quantity: 0,
+      previous: { quantity: 7, foil_quantity: 0 },
+    })
+
+    expect(session.log.value).toHaveLength(2)
+    expect(session.log.value[0]).toMatchObject({ quantity: 8, previous: { quantity: 7 } })
+    expect(session.log.value[1]).toMatchObject({ quantity: 1, previous: { quantity: 0 } })
+  })
+
+  it('drops the row when a burst walks itself back to where it started', () => {
+    mountBare()
+    session.logManualEntry({
+      card: sol,
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+    session.logManualEntry({
+      card: sol,
+      quantity: 0,
+      foil_quantity: 0,
+      previous: { quantity: 1, foil_quantity: 0 },
+    })
+
+    // An "Undo" that restores the counts already on screen is worse than no row at all.
+    expect(session.log.value).toHaveLength(0)
+  })
+
+  it('ignores a write that changed nothing', () => {
+    mountBare()
+    session.logManualEntry({
+      card: sol,
+      quantity: 2,
+      foil_quantity: 0,
+      previous: { quantity: 2, foil_quantity: 0 },
+    })
+    expect(session.log.value).toHaveLength(0)
+  })
+
+  it('never folds into a scanned row — that row is its own physical card', async () => {
+    await captureSettled()
+    await session.commitCurrent()
+    expect(session.log.value).toHaveLength(1)
+    const scanned = session.log.value[0]!
+
+    session.logManualEntry({
+      card: scanned.card,
+      quantity: scanned.quantity + 1,
+      foil_quantity: scanned.foil_quantity,
+      previous: { quantity: scanned.quantity, foil_quantity: scanned.foil_quantity },
+    })
+
+    expect(session.log.value).toHaveLength(2)
+    expect(session.log.value[0]!.source).toBe('manual')
+    expect(session.log.value[1]).toBe(scanned)
+  })
+
+  it('rebases the tentative match when the manual add hits the printing on screen', async () => {
+    // Both surfaces write ABSOLUTE counts to one holding. Without the rebase the panel would
+    // commit the count it seeded from, silently discarding the copies just added by name.
+    const printing = await captureSettled()
+    expect(session.target.quantity).toBe(1)
+
+    session.logManualEntry({
+      card: printing,
+      quantity: 2,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+
+    // The scanned copy still rides on top of the new baseline.
+    expect(session.target.quantity).toBe(3)
+    await session.commitCurrent()
+    expect(save).toHaveBeenCalledWith({
+      game: 'mtg',
+      id: printing.id,
+      quantity: 3,
+      foil_quantity: 0,
+    })
+  })
+})

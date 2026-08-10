@@ -1,9 +1,32 @@
 import { computed, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getCardNames, listProducts, type ProductPage } from '@/lib/api'
+import { getCardNames, listProducts, type Card, type ProductPage } from '@/lib/api'
+import type { OwnedCountWrite } from '@/composables/useOwnedCountEditor'
 
 /** Public suggestion queries for the collection/wish-list and deck quick-add boxes.
  * Exact-name printing discovery lives in `usePrintings`, shared with replacement/scanner. */
+
+/** What a quick-add print tile reports once one of its saves lands: the write itself plus
+ * the printing it was for. It travels tile → dialog → box, where the box turns it into an
+ * optional `saved` event every other host simply ignores. The scan page listens: a manual add
+ * is written to the same collection the scanner writes to, so it belongs in the same session
+ * history, with the same one-tap undo. */
+export interface QuickAddSaved extends OwnedCountWrite {
+  card: Card
+}
+
+/**
+ * How that report travels down: a plain **callback prop**, not an event, on both inner hops.
+ *
+ * A debounced save lands a round-trip after it was scheduled, and the editor deliberately
+ * flushes a pending edit on unmount — so the reporting call routinely happens *after* the
+ * tile (and the dialog around it) have gone: tap `+`, tap Done. Vue's `emit()` returns early
+ * once an instance is unmounted, so an event there is silently dropped and the write lands on
+ * the server with no history row, no undo, and no rebase of an open tentative match. A
+ * captured function has no such guard. Only the last hop — the box, which outlives the
+ * dialog it opens — reports through a normal event.
+ */
+export type QuickAddSavedReporter = (write: QuickAddSaved) => void
 
 /** Minimum characters before the quick-add box queries for name hints — short
  * enough to feel responsive, long enough to keep the suggestion set tight. */

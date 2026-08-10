@@ -37,6 +37,20 @@ export interface SessionEntry {
   quantity: number
   foil_quantity: number
   previous: CollectionQuantities
+  /** How the card got here: the camera, or the page's add-by-name box. The history shows
+   * both — a manual add writes to the same collection and deserves the same undo — and the
+   * two are labelled apart so "I scanned that" and "I typed that" stay distinguishable. */
+  source: 'scan' | 'manual'
+}
+
+/** An absolute-count write made outside the scanner — the page's quick-add box — offered to
+ * the session log. Structurally what `QuickAddSaved` carries, without this module having to
+ * know about the quick-add surface. */
+export interface ManualAdd {
+  card: Card
+  quantity: number
+  foil_quantity: number
+  previous: CollectionQuantities
 }
 
 /** Regular copies a fresh scan proposes — you showed the camera one card. */
@@ -54,6 +68,10 @@ export function useScanSession(game: Ref<string>) {
 
   // Monotonic id per committed entry (stable session-log key across each unshift).
   let nextEntryId = 0
+  // Which log row the newest add-by-name write landed in, and the baseline that write started
+  // from — the burst identity `logManualEntry` folds on. Ids are never reused, so a row that
+  // Undo (or a self-cancelling burst) removed can never be matched by a later write.
+  let lastManualWrite: { entryId: number; base: CollectionQuantities } | null = null
   // A Stop/navigation finalizer can race the auto-advance commit. Share the same promise so
   // both callers wait for one write instead of either double-writing or treating the in-flight
   // commit as a failed/no-op save.
@@ -353,6 +371,7 @@ export function useScanSession(game: Ref<string>) {
           quantity,
           foil_quantity: foilQuantity,
           previous,
+          source: 'scan',
         })
         return true
       } catch {
@@ -363,6 +382,80 @@ export function useScanSession(game: Ref<string>) {
       }
     })()
     return commitInFlight
+  }
+
+  function sameCounts(a: CollectionQuantities, b: CollectionQuantities): boolean {
+    return a.quantity === b.quantity && a.foil_quantity === b.foil_quantity
+  }
+
+  /** Move the tentative panel's absolute baseline to counts someone else just wrote for the
+   * printing it is holding, keeping the user's pending delta (normally the +1 scanned copy)
+   * on top. Writes here are ABSOLUTE, so without this a commit would overwrite that other
+   * write instead of adding to it. Shared by Undo and by the add-by-name box, which both
+   * change the same holding out from under an open match. */
+  function rebaseTentative(card: Card, counts: CollectionQuantities) {
+    if (selectedCard.value?.id !== card.id || !seeded.value) return
+    const quantityDelta = target.quantity - seedBase.quantity
+    const foilDelta = target.foil_quantity - seedBase.foil_quantity
+    seedBase.quantity = counts.quantity
+    seedBase.foil_quantity = counts.foil_quantity
+    target.quantity = Math.max(0, seedBase.quantity + quantityDelta)
+    target.foil_quantity = Math.max(0, seedBase.foil_quantity + foilDelta)
+  }
+
+  /**
+   * File a write made by the page's add-by-name box in this session's history. A manual add
+   * lands in the same collection the scanner writes to, so leaving it out made the running
+   * tally understate the session — and cost it the one-tap undo a scanned card gets.
+   *
+   * Quick-add is a *burst* surface: three taps on `+` debounce into one write, and a fourth
+   * after that save lands is a second write for the same card. Those fold into ONE row rather
+   * than stacking, so "undo the Sol Rings I just added" is one tap that restores the count
+   * from before the whole burst. Two shapes continue the newest row:
+   *
+   * - a write that starts where the row's counts currently stand — the next burst; and
+   * - a write that starts where the row's *last* write started. Every save in one burst
+   *   reports that burst's baseline, so an edit landing mid-save produces two writes from the
+   *   same point; matching on the row's own `previous` instead would only ever catch that in
+   *   the burst that opened the row, and the second save of any later burst would unshift a
+   *   duplicate, overlapping row (a stale "Now N" above a newer one, and an Undo on the older
+   *   that walks the card back past copies the newer row still claims).
+   *
+   * Only a `manual` row is folded into — a scanned row is its own physical card, so it stays
+   * its own undo unit.
+   */
+  function logManualEntry(add: ManualAdd): void {
+    if (sameCounts(add.previous, add)) return
+    rebaseTentative(add.card, add)
+    const top = log.value[0]
+    if (
+      top &&
+      top.source === 'manual' &&
+      top.card.id === add.card.id &&
+      (sameCounts(top, add.previous) ||
+        (lastManualWrite?.entryId === top.id && sameCounts(lastManualWrite.base, add.previous)))
+    ) {
+      top.quantity = add.quantity
+      top.foil_quantity = add.foil_quantity
+      lastManualWrite = { entryId: top.id, base: add.previous }
+      // The burst walked itself back to where it started (added a copy, then removed it):
+      // drop the row rather than leave an Undo that restores the counts already shown.
+      if (sameCounts(top.previous, top)) {
+        log.value.splice(0, 1)
+        lastManualWrite = null
+      }
+      return
+    }
+    const id = nextEntryId++
+    lastManualWrite = { entryId: id, base: add.previous }
+    log.value.unshift({
+      id,
+      card: add.card,
+      quantity: add.quantity,
+      foil_quantity: add.foil_quantity,
+      previous: add.previous,
+      source: 'manual',
+    })
   }
 
   /** Wait for printing resolution and owned-count seeding, then save the tentative card.
@@ -488,17 +581,10 @@ export function useScanSession(game: Ref<string>) {
         // the log during the await, so the numeric index would point at the wrong row by now.
         const at = log.value.indexOf(entry)
         if (at !== -1) log.value.splice(at, 1)
-        if (selectedCard.value?.id === entry.card.id && seeded.value) {
-          // Keep the tentative edit (normally +1 scanned copy) while moving its absolute
-          // baseline to the count restored by Undo. Without this, 1 owned -> tentative 2 ->
-          // Undo to 0 would still commit 2, making the Undo ineffective.
-          const quantityDelta = target.quantity - seedBase.quantity
-          const foilDelta = target.foil_quantity - seedBase.foil_quantity
-          seedBase.quantity = entry.previous.quantity
-          seedBase.foil_quantity = entry.previous.foil_quantity
-          target.quantity = Math.max(0, seedBase.quantity + quantityDelta)
-          target.foil_quantity = Math.max(0, seedBase.foil_quantity + foilDelta)
-        }
+        // Keep the tentative edit (normally +1 scanned copy) while moving its absolute
+        // baseline to the count restored by Undo. Without this, 1 owned -> tentative 2 ->
+        // Undo to 0 would still commit 2, making the Undo ineffective.
+        rebaseTentative(entry.card, entry.previous)
         commitError.value = false
         return true
       } catch {
@@ -561,6 +647,7 @@ export function useScanSession(game: Ref<string>) {
     setName,
     adjust,
     undo,
+    logManualEntry,
     retryOwned,
     retryPrintings,
     pickCandidate,

@@ -22,6 +22,20 @@ export interface OwnedCountSeed {
   foil_quantity: number
 }
 
+/** A landed absolute-count write, reported to `opts.onSaved`: what was written for `id`, and
+ * the counts that write replaced.
+ *
+ * `previous` is the holding as of the START of the current editing burst, not of the last
+ * tap: three quick `+` taps debounce into ONE save, and a caller that logs the change so it
+ * can be undone (the scanner's session history, issue: manual adds were invisible there)
+ * needs the count from before the burst or its undo would only walk back the final tap. */
+export interface OwnedCountWrite {
+  id: string
+  quantity: number
+  foil_quantity: number
+  previous: OwnedCountSeed
+}
+
 /**
  * Local, instantly-updated regular/foil counts for a card with a debounced + serialized
  * save to {@link useSetCollectionEntryMutation} (which writes *absolute* counts). Extracted
@@ -61,6 +75,10 @@ export function useOwnedCountEditor(
      * fork, and existing collection/wish-list callers are untouched (they leave it unset
      * and keep the internal mutation path). */
     saveFn?: (id: string, quantity: number, foilQuantity: number) => Promise<unknown>
+    /** Called after each write that actually lands, with the counts written and the ones
+     * they replaced ({@link OwnedCountWrite}). Optional and side-effect-free for every
+     * existing caller; the quick-add tile uses it to report a manual add upward. */
+    onSaved?: (write: OwnedCountWrite) => void
   } = {},
 ) {
   const mutation =
@@ -108,6 +126,12 @@ export function useOwnedCountEditor(
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<unknown> = Promise.resolve()
   let editGen = 0
+  // The counts the current editing burst started from — captured on the first adjustment
+  // after a clean state, and cleared only by a save that no later edit has overtaken. That
+  // second half matters: when an edit lands mid-save, BOTH saves report the same burst
+  // baseline, so a listener sees two writes that start from one point rather than a second
+  // one that appears to start where nothing was.
+  let burstBase: OwnedCountSeed | null = null
 
   // Switching to a different card starts fresh. Flush any pending debounced edit against
   // the PREVIOUS card's id first (its counts are still in `regular`/`foil`), so the edit
@@ -123,21 +147,34 @@ export function useOwnedCountEditor(
     }
     dirty.value = false
     saveError.value = false
+    // The new card's first edit starts its own burst; the previous card's baseline describes
+    // counts that are no longer in `regular`/`foil`.
+    burstBase = null
   })
 
   function runSave() {
     const gen = editGen
-    return persist(cardId.value, regular.value, foil.value)
+    // Read the write's inputs once: `.then` runs a round-trip later, by which point another
+    // edit may have moved the refs, and `onSaved` must report what was actually written.
+    const id = cardId.value
+    const quantity = regular.value
+    const foilQuantity = foil.value
+    const previous = burstBase
+    return persist(id, quantity, foilQuantity)
       .then(() => {
         saveError.value = false
+        if (previous) opts.onSaved?.({ id, quantity, foil_quantity: foilQuantity, previous })
       })
       .catch(() => {
         saveError.value = true
       })
       .finally(() => {
-        // Only clear dirty if no further edit happened while this save ran, so the
-        // pending edit's own save (and reseed) stays authoritative.
-        if (gen === editGen) dirty.value = false
+        // Only clear dirty (and the burst baseline) if no further edit happened while this
+        // save ran, so the pending edit's own save (and reseed) stays authoritative.
+        if (gen === editGen) {
+          dirty.value = false
+          burstBase = null
+        }
       })
   }
 
@@ -184,6 +221,8 @@ export function useOwnedCountEditor(
     const next = Math.max(0, current.value + delta)
     // A clamped no-op (e.g. minus at 0) changes nothing, so don't schedule a redundant save.
     if (next === current.value) return
+    // Snapshot before the mutation — this is the count a listener's undo has to restore.
+    burstBase ??= { quantity: regular.value, foil_quantity: foil.value }
     current.value = next
     scheduleSave()
   }

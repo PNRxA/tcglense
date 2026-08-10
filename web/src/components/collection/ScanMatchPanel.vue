@@ -7,6 +7,7 @@ import CardImage from '@/components/cards/CardImage.vue'
 import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
 import PrintingTile from '@/components/printings/PrintingTile.vue'
 import { displayUsdPrice } from '@/lib/cardPrice'
+import { holdingDelta, holdingDeltaIsFoil, holdingDeltaSummary } from '@/lib/holdingDelta'
 import { printingMetadataLabel } from '@/lib/printings'
 import type { Card, CollectionQuantities, ScanMatch as ScanCandidate } from '@/lib/api'
 import type { ScanMatch } from '@/composables/useScanSession'
@@ -91,12 +92,35 @@ function countLabel(value: number): string {
   return String(value)
 }
 
+// What committing right now would change. The scanner routes its copy to foil off a printed
+// ★ it detected visually, and that call can be wrong — so which of the two numbers moved has
+// to be obvious *before* the card commits, not discoverable by comparing "3" against
+// "(had 2)". Only meaningful once the holding has seeded: until then `target` still carries
+// the previous card's counts, the same reason `(had N)` is gated on `ready`.
+const delta = computed(() => holdingDelta(props.owned, props.target))
+const deltaSummary = computed(() => (props.ready ? holdingDeltaSummary(delta.value) : null))
+const deltaIsFoil = computed(() => holdingDeltaIsFoil(delta.value))
+// The glyph carries the finish where there is one to carry; a change that only takes copies
+// away has no foil story to tell and must not lead with a plus sign.
+const deltaIcon = computed(() => {
+  if (deltaIsFoil.value) return Sparkles
+  const { quantity, foil_quantity } = delta.value
+  return quantity <= 0 && foil_quantity <= 0 ? Minus : Plus
+})
+
+// Foil accents amber and regular the primary hue, matching the session log's chips so the
+// tentative panel and the history describe one card the same way.
+const FOIL_ACCENT = 'bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-400'
+const REGULAR_ACCENT = 'bg-primary/10 text-primary ring-primary/20'
+
 const rows = computed(() => [
   {
     key: 'quantity' as const,
     label: 'Regular',
     value: props.target.quantity,
     was: props.owned.quantity,
+    delta: props.ready ? delta.value.quantity : 0,
+    accent: REGULAR_ACCENT,
     icon: null,
   },
   {
@@ -104,6 +128,8 @@ const rows = computed(() => [
     label: 'Foil',
     value: props.target.foil_quantity,
     was: props.owned.foil_quantity,
+    delta: props.ready ? delta.value.foil_quantity : 0,
+    accent: FOIL_ACCENT,
     icon: Sparkles,
   },
 ])
@@ -183,18 +209,40 @@ const rows = computed(() => [
           {{ price.text }}<span v-if="price.foil" class="ml-0.5 uppercase opacity-70">foil</span>
         </p>
 
+        <!-- The headline answer to "which number did that scan go into?", stated before the
+           steppers so a wrong foil call is caught at a glance rather than after committing.
+           The matching row below is tinted the same colour. -->
+        <p
+          v-if="deltaSummary"
+          data-testid="scan-delta-summary"
+          class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ring-1"
+          :class="deltaIsFoil ? FOIL_ACCENT : REGULAR_ACCENT"
+        >
+          <component :is="deltaIcon" class="size-3.5 shrink-0" aria-hidden="true" />
+          {{ deltaSummary }}
+        </p>
+
         <!-- Copies to keep in the collection (absolute; defaults to what you owned + 1). -->
         <div class="space-y-1.5">
           <div
             v-for="row in rows"
             :key="row.key"
-            class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+            class="-mx-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg px-2 py-1 ring-1"
+            :class="row.delta ? row.accent : 'ring-transparent'"
           >
             <span class="flex items-center gap-1.5 text-sm">
               <component :is="row.icon" v-if="row.icon" class="size-3.5" aria-hidden="true" />
               {{ row.label }}
               <span v-if="ready && row.was > 0" class="text-muted-foreground text-xs"
                 >(had {{ row.was }})</span
+              >
+              <!-- The summary above already states the change in words, so this is the
+                 visual echo on the row it belongs to, not a second announcement. -->
+              <span
+                v-if="row.delta"
+                class="text-xs font-semibold tabular-nums"
+                aria-hidden="true"
+                >{{ row.delta > 0 ? `+${row.delta}` : row.delta }}</span
               >
             </span>
             <div class="flex items-center gap-1.5">

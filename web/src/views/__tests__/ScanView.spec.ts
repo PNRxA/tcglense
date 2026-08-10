@@ -6,6 +6,7 @@ import ScanView from '@/views/ScanView.vue'
 import ScanCameraSurface from '@/components/collection/ScanCameraSurface.vue'
 import ScanCaptureDock from '@/components/collection/ScanCaptureDock.vue'
 import ScanMatchPanel from '@/components/collection/ScanMatchPanel.vue'
+import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import { useScanPreferencesStore } from '@/stores/scanPreferences'
 
 // Typed mock helpers (the repo's lint requires a type parameter on vi.fn()).
@@ -20,6 +21,7 @@ const H = vi.hoisted(() => ({
   capture: vi.fn<() => Promise<unknown>>(),
   handleCapture: vi.fn<() => Promise<string>>(),
   confirmCurrent: vi.fn<() => Promise<void>>(),
+  logManualEntry: vi.fn<(add: unknown) => void>(),
   discardCurrent: vi.fn<() => void>(),
   finalizeCurrent: vi.fn<() => Promise<boolean>>(),
 }))
@@ -89,6 +91,7 @@ vi.mock('@/composables/useScanSession', async () => {
       setName: voidFn(),
       adjust: voidFn(),
       undo: voidFn(),
+      logManualEntry: H.logManualEntry,
       retryOwned: voidFn(),
       retryPrintings: voidFn(),
       pickCandidate: voidFn(),
@@ -202,6 +205,24 @@ describe('ScanView auto-scroll to review', () => {
     await flushPromises()
     expect(scrollIntoView).toHaveBeenCalledOnce()
     expect(focus).toHaveBeenCalledOnce()
+  })
+})
+
+describe('ScanView add-by-name fallback', () => {
+  it('files a card added by name in the same session history', async () => {
+    // The fallback box writes to the same collection the scanner does. Before this, a card
+    // added by name left the tally reading one short and was the one add in the session with
+    // no one-tap undo.
+    const wrapper = shallowMount(ScanView)
+    const write = {
+      id: 'sol-ring',
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+      card: { id: 'sol-ring', name: 'Sol Ring' },
+    }
+    await wrapper.findComponent(QuickAddBox).vm.$emit('saved', write)
+    expect(H.logManualEntry).toHaveBeenCalledExactlyOnceWith(write)
   })
 })
 

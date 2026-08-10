@@ -120,6 +120,52 @@ describe('ScanMatchPanel', () => {
     ['the name resolved to no printings at all', { printsTotal: 0 }],
   ] as const
 
+  // The scanner decides foil visually, off a printed ★ — a call it can get wrong. Which of
+  // the two numbers the scanned copy went into therefore has to be legible before the card
+  // commits, not reconstructable by diffing the count against its "(had N)".
+  it('says in words which finish the scanned copy is going into', () => {
+    const foilScan = mountPanel({
+      owned: { quantity: 0, foil_quantity: 1 },
+      target: { quantity: 0, foil_quantity: 2 },
+    })
+    expect(foilScan.get('[data-testid="scan-delta-summary"]').text()).toBe('Adding 1 foil copy')
+
+    const regularScan = mountPanel()
+    expect(regularScan.get('[data-testid="scan-delta-summary"]').text()).toBe(
+      'Adding 1 regular copy',
+    )
+  })
+
+  it('marks the row the copy lands on, and leaves the other one alone', () => {
+    const wrapper = mountPanel({
+      owned: { quantity: 0, foil_quantity: 0 },
+      target: { quantity: 0, foil_quantity: 1 },
+    })
+    const [regularRow, foilRow] = wrapper.findAll('.rounded-lg.ring-1')
+    expect(regularRow!.text()).toContain('Regular')
+    expect(regularRow!.text()).not.toContain('+1')
+    expect(foilRow!.text()).toContain('+1')
+    // The tint is what carries "this one" at arm's length; the transparent ring on the other
+    // row keeps both the same size so nothing jumps as the pick changes.
+    expect(foilRow!.classes().join(' ')).toContain('amber')
+    expect(regularRow!.classes()).toContain('ring-transparent')
+  })
+
+  it('says nothing about a change while the counts are still the previous card’s', () => {
+    // `target` holds the last card's numbers until this printing's holding seeds, so any
+    // delta computed now describes two different cards.
+    const wrapper = mountPanel({ ready: false, resolving: true, selectedCard: null })
+    expect(wrapper.find('[data-testid="scan-delta-summary"]').exists()).toBe(false)
+  })
+
+  it('says nothing when the steppers have been walked back to what was already owned', () => {
+    const wrapper = mountPanel({
+      owned: { quantity: 2, foil_quantity: 0 },
+      target: { quantity: 2, foil_quantity: 0 },
+    })
+    expect(wrapper.find('[data-testid="scan-delta-summary"]').exists()).toBe(false)
+  })
+
   it.each(terminal)('shows a placeholder, not a spinner, when %s', (_name, overrides) => {
     const wrapper = mountPanel({
       ready: false,

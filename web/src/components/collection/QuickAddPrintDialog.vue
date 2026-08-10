@@ -13,6 +13,7 @@ import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
 import { usePrintingPicker } from '@/composables/usePrintings'
 import { useOwnedCounts } from '@/composables/useCollection'
 import { useWishlistCounts } from '@/composables/useWishlist'
+import type { QuickAddSavedReporter } from '@/composables/useQuickAdd'
 import type { Card } from '@/lib/api'
 import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCountEditor'
 
@@ -21,13 +22,21 @@ import type { CardListTarget, OwnedCountSeed } from '@/composables/useOwnedCount
 // says so (#167). Opened by QuickAddBox once a name is selected. The reka dialog
 // gives a focus trap, Escape-to-close, and click-outside dismissal for free.
 const props = withDefaults(
-  defineProps<{ game: string; name: string | null; list?: CardListTarget }>(),
-  { list: 'collection' },
+  defineProps<{
+    game: string
+    name: string | null
+    list?: CardListTarget
+    /** Relayed straight through to every tile — a callback prop, not an event, because a
+     * tile's save can land after this dialog has closed and unmounted it (see
+     * `QuickAddSavedReporter`). */
+    reportSaved?: QuickAddSavedReporter
+  }>(),
+  { list: 'collection', reportSaved: undefined },
 )
 const open = defineModel<boolean>('open', { required: true })
-// Forwarded to the parent so it can return focus to the quick-add box on close (this
-// dialog is opened programmatically, without a trigger, so reka has no element to
-// restore focus to and would otherwise drop it to <body>).
+// Forwarded to the parent so it can return focus to the quick-add box on close (this dialog
+// is opened programmatically, without a trigger, so reka has no element to restore focus to
+// and would otherwise drop it to <body>).
 const emit = defineEmits<{ closeAutoFocus: [Event] }>()
 
 const game = toRef(props, 'game')
@@ -157,6 +166,7 @@ const heldFirstLabel = computed(() =>
             :seed="seedFor(printing)"
             :ready="seedReady"
             :list="list"
+            :report-saved="reportSaved"
           />
         </template>
       </PrintingPickerGrid>

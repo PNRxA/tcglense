@@ -55,14 +55,17 @@ const PassThrough = { template: '<div><slot /></div>' }
 // The tile renders only its printing id, so a spec reads the rendered order straight off it.
 const TileStub = {
   name: 'QuickAddPrintTile',
-  props: ['game', 'card', 'seed', 'ready', 'list'],
+  props: ['game', 'card', 'seed', 'ready', 'list', 'reportSaved'],
   template: '<span class="pid">{{ card.id }}</span>',
 }
 
-function mountDialog(list: 'collection' | 'wishlist' = 'collection') {
+function mountDialog(
+  list: 'collection' | 'wishlist' = 'collection',
+  reportSaved?: (write: unknown) => void,
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(QuickAddPrintDialog, {
-    props: { open: true, game: 'mtg', name: 'Dummy Reprinted Relic', list },
+    props: { open: true, game: 'mtg', name: 'Dummy Reprinted Relic', list, reportSaved },
     global: {
       plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
       stubs: {
@@ -198,6 +201,17 @@ describe('QuickAddPrintDialog held-first ordering', () => {
     const wrapper = mountDialog('wishlist')
     await nextTick()
     expect(order(wrapper)).toEqual(['old', 'new', 'mid'])
+    wrapper.unmount()
+  })
+
+  it('hands every tile the landed-write reporter it was given', async () => {
+    // A callback prop, not an event: a tile's save can resolve after this dialog closed and
+    // unmounted it, and Vue drops an emit from an unmounted instance \u2014 the manual add
+    // would vanish from the scan page's session history with nothing to show for it.
+    const reportSaved = vi.fn<(write: unknown) => void>()
+    const wrapper = mountDialog('collection', reportSaved)
+    await nextTick()
+    expect(wrapper.findComponent(TileStub).props('reportSaved')).toBe(reportSaved)
     wrapper.unmount()
   })
 })

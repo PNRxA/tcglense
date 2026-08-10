@@ -26,3 +26,13 @@ export function displayUsdPrice(prices: UsdPrices): DisplayPrice | null {
   if (prices.usd_foil) return { amount: prices.usd_foil, foil: true }
   return null
 }
+
+/** The USD price for a *known* finish — what a surface that already committed to regular or
+ * foil (the scan session log, whose rows say which one they added to) should price the card
+ * at. Falls back the same way {@link displayUsdPrice} does when that finish carries no price,
+ * so a foil-only printing added as regular still shows a number rather than nothing, and the
+ * returned `foil` flag always says which price the amount actually is. */
+export function finishUsdPrice(prices: UsdPrices, foil: boolean): DisplayPrice | null {
+  if (foil && prices.usd_foil) return { amount: prices.usd_foil, foil: true }
+  return displayUsdPrice(prices)
+}
