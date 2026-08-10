@@ -320,7 +320,12 @@ function copyDeckList() {
       <!-- Estimated Commander bracket — renders nothing for a deck in any other format,
         and nothing at all until the deck has cards in it (an empty list has no power
         level to read). -->
-      <DeckBracket v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
+      <DeckBracket
+        v-if="deck.summary.total_cards > 0"
+        :game="game"
+        :deck-id="deck.id"
+        :format="deck.format"
+      />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
 

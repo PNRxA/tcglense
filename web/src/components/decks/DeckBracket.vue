@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, toRef, useId } from 'vue'
 import { ChevronDown } from '@lucide/vue'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import { useDeckBracketQuery, usePublicDeckBracketQuery } from '@/composables/useDeckAnalysis'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import { bracketBar, bracketTone, ESTIMATABLE_BRACKETS } from '@/lib/bracket'
+import { normalizeFormatKey } from '@/lib/legality'
 
 // The deck page's **estimated Commander bracket**: where the deck sits on Wizards' 1–5
 // ladder, so two players can compare decks before a game instead of finding out on turn
@@ -19,15 +20,16 @@ import { bracketBar, bracketTone, ESTIMATABLE_BRACKETS } from '@/lib/bracket'
 // chained, what the deck was built for). A power rating nobody can check is a power rating
 // nobody believes.
 //
-// That honesty is a lot of text for something most visits only glance at, so it is
-// **collapsed by default**: the rung, the ladder, and one chip per category — including the
-// zeroes, which are half the point — always show, and the evidence behind them is one click
-// away. The chips are the summary *of* the detail rather than a second set of numbers, so a
+// That honesty is a lot of text for something most visits only glance at, so the resting
+// state is **two rows**: the rung, and one chip per category — including the zeroes, which
+// are half the point. Everything else, the full ladder and the bracket's own description
+// included, is behind "Details". The chips are the summary *of* the detail rather than a
+// second set of numbers (both read their count badge's three states from `countTone`), so a
 // collapsed panel can't disagree with an expanded one.
 //
 // The disclosure follows `components/shared/CollapsibleSection.vue`'s idiom (rotating
 // chevron, `aria-expanded`, body mounted only while open) rather than reusing it: that
-// component hides its whole card behind its header, and here the headline has to stay
+// component hides its whole card behind its header, and here the verdict has to stay
 // visible for the panel to be worth glancing at at all.
 //
 // `handle` puts the panel in public mode, exactly as `DeckStats` does: the surface is fixed
@@ -35,20 +37,34 @@ import { bracketBar, bracketTone, ESTIMATABLE_BRACKETS } from '@/lib/bracket'
 const props = defineProps<{
   game: string
   deckId: number
+  /** The deck's own format label. Optional — omitted means "ask anyway". */
+  format?: string | null
   handle?: string
 }>()
 
 const game = toRef(props, 'game')
 const deckId = toRef(props, 'deckId')
 const handle = computed(() => props.handle ?? '')
+
+// The ladder is defined for Commander alone, so every other deck's answer is a guaranteed
+// `null` — and this read shares the per-user `Analytics` quota with the deck's stats,
+// legality and goldfish. Skipping the request for a deck we can already see isn't a
+// Commander deck spends that budget on the panels that will actually render something.
+// Safe to decide here because the client's format table is the same one the server
+// normalises with (`lib/legality.ts` mirrors `analysis::formats`, both pinned by tests);
+// were they ever to disagree, the panel would silently not render rather than show a wrong
+// answer — a miss, which is this feature's whole stance anyway.
+const canBeEstimated = computed(
+  () => props.format === undefined || normalizeFormatKey(props.format) === 'commander',
+)
 const bracketQuery = props.handle
-  ? usePublicDeckBracketQuery(handle, deckId)
-  : useDeckBracketQuery(game, deckId)
+  ? usePublicDeckBracketQuery(handle, deckId, canBeEstimated)
+  : useDeckBracketQuery(game, deckId, canBeEstimated)
 
 // `null` is the answer for every deck that isn't a Commander deck — the ladder is defined
 // for that format alone — so the panel renders nothing at all rather than an empty card.
 const estimate = computed(() => bracketQuery.data.value?.data ?? null)
-const pending = computed(() => bracketQuery.isPending.value)
+const pending = computed(() => canBeEstimated.value && bracketQuery.isPending.value)
 const updating = computed(() => bracketQuery.isFetching.value && !pending.value)
 
 const tone = computed(() => bracketTone(estimate.value?.bracket ?? 0))
@@ -75,63 +91,47 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
     <UpdatingCue label="Estimating bracket…" />
   </p>
 
-  <Card v-else-if="estimate" class="mb-6" :aria-busy="updating || undefined">
-    <CardHeader class="flex flex-row items-start justify-between gap-3 space-y-0">
-      <div class="min-w-0">
-        <CardTitle class="text-base">Estimated bracket</CardTitle>
-        <p class="text-muted-foreground mt-1 text-xs">
-          The lowest bracket this {{ estimate.format_label }} deck's cards don't rule out.
-        </p>
-      </div>
-      <span v-if="updating" class="text-muted-foreground shrink-0 text-xs" aria-live="polite">
-        <UpdatingCue label="Re-estimating…" />
-      </span>
-    </CardHeader>
-
-    <CardContent class="space-y-4">
+  <Card v-else-if="estimate" class="mb-6 gap-3 py-4" :aria-busy="updating || undefined">
+    <CardContent class="space-y-3">
+      <!-- The resting state, row one: the verdict and the way out of it. -->
       <div class="flex items-center gap-3">
         <span
-          class="flex size-12 shrink-0 items-center justify-center rounded-lg text-2xl font-semibold tabular-nums"
+          class="flex size-9 shrink-0 items-center justify-center rounded-md text-lg font-semibold tabular-nums"
           :class="tone"
           >{{ estimate.bracket }}</span
         >
-        <div class="min-w-0">
-          <p class="font-semibold">{{ estimate.label }}</p>
-          <p class="text-muted-foreground text-sm">{{ estimate.description }}</p>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm leading-tight font-semibold">{{ estimate.label }}</p>
+          <p class="text-muted-foreground truncate text-xs leading-tight" aria-live="polite">
+            <template v-if="updating"><UpdatingCue label="Re-estimating…" /></template>
+            <template v-else
+              >Estimated bracket · {{ estimate.bracket }} of {{ estimate.ladder.length }}</template
+            >
+          </p>
         </div>
+        <button
+          type="button"
+          class="text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-xs font-medium"
+          :aria-expanded="expanded"
+          :aria-controls="expanded ? detailsId : undefined"
+          @click="expanded = !expanded"
+        >
+          Details
+          <ChevronDown
+            class="size-3.5 transition-transform"
+            :class="expanded ? 'rotate-180' : ''"
+            aria-hidden="true"
+          />
+        </button>
       </div>
 
-      <!-- The whole ladder, so the estimate is read in context. Brackets 1 and 5 are
-        greyed: they weren't ruled out, they're just not something a list can establish. -->
-      <ol class="grid grid-cols-5 gap-1.5">
-        <li v-for="rung in estimate.ladder" :key="rung.bracket" :title="rung.description">
-          <div
-            class="h-1.5 rounded-full"
-            :class="rung.bracket === estimate.bracket ? bracketBar(rung.bracket) : 'bg-muted'"
-          />
-          <p
-            class="mt-1 truncate text-[0.7rem]"
-            :class="
-              rung.bracket === estimate.bracket
-                ? 'font-semibold'
-                : ESTIMATABLE_BRACKETS.includes(rung.bracket)
-                  ? 'text-muted-foreground'
-                  : 'text-muted-foreground/60'
-            "
-          >
-            {{ rung.bracket }} · {{ rung.label }}
-          </p>
-        </li>
-      </ol>
-
-      <!-- The condensed summary: what was counted, without the evidence. Every category
-        appears, so a zero is something the deck says rather than something the reader has
-        to infer from an absence. -->
-      <ul class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <!-- Row two: what was counted, without the evidence. Every category appears, so a
+        zero is something the deck says rather than something the reader has to infer. -->
+      <ul class="flex flex-wrap items-center gap-1.5">
         <li
           v-for="category in estimate.categories"
           :key="category.signal"
-          class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+          class="inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs"
         >
           <span :class="category.count === 0 ? 'text-muted-foreground' : ''">{{
             category.label
@@ -144,22 +144,41 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
         </li>
       </ul>
 
-      <button
-        type="button"
-        class="text-muted-foreground hover:text-foreground group flex items-center gap-1.5 text-xs font-medium"
-        :aria-expanded="expanded"
-        :aria-controls="detailsId"
-        @click="expanded = !expanded"
-      >
-        {{ expanded ? 'Hide details' : 'Show details' }}
-        <ChevronDown
-          class="size-3.5 transition-transform"
-          :class="expanded ? 'rotate-180' : ''"
-          aria-hidden="true"
-        />
-      </button>
-
       <div v-if="expanded" :id="detailsId" class="space-y-5 border-t pt-4">
+        <p class="text-sm">
+          <span class="font-medium">{{ estimate.label }}.</span>
+          {{ estimate.description }}
+        </p>
+        <p class="text-muted-foreground -mt-4 text-xs">
+          The lowest bracket this {{ estimate.format_label }} deck's cards don't rule out.
+        </p>
+
+        <!-- The whole ladder, so the estimate is read in context. Brackets 1 and 5 are
+          greyed: they weren't ruled out, they're just not something a list can establish. -->
+        <ol class="grid grid-cols-5 gap-1.5">
+          <li v-for="rung in estimate.ladder" :key="rung.bracket" :title="rung.description">
+            <div
+              class="h-1.5 rounded-full"
+              :class="rung.bracket === estimate.bracket ? bracketBar(rung.bracket) : 'bg-muted'"
+            />
+            <!-- Five names don't fit across a phone — they truncate to "3 · Upgr…", which
+              is worse than not showing them. The number always fits, and the rung the deck
+              landed on is spelled out in the headline two rows up either way. -->
+            <p
+              class="mt-1 truncate text-[0.7rem]"
+              :class="
+                rung.bracket === estimate.bracket
+                  ? 'font-semibold'
+                  : ESTIMATABLE_BRACKETS.includes(rung.bracket)
+                    ? 'text-muted-foreground'
+                    : 'text-muted-foreground/60'
+              "
+            >
+              {{ rung.bracket }}<span class="hidden sm:inline"> · {{ rung.label }}</span>
+            </p>
+          </li>
+        </ol>
+
         <ul class="space-y-1 text-sm">
           <li v-for="(reason, index) in estimate.reasons" :key="index" class="flex gap-2">
             <span class="text-muted-foreground" aria-hidden="true">•</span>

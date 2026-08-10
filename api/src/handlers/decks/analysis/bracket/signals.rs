@@ -99,16 +99,19 @@ const QUANTIFIER_SCAN_WORDS: usize = 8;
 /// descriptor.
 const SEARCH_SCAN_CHARS: usize = 80;
 
-/// Rules text as lowercased **sentences**, reminder text stripped.
+/// Rules text as lowercased **clauses**, reminder text stripped: split on sentence stops
+/// **and on the colon that separates an activation cost from its effect**.
 ///
-/// Sentence-at-a-time is what keeps a cost from being read as an effect: `{2}, Sacrifice a
-/// land: Destroy all creatures.` is one line but two clauses, and a sentence scan is what
-/// stops the "all" of the wrath from binding to the land of the cost.
+/// Both splits are load-bearing, and the colon is the subtler one. `{T}, Sacrifice a Forest:
+/// Untap all lands you control.` is a single sentence whose *cost* supplies a mass verb and
+/// whose *effect* supplies "all … lands"; read whole, it is Armageddon, and read as two
+/// clauses it is the mana creature it actually is. Every predicate below scans a clause, so
+/// a cost can never lend its verb to an effect that didn't have one.
 fn sentences(card: &CardFacts) -> Vec<String> {
     ability_lines(card)
         .iter()
         .flat_map(|line| {
-            line.split('.')
+            line.split(['.', ':'])
                 .map(str::trim)
                 .filter(|part| !part.is_empty())
                 .map(str::to_string)
@@ -125,13 +128,37 @@ fn names_lands(text: &str) -> bool {
     PLURAL_LAND_WORDS.iter().any(|word| has_word(text, word))
 }
 
-/// Whether the sentence puts a table-wide subject in front of its verb — "each player
-/// sacrifices four lands". The symmetric spellings only; a sentence about *one* player is
-/// targeted removal, not mass denial.
+/// Whether the clause puts a table-wide subject in front of its verb — "each player
+/// sacrifices four lands", "…during their **controllers'** untap steps". The symmetric
+/// spellings only; a clause about *one* player is targeted removal, not mass denial.
 fn addresses_everyone(sentence: &str) -> bool {
     has_word(sentence, "each player")
         || has_word(sentence, "each opponent")
         || has_word(sentence, "players")
+        || has_word(sentence, "controllers")
+}
+
+/// Whether the clause is about the caster's **own** permanents. The Amonkhet "Last …" cycle
+/// is the reason this exists: "Lands you control don't untap during your next untap step" is
+/// a *drawback on a wrath*, and reads word-for-word like Winter Orb to anything that only
+/// asks whether "lands" and "don't untap" are both present.
+fn is_self_scoped(sentence: &str) -> bool {
+    sentence.contains("you control") || sentence.contains("you own")
+}
+
+/// Whether the clause names a target. A targeted effect is by definition not table-wide, so
+/// "Up to three target lands don't untap…" and "Target player can't play lands this turn"
+/// are tempo cards rather than the lockdown they otherwise pattern-match.
+fn is_targeted(sentence: &str) -> bool {
+    has_word(sentence, "target")
+}
+
+/// Whether the clause denies the **whole table** something: it addresses everyone, and it
+/// neither targets nor confines itself to the caster's own side. Every "nobody gets to use
+/// their lands" branch gates on this, because those branches read a *restriction* rather
+/// than a removal, and a restriction on yourself is a cost you paid.
+fn denies_the_table(sentence: &str) -> bool {
+    addresses_everyone(sentence) && !is_targeted(sentence) && !is_self_scoped(sentence)
 }
 
 /// Whether a mass quantifier in this sentence governs a **land**: `all` (or `every`)
@@ -184,16 +211,17 @@ pub(super) fn is_mass_land_denial(card: &CardFacts) -> bool {
         let everyone = addresses_everyone(sentence);
 
         // Locking lands down is denial without removing anything (Winter Orb, Back to
-        // Basics). A *singular* land only counts when the sentence is about the table:
-        // "this land doesn't untap during your next untap step" describes one permanent.
-        if (names_lands(sentence) || everyone)
+        // Basics). Both lock branches demand the WHOLE TABLE, not merely a plural: a
+        // restriction you place on yourself is a cost, and one you place on a single target
+        // is tempo — neither is the thing brackets 1 to 3 forbid.
+        if denies_the_table(sentence)
             && (sentence.contains("don't untap")
                 || sentence.contains("doesn't untap")
                 || sentence.contains("can't untap"))
         {
             return true;
         }
-        if sentence.contains("can't play lands") {
+        if denies_the_table(sentence) && sentence.contains("can't play lands") {
             return true;
         }
 
@@ -202,6 +230,12 @@ pub(super) fn is_mass_land_denial(card: &CardFacts) -> bool {
             return false;
         }
 
+        // Blowing up your OWN lands is a price, not a denial: "Sacrifice all Swamps you
+        // control" is what a reanimation spell costs. Removal reads the quantifier rather
+        // than the subject, so the self-scope test is what keeps the two apart.
+        if is_self_scoped(sentence) {
+            return false;
+        }
         let removes = MASS_VERBS.iter().any(|verb| has_word(sentence, verb));
         removes && (mass_quantified_land(sentence) || (everyone && names_lands(sentence)))
     })
@@ -234,9 +268,17 @@ pub(super) fn is_tutor(card: &CardFacts) -> bool {
         // Bounded by chars, not bytes — oracle text carries em dashes and accents, and a
         // byte slice through one would panic.
         let scanned: String = sentence[index..].chars().take(SEARCH_SCAN_CHARS).collect();
-        let descriptor = match scanned.find(" card") {
-            Some(end) => &scanned[..end + " card".len()],
-            None => scanned.as_str(),
+        // "If you search your library this way, shuffle" is a back-reference to a search
+        // that already happened, not a second one — and it names nothing, so a descriptor
+        // scan finds no land in it and would call every land-fetcher a tutor. A real search
+        // says what it is *for*.
+        let Some(target) = scanned.find(" for ") else {
+            return false;
+        };
+        let clause = &scanned[target..];
+        let descriptor = match clause.find(" card") {
+            Some(end) => &clause[..end + " card".len()],
+            None => clause,
         };
         !names_a_land(descriptor)
     })
@@ -312,6 +354,69 @@ mod tests {
         }
     }
 
+    /// The near-misses an adversarial review of this module found, each a real card that a
+    /// plural-vs-singular reading of the lock branches called mass land denial. Every one of
+    /// them belongs in a bracket 2 deck, and flagging any of them jumps that deck to 4 — the
+    /// single most expensive mistake this file can make.
+    #[test]
+    fn mass_land_denial_declines_a_drawback_a_player_takes_on_themselves() {
+        for text in [
+            // The Amonkhet "Last …" cycle: a wrath whose price is your own untap step.
+            "Destroy all creatures. Lands you control don't untap during your next untap step.",
+            "Return target creature card from your graveyard to the battlefield. Lands you control \
+             don't untap during your next untap step.",
+            // Playing off the top of your library, at the cost of your own land drops.
+            "You may look at the top card of your library any time. You can't play lands or cast \
+             spells from your hand.",
+            "You can't play lands.",
+            // Its own controller's Swamps, as the price of the reanimation.
+            "Return all Nightstalker creature cards from your graveyard to the battlefield. \
+             Sacrifice all Swamps you control.",
+            // A cost that supplies the verb and an effect that supplies the quantifier — one
+            // sentence, two clauses, and no destruction anywhere.
+            "{T}, Sacrifice this creature: Untap all Forests you control.",
+        ] {
+            assert!(
+                !is_mass_land_denial(&oracle(text)),
+                "a cost you pay yourself is not denying anyone their lands: {text}"
+            );
+        }
+    }
+
+    /// Targeting one player is tempo, not a table-wide lock — the other half of the same
+    /// review's finding.
+    #[test]
+    fn mass_land_denial_declines_a_single_target() {
+        for text in [
+            "Lands target player controls don't untap during that player's next untap step.",
+            "Creatures and lands target opponent controls don't untap during their next untap step.",
+            "Up to three target lands don't untap during their controllers' next untap steps.",
+            "Target player can't play lands this turn. Draw a card.",
+        ] {
+            assert!(
+                !is_mass_land_denial(&oracle(text)),
+                "one player's lands for one turn is not mass land denial: {text}"
+            );
+        }
+    }
+
+    /// …while the genuine table-wide locks still read, including the "their controllers'"
+    /// phrasing that is the only thing making Winter Orb symmetric on its face.
+    #[test]
+    fn mass_land_denial_still_reads_a_table_wide_lock() {
+        for text in [
+            "Lands don't untap during their controllers' untap steps.",
+            "Nonbasic lands don't untap during their controllers' untap steps.",
+            "Each player can't untap more than one land during their untap step.",
+            "Players can't play lands.",
+        ] {
+            assert!(
+                is_mass_land_denial(&oracle(text)),
+                "a lock on everyone's lands is exactly what this category is: {text}"
+            );
+        }
+    }
+
     /// Reminder text is stripped before anything is read, so a parenthetical can neither
     /// create nor hide a match.
     #[test]
@@ -373,6 +478,19 @@ mod tests {
         assert!(is_tutor(&oracle(
             "Search your library for a creature card, put it onto the battlefield, then \
              search your library for a land and put it into your hand."
+        )));
+    }
+
+    /// "If you search your library this way, shuffle" is a back-reference to the search in
+    /// the previous sentence, not a search of its own — and it names nothing, so a
+    /// descriptor scan finds no land in it and would call every land-fetcher carrying that
+    /// boilerplate a tutor.
+    #[test]
+    fn a_shuffle_back_reference_is_not_a_second_search() {
+        assert!(!is_tutor(&oracle(
+            "When this creature enters, if an opponent controls more lands than you, search \
+             your library for a Plains card and put it onto the battlefield tapped. If you \
+             search your library this way, shuffle."
         )));
     }
 

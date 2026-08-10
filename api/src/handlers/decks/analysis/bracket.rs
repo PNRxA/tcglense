@@ -242,13 +242,21 @@ fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a>> {
 }
 
 /// "Armageddon", "Armageddon and Ravages of War", "A, B and 4 more".
-fn name_list(cards: &[DeckBracketCard]) -> String {
+///
+/// `total` is the category's real count, **not** `cards.len()`: the card list is capped
+/// (`MAX_LISTED_CARDS`) and the sentence states the count, so deriving the remainder from
+/// the list would make a reason sentence contradict its own opening number the moment a
+/// category ran past the cap.
+fn name_list(cards: &[DeckBracketCard], total: i64) -> String {
     let named: Vec<&str> = cards
         .iter()
         .take(MAX_NAMED_IN_REASON)
         .map(|card| card.name.as_str())
         .collect();
-    let remainder = cards.len().saturating_sub(named.len());
+    let remainder = usize::try_from(total)
+        .unwrap_or(usize::MAX)
+        .max(cards.len())
+        .saturating_sub(named.len());
     let mut parts: Vec<String> = named.into_iter().map(str::to_string).collect();
     if remainder > 0 {
         parts.push(format!("{remainder} more"));
@@ -337,7 +345,7 @@ fn estimate_bracket(format_key: &str, input: &DeckAnalysisInput) -> DeckBracketE
         categories
             .iter()
             .find(|category| category.signal == signal)
-            .map(|category| name_list(&category.cards))
+            .map(|category| name_list(&category.cards, category.count))
             .unwrap_or_default()
     };
 
@@ -619,7 +627,8 @@ mod tests {
     }
 
     /// `count` is exact even when the list is capped, so a huge deck can't quietly report
-    /// fewer Game Changers than it holds.
+    /// fewer Game Changers than it holds — and the reason sentence's own arithmetic has to
+    /// agree with that count rather than with the capped list it names three cards from.
     #[test]
     fn the_card_list_is_capped_but_the_count_is_not() {
         let entries: Vec<AnalysisEntry> = (1..=(MAX_LISTED_CARDS as i32 + 5))
@@ -630,6 +639,14 @@ mod tests {
         let changers = category(&estimate, DeckBracketSignal::GameChanger);
         assert_eq!(changers.count, MAX_LISTED_CARDS as i64 + 5);
         assert_eq!(changers.cards.len(), MAX_LISTED_CARDS);
+        assert!(
+            estimate.reasons[0].contains(&format!(
+                "and {} more",
+                MAX_LISTED_CARDS + 5 - MAX_NAMED_IN_REASON
+            )),
+            "the sentence must account for every card it counted, got: {}",
+            estimate.reasons[0]
+        );
     }
 
     /// Every category is always reported, in a stable order, so a client can lay the panel
@@ -681,9 +698,13 @@ mod tests {
                 quantity: 1,
             })
             .collect();
-        assert_eq!(name_list(&cards), "A, B, C and 2 more");
-        assert_eq!(name_list(&cards[..1]), "A");
-        assert_eq!(name_list(&cards[..2]), "A and B");
-        assert_eq!(name_list(&[]), "");
+        assert_eq!(name_list(&cards, 5), "A, B, C and 2 more");
+        assert_eq!(name_list(&cards[..1], 1), "A");
+        assert_eq!(name_list(&cards[..2], 2), "A and B");
+        assert_eq!(name_list(&[], 0), "");
+        // The remainder counts up to the CATEGORY's total, not the capped list's length —
+        // otherwise "60 Game Changers — A, B, C and 47 more" accounts for 50 of the 60 it
+        // just claimed, and contradicts the count the panel shows beside it.
+        assert_eq!(name_list(&cards, 60), "A, B, C and 57 more");
     }
 }

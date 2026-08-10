@@ -593,6 +593,27 @@ async fn the_bracket_is_estimated_only_for_commander() {
     );
     assert!(!estimate["reasons"].as_array().expect("reasons").is_empty());
     assert!(!estimate["caveats"].as_array().expect("caveats").is_empty());
+
+    // The public mirror, on a deck that produces a REAL estimate. The parity assertion in
+    // `a_shared_deck_analyses_identically_and_privately` runs over a Modern deck, where both
+    // sides are null and `null == null` would hold however wrong the mirror was — so this is
+    // the one that actually pins "the same `analyse_bracket` core".
+    let handle = share(&app, &access, "bracketeer", edh).await;
+    let (status, headers, public_bracket) =
+        send(&app, get(&format!("/api/u/{handle}/decks/{edh}/bracket"))).await;
+    assert_eq!(status, StatusCode::OK, "public bracket: {public_bracket:?}");
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read is a pure function of its URL, so it's CDN-cacheable"
+    );
+    assert!(
+        !public_bracket["data"].is_null(),
+        "a real estimate, not null"
+    );
+    assert_eq!(
+        public_bracket, body,
+        "a shared deck and its owner's copy are the same deck"
+    );
 }
 
 #[tokio::test]

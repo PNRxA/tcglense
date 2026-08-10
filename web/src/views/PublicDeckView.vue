@@ -175,6 +175,7 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         v-if="deck.summary.total_cards > 0"
         :game="deck.game"
         :deck-id="deck.id"
+        :format="deck.format"
         :handle="handle"
       />
 
