@@ -62,7 +62,41 @@ pub async fn refresh_all(
     for game in GAMES {
         match game.id {
             crate::scryfall::GAME => {
-                if let Err(err) = crate::scryfall::refresh(db, client, source).await {
+                // The three Scryfall datasets below (cards, rulings, art tags) each read
+                // one entry out of the same small bulk-data catalog. Fetch it once and
+                // lend it to all three: one request per tick instead of three identical
+                // ones, so a transport blip has a third as many chances to cost a dataset
+                // its whole sync interval — the expected loss is unchanged (one failure
+                // now skips three datasets instead of one skipping one), but the failure
+                // events are a third as many and so is the load on Scryfall.
+                //
+                // A failed fetch skips all three: none of them can resolve a download URL
+                // without it. It deliberately does *not* mark `ingest_state` errors — no
+                // import was attempted, so each dataset stays legitimately `complete` at
+                // its current version and the next tick's version gates short-circuit
+                // normally instead of forcing an unnecessary full re-download.
+                let catalog = match crate::scryfall::client::BulkCatalog::fetch(
+                    client,
+                    &source.scryfall_bulk_data_url(),
+                )
+                .await
+                {
+                    Ok(catalog) => Some(catalog),
+                    Err(err) => {
+                        // `?err` not `%err`: the Debug chain carries the underlying
+                        // cause (connect refused / timed out / DNS), which the Display
+                        // form flattens to an undiagnosable "error sending request".
+                        tracing::error!(
+                            game = game.id,
+                            error = ?err,
+                            "scryfall bulk catalog fetch failed; skipping its datasets this tick"
+                        );
+                        None
+                    }
+                };
+                if let Some(catalog) = &catalog
+                    && let Err(err) = crate::scryfall::refresh(db, client, source, catalog).await
+                {
                     tracing::error!(game = game.id, error = %err, "card data refresh failed");
                 }
                 // Copy each foil-★ variant's foil price onto its nonfoil base card (issue
@@ -84,14 +118,20 @@ pub async fn refresh_all(
                 // clarifications keyed by oracle_id. Runs after the card sync so it can
                 // scope rulings to stored cards' gameplay ids; version-gated independently,
                 // so an unchanged tick is skipped.
-                if let Err(err) = crate::scryfall::rulings::refresh(db, client, source).await {
+                if let Some(catalog) = &catalog
+                    && let Err(err) =
+                        crate::scryfall::rulings::refresh(db, client, source, catalog).await
+                {
                     tracing::error!(game = game.id, error = %err, "card rulings refresh failed");
                 }
                 // Tagger art tags (issue #140): community "what's in the artwork" labels
                 // keyed by illustration_id, behind the `art:` search filter. Runs after
                 // the card sync so taggings scope to stored artworks; version-gated
                 // independently, so an unchanged tick is skipped.
-                if let Err(err) = crate::scryfall::art_tags::refresh(db, client, source).await {
+                if let Some(catalog) = &catalog
+                    && let Err(err) =
+                        crate::scryfall::art_tags::refresh(db, client, source, catalog).await
+                {
                     tracing::error!(game = game.id, error = %err, "art tags refresh failed");
                 }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for

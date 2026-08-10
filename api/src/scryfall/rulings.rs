@@ -20,6 +20,7 @@ use sea_orm::{
 };
 
 use super::client;
+use super::client::BulkCatalog;
 use super::ingest::IngestError;
 use super::model::ScryfallRuling;
 use super::{DATASET_RULINGS, GAME};
@@ -42,14 +43,18 @@ struct Row {
 
 /// Refresh MTG card rulings from Scryfall, recording status in `ingest_state`.
 ///
+/// `catalog` is the tick's shared bulk-data catalog (see [`BulkCatalog`]); this reads
+/// its own dataset entry out of it rather than fetching the document itself.
+///
 /// On error the `(mtg, rulings)` state row is best-effort marked `"error"` so the next
 /// boot retries, and the error is returned for logging by the caller.
 pub async fn refresh(
     db: &DatabaseConnection,
     client: &Client,
     source: &SyncSource,
+    catalog: &BulkCatalog,
 ) -> Result<(), IngestError> {
-    match refresh_inner(db, client, source).await {
+    match refresh_inner(db, client, source, catalog).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let _ = ingest_state::mark_error(db, GAME, DATASET_RULINGS, &err.public_detail()).await;
@@ -62,16 +67,9 @@ async fn refresh_inner(
     db: &DatabaseConnection,
     client: &Client,
     source: &SyncSource,
+    catalog: &BulkCatalog,
 ) -> Result<(), IngestError> {
-    let entry = client::bulk_data(client, &source.scryfall_bulk_data_url())
-        .await?
-        .into_iter()
-        .find(|b| b.kind == DATASET_RULINGS)
-        .ok_or_else(|| {
-            IngestError::Other(format!(
-                "scryfall bulk dataset '{DATASET_RULINGS}' not found"
-            ))
-        })?;
+    let entry = catalog.entry(DATASET_RULINGS)?;
 
     // Skip if we already imported this exact version.
     if let Some(state) = ingest_state::load(db, GAME, DATASET_RULINGS).await?
@@ -111,7 +109,7 @@ async fn refresh_inner(
 
     // In mirror mode the file streams from the mirror; upstream mode follows the location
     // the catalog entry advertises.
-    let download_url = client::file_url(source, DATASET_RULINGS, &entry)?;
+    let download_url = client::file_url(source, DATASET_RULINGS, entry)?;
     let rows = collect_rulings(client, &download_url, &known).await?;
     let count = rows.len() as i32;
 
