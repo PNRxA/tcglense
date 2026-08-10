@@ -8,6 +8,9 @@ import { BRACKET_BAR } from '@/lib/bracket'
 // *honest*: it renders nothing for a deck the ladder doesn't describe, it never hides a
 // category the response reported, it lists the cards a count was made of (so the number can
 // be checked), and it always shows the caveats that make a floor a floor.
+//
+// It opens **collapsed** — the rung, the ladder and one chip per category — so these mostly
+// come in pairs: what the condensed view must already say, and what expanding adds.
 
 const query = vi.hoisted(() => ({
   pending: false,
@@ -116,13 +119,19 @@ function mountPanel(props: Record<string, unknown> = {}) {
   return mount(DeckBracket, { props: { game: 'mtg', deckId: 7, ...props } })
 }
 
+/** Mount and open the disclosure — what a case asserting on the evidence needs. */
+async function mountExpanded(props: Record<string, unknown> = {}) {
+  const wrapper = mountPanel(props)
+  await wrapper.get('button[aria-expanded]').trigger('click')
+  return wrapper
+}
+
 describe('DeckBracket', () => {
-  it('renders the estimate, the whole ladder, and the reasons', () => {
+  it('renders the estimate and the whole ladder without being expanded', () => {
     const wrapper = mountPanel()
 
     expect(wrapper.text()).toContain('Estimated bracket')
     expect(wrapper.text()).toContain('Upgraded')
-    expect(wrapper.text()).toContain('2 Game Changers')
     // The panel is explicit that the number is a floor, not a verdict.
     expect(wrapper.text()).toContain("don't rule out")
 
@@ -141,12 +150,50 @@ describe('DeckBracket', () => {
     expect(filled[0]!.text()).toBe('3 · Upgraded')
   })
 
-  it('lists every category, including the ones the deck holds none of', () => {
+  it('summarizes every category while collapsed, zeroes included', () => {
     const wrapper = mountPanel()
+
+    // The condensed view still names all four counts — an absent category would otherwise
+    // have to be inferred from silence, and "0 mass land denial" is half the point.
+    const chips = wrapper.findAll('ul > li')
+    expect(chips.map((chip) => chip.findAll('span').map((part) => part.text()))).toEqual([
+      ['Game Changers', '2'],
+      ['Mass land denial', '0'],
+      ['Extra turns', '0'],
+      ['Tutors', '0'],
+    ])
+    // …but not the evidence behind them.
+    expect(wrapper.text()).not.toContain('Rhystic Study')
+    expect(wrapper.text()).not.toContain("What this can't see")
+    expect(wrapper.findAll('a')).toHaveLength(0)
+  })
+
+  it('opens the details on demand and closes them again', async () => {
+    const wrapper = mountPanel()
+    const toggle = wrapper.get('button[aria-expanded]')
+
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.text()).toContain('Show details')
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(toggle.text()).toContain('Hide details')
+    // The reasons and the evidence are what expanding buys.
+    expect(wrapper.text()).toContain('2 Game Changers')
+    expect(wrapper.text()).toContain('Rhystic Study')
+    // The disclosure names the region it controls.
+    expect(wrapper.find(`#${toggle.attributes('aria-controls')}`).exists()).toBe(true)
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.text()).not.toContain('Rhystic Study')
+  })
+
+  it('lists every category in the details, including the ones the deck holds none of', async () => {
+    const wrapper = await mountExpanded()
     const sections = wrapper.findAll('section')
 
-    // Four categories plus the caveats section — an absent category would otherwise have to
-    // be inferred from silence, and "0 mass land denial" is the whole point of the panel.
+    // Four categories plus the caveats section.
     expect(sections.length).toBe(5)
     const text = wrapper.text()
     for (const label of ['Game Changers', 'Mass land denial', 'Extra turns', 'Tutors']) {
@@ -154,8 +201,8 @@ describe('DeckBracket', () => {
     }
   })
 
-  it('links each counted card so the number can be checked', () => {
-    const wrapper = mountPanel()
+  it('links each counted card so the number can be checked', async () => {
+    const wrapper = await mountExpanded()
     const links = wrapper.findAll('a')
 
     expect(links).toHaveLength(2)
@@ -165,16 +212,16 @@ describe('DeckBracket', () => {
     expect(links[1]!.text()).toBe('Smothering Tithe ×2')
   })
 
-  it('says how many cards a capped list left out', () => {
+  it('says how many cards a capped list left out', async () => {
     const estimate = makeEstimate()
     estimate.categories[0]!.count = 9
     query.estimate = estimate
 
-    expect(mountPanel().text()).toContain('…and 7 more')
+    expect((await mountExpanded()).text()).toContain('…and 7 more')
   })
 
-  it('always shows what the estimate could not see', () => {
-    const wrapper = mountPanel()
+  it('shows what the estimate could not see once expanded', async () => {
+    const wrapper = await mountExpanded()
 
     expect(wrapper.text()).toContain("What this can't see")
     expect(wrapper.text()).toContain("Two-card infinite combos aren't detected.")
@@ -191,10 +238,10 @@ describe('DeckBracket', () => {
     const wrapper = mountPanel()
 
     expect(wrapper.text()).toContain('Estimating bracket…')
-    // A cue, not the panel's own shape: no ladder, no categories, nothing to reflow when
-    // the answer turns out to be "this isn't a Commander deck".
+    // A cue, not the panel's own shape: no ladder, no chips, nothing to reflow when the
+    // answer turns out to be "this isn't a Commander deck".
     expect(wrapper.find('ol').exists()).toBe(false)
-    expect(wrapper.findAll('section')).toHaveLength(0)
+    expect(wrapper.find('button[aria-expanded]').exists()).toBe(false)
   })
 
   it('selects the public read when a handle is given, and the authed one otherwise', () => {
