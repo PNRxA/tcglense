@@ -151,6 +151,9 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         .and_then(|v| serde_json::to_string(v).ok());
 
     card::ActiveModel {
+        // Derived by `super::foil_variants::refresh_foil_variant_folds`, never by the provider:
+        // left untouched so the upsert (which also excludes it) can't clobber a fold.
+        folded_onto_id: NotSet,
         id: NotSet,
         game: Set(GAME.to_string()),
         external_id: Set(card.id),

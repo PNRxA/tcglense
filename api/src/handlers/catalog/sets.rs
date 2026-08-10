@@ -145,15 +145,49 @@ pub async fn list_sets(
     // One aggregate scan marks which sets have a special-treatment card, so each tile knows
     // whether to offer the by-sub-type view (the set list is CDN-cached, so this runs ~hourly).
     let with_subtypes = crate::scryfall::subtypes::sets_with_subtypes(&state.db, &game).await?;
+    let folded = folded_counts_by_set(&state, &game).await?;
     let data: Vec<SetResponse> = sets
         .into_iter()
         .map(|m| {
             let mut set = SetResponse::from(m);
             set.has_subtypes = with_subtypes.contains(&set.code);
+            set.card_count -= folded.get(&set.code).copied().unwrap_or(0);
             set
         })
         .collect();
     Ok(Json(DataBody { data }))
+}
+
+/// How many foil-★ variants are folded out of each set's grid, keyed by set code.
+///
+/// `card_count` is Scryfall's own set-object count, stored verbatim at ingest and never
+/// derived from `cards` — so on a set where the fold hides rows, the tile's "N cards" line
+/// and the collection-completion denominator it feeds (`SetTile.vue`) would overstate the
+/// grid the tile links to. Subtracting the folded rows keeps the header honest about what a
+/// visitor can actually page through.
+///
+/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..070`'s index —
+/// the set list is CDN-cached, so this runs about as often as the sub-type scan beside it.
+/// It does not chase the pre-existing ±1 paper-vs-Scryfall skew the tile already tolerates;
+/// it only removes the gap this fold opens.
+async fn folded_counts_by_set(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, i32>, AppError> {
+    let rows: Vec<(String, i64)> = Card::find()
+        .select_only()
+        .column(card::Column::SetCode)
+        .column_as(card::Column::Id.count(), "folded")
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::FoldedOntoId.is_not_null())
+        .group_by(card::Column::SetCode)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(code, n)| (code, i32::try_from(n).unwrap_or(i32::MAX)))
+        .collect())
 }
 
 /// Get set

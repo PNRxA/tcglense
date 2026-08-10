@@ -70,7 +70,7 @@ pub(super) fn is_predicate(
         // `set:sld is:foil` of every printing Scryfall splits that way.
         "foil" => Condition::any()
             .add(array_member(dialect, "finishes", "foil"))
-            .add(crate::scryfall::has_folded_foil_variant()),
+            .add(crate::scryfall::has_folded_foil_variant(dialect, None)),
         "nonfoil" => cond_one(array_member(dialect, "finishes", "nonfoil")),
         "etched" => cond_one(array_member(dialect, "finishes", "etched")),
         // Print-detail boolean flags.
@@ -95,7 +95,16 @@ pub(super) fn is_predicate(
         | "textured" | "galaxyfoil" | "surgefoil" | "gilded" | "neonink" | "halofoil"
         | "confettifoil" | "oilslick" | "stepandcompleat" | "embossed" | "serialized"
         | "doublerainbow" | "rainbowfoil" | "silverfoil" => {
-            cond_one(array_member(dialect, "promo_types", &v))
+            // Same shape as `is:foil` above, one level down. When a foil-★ variant is folded
+            // onto its base for display, the *treatment* token (`rainbowfoil`, `surgefoil`, …)
+            // lives on the star we hid, never on the base — so without this arm the fold would
+            // quietly empty `set:sld is:rainbowfoil` the way it would have emptied
+            // `set:sld is:foil`. The fold only ever hides a star whose promo types differ from
+            // its base by these treatment tokens alone (`scryfall::foil_variants`), so this is
+            // exactly the set of searches it could otherwise cost.
+            Condition::any()
+                .add(array_member(dialect, "promo_types", &v))
+                .add(crate::scryfall::has_folded_foil_variant(dialect, Some(&v)))
         }
         _ => {
             let prefix = if negated { "not" } else { "is" };

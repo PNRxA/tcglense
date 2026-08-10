@@ -628,11 +628,22 @@ fn finish_and_flag_is_subjects_compile() {
     // listing, so without this arm `is:foil` would lose those printings entirely.
     for s in [sql("is:foil"), pg_sql("is:foil")] {
         assert!(s.contains("EXISTS"), "{s}");
-        assert!(s.contains("cards.collector_number || '★'"), "{s}");
-        // Spelled to match `idx_cards_foil_variant_star`'s partial predicate so the probe
-        // can be served from it (m..044); a rewrite that drops either half loses the index.
-        assert!(s.contains("fv.finishes = 'foil'"), "{s}");
-        assert!(s.contains("fv.collector_number LIKE '%★'"), "{s}");
+        // A semi-join on the persisted, indexed pointer (`m..070`) — never a correlated
+        // re-derivation of the pairing rule, which is what made this leaf a full `cards`
+        // scan on Postgres.
+        assert!(s.contains("fv.folded_onto_id = cards.id"), "{s}");
+        assert!(
+            !s.contains("substr("),
+            "the rule must not be re-derived per row: {s}"
+        );
+    }
+    // The foil-*treatment* leaves get the same arm, reaching the folded star's own
+    // `promo_types` — otherwise the fold would empty `is:rainbowfoil` the way it would
+    // have emptied `is:foil`.
+    for s in [sql("is:rainbowfoil"), pg_sql("is:rainbowfoil")] {
+        assert!(s.contains("fv.folded_onto_id = cards.id"), "{s}");
+        assert!(s.contains("LOWER(COALESCE(fv.promo_types, ''))"), "{s}");
+        assert!(s.contains("'%,rainbowfoil,%'"), "{s}");
     }
     assert!(sql("is:reprint").contains("reprint IS TRUE"));
     assert!(sql("-is:reprint").contains("NOT"));
@@ -873,6 +884,9 @@ async fn is_foil_matches_a_base_whose_foil_is_a_folded_star_variant() {
         .await
         .expect("insert card");
     }
+    crate::scryfall::refresh_foil_variant_folds(&db, "mtg")
+        .await
+        .expect("fold pass");
 
     async fn numbers(db: &DatabaseConnection, q: &str) -> Vec<String> {
         let mut v: Vec<String> = Card::find()

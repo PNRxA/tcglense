@@ -500,6 +500,11 @@ async fn catalog_listings_fold_a_foil_star_onto_its_nonfoil_base() {
         .await
         .expect("insert card");
     }
+    // The fold is decided once by the sync-tick pass and persisted, so a fixture has to run
+    // it — exactly as a real catalog does before any listing is served.
+    crate::scryfall::refresh_foil_variant_folds(&db, "mtg")
+        .await
+        .expect("fold pass");
 
     let numbers = |rows: Vec<card::Model>| {
         let mut v: Vec<String> = rows.into_iter().map(|c| c.collector_number).collect();

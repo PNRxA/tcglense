@@ -242,18 +242,22 @@ pub struct NameSuggestParams {
 /// The base query **every public card listing** starts from: the game's cards, minus the
 /// foil-★ variants folded onto their nonfoil base.
 ///
-/// Some Secret Lair printings are two Scryfall objects — a nonfoil `1587` and a foil `1587★`
-/// sharing one gameplay identity — and [`crate::scryfall::enrich_foil_variant_prices`] already
-/// copies the star's foil price onto the base, so listing both puts two near-identical tiles
-/// in the grid where one card exists (the "Hatsune Miku: Sakura Superstar" drop showed six
-/// such pairs). The fold is the catalog-side twin of the one the collection has always done
+/// Some printings are two Scryfall objects — a nonfoil `1587` and a foil `1587★` sharing one
+/// gameplay identity — and [`crate::scryfall::enrich_foil_variant_prices`] already copies the
+/// star's foil price onto the base, so listing both puts two near-identical tiles in the grid
+/// where one card exists (the "Hatsune Miku: Sakura Superstar" drop showed six such pairs).
+/// The fold is the catalog-side twin of the one the collection has always done
 /// (`collection_import::consolidate`), and it is deliberately a **presentation** fold: the star
 /// row stays in `cards`, so its Scryfall id keeps resolving on the card detail route, in
 /// holdings/deck/alert links, and in provider imports.
 ///
-/// Conservative by construction — a `…★` promo with no base, a star whose base is itself
-/// foilable, and an etched star are all still listed. See
-/// [`crate::scryfall::not_folded_foil_variant`] for the rule and its cost.
+/// Which stars qualify is decided once per sync tick by
+/// [`crate::scryfall::refresh_foil_variant_folds`] and persisted on `cards.folded_onto_id`, so
+/// this is one indexed `IS NULL` test rather than a per-row re-derivation of the pairing rule.
+/// It is **narrower than the pairing rule the price enrichment uses**: a star that differs from
+/// its base in anything a visitor can see or search on — border colour, watermark, art, frame,
+/// a non-foil promo type — keeps its own tile, as do an orphan `…★` promo, an etched star, and
+/// a star whose base is itself foilable.
 ///
 /// Every card grid must build from here rather than a bare `Card::find()`, or that surface
 /// starts showing the duplicate again: the all-cards search, a set's cards, the by-drop and
@@ -272,9 +276,10 @@ pub struct NameSuggestParams {
 /// - **The sitemap** — the star's detail page still exists and is still worth indexing (and
 ///   its chunking is a keyset walk over `cards.id`, so filtering would renumber every chunk).
 ///
-/// The drop grouping has one more half: a drop whose snapshot entry names only the star still
-/// claims its base, via the star fallback in [`crate::scryfall::drops::DropTable::drop_for`] —
-/// without it, folding a star away could drop its card into the trailing "Other" bucket.
+/// Two more halves live elsewhere: a drop whose snapshot entry names only the star still claims
+/// its base ([`crate::scryfall::drops::DropTable::drop_for`]), and a set tile's `card_count` is
+/// reduced by what the fold hid ([`sets::list_sets`]), so neither the grouping nor the header
+/// disagrees with the grid.
 fn catalog_cards(game: &str) -> Select<card::Entity> {
     Card::find()
         .filter(card::Column::Game.eq(game))

@@ -394,7 +394,13 @@ pub(super) async fn flush_cards(
         .on_conflict(
             OnConflict::columns([card::Column::Game, card::Column::ExternalId])
                 // Update every provider-owned column — all but the
-                // identity/conflict keys and created_at.
+                // identity/conflict keys, created_at, and `folded_onto_id`.
+                //
+                // `folded_onto_id` is **ours**, not the provider's: it is derived by
+                // `super::foil_variants::refresh_foil_variant_folds` from the pair of rows,
+                // and the incoming `ActiveModel` never sets it. Because this list is built
+                // from `Column::iter()` minus a deny-list, omitting it here would set it
+                // from `excluded.folded_onto_id` — i.e. wipe every fold on every sync.
                 .update_columns(card::Column::iter().filter(|c| {
                     !matches!(
                         c,
@@ -402,6 +408,7 @@ pub(super) async fn flush_cards(
                             | card::Column::Game
                             | card::Column::ExternalId
                             | card::Column::CreatedAt
+                            | card::Column::FoldedOntoId
                     )
                 }))
                 // Skip the write entirely when the row is unchanged: on the daily
@@ -412,6 +419,13 @@ pub(super) async fn flush_cards(
                 // changed and defeat the guard — so `cards.updated_at` now means "last
                 // time a datum actually changed", not "last sync touch" (read nowhere
                 // today; sitemap lastmod uses ingest_state/released_at).
+                //
+                // `folded_onto_id` is excluded for a second, sharper reason than the SET
+                // list above: it is non-NULL on every folded row while `excluded`'s is
+                // always NULL, so comparing it would make each of those rows look changed
+                // on *every* tick — defeating the guard and, because `updated_at` stays in
+                // the SET list, mass-bumping the very cursor the price-alert evaluator's
+                // change-narrowing reads.
                 .action_and_where(upsert_changed_guard::<card::Column>("cards", |c| {
                     matches!(
                         c,
@@ -420,6 +434,7 @@ pub(super) async fn flush_cards(
                             | card::Column::ExternalId
                             | card::Column::CreatedAt
                             | card::Column::UpdatedAt
+                            | card::Column::FoldedOntoId
                     )
                 }))
                 .to_owned(),

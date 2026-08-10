@@ -922,6 +922,9 @@ async fn holdings_search_resolves_the_foil_star_arm_under_the_card_join() {
         .await
         .expect("insert holding");
     }
+    crate::scryfall::refresh_foil_variant_folds(&db, "mtg")
+        .await
+        .expect("fold pass");
 
     let rows = collection_query(
         1,

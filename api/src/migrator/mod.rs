@@ -69,6 +69,7 @@ mod m20240101_000066_add_card_art_tags_illustration_index;
 mod m20240101_000067_add_life_event_counters;
 mod m20240101_000068_add_cards_illustration_index;
 mod m20240101_000069_add_deck_cards_section_index;
+mod m20240101_000070_add_cards_folded_onto_id;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -148,6 +149,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000067_add_life_event_counters::Migration),
             Box::new(m20240101_000068_add_cards_illustration_index::Migration),
             Box::new(m20240101_000069_add_deck_cards_section_index::Migration),
+            Box::new(m20240101_000070_add_cards_folded_onto_id::Migration),
         ]
     }
 }
