@@ -82,9 +82,10 @@ receipts below and an arbitrary hex could not.
   `.dark[data-accent=…]` twin must come after it — never add a light block without its
   twin (the comment above the blocks says the same).
 - **Adding a preset** means: both slug lists (+ their pinning tests), a light/dark pair in
-  `main.css` proven AA in *both roles* (fill under its `--primary-foreground`, and as
-  link text on `--background` — the second one is the binding constraint, light hues
-  need L ≈ 0.52–0.56), a swatch hex in `ACCENT_OPTIONS`, and the receipts noted here.
+  `main.css` proven AA in *three roles* — fill under its `--primary-foreground`, link
+  text on `--background`, **and text on its own tinted chip** (`bg-primary/15
+  text-primary`, the strictest: light hues need L ≈ 0.48–0.52) — a swatch hex in
+  `ACCENT_OPTIONS`, and the receipts noted here.
 - **What the accent must never touch**: status tokens, rarity/foil, and the chart palette
   — charts are CVD-validated as a fixed set (below), which a per-user hue swap would
   silently invalidate.
@@ -96,8 +97,9 @@ when changing values:
 
 - **WCAG AA (≥ 4.5:1)** holds for: foreground/muted-foreground on background, card and
   muted; `*-foreground` on every solid fill (primary, success, warning, info,
-  destructive-with-white in light); and every status/rarity token *as text* on the
-  background in both themes.
+  destructive-with-white in light); every status/rarity token *as text* on the
+  background in both themes; and every accent's `text-primary` in all three roles
+  (solid fill, link on background, and on its own `/15` tinted chip).
 - **The chart palette passes a CVD validator in both themes** — lightness band, chroma
   floor, adjacent-pair colorblind separation (worst deutan ΔE ≥ 10), normal-vision floor,
   and ≥ 3:1 contrast against the card surface. Hues correspond 1↔2↔… across themes
@@ -122,8 +124,8 @@ when changing values:
 ## Recurring recipes (today's canon, for consistency — not yet components)
 
 - **Linked tile**: `bg-card hover:border-ring/60 hover:bg-accent/40 rounded-xl border
-  p-5 transition-colors` + `bg-muted size-12 rounded-lg` icon well (with the ember ring,
-  hovers now warm the border — that's intended).
+  p-5 transition-colors` + `bg-muted size-12 rounded-lg` icon well (the ring is the
+  accent hue, so hovers tint the border toward the user's accent — that's intended).
 - **Section card**: `bg-card rounded-xl border p-4 shadow-sm`.
 - **Stat row**: uppercase `text-xs text-muted-foreground` label over
   `font-semibold tabular-nums` value.

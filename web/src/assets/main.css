@@ -100,7 +100,7 @@
   --card-foreground: oklch(0.19 0.015 57);
   --popover: oklch(0.994 0.003 85);
   --popover-foreground: oklch(0.19 0.015 57);
-  --primary: oklch(0.56 0.2 356);
+  --primary: oklch(0.52 0.2 356);
   --primary-foreground: oklch(0.984 0.012 80);
   --secondary: oklch(0.952 0.012 75);
   --secondary-foreground: oklch(0.279 0.02 50);
@@ -195,7 +195,7 @@
  */
 
 :root[data-accent='ember'] {
-  --primary: oklch(0.56 0.16 45);
+  --primary: oklch(0.515 0.148 45);
   --ring: oklch(0.64 0.15 48);
 }
 .dark[data-accent='ember'] {
@@ -205,7 +205,7 @@
 }
 
 :root[data-accent='violet'] {
-  --primary: oklch(0.54 0.18 295);
+  --primary: oklch(0.52 0.18 295);
   --ring: oklch(0.621 0.149 295);
 }
 .dark[data-accent='violet'] {
@@ -215,7 +215,7 @@
 }
 
 :root[data-accent='teal'] {
-  --primary: oklch(0.52 0.089 190);
+  --primary: oklch(0.49 0.084 190);
   --ring: oklch(0.599 0.09 190);
 }
 .dark[data-accent='teal'] {
@@ -225,7 +225,7 @@
 }
 
 :root[data-accent='blue'] {
-  --primary: oklch(0.52 0.13 245);
+  --primary: oklch(0.495 0.124 245);
   --ring: oklch(0.599 0.13 245);
 }
 .dark[data-accent='blue'] {
@@ -235,7 +235,7 @@
 }
 
 :root[data-accent='green'] {
-  --primary: oklch(0.521 0.121 150);
+  --primary: oklch(0.485 0.12 150);
   --ring: oklch(0.599 0.11 150);
 }
 .dark[data-accent='green'] {
@@ -259,7 +259,11 @@
   h4 {
     font-family: var(--font-heading);
   }
+  /* Selected text takes the foreground ink (the browser-default behaviour of
+     repainting glyphs): without it, selected text-primary links sit on a tint of
+     their own hue and drop under AA in light mode. */
   ::selection {
     background-color: color-mix(in oklab, var(--primary) 25%, transparent);
+    color: var(--foreground);
   }
 }

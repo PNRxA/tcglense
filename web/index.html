@@ -6,10 +6,6 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="manifest" href="/site.webmanifest">
-    <!-- Brand-pink (the default accent) fallback for UIs that ignore the media-query
-         pair below. Keep all three theme-colors in sync with the tokens in
-         src/assets/main.css. -->
-    <meta name="theme-color" content="#c72b78">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TCGLense</title>
     <!--
@@ -25,8 +21,13 @@
       name="description"
       content="Track trading-card prices over time, catalogue your collection and wish list, and use ghost mode to see exactly which cards you're missing."
     >
+    <!-- Theme-colors mirror the tokens in src/assets/main.css. Order is load-bearing:
+         the WHATWG algorithm takes the FIRST meta whose media matches, so the media
+         pair must precede the media-less brand-pink fallback (for UIs that evaluate
+         no media at all) or the fallback shadows both. -->
     <meta name="theme-color" content="#fbf9f5" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0c0c11" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#b9186d">
     <meta property="og:site_name" content="TCGLense">
     <meta property="og:type" content="website">
     <meta property="og:title" content="TCGLense">

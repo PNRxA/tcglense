@@ -163,7 +163,7 @@ const maxDollars = centsToDollars(MAX_BULK_THRESHOLD_CENTS)
               :aria-label="option.label"
               :title="option.label"
               :disabled="setAccent.isPending.value"
-              class="focus-visible:ring-ring/50 flex size-9 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:ring-3 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none"
+              class="focus-visible:ring-ring focus-visible:ring-offset-background flex size-9 items-center justify-center rounded-full border outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none"
               :class="accentStore.accent === option.value ? 'border-foreground/40' : ''"
               :style="{ backgroundColor: option.swatch }"
               @click="onAccent(option.value)"

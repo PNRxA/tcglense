@@ -5,7 +5,7 @@ detail lives in `docs/` — read the relevant one before working in its area:
 
 - [`docs/api-contracts.md`](./docs/api-contracts.md) — every HTTP endpoint, wire shape, the search syntax, caching/ETag/sitemaps, import/sync mechanics
 - [`docs/architecture.md`](./docs/architecture.md) — the fully annotated file map for `api/src/` and `web/src/`, plus test organization
-- [`docs/design-system.md`](./docs/design-system.md) — the "Ember & Nightfoil" design tokens (`web/src/assets/main.css`), the status/foil/rarity color vocabulary, chart-palette validation, and the artifacts coupled to any palette change
+- [`docs/design-system.md`](./docs/design-system.md) — the design tokens (`web/src/assets/main.css`: "Nightfoil" neutrals + the switchable accent presets), the status/foil/rarity color vocabulary, chart-palette validation, and the artifacts coupled to any palette change
 - [`docs/operations.md`](./docs/operations.md) — running, commands, CI, releases, Docker, and the full environment-variable reference (authoritative: `api/src/config.rs`, `api/.env.example`)
 - [`docs/tradeoffs.md`](./docs/tradeoffs.md) — known trade-offs and design rationale; read it before "fixing" anything that looks odd
 - Self-hosting / deploying: [`docs/self-hosting.md`](./docs/self-hosting.md) — the deploy hub (homelab, production split, bare metal, CDN cache rules), then the managed-cloud guides [`docs/deploy-digitalocean.md`](./docs/deploy-digitalocean.md) (Droplet, recommended) · [`docs/deploy-app-platform.md`](./docs/deploy-app-platform.md) (PaaS)
