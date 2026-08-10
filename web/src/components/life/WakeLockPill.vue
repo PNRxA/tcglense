@@ -21,7 +21,7 @@ const copy = computed(() => {
     ? {
         label: 'Screen staying on',
         title: 'The screen is being kept awake while this game is in progress.',
-        tone: 'text-emerald-700 dark:text-emerald-400',
+        tone: 'text-success',
       }
     : {
         label: 'Screen may sleep',
@@ -34,7 +34,7 @@ const copy = computed(() => {
 <template>
   <span
     class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-    :class="[copy.tone, active && supported ? 'bg-emerald-500/15' : 'bg-muted']"
+    :class="[copy.tone, active && supported ? 'bg-success/15' : 'bg-muted']"
     :title="copy.title"
   >
     <MonitorSmartphone class="size-3.5" aria-hidden="true" />

@@ -30,7 +30,7 @@ const lineFor = (playerId: number) => props.lines.find((line) => line.playerId =
       v-for="seat in ranked"
       :key="seat.id"
       class="bg-card flex items-center gap-4 rounded-xl border p-4"
-      :class="seat.result === 'win' ? 'border-emerald-500/50 bg-emerald-500/5' : ''"
+      :class="seat.result === 'win' ? 'border-success/50 bg-success/5' : ''"
     >
       <span
         class="size-2.5 shrink-0 rounded-full"
@@ -42,7 +42,7 @@ const lineFor = (playerId: number) => props.lines.find((line) => line.playerId =
           <span class="truncate">{{ seat.name }}</span>
           <Crown
             v-if="seat.result === 'win'"
-            class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+            class="size-4 shrink-0 text-success"
             aria-label="Winner"
           />
           <Handshake

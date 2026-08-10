@@ -65,13 +65,14 @@ const hasSeparateFaceImages = computed(
   () => isMultiFace.value && SEPARATE_FACE_IMAGE_LAYOUTS.includes(card.value?.layout ?? ''),
 )
 
-// Rarity chip tint, echoing the familiar TCG rarity metals (uncommon silver, rare
-// gold, mythic orange); anything unrecognised falls back to the muted chip.
+// Rarity chip tint over the design system's rarity tokens, echoing the familiar TCG
+// rarity metals (uncommon silver, rare gold, mythic ember); anything unrecognised
+// falls back to the muted chip.
 const RARITY_CHIP_CLASSES: Record<string, string> = {
   common: 'bg-muted text-foreground/80',
-  uncommon: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
-  rare: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  mythic: 'bg-orange-600/15 text-orange-700 dark:text-orange-400',
+  uncommon: 'bg-rarity-uncommon/15 text-rarity-uncommon',
+  rare: 'bg-rarity-rare/15 text-rarity-rare',
+  mythic: 'bg-rarity-mythic/15 text-rarity-mythic',
 }
 const rarityChipClass = computed(
   () => RARITY_CHIP_CLASSES[card.value?.rarity ?? ''] ?? 'bg-muted text-foreground/80',

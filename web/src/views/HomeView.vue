@@ -306,7 +306,7 @@ const rowLinkClass =
                 </div>
               </div>
               <span
-                class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+                class="bg-warning/15 text-warning shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
               >
                 Triggered
               </span>

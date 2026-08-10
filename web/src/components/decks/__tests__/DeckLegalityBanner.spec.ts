@@ -35,7 +35,7 @@ describe('DeckLegalityBanner', () => {
     expect(wrapper.element.tagName).toBe('P')
     expect(wrapper.classes()).toContain('text-muted-foreground')
     expect(wrapper.classes()).not.toContain('rounded-lg')
-    expect(wrapper.find('svg').classes()).toContain('text-emerald-600')
+    expect(wrapper.find('svg').classes()).toContain('text-success')
   })
 
   it('summarizes and lists mixed legality issues', () => {
@@ -69,7 +69,7 @@ describe('DeckLegalityBanner', () => {
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
     const text = wrapper.text()
 
-    expect(wrapper.classes()).toContain('border-red-500/40')
+    expect(wrapper.classes()).toContain('border-destructive/40')
     expect(text).toContain('Not legal in Vintage')
     expect(text).toContain('2 banned, 1 not legal, 1 restricted over the 1-copy limit')
     expect(text).toContain('Black Lotus')
@@ -79,10 +79,10 @@ describe('DeckLegalityBanner', () => {
     expect(text).toContain('Restricted · 3 copies')
 
     const chips = wrapper.findAll('li span:last-child')
-    expect(chips.find((chip) => chip.text() === 'Banned')?.classes()).toContain('bg-red-500/15')
+    expect(chips.find((chip) => chip.text() === 'Banned')?.classes()).toContain('bg-destructive/15')
     expect(chips.find((chip) => chip.text() === 'Not Legal')?.classes()).toContain('bg-muted')
     expect(chips.find((chip) => chip.text().startsWith('Restricted'))?.classes()).toContain(
-      'bg-amber-500/15',
+      'bg-warning/15',
     )
   })
 
@@ -135,7 +135,7 @@ describe('DeckLegalityBanner', () => {
     expect(wrapper.text()).not.toContain('1 banneds')
   })
 
-  it('stays amber and calls an under-built deck in progress, not illegal', () => {
+  it('stays on the warning tint and calls an under-built deck in progress, not illegal', () => {
     const legality = makeLegality({
       format_key: 'commander',
       format_label: 'Commander',
@@ -152,8 +152,8 @@ describe('DeckLegalityBanner', () => {
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
     const text = wrapper.text()
 
-    expect(wrapper.classes()).toContain('border-amber-500/40')
-    expect(wrapper.classes()).not.toContain('border-red-500/40')
+    expect(wrapper.classes()).toContain('border-warning/40')
+    expect(wrapper.classes()).not.toContain('border-destructive/40')
     expect(text).toContain('Commander deck in progress')
     expect(text).not.toContain('Not legal in')
     expect(text).toContain('63 of 100 cards — 37 to go.')
@@ -178,7 +178,7 @@ describe('DeckLegalityBanner', () => {
 
     const wrapper = mount(DeckLegalityBanner, { props: { legality } })
 
-    expect(wrapper.classes()).toContain('border-red-500/40')
+    expect(wrapper.classes()).toContain('border-destructive/40')
     expect(wrapper.text()).toContain('Not legal in Commander')
     expect(wrapper.text()).toContain("1 outside the commander's colour identity")
     const messages = wrapper.findAll('li').map((row) => row.text())

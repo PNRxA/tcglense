@@ -16,8 +16,9 @@ const violations = computed(() =>
   ),
 )
 /**
- * `error` = illegal as it stands (red), `warning` = only unfinished (amber), `clean` = the
- * quiet all-clear line. A half-built deck shouldn't be shouted at in red.
+ * `error` = illegal as it stands (destructive), `warning` = only unfinished (warning),
+ * `clean` = the quiet all-clear line. A half-built deck shouldn't be shouted at in
+ * destructive red.
  */
 const state = computed<'error' | 'warning' | 'clean'>(() => {
   if (!props.legality.legal) return 'error'
@@ -47,12 +48,12 @@ const summary = computed(() => {
 })
 
 const ISSUE_CHIP_CLASSES: Record<DeckIssueStatus, string> = {
-  banned: 'bg-red-500/15 text-red-700 dark:text-red-400',
+  banned: 'bg-destructive/15 text-destructive',
   not_legal: 'bg-muted text-muted-foreground',
-  commander_only: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  off_colour: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  over_limit: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  restricted: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  commander_only: 'bg-warning/15 text-warning',
+  off_colour: 'bg-warning/15 text-warning',
+  over_limit: 'bg-warning/15 text-warning',
+  restricted: 'bg-warning/15 text-warning',
 }
 
 /** Copy counts only help where the breach is about how many you run. */
@@ -65,10 +66,7 @@ function issueLabel(issue: DeckLegalityIssue): string {
 
 <template>
   <p v-if="state === 'clean'" class="text-muted-foreground flex items-center gap-1.5 text-sm">
-    <CircleCheck
-      class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-      aria-hidden="true"
-    />
+    <CircleCheck class="text-success size-4 shrink-0" aria-hidden="true" />
     No {{ legality.format_label }} legality issues
   </p>
 
@@ -76,14 +74,14 @@ function issueLabel(issue: DeckLegalityIssue): string {
     v-else
     class="flex items-start gap-2 rounded-lg border p-3 text-sm"
     :class="
-      state === 'error' ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/40 bg-amber-500/10'
+      state === 'error'
+        ? 'border-destructive/40 bg-destructive/10'
+        : 'border-warning/40 bg-warning/10'
     "
   >
     <TriangleAlert
       class="mt-0.5 size-4 shrink-0"
-      :class="
-        state === 'error' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'
-      "
+      :class="state === 'error' ? 'text-destructive' : 'text-warning'"
       aria-hidden="true"
     />
     <div class="min-w-0 flex-1">

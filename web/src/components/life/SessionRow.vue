@@ -44,11 +44,7 @@ const title = computed(
   >
     <div class="bg-muted grid size-10 shrink-0 place-items-center rounded-lg">
       <Play v-if="isActive" class="size-5" aria-hidden="true" />
-      <Crown
-        v-else-if="winner"
-        class="size-5 text-emerald-600 dark:text-emerald-400"
-        aria-hidden="true"
-      />
+      <Crown v-else-if="winner" class="size-5 text-success" aria-hidden="true" />
       <Handshake v-else-if="draw" class="size-5" aria-hidden="true" />
       <ChevronRight v-else class="size-5" aria-hidden="true" />
     </div>

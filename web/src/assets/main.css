@@ -3,15 +3,31 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * TCGLense design system — "Ember & Nightfoil".
+ *
+ * The single source of truth for the app's look: every color below is a semantic
+ * token consumed through Tailwind utilities (bg-primary, text-success, shadow-lift…).
+ * Light mode is warm paper (card-stock whites, ink-brown foreground); dark mode is a
+ * violet-cast near-black (the "nightfoil" canvas). The brand hue is ember orange —
+ * the magnifying-lens warmth of the favicon's old #e8833a theme-color — used for
+ * --primary and --ring, so links, buttons, focus rings and hover borders all carry it.
+ *
+ * Rules, rationale, and the accessibility receipts (every pairing below passes WCAG
+ * AA; the chart palette passes a CVD-separation validator in both modes) live in
+ * docs/design-system.md. Change values there and here together.
+ */
+
 @theme inline {
   /* Inter (self-hosted variable font, imported in main.ts) as the app's sans font,
-     ahead of the system-UI stack; headings reuse it via --font-heading below. This is
-     what actually applies Inter — previously it was fetched from Google Fonts but never
-     set as --font-sans, so the UI rendered in the system font. */
+     ahead of the system-UI stack; headings use Bricolage Grotesque via --font-heading
+     (applied to h1–h4 in the base layer below). This is what actually applies Inter —
+     previously it was fetched from Google Fonts but never set as --font-sans, so the
+     UI rendered in the system font. */
   --font-sans:
     'Inter Variable', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
     'Segoe UI Symbol', 'Noto Color Emoji';
-  --font-heading: var(--font-sans);
+  --font-heading: 'Bricolage Grotesque Variable', var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -43,79 +59,123 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  /* Status tokens — the one vocabulary for state color. success = good/up/legal/won,
+     warning = caution/restricted/triggered, info = neutral notice; "bad" reuses
+     --destructive. Chip idiom: bg-success/15 text-success border-success/40 (solid
+     badges use the -foreground pair). */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  /* Domain accents: foil = the gold shimmer marking foil printings (not a warning);
+     rarity-* color the uncommon/rare/mythic chips (common stays bg-muted). */
+  --color-foil: var(--foil);
+  --color-rarity-uncommon: var(--rarity-uncommon);
+  --color-rarity-rare: var(--rarity-rare);
+  --color-rarity-mythic: var(--rarity-mythic);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* Elevation utilities (shadow-card, shadow-lift) that swap per theme — light mode
+     casts warm ink, dark mode needs true black at higher opacity to read at all. */
+  --shadow-card: var(--surface-shadow);
+  --shadow-lift: var(--surface-shadow-lift);
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: oklch(0.983 0.006 85);
+  --foreground: oklch(0.19 0.015 57);
+  --card: oklch(0.994 0.003 85);
+  --card-foreground: oklch(0.19 0.015 57);
+  --popover: oklch(0.994 0.003 85);
+  --popover-foreground: oklch(0.19 0.015 57);
+  --primary: oklch(0.56 0.16 45);
+  --primary-foreground: oklch(0.984 0.012 80);
+  --secondary: oklch(0.952 0.012 75);
+  --secondary-foreground: oklch(0.279 0.02 50);
+  --muted: oklch(0.956 0.009 85);
+  --muted-foreground: oklch(0.5 0.02 62);
+  --accent: oklch(0.945 0.018 70);
+  --accent-foreground: oklch(0.251 0.025 58);
+  --destructive: oklch(0.549 0.199 27);
+  --border: oklch(0.899 0.012 80);
+  --input: oklch(0.899 0.012 80);
+  --ring: oklch(0.64 0.15 48);
+  --chart-1: oklch(0.62 0.16 48);
+  --chart-2: oklch(0.58 0.1 190);
+  --chart-3: oklch(0.549 0.151 295);
+  --chart-4: oklch(0.63 0.125 83);
+  --chart-5: oklch(0.55 0.13 245);
+  --success: oklch(0.54 0.13 155);
+  --success-foreground: oklch(0.984 0.012 80);
+  --warning: oklch(0.55 0.12 60);
+  --warning-foreground: oklch(0.984 0.012 80);
+  --info: oklch(0.55 0.11 240);
+  --info-foreground: oklch(0.984 0.012 80);
+  --foil: oklch(0.559 0.11 78);
+  --rarity-uncommon: oklch(0.52 0.06 239);
+  --rarity-rare: oklch(0.551 0.11 75);
+  --rarity-mythic: oklch(0.551 0.17 40);
+  --sidebar: oklch(0.97 0.007 85);
+  --sidebar-foreground: oklch(0.19 0.015 57);
+  --sidebar-primary: oklch(0.56 0.16 45);
+  --sidebar-primary-foreground: oklch(0.984 0.012 80);
+  --sidebar-accent: oklch(0.945 0.018 70);
+  --sidebar-accent-foreground: oklch(0.251 0.025 58);
+  --sidebar-border: oklch(0.899 0.012 80);
+  --sidebar-ring: oklch(0.64 0.15 48);
+  --surface-shadow: 0 1px 3px oklch(0.19 0.015 57 / 10%), 0 1px 2px oklch(0.19 0.015 57 / 6%);
+  --surface-shadow-lift: 0 8px 20px oklch(0.19 0.015 57 / 14%), 0 2px 6px oklch(0.19 0.015 57 / 8%);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.157 0.011 285);
+  --foreground: oklch(0.955 0.007 89);
+  --card: oklch(0.204 0.016 285);
+  --card-foreground: oklch(0.955 0.007 89);
+  --popover: oklch(0.204 0.016 285);
+  --popover-foreground: oklch(0.955 0.007 89);
+  --primary: oklch(0.74 0.15 55);
+  --primary-foreground: oklch(0.171 0.029 56);
+  --secondary: oklch(0.269 0.02 285);
+  --secondary-foreground: oklch(0.955 0.007 89);
+  --muted: oklch(0.26 0.015 285);
+  --muted-foreground: oklch(0.719 0.019 78);
+  --accent: oklch(0.279 0.031 290);
+  --accent-foreground: oklch(0.955 0.007 89);
+  --destructive: oklch(0.659 0.19 25);
+  --border: oklch(0.92 0.03 290 / 13%);
+  --input: oklch(0.92 0.03 290 / 16%);
+  --ring: oklch(0.68 0.14 50);
+  --chart-1: oklch(0.66 0.15 53);
+  --chart-2: oklch(0.65 0.11 190);
+  --chart-3: oklch(0.64 0.14 295);
+  --chart-4: oklch(0.66 0.13 87);
+  --chart-5: oklch(0.62 0.12 245);
+  --success: oklch(0.719 0.13 155);
+  --success-foreground: oklch(0.16 0.03 156);
+  --warning: oklch(0.8 0.13 80);
+  --warning-foreground: oklch(0.2 0.043 71);
+  --info: oklch(0.749 0.1 235);
+  --info-foreground: oklch(0.17 0.03 239);
+  --foil: oklch(0.8 0.12 88);
+  --rarity-uncommon: oklch(0.779 0.061 235);
+  --rarity-rare: oklch(0.799 0.11 85);
+  --rarity-mythic: oklch(0.719 0.16 45);
+  --sidebar: oklch(0.204 0.016 285);
+  --sidebar-foreground: oklch(0.955 0.007 89);
+  --sidebar-primary: oklch(0.74 0.15 55);
+  --sidebar-primary-foreground: oklch(0.171 0.029 56);
+  --sidebar-accent: oklch(0.279 0.031 290);
+  --sidebar-accent-foreground: oklch(0.955 0.007 89);
+  --sidebar-border: oklch(0.92 0.03 290 / 13%);
+  --sidebar-ring: oklch(0.68 0.14 50);
+  --surface-shadow: 0 2px 8px rgb(0 0 0 / 60%);
+  --surface-shadow-lift: 0 8px 24px rgb(0 0 0 / 85%);
 }
 
 @layer base {
@@ -124,5 +184,16 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* Headings wear the display face app-wide; weight/size/tracking stay per-call-site
+     utilities. h5/h6 are left in the body face — at small sizes they're labels. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading);
+  }
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 25%, transparent);
   }
 }

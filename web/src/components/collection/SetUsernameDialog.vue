@@ -119,10 +119,7 @@ async function submit() {
           <p v-if="localError" class="text-destructive text-xs">{{ localError }}</p>
           <p v-else-if="checking" class="text-muted-foreground text-xs">Checking…</p>
           <p v-else-if="serverReason" class="text-destructive text-xs">{{ serverReason }}</p>
-          <p
-            v-else-if="available"
-            class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"
-          >
+          <p v-else-if="available" class="flex items-center gap-1 text-xs text-success">
             <Check class="size-3.5" /> Looks good
           </p>
           <p v-else class="text-muted-foreground text-xs">

@@ -144,7 +144,7 @@ async function submit() {
 
       <!-- Success state -->
       <div v-else-if="created" class="mt-4 space-y-4">
-        <p class="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+        <p class="flex items-center gap-2 text-sm text-success">
           <Check class="size-4" /> Alert created.
         </p>
         <p class="text-muted-foreground text-sm">

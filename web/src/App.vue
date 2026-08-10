@@ -130,8 +130,8 @@ onMounted(() => {
             </div>
             <RouterLink
               to="/"
-              class="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight"
-              >TCGLense</RouterLink
+              class="font-heading shrink-0 text-lg font-bold tracking-tight whitespace-nowrap"
+              >TCG<span class="text-primary">Lense</span></RouterLink
             >
             <!-- MainNav renders its own <nav> landmark (reka NavigationMenu), so this is a div.
                Both dropdowns live under one NavigationMenu so the swipe/fade motion plays

@@ -80,7 +80,7 @@ const ghostTextClass = computed(() =>
         :name="card.name"
         :has-image="card.has_image"
         size="normal"
-        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.03] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.03] group-hover:shadow-lift motion-reduce:transition-none motion-reduce:group-hover:scale-100"
         :class="ghostImageClass"
       />
       <!-- The image lifts to `group-hover:z-10` on hover, so overlay content must carry a

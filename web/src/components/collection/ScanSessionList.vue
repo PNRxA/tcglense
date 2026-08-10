@@ -113,7 +113,7 @@ watch(
               class="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium tabular-nums ring-1"
               :class="
                 row.foil
-                  ? 'bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-400'
+                  ? 'bg-foil/10 text-foil ring-foil/30'
                   : 'bg-primary/10 text-primary ring-primary/20'
               "
             >

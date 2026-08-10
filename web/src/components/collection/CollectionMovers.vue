@@ -127,7 +127,7 @@ const asOfText = computed(() => {
              the right edge; allowing the track to shrink lets the row's name truncate instead. -->
         <section class="min-w-0">
           <h3
-            class="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase text-emerald-700 dark:text-emerald-400"
+            class="text-success flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase"
           >
             <TrendingUp class="size-3.5" aria-hidden="true" />
             Gainers
@@ -141,7 +141,7 @@ const asOfText = computed(() => {
         </section>
         <section class="min-w-0">
           <h3
-            class="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase text-red-700 dark:text-red-400"
+            class="text-destructive flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase"
           >
             <TrendingDown class="size-3.5" aria-hidden="true" />
             Losers

@@ -5,6 +5,7 @@ detail lives in `docs/` — read the relevant one before working in its area:
 
 - [`docs/api-contracts.md`](./docs/api-contracts.md) — every HTTP endpoint, wire shape, the search syntax, caching/ETag/sitemaps, import/sync mechanics
 - [`docs/architecture.md`](./docs/architecture.md) — the fully annotated file map for `api/src/` and `web/src/`, plus test organization
+- [`docs/design-system.md`](./docs/design-system.md) — the "Ember & Nightfoil" design tokens (`web/src/assets/main.css`), the status/foil/rarity color vocabulary, chart-palette validation, and the artifacts coupled to any palette change
 - [`docs/operations.md`](./docs/operations.md) — running, commands, CI, releases, Docker, and the full environment-variable reference (authoritative: `api/src/config.rs`, `api/.env.example`)
 - [`docs/tradeoffs.md`](./docs/tradeoffs.md) — known trade-offs and design rationale; read it before "fixing" anything that looks odd
 - Self-hosting / deploying: [`docs/self-hosting.md`](./docs/self-hosting.md) — the deploy hub (homelab, production split, bare metal, CDN cache rules), then the managed-cloud guides [`docs/deploy-digitalocean.md`](./docs/deploy-digitalocean.md) (Droplet, recommended) · [`docs/deploy-app-platform.md`](./docs/deploy-app-platform.md) (PaaS)
@@ -120,6 +121,10 @@ Adding a TCG = a `Game` in `catalog::GAMES` + a provider module + one arm each i
 - **UI primitives:** `npx shadcn-vue@latest add <name>`; hand-written ones copy the
   `components/ui/button/Button.vue` idiom. `@vueuse/core` is only a transitive dep —
   don't import it; use `defineModel` for v-model.
+- **Color is tokens, never palette classes:** state color comes from the design system's
+  semantic tokens (`success`/`warning`/`info`/`destructive`, plus `foil` and `rarity-*` —
+  chip idiom `bg-<token>/15 text-<token>`), not `emerald-*`/`amber-*`/`red-*` literals;
+  vocabulary + the artifacts coupled to any palette change: `docs/design-system.md`.
 
 ## Keep it maintainable
 

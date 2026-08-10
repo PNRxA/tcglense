@@ -156,16 +156,17 @@ export function lifeSteps(lines: LifeLine[]): LifeStep[] {
 /**
  * Seat colours, by position, over the theme's existing `--chart-*` tokens.
  *
- * The order is chosen so adjacent seats never share a hue family in either theme (the light
- * theme's `chart-4` and `chart-5` are both warm yellows, so they're kept apart). A sixth seat
- * takes the foreground colour rather than inventing a new token — at six players the legend and
- * names are doing the identifying anyway.
+ * The design system's chart palette (ember, teal, violet, gold, blue — see
+ * docs/design-system.md) is CVD-validated **in token order** in both themes, so seats take the
+ * tokens in that order; re-shuffling it would re-create adjacent hue clashes the validator
+ * already ruled out. A sixth seat takes the foreground colour rather than inventing a new
+ * token — at six players the legend and names are doing the identifying anyway.
  */
 const SEAT_COLOR_VARS = [
   'var(--chart-1)',
   'var(--chart-2)',
-  'var(--chart-4)',
   'var(--chart-3)',
+  'var(--chart-4)',
   'var(--chart-5)',
   'var(--foreground)',
 ] as const

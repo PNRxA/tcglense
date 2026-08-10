@@ -54,7 +54,7 @@ function warmProductDetailDialog() {
         :name="product.name"
         :has-image="product.has_image"
         size="normal"
-        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.02] group-hover:shadow-md dark:group-hover:shadow-[0_8px_24px_rgba(0,0,0,0.85)] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+        class="transition duration-200 ease-out group-hover:z-10 group-hover:scale-[1.02] group-hover:shadow-lift motion-reduce:transition-none motion-reduce:group-hover:scale-100"
       />
       <!-- The slotted control self-positions (bottom-2 left-2 z-20) and may be interactive:
         the image lifts to `group-hover:z-10` on hover, so overlay content must carry a higher

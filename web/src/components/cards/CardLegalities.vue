@@ -9,10 +9,10 @@ const props = defineProps<{
 }>()
 
 const STATUS_CHIP_CLASSES: Record<LegalityStatus, string> = {
-  legal: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  legal: 'bg-success/15 text-success',
   not_legal: 'bg-muted text-muted-foreground',
-  banned: 'bg-red-500/15 text-red-700 dark:text-red-400',
-  restricted: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  banned: 'bg-destructive/15 text-destructive',
+  restricted: 'bg-warning/15 text-warning',
 }
 
 // The panel opens on the widely-played formats only; "Show all formats" reveals the

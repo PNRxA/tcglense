@@ -108,9 +108,9 @@ const deltaIcon = computed(() => {
   return quantity <= 0 && foil_quantity <= 0 ? Minus : Plus
 })
 
-// Foil accents amber and regular the primary hue, matching the session log's chips so the
-// tentative panel and the history describe one card the same way.
-const FOIL_ACCENT = 'bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-400'
+// Foil accents the foil token and regular the primary hue, matching the session log's chips
+// so the tentative panel and the history describe one card the same way.
+const FOIL_ACCENT = 'bg-foil/10 text-foil ring-foil/30'
 const REGULAR_ACCENT = 'bg-primary/10 text-primary ring-primary/20'
 
 const rows = computed(() => [
