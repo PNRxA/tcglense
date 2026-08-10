@@ -42,6 +42,7 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
+import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
@@ -315,6 +316,11 @@ function copyDeckList() {
         <UpdatingCue label="Checking format legality…" />
       </p>
       <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
+
+      <!-- Estimated Commander bracket — renders nothing for a deck in any other format,
+        and nothing at all until the deck has cards in it (an empty list has no power
+        level to read). -->
+      <DeckBracket v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
 

@@ -8,6 +8,7 @@ import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
@@ -167,6 +168,15 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         <UpdatingCue label="Checking format legality…" />
       </p>
       <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
+
+      <!-- Estimated Commander bracket, mirroring the owner view: the same server read, so a
+        shared deck and its owner's copy can't disagree about its power level either. -->
+      <DeckBracket
+        v-if="deck.summary.total_cards > 0"
+        :game="deck.game"
+        :deck-id="deck.id"
+        :handle="handle"
+      />
 
       <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
 

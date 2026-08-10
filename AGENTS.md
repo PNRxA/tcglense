@@ -231,10 +231,11 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   list, import, rename, folder move) builds through the one `deck_headers`/`deck_header` seam —
   a third derived field belongs there, not at a call site.
   **Deck analysis is server-side** (issue #596): composition + draw odds
-  (`/stats`), the legality verdict (`/legality`), and a seeded sample hand (`/goldfish`) all
+  (`/stats`), the legality verdict (`/legality`), the estimated Commander bracket
+  (`/bracket`), and a seeded sample hand (`/goldfish`) all
   live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
   mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a
-  shared deck and its owner's copy can never disagree. All three are **`GET`s taking
+  shared deck and its owner's copy can never disagree. All four are **`GET`s taking
   `AuthUser`** — they write nothing, so a read-only key must be able to call them.
   **Legality is two modules, not one:** `analysis::legality` judges each card against the
   format's Scryfall data, `analysis::rules` judges the deck (size, copy limit, command zone,
@@ -280,7 +281,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   is **bounded** — it materialises one slot per *copy* and a deck row's counts are
   caller-controlled, so an oversized library is a `422`, never an allocation. For the same
   reason the command-zone check counts copies instead of expanding them; **nothing on these
-  paths may go per-copy.** Deck writes must invalidate the analysis query family
+  paths may go per-copy.**
+  **The bracket estimate is a floor, not a verdict** (`analysis::bracket`): it reports the
+  lowest of Wizards' rungs the deck's cards don't rule out and is **only ever 2, 3 or 4** —
+  1 (Exhibition) and 5 (cEDH) are claims about *intent*, so asserting either from a list would
+  be inventing a fact. It answers `null` for every format but `commander`, the one the ladder
+  is defined for. Only two categories decide the number (any mass land denial, or more than
+  three Game Changers, is bracket 4; one to three Game Changers is 3); extra turns and tutors
+  are **reported and never decisive**, because what brackets 2 and 3 actually forbid —
+  *chaining* extra turns — isn't in the list, and a caveat saying so ships with every response.
+  Game Changers are read off the catalog's `game_changer` column (Wizards' curated list,
+  published on the card); the other three are a **grammar over oracle text**
+  (`bracket/signals.rs`) built on `rules`'s `ability_lines`/`has_word` rather than a second
+  copy of them — same stance as the construction rules, since a false positive costs a player
+  two brackets: every predicate declines when unsure, and every counted card rides the
+  response so the number can be audited. The ladder's labels **ship in the payload** instead
+  of being mirrored client-side like the format table above: the panel that draws them doesn't
+  exist until the response lands, so a mirror would buy nothing and could drift. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
   Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written

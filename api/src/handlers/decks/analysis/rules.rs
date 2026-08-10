@@ -89,7 +89,10 @@ pub(crate) fn command_zone_section_ids(sections: &[DeckSectionResponse]) -> Vec<
 
 /// Whether `word` appears in `line` on word boundaries, the way a `\b…\b` regex matches —
 /// a word character being `[A-Za-z0-9_]`. `line` is already lowercased; `word` must be too.
-fn has_word(line: &str, word: &str) -> bool {
+///
+/// Shared with [`super::bracket`]'s card grammar rather than copied: both modules read the
+/// same oracle text for the same reason, and "does this card say X" must mean one thing.
+pub(super) fn has_word(line: &str, word: &str) -> bool {
     let is_word_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let bytes = line.as_bytes();
     let mut from = 0usize;
@@ -120,7 +123,10 @@ fn is_basic_land(card: &CardFacts) -> bool {
 /// Oracle text as lowercased ability lines with reminder text stripped, so a keyword test
 /// matches the ability itself and never the parenthetical that explains it (every Partner
 /// card's reminder text names Partner, and so does nothing else).
-fn ability_lines(card: &CardFacts) -> Vec<String> {
+///
+/// Also the entry point [`super::bracket`]'s grammar reads through, so reminder text can't
+/// create a bracket signal any more than it can create a Partner pairing.
+pub(super) fn ability_lines(card: &CardFacts) -> Vec<String> {
     // `(…)` spans are dropped, non-nested and only when they close — matching the
     // `\([^)]*\)` the SPA used, so an unbalanced `(` leaves its text in place rather than
     // swallowing the rest of the card.

@@ -20,9 +20,9 @@ use crate::entities::prelude::Deck;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
-    DeckAnalytics, DeckDetail, DeckLegality, DeckResponse, GoldfishHand, GoldfishParams,
-    StatsParams, analyse_goldfish, analyse_legality, analyse_stats, deck_detail, deck_headers,
-    load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckResponse, GoldfishHand,
+    GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality,
+    analyse_stats, deck_detail, deck_headers, load_analysis, load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -155,12 +155,12 @@ pub async fn public_deck(
 
 // ---------- Analysis mirrors (issue #596) ----------
 //
-// The three deck-analysis reads, for a deck whose owner shared it. Each resolves the deck
+// The deck-analysis reads, for a deck whose owner shared it. Each resolves the deck
 // through the same `load_public_deck` gate as `public_deck` — so an unknown handle and a
 // private deck stay the one indistinguishable 404 — and then calls the identical
 // `analyse_*` entry point the owner's own read uses. There is deliberately no second
 // implementation here: a public deck and its owner's copy must never disagree about the
-// deck's composition, its legality, or the hand a seed deals.
+// deck's composition, its legality, its bracket, or the hand a seed deals.
 
 /// Public deck analytics
 ///
@@ -218,6 +218,35 @@ pub async fn public_deck_legality(
     let input = load_analysis(&state, deck.id).await?;
     Ok(Json(DataBody {
         data: analyse_legality(deck.format.as_deref(), &input),
+    }))
+}
+
+/// Public deck bracket
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/bracket` -> a public deck's estimated Commander
+/// bracket, identical to what its owner sees. `data` is null unless the deck's format is
+/// Commander. `404` when the handle is unknown or the deck is private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/bracket",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The estimated bracket, or null when the deck isn't a Commander deck.", body = DataBody<Option<DeckBracketEstimate>>),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_bracket(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DataBody<Option<DeckBracketEstimate>>>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(DataBody {
+        data: analyse_bracket(deck.format.as_deref(), &input),
     }))
 }
 

@@ -7,6 +7,9 @@
 //!   the catalog's Scryfall data, composed with the deck-construction rules that judge the
 //!   deck as a whole (size, copy limit, command zone, colour identity).
 //! * **Goldfish** ([`goldfish`]) — an opening hand, London mulligans, and a draw step.
+//! * **Bracket** ([`bracket`]) — where a Commander deck sits on Wizards' 1–5 power ladder,
+//!   read off the cards. Legality asks "may you play this"; the bracket asks "who should
+//!   you play it against", which is why it is a separate read with its own vocabulary.
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -43,6 +46,7 @@ use crate::state::AppState;
 
 use super::DeckSectionResponse;
 
+pub(crate) mod bracket;
 pub(crate) mod formats;
 pub(crate) mod goldfish;
 pub(crate) mod legality;
@@ -52,12 +56,13 @@ pub(crate) mod stats;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
-    __path_deck_goldfish, __path_deck_legality, __path_deck_stats, deck_goldfish, deck_legality,
-    deck_stats,
+    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_stats,
+    deck_bracket, deck_goldfish, deck_legality, deck_stats,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
 // a shared deck's analysis is the identical computation the owner sees.
+pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
@@ -88,6 +93,10 @@ pub(crate) struct CardFacts {
     /// Per-format legality object, or `None` when the row carries no legality data —
     /// which is "unknown", never "illegal".
     pub legalities: Option<BTreeMap<String, String>>,
+    /// Whether the card is on Wizards' **Game Changers** list, as the provider publishes
+    /// it. `None` is "the row carries no such datum", which the bracket estimate reads as
+    /// "not one" rather than guessing.
+    pub game_changer: Option<bool>,
 }
 
 impl From<&card::Model> for CardFacts {
@@ -119,6 +128,7 @@ impl From<&card::Model> for CardFacts {
             color_identity: split_csv(m.color_identity.clone()),
             cmc: m.cmc,
             legalities: parse_legalities(m.legalities.as_deref()),
+            game_changer: m.game_changer,
         }
     }
 }
@@ -296,6 +306,7 @@ pub(crate) mod test_fixtures {
             color_identity: Vec::new(),
             cmc: None,
             legalities: None,
+            game_changer: None,
         }
     }
 
@@ -326,6 +337,11 @@ pub(crate) mod test_fixtures {
             self.legalities
                 .get_or_insert_with(BTreeMap::new)
                 .insert(format.to_string(), status.to_string());
+            self
+        }
+
+        pub(crate) fn game_changer(mut self, value: bool) -> Self {
+            self.game_changer = Some(value);
             self
         }
     }
@@ -365,6 +381,10 @@ pub(crate) mod test_fixtures {
         }
         pub(crate) fn legal(mut self, format: &str, status: &str) -> Self {
             self.facts = self.facts.legal(format, status);
+            self
+        }
+        pub(crate) fn game_changer(mut self, value: bool) -> Self {
+            self.facts = self.facts.game_changer(value);
             self
         }
     }
