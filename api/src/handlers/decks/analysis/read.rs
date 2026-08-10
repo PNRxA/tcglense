@@ -13,8 +13,9 @@ use crate::state::AppState;
 
 use super::super::load_deck;
 use super::{
-    DeckAnalytics, DeckLegality, GoldfishHand, GoldfishParams, StatsParams, analyse_goldfish,
-    analyse_legality, analyse_stats, load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckLegality, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_goldfish, analyse_legality, analyse_stats, load_analysis,
+    load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -84,6 +85,41 @@ pub async fn deck_legality(
     let input = load_analysis(&state, deck.id).await?;
     Ok(Json(DataBody {
         data: analyse_legality(deck.format.as_deref(), &input),
+    }))
+}
+
+/// Estimated Commander bracket
+///
+/// `GET /api/decks/{game}/{deck_id}/bracket` -> where the deck sits on Wizards' 1–5
+/// Commander bracket ladder, estimated from its cards: the Game Changers, mass land denial,
+/// extra turns, and tutors it holds, the reasons the estimate landed where it did, and what
+/// it could not check. `data` is **null** unless the deck's format is Commander — the one
+/// format the ladder is defined for. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/bracket",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The estimated bracket, or null when the deck isn't a Commander deck.", body = DataBody<Option<DeckBracketEstimate>>),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_bracket(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DataBody<Option<DeckBracketEstimate>>>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(DataBody {
+        data: analyse_bracket(deck.format.as_deref(), &input),
     }))
 }
 

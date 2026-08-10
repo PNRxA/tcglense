@@ -1,5 +1,11 @@
 import { request } from './client'
-import type { DeckAnalytics, DeckFormat, DeckLegality, GoldfishHand } from './generated'
+import type {
+  DeckAnalytics,
+  DeckBracketEstimate,
+  DeckFormat,
+  DeckLegality,
+  GoldfishHand,
+} from './generated'
 
 // ---------- Deck analysis (issue #596) ----------
 //
@@ -16,6 +22,11 @@ import type { DeckAnalytics, DeckFormat, DeckLegality, GoldfishHand } from './ge
 
 export type {
   DeckAnalytics,
+  DeckBracketCard,
+  DeckBracketCategory,
+  DeckBracketEstimate,
+  DeckBracketLevel,
+  DeckBracketSignal,
   DeckCardOdds,
   DeckComposition,
   DeckDrawOdds,
@@ -130,6 +141,28 @@ export function getPublicDeckLegality(
   deckId: number,
 ): Promise<{ data: DeckLegality | null }> {
   return request<{ data: DeckLegality | null }>(`${publicBase(handle, deckId)}/legality`)
+}
+
+// ----- Bracket -----
+
+/** A Commander deck's estimated bracket, or `null` when the deck isn't a Commander deck —
+ * the one format Wizards' ladder is defined for. */
+export function getDeckBracket(
+  token: string,
+  game: string,
+  deckId: number,
+): Promise<{ data: DeckBracketEstimate | null }> {
+  return request<{ data: DeckBracketEstimate | null }>(`${deckBase(game, deckId)}/bracket`, {
+    token,
+  })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckBracket(
+  handle: string,
+  deckId: number,
+): Promise<{ data: DeckBracketEstimate | null }> {
+  return request<{ data: DeckBracketEstimate | null }>(`${publicBase(handle, deckId)}/bracket`)
 }
 
 // ----- Goldfish -----

@@ -90,7 +90,7 @@ impl UserRoute {
             // the same tighter bucket rather than the generous General one.
             if matches!(
                 tail.rsplit('/').next(),
-                Some("stats" | "legality" | "goldfish")
+                Some("stats" | "legality" | "bracket" | "goldfish")
             ) {
                 return Self::Analytics;
             }
@@ -417,6 +417,11 @@ mod tests {
             "/api/collection/mtg/export",
             "/api/collection/mtg/cards/export",
             "/api/wishlist/mtg/cards/export",
+            // Deck analysis: each folds every card in the deck (issue #596).
+            "/api/decks/mtg/7/stats",
+            "/api/decks/mtg/7/legality",
+            "/api/decks/mtg/7/bracket",
+            "/api/decks/mtg/7/goldfish",
         ] {
             assert_eq!(
                 UserRoute::from_path(analytics),

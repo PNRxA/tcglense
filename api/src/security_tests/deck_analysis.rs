@@ -1,9 +1,9 @@
-//! Deck analysis (issue #596): the composition, legality, and goldfish reads on both the
-//! authed deck surface and its public-sharing mirror.
+//! Deck analysis (issue #596): the composition, legality, bracket, and goldfish reads on
+//! both the authed deck surface and its public-sharing mirror.
 //!
 //! What these pin, over and above the pure-function unit tests beside each module:
 //!
-//! * They are **reads** — a read-only `tcgl_` key may call all three, and none of them is
+//! * They are **reads** — a read-only `tcgl_` key may call every one of them, and none is
 //!   an existence oracle (another user's deck is a `404`, never a `403`, and a private deck
 //!   stays a `404` on the public mirror).
 //! * The goldfish is **stateless and reproducible over HTTP**: the same URL deals the same
@@ -137,6 +137,7 @@ async fn analysis_reads_require_authentication() {
     for path in [
         "/api/decks/mtg/1/stats",
         "/api/decks/mtg/1/legality",
+        "/api/decks/mtg/1/bracket",
         "/api/decks/mtg/1/goldfish",
     ] {
         let (status, headers, _) = send(&app, get(path)).await;
@@ -161,7 +162,7 @@ async fn another_users_deck_is_404_never_403() {
     )
     .await;
 
-    for path in ["stats", "legality", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "goldfish"] {
         let (status, _, _) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &bob),
@@ -190,7 +191,7 @@ async fn a_read_only_key_may_analyse() {
     )
     .await;
 
-    for path in ["stats", "legality", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "goldfish"] {
         let (status, _, body) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &key),
@@ -448,7 +449,7 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     let (deck_id, _) = deck_with_cards(&app, &access, "Shared", "Modern", &stack).await;
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
-    for path in ["stats", "legality", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "goldfish"] {
         let (status, headers, _) = send(
             &app,
             get(&format!("/api/u/nobody-0001/decks/{deck_id}/{path}")),
@@ -493,6 +494,19 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     .await;
     assert_eq!(public_legality, owner_legality);
 
+    let (status, _, public_bracket) = send(
+        &app,
+        get(&format!("/api/u/{handle}/decks/{deck_id}/bracket")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, owner_bracket) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/bracket"), &access),
+    )
+    .await;
+    assert_eq!(public_bracket, owner_bracket);
+
     let (status, headers, public_hand) = send(
         &app,
         get(&format!("/api/u/{handle}/decks/{deck_id}/goldfish?seed=7")),
@@ -536,6 +550,69 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     assert_eq!(
         public_hand, owner_hand,
         "one seed, one deck, one hand — whoever asks"
+    );
+}
+
+#[tokio::test]
+async fn the_bracket_is_estimated_only_for_commander() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "bracket@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+    let stack: Vec<(String, i64)> = cards.iter().map(|c| (c.clone(), 1)).collect();
+
+    // The ladder is defined for Commander and no other format, so anything else answers
+    // "nothing to say" rather than putting a number on a deck it doesn't describe.
+    let (modern, _) = deck_with_cards(&app, &access, "Burn", "Modern", &stack).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{modern}/bracket"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bracket failed: {body:?}");
+    assert!(body["data"].is_null(), "brackets are a Commander thing");
+
+    let (edh, _) = deck_with_cards(&app, &access, "Precon", "EDH", &stack).await;
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{edh}/bracket"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bracket failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"), "per-user data");
+    let estimate = &body["data"];
+    assert_eq!(estimate["format_key"], "commander");
+    // Seeded dummy cards carry no Game Changer flag and no land denial, so the estimate
+    // sits on its floor — and says so, with the whole ladder and the caveats that make a
+    // floor honest.
+    assert_eq!(estimate["bracket"], 2);
+    assert_eq!(estimate["label"], "Core");
+    assert_eq!(estimate["ladder"].as_array().expect("ladder").len(), 5);
+    assert_eq!(
+        estimate["categories"].as_array().expect("categories").len(),
+        4
+    );
+    assert!(!estimate["reasons"].as_array().expect("reasons").is_empty());
+    assert!(!estimate["caveats"].as_array().expect("caveats").is_empty());
+
+    // The public mirror, on a deck that produces a REAL estimate. The parity assertion in
+    // `a_shared_deck_analyses_identically_and_privately` runs over a Modern deck, where both
+    // sides are null and `null == null` would hold however wrong the mirror was — so this is
+    // the one that actually pins "the same `analyse_bracket` core".
+    let handle = share(&app, &access, "bracketeer", edh).await;
+    let (status, headers, public_bracket) =
+        send(&app, get(&format!("/api/u/{handle}/decks/{edh}/bracket"))).await;
+    assert_eq!(status, StatusCode::OK, "public bracket: {public_bracket:?}");
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read is a pure function of its URL, so it's CDN-cacheable"
+    );
+    assert!(
+        !public_bracket["data"].is_null(),
+        "a real estimate, not null"
+    );
+    assert_eq!(
+        public_bracket, body,
+        "a shared deck and its owner's copy are the same deck"
     );
 }
 
