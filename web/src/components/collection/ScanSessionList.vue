@@ -42,6 +42,9 @@ const rows = computed(() =>
     return {
       entry,
       foil,
+      // A quick-add row can be a *decrease* (the dialog's steppers go both ways), and
+      // "Undo adding" on a row whose chip reads "-1 regular" is a lie to a screen reader.
+      removing: delta.quantity + delta.foil_quantity < 0,
       deltaLabel: holdingDeltaLabel(delta),
       price: price ? { ...price, text: money.formatUsd(price.amount) } : null,
     }
@@ -90,8 +93,9 @@ watch(
               <Keyboard class="text-muted-foreground size-3.5" aria-hidden="true" />
               <span class="sr-only">added by name</span>
             </span>
-            <!-- The card's value, for the finish this row added: what a scanning session is
-              usually adding up as it goes. -->
+            <!-- What one copy of this card is worth in the finish this row added — the
+              catalog price, the same number every other tile shows, not the row's delta
+              multiplied out. -->
             <span
               v-if="row.price?.text"
               class="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums"
@@ -132,7 +136,7 @@ watch(
         size="sm"
         class="text-muted-foreground min-h-11 shrink-0 lg:min-h-8"
         :disabled="disabled"
-        :aria-label="`Undo adding ${row.entry.card.name}`"
+        :aria-label="`Undo ${row.removing ? 'removing' : 'adding'} ${row.entry.card.name}`"
         @click="emit('undo', index)"
       >
         <Undo2 class="size-4" aria-hidden="true" />

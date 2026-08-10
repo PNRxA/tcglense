@@ -12,6 +12,7 @@ import {
   useCardNameSuggestions,
   useProductSuggestions,
   type QuickAddSaved,
+  type QuickAddSavedReporter,
 } from '@/composables/useQuickAdd'
 import { productTypeLabel } from '@/lib/productType'
 import type { Product } from '@/lib/api'
@@ -41,7 +42,12 @@ const props = withDefaults(
 // Card-mode only: each landed write from the step-two print dialog, relayed to the host page.
 // Optional — the landings ignore it; the scan page uses it to file a manual add in the
 // session history beside the scanned cards (see `QuickAddSaved`).
+//
+// This box outlives the dialog it opens, so it is the one hop that can safely be an event:
+// the two below it are callback props, because a tile's save routinely lands after that tile
+// has unmounted and Vue drops an emit from an unmounted instance (`QuickAddSavedReporter`).
 const emit = defineEmits<{ saved: [QuickAddSaved] }>()
+const reportSaved: QuickAddSavedReporter = (write) => emit('saved', write)
 
 const game = toRef(props, 'game')
 const listName = computed(() => (props.list === 'wishlist' ? 'wish list' : 'collection'))
@@ -315,8 +321,8 @@ function onKeydown(event: KeyboardEvent) {
       :game="game"
       :name="selectedName"
       :list="list"
+      :report-saved="reportSaved"
       @close-auto-focus="onDialogCloseAutoFocus"
-      @saved="emit('saved', $event)"
     />
     <QuickAddProductDialog
       v-else

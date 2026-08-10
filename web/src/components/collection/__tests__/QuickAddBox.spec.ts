@@ -53,8 +53,8 @@ import QuickAddBox from '../QuickAddBox.vue'
 // (and its own queries).
 const DialogStub = {
   name: 'QuickAddPrintDialog',
-  props: ['open', 'game', 'name', 'list'],
-  emits: ['update:open', 'saved'],
+  props: ['open', 'game', 'name', 'list', 'reportSaved'],
+  emits: ['update:open'],
   template: '<div class="dialog-stub" :data-open="String(open)">{{ name }}</div>',
 }
 
@@ -123,7 +123,10 @@ describe('QuickAddBox', () => {
       previous: { quantity: 0, foil_quantity: 0 },
       card: { id: 'bolt-1', name: 'Lightning Bolt' },
     }
-    wrapper.findComponent(DialogStub).vm.$emit('saved', write)
+    // The box outlives the dialog, so this last hop is a normal event; the dialog receives
+    // the reporter as a callback prop because a tile's save can land after it unmounts.
+    const report = wrapper.findComponent(DialogStub).props('reportSaved') as (w: unknown) => void
+    report(write)
     expect(wrapper.emitted('saved')).toEqual([[write]])
     wrapper.unmount()
   })

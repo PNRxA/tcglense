@@ -75,8 +75,15 @@ describe('QuickAddPrintTile action adapter', () => {
     // is what turns a write into something a host page can log (the scan page files it in
     // the session history, undo and all).
     const card = makeCard('island')
-    const wrapper = mount(QuickAddPrintTile, {
-      props: { game: 'mtg', card, seed: { quantity: 2, foil_quantity: 1 }, ready: true },
+    const reportSaved = vi.fn<(write: unknown) => void>()
+    mount(QuickAddPrintTile, {
+      props: {
+        game: 'mtg',
+        card,
+        seed: { quantity: 2, foil_quantity: 1 },
+        ready: true,
+        reportSaved,
+      },
       global: { stubs: { Button: ButtonStub, PrintingTile: PrintingTileStub } },
     })
 
@@ -87,16 +94,43 @@ describe('QuickAddPrintTile action adapter', () => {
       previous: { quantity: 2, foil_quantity: 1 },
     })
 
-    expect(wrapper.emitted('saved')).toEqual([
-      [
-        {
-          id: 'island',
-          quantity: 3,
-          foil_quantity: 1,
-          previous: { quantity: 2, foil_quantity: 1 },
-          card,
-        },
-      ],
-    ])
+    expect(reportSaved).toHaveBeenCalledExactlyOnceWith({
+      id: 'island',
+      quantity: 3,
+      foil_quantity: 1,
+      previous: { quantity: 2, foil_quantity: 1 },
+      card,
+    })
+  })
+
+  it('still reports a write that lands after the tile is gone', () => {
+    // The save is debounced and the editor deliberately flushes on unmount, so "tap +, tap
+    // Done" resolves the write after this tile (and the dialog around it) have unmounted.
+    // Vue drops an `emit` from an unmounted instance, which would land the copy in the
+    // collection with no history row, no undo, and no rebase of an open tentative match —
+    // so the report is a callback prop, which has no such guard.
+    const card = makeCard('island')
+    const reportSaved = vi.fn<(write: unknown) => void>()
+    const wrapper = mount(QuickAddPrintTile, {
+      props: {
+        game: 'mtg',
+        card,
+        seed: { quantity: 0, foil_quantity: 0 },
+        ready: true,
+        reportSaved,
+      },
+      global: { stubs: { Button: ButtonStub, PrintingTile: PrintingTileStub } },
+    })
+    const landed = H.onSaved!
+
+    wrapper.unmount()
+    landed({
+      id: 'island',
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+
+    expect(reportSaved).toHaveBeenCalledOnce()
   })
 })

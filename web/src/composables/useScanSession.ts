@@ -68,6 +68,10 @@ export function useScanSession(game: Ref<string>) {
 
   // Monotonic id per committed entry (stable session-log key across each unshift).
   let nextEntryId = 0
+  // Which log row the newest add-by-name write landed in, and the baseline that write started
+  // from — the burst identity `logManualEntry` folds on. Ids are never reused, so a row that
+  // Undo (or a self-cancelling burst) removed can never be matched by a later write.
+  let lastManualWrite: { entryId: number; base: CollectionQuantities } | null = null
   // A Stop/navigation finalizer can race the auto-advance commit. Share the same promise so
   // both callers wait for one write instead of either double-writing or treating the in-flight
   // commit as a failed/no-op save.
@@ -407,10 +411,18 @@ export function useScanSession(game: Ref<string>) {
    * Quick-add is a *burst* surface: three taps on `+` debounce into one write, and a fourth
    * after that save lands is a second write for the same card. Those fold into ONE row rather
    * than stacking, so "undo the Sol Rings I just added" is one tap that restores the count
-   * from before the whole burst. Two shapes count as continuing the newest row: a write that
-   * starts where the row ended, and one that starts where the row started (an edit landing
-   * mid-save makes both of that burst's saves report the same baseline). Only a `manual` row
-   * is folded into — a scanned row is its own physical card, so it stays its own undo unit.
+   * from before the whole burst. Two shapes continue the newest row:
+   *
+   * - a write that starts where the row's counts currently stand — the next burst; and
+   * - a write that starts where the row's *last* write started. Every save in one burst
+   *   reports that burst's baseline, so an edit landing mid-save produces two writes from the
+   *   same point; matching on the row's own `previous` instead would only ever catch that in
+   *   the burst that opened the row, and the second save of any later burst would unshift a
+   *   duplicate, overlapping row (a stale "Now N" above a newer one, and an Undo on the older
+   *   that walks the card back past copies the newer row still claims).
+   *
+   * Only a `manual` row is folded into — a scanned row is its own physical card, so it stays
+   * its own undo unit.
    */
   function logManualEntry(add: ManualAdd): void {
     if (sameCounts(add.previous, add)) return
@@ -420,17 +432,24 @@ export function useScanSession(game: Ref<string>) {
       top &&
       top.source === 'manual' &&
       top.card.id === add.card.id &&
-      (sameCounts(top, add.previous) || sameCounts(top.previous, add.previous))
+      (sameCounts(top, add.previous) ||
+        (lastManualWrite?.entryId === top.id && sameCounts(lastManualWrite.base, add.previous)))
     ) {
       top.quantity = add.quantity
       top.foil_quantity = add.foil_quantity
+      lastManualWrite = { entryId: top.id, base: add.previous }
       // The burst walked itself back to where it started (added a copy, then removed it):
       // drop the row rather than leave an Undo that restores the counts already shown.
-      if (sameCounts(top.previous, top)) log.value.splice(0, 1)
+      if (sameCounts(top.previous, top)) {
+        log.value.splice(0, 1)
+        lastManualWrite = null
+      }
       return
     }
+    const id = nextEntryId++
+    lastManualWrite = { entryId: id, base: add.previous }
     log.value.unshift({
-      id: nextEntryId++,
+      id,
       card: add.card,
       quantity: add.quantity,
       foil_quantity: add.foil_quantity,

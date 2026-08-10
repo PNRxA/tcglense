@@ -100,6 +100,13 @@ function countLabel(value: number): string {
 const delta = computed(() => holdingDelta(props.owned, props.target))
 const deltaSummary = computed(() => (props.ready ? holdingDeltaSummary(delta.value) : null))
 const deltaIsFoil = computed(() => holdingDeltaIsFoil(delta.value))
+// The glyph carries the finish where there is one to carry; a change that only takes copies
+// away has no foil story to tell and must not lead with a plus sign.
+const deltaIcon = computed(() => {
+  if (deltaIsFoil.value) return Sparkles
+  const { quantity, foil_quantity } = delta.value
+  return quantity <= 0 && foil_quantity <= 0 ? Minus : Plus
+})
 
 // Foil accents amber and regular the primary hue, matching the session log's chips so the
 // tentative panel and the history describe one card the same way.
@@ -211,11 +218,7 @@ const rows = computed(() => [
           class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ring-1"
           :class="deltaIsFoil ? FOIL_ACCENT : REGULAR_ACCENT"
         >
-          <component
-            :is="deltaIsFoil ? Sparkles : Plus"
-            class="size-3.5 shrink-0"
-            aria-hidden="true"
-          />
+          <component :is="deltaIcon" class="size-3.5 shrink-0" aria-hidden="true" />
           {{ deltaSummary }}
         </p>
 

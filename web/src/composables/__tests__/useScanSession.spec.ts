@@ -614,14 +614,17 @@ describe('useScanSession manual adds', () => {
         previous: { quantity: previous, foil_quantity: 0 },
       })
     write(2, 0)
+    // A second burst starts where the first left off.
     write(3, 2)
-    // An edit landing mid-save makes both of that burst's writes report the same baseline;
-    // the later one supersedes rather than opening a second row.
-    write(4, 0)
+    // An edit landing mid-save makes BOTH writes of that burst report its baseline. The
+    // second must supersede the row, not unshift a duplicate that overlaps it — which is
+    // what matching on the row's own `previous` did once the row had folded once already.
+    write(4, 3)
+    write(5, 3)
 
     expect(session.log.value).toHaveLength(1)
     expect(session.log.value[0]).toMatchObject({
-      quantity: 4,
+      quantity: 5,
       previous: { quantity: 0, foil_quantity: 0 },
     })
 
@@ -634,6 +637,29 @@ describe('useScanSession manual adds', () => {
       foil_quantity: 0,
     })
     expect(session.log.value).toHaveLength(0)
+  })
+
+  it('starts a fresh row for a write that begins somewhere the newest row never was', () => {
+    // Not every same-card write continues the row: another surface (the card modal the
+    // history rows now open) can move the holding, and a burst starting from a count this
+    // row never held is a separate change with its own honest Undo.
+    mountBare()
+    session.logManualEntry({
+      card: sol,
+      quantity: 1,
+      foil_quantity: 0,
+      previous: { quantity: 0, foil_quantity: 0 },
+    })
+    session.logManualEntry({
+      card: sol,
+      quantity: 8,
+      foil_quantity: 0,
+      previous: { quantity: 7, foil_quantity: 0 },
+    })
+
+    expect(session.log.value).toHaveLength(2)
+    expect(session.log.value[0]).toMatchObject({ quantity: 8, previous: { quantity: 7 } })
+    expect(session.log.value[1]).toMatchObject({ quantity: 1, previous: { quantity: 0 } })
   })
 
   it('drops the row when a burst walks itself back to where it started', () => {

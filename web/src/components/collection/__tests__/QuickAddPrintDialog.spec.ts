@@ -55,15 +55,17 @@ const PassThrough = { template: '<div><slot /></div>' }
 // The tile renders only its printing id, so a spec reads the rendered order straight off it.
 const TileStub = {
   name: 'QuickAddPrintTile',
-  props: ['game', 'card', 'seed', 'ready', 'list'],
-  emits: ['saved'],
+  props: ['game', 'card', 'seed', 'ready', 'list', 'reportSaved'],
   template: '<span class="pid">{{ card.id }}</span>',
 }
 
-function mountDialog(list: 'collection' | 'wishlist' = 'collection') {
+function mountDialog(
+  list: 'collection' | 'wishlist' = 'collection',
+  reportSaved?: (write: unknown) => void,
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(QuickAddPrintDialog, {
-    props: { open: true, game: 'mtg', name: 'Dummy Reprinted Relic', list },
+    props: { open: true, game: 'mtg', name: 'Dummy Reprinted Relic', list, reportSaved },
     global: {
       plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
       stubs: {
@@ -202,21 +204,14 @@ describe('QuickAddPrintDialog held-first ordering', () => {
     wrapper.unmount()
   })
 
-  it('relays a tile\u2019s landed write to the host page', async () => {
-    // The dialog is a pass-through here, but it is one of three hops between the tile that
-    // saves and the page that logs the add \u2014 a silent break in any of them loses the
-    // manual add from the scan page's session history with nothing to show for it.
-    const wrapper = mountDialog()
+  it('hands every tile the landed-write reporter it was given', async () => {
+    // A callback prop, not an event: a tile's save can resolve after this dialog closed and
+    // unmounted it, and Vue drops an emit from an unmounted instance \u2014 the manual add
+    // would vanish from the scan page's session history with nothing to show for it.
+    const reportSaved = vi.fn<(write: unknown) => void>()
+    const wrapper = mountDialog('collection', reportSaved)
     await nextTick()
-    const write = {
-      id: 'new',
-      quantity: 1,
-      foil_quantity: 0,
-      previous: { quantity: 0, foil_quantity: 0 },
-      card: CARDS[0]!,
-    }
-    wrapper.findComponent(TileStub).vm.$emit('saved', write)
-    expect(wrapper.emitted('saved')).toEqual([[write]])
+    expect(wrapper.findComponent(TileStub).props('reportSaved')).toBe(reportSaved)
     wrapper.unmount()
   })
 })

@@ -58,7 +58,7 @@ function clause(verb: string, regular: number, foil: number): string {
 }
 
 /** The same change as a sentence, for the tentative match panel: `Adding 1 foil copy`,
- * `Removing 2 regular copies`, `Adding 1 regular and 1 foil copy`. Null when nothing moved.
+ * `Removing 2 regular copies`, `Adding 1 regular copy and 1 foil copy`. Null when nothing moved.
  * Mixed signs (one finish up, the other down) are spelled out as two clauses so a correction
  * that moves the scanned copy from regular to foil reads as exactly that. */
 export function holdingDeltaSummary(delta: HoldingDelta): string | null {

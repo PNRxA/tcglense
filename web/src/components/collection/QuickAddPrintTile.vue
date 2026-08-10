@@ -8,7 +8,7 @@ import {
   type CardListTarget,
   type OwnedCountSeed,
 } from '@/composables/useOwnedCountEditor'
-import type { QuickAddSaved } from '@/composables/useQuickAdd'
+import type { QuickAddSavedReporter } from '@/composables/useQuickAdd'
 import type { Card } from '@/lib/api'
 
 // One printing in the quick-add print picker, rendered as a tall tile so the artwork
@@ -31,14 +31,15 @@ const props = withDefaults(
     /** Whether `seed` reflects the current server holding (gates the steppers). */
     ready: boolean
     list?: CardListTarget
+    /** Called once a save actually lands, so a host page can log the manual add (the scan
+     * page files it in the session history beside the scanned cards, undo and all).
+     * Debounced saves mean one call per editing burst, not one per tap — see
+     * `OwnedCountWrite` — and it is a callback prop rather than an emit because that call
+     * routinely outlives this tile; see `QuickAddSavedReporter`. */
+    reportSaved?: QuickAddSavedReporter
   }>(),
-  { list: 'collection' },
+  { list: 'collection', reportSaved: undefined },
 )
-
-// Reported once a save actually lands, so a host page can log the manual add (the scan
-// page files it in the session history beside the scanned cards, undo and all). Debounced
-// saves mean one event per editing burst, not one per tap — see `OwnedCountWrite`.
-const emit = defineEmits<{ saved: [QuickAddSaved] }>()
 
 const game = toRef(props, 'game')
 const cardId = computed(() => props.card.id)
@@ -46,7 +47,7 @@ const seed = toRef(props, 'seed')
 
 const { regular, foil, adjust, saving, saveError } = useOwnedCountEditor(game, cardId, seed, {
   list: props.list,
-  onSaved: (write) => emit('saved', { ...write, card: props.card }),
+  onSaved: (write) => props.reportSaved?.({ ...write, card: props.card }),
 })
 
 const owned = computed(() => regular.value + foil.value > 0)

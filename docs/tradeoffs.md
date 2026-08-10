@@ -1347,29 +1347,44 @@ catalog) is planned but not implemented.
   in-flight `getUserMedia` (via the existing generation counter), so a permission grant that
   lands after the user left stops its own orphaned stream instead of going live on a page
   nobody is looking at.
-- **The session log is the record of what the session wrote — every writer feeds it.** The
-  scan page has two ways to add a card: the camera, and the add-by-name box that exists
-  precisely because some cards won't scan. Both write the same absolute counts to the same
-  collection, so a log that only knew about the camera made the running tally read short and
-  left the manual add as the one add in the session with no one-tap Undo. The quick-add
-  surface therefore reports each landed write upward as an optional `saved` event (tile →
-  dialog → box; every other host simply ignores it) and `useScanSession.logManualEntry`
-  files it. Three things make that safe to rely on. **(1) `previous` is the burst's baseline,
-  not the last tap's.** `useOwnedCountEditor` debounces, so three taps on `+` are ONE write;
-  reporting the count from before the last tap would give the row an Undo that walks back a
-  third of what it added. The editor snapshots the counts on the first adjustment after a
-  clean state and clears that snapshot only when a save no later edit has overtaken lands —
-  so an edit that arrives mid-save makes BOTH of that burst's writes report the same
-  baseline, rather than the second appearing to start from nowhere. **(2) The log folds a
-  burst into one row.** A write continuing the newest row — starting where it ended, or
-  where it started (case 1's overlap) — updates that row instead of stacking, so "undo the
-  Sol Rings I just added" stays one tap; a burst that walks itself back to its start drops
-  the row entirely rather than leaving an Undo that restores what is already on screen. Only
-  a `manual` row is folded into: a scanned row is its own physical card. **(3) A manual write
-  rebases the tentative match**, the same way Undo does, through the one `rebaseTentative`
-  seam — writes are ABSOLUTE, so a quick-add to the printing the panel is holding would
-  otherwise be silently overwritten when that panel commits. A failed save reports nothing,
-  so the log never offers to undo counts the server never took.
+- **The session log is the record of what the scan page's own surfaces wrote.** The page has
+  two ways to add a card: the camera, and the add-by-name box that exists precisely because
+  some cards won't scan. Both write the same absolute counts to the same collection, so a log
+  that only knew about the camera made the running tally read short and left the manual add as
+  the one add in the session with no one-tap Undo. The quick-add surface therefore reports each
+  landed write upward — a **callback prop** on the two inner hops (tile → dialog), then an
+  optional `saved` event from the box, which every other host simply ignores — and
+  `useScanSession.logManualEntry` files it. That prop/event split is load-bearing: a debounced
+  save resolves a round-trip late and the editor flushes a pending edit on unmount, so "tap
+  `+`, tap Done" reports *after* the tile and its dialog are gone, and Vue's `emit()` returns
+  early on an unmounted instance — an event there is silently dropped, landing the copy in the
+  collection with no row, no Undo and no rebase. Only the box, which outlives the dialog it
+  opens, is safe to report through an event. Four things make the rest safe to rely on.
+  **(1) `previous` is the burst's baseline, not the last tap's.** `useOwnedCountEditor`
+  debounces, so three taps on `+` are ONE write; reporting the count from before the last tap
+  would give the row an Undo that walks back a third of what it added. The editor snapshots the
+  counts on the first adjustment after a clean state and clears that snapshot only when a save
+  no later edit has overtaken lands — so an edit that arrives mid-save makes BOTH of that
+  burst's writes report the same baseline, rather than the second appearing to start from
+  nowhere. **(2) The log folds a burst into one row.** A write continuing the newest row
+  updates that row instead of stacking, so "undo the Sol Rings I just added" stays one tap; a
+  burst that walks itself back to its start drops the row entirely rather than leaving an Undo
+  that restores what is already on screen. Only a `manual` row is folded into: a scanned row is
+  its own physical card. Continuation is decided against **the row's last write**, tracked in
+  `lastManualWrite` — matching the row's own `previous` instead only ever caught case 1's
+  overlap in the burst that *opened* the row, so the second save of any later burst unshifted a
+  duplicate row overlapping the first: a stale "Now N" above a newer one, both chips counting
+  the same copies, and an Undo on the older walking the card back past copies the newer row
+  still claimed. **(3) A manual write rebases the tentative match**, the same way Undo does,
+  through the one `rebaseTentative` seam — writes are ABSOLUTE, so a quick-add to the printing
+  the panel is holding would otherwise be silently overwritten when that panel commits.
+  **(4) A failed save reports nothing**, so the log never offers to undo counts the server
+  never took. Known gap, deliberately left open: a history row opens the shared card modal,
+  whose own `CollectionControls` are a *third* writer of the same holding and outside this
+  contract — its edits are neither logged nor rebased, so an Undo on the row beneath can walk
+  the card back past them. That is the standing hazard of two live absolute-count editors, not
+  something the scan page can fix from its side; wiring a global modal into a page-local log
+  would need a seam that does not exist yet.
 - **Which number a scan went into is stated, not inferred.** The finish is decided visually,
   off a printed ★ the detector can miss or imagine, and it is the one part of a match the
   user is most likely to need to correct. So the match panel says it in words before the card
