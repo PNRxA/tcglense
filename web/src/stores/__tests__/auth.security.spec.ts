@@ -28,6 +28,7 @@ const USER: User = {
   discriminator: null,
   handle: null,
   currency: 'USD',
+  accent: 'pink',
 }
 
 const OTHER_USER: User = {

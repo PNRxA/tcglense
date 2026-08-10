@@ -40,6 +40,11 @@ pub struct Model {
     /// Writes are restricted to `currency::SUPPORTED_CURRENCIES`; existing accounts and
     /// new registrations default to USD in the migration/database.
     pub currency: String,
+    /// UI accent-colour preset slug (the design system's brand hue). Writes are
+    /// restricted to `accent::SUPPORTED_ACCENTS`; existing accounts and new
+    /// registrations default to "pink" in the migration/database. The SPA maps the
+    /// slug to its AA-validated colour pairs (`web/src/lib/accent.ts`).
+    pub accent: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

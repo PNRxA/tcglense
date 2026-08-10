@@ -27,7 +27,7 @@ import { Camera, Check, Plus, ScanLine } from '@lucide/vue'
       </div>
 
       <div
-        class="bg-background/90 absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 px-2.5 py-1 text-[10px] font-medium text-emerald-700 shadow-sm dark:text-emerald-400"
+        class="bg-background/90 absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-full border border-success/30 px-2.5 py-1 text-[10px] font-medium text-success shadow-sm"
       >
         <ScanLine class="size-3" />
         Card locked on

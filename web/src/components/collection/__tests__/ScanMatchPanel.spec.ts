@@ -147,7 +147,7 @@ describe('ScanMatchPanel', () => {
     expect(foilRow!.text()).toContain('+1')
     // The tint is what carries "this one" at arm's length; the transparent ring on the other
     // row keeps both the same size so nothing jumps as the pick changes.
-    expect(foilRow!.classes().join(' ')).toContain('amber')
+    expect(foilRow!.classes().join(' ')).toContain('foil')
     expect(regularRow!.classes()).toContain('ring-transparent')
   })
 

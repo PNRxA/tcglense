@@ -410,6 +410,10 @@ mod coverage_drift {
             "/api/auth/currency",
             "account display preference; SPA session flow",
         ),
+        (
+            "/api/auth/accent",
+            "account display preference; SPA session flow",
+        ),
         ("/api/auth/username", "handle claim; SPA session flow"),
         (
             "/api/auth/username/available",

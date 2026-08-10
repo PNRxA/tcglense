@@ -117,6 +117,54 @@ async fn display_currency_is_validated_and_persisted_on_the_account() {
     assert_eq!(body["user"]["currency"], "AUD");
 }
 
+#[tokio::test]
+async fn accent_colour_is_validated_and_persisted_on_the_account() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "accent@example.com", "password123").await;
+
+    // Fresh accounts start on the design system's default accent.
+    let (status, _, body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["user"]["accent"], "pink");
+
+    let (status, headers, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/accent",
+            &access,
+            json!({ "accent": "teal" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "accent update failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["accent"], "teal");
+
+    // A fresh read proves the preference was stored, not only echoed by the write.
+    let (status, _, body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["user"]["accent"], "teal");
+
+    // Only preset slugs are accepted — free-form colours would escape the design
+    // system's contrast guarantees. A failed update leaves the previous choice intact.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/auth/accent",
+            &access,
+            json!({ "accent": "#ff00aa" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["error"].as_str().unwrap().contains("pink, ember"));
+
+    let (_, _, body) = send(&app, get_with_bearer("/api/auth/me", &access)).await;
+    assert_eq!(body["user"]["accent"], "teal");
+}
+
 /// A cryptographically-valid, unexpired access token stops working the instant its
 /// account is deleted: the `AuthUser` extractor re-loads the user by the token's
 /// subject on every request and rejects a token whose user no longer exists. This is

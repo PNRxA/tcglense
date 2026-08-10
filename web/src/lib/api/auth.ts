@@ -145,6 +145,12 @@ export function setCurrency(token: string, currency: string): Promise<User> {
   return request<User>('/api/auth/currency', { method: 'PUT', body: { currency }, token })
 }
 
+/** Persist the signed-in user's UI accent preset (a slug from `lib/accent.ts`'s
+ * `ACCENT_OPTIONS`, mirrored server-side). A non-preset value is 422. */
+export function setAccent(token: string, accent: string): Promise<User> {
+  return request<User>('/api/auth/accent', { method: 'PUT', body: { accent }, token })
+}
+
 /** Whether a candidate username passes the rules (length/charset/reserved/profanity),
  * for the "choose a username" dialog's live feedback. Authed (the dialog is only reachable
  * while signed in); allocates nothing. */

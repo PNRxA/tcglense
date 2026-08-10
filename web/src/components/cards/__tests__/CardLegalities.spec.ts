@@ -42,9 +42,9 @@ describe('CardLegalities', () => {
     await wrapper.get('button').trigger('click')
 
     const cases = [
-      ['modern', 'Legal', 'Modern', 'bg-emerald-500/15', 'text-emerald-700'],
-      ['legacy', 'Banned', 'Legacy', 'bg-red-500/15', 'text-red-700'],
-      ['vintage', 'Restricted', 'Vintage', 'bg-amber-500/15', 'text-amber-700'],
+      ['modern', 'Legal', 'Modern', 'bg-success/15', 'text-success'],
+      ['legacy', 'Banned', 'Legacy', 'bg-destructive/15', 'text-destructive'],
+      ['vintage', 'Restricted', 'Vintage', 'bg-warning/15', 'text-warning'],
       ['standard', 'Not Legal', 'Standard', 'bg-muted', 'text-muted-foreground'],
     ] as const
 

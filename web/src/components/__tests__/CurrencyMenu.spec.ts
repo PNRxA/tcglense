@@ -31,6 +31,7 @@ function mountMenu(signedIn: boolean) {
       discriminator: null,
       handle: null,
       currency: 'USD',
+      accent: 'pink',
     }
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

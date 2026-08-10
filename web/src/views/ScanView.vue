@@ -374,12 +374,9 @@ function discardAndReturn() {
 
         <div
           v-if="unrecognized"
-          class="border-amber-500/40 bg-amber-500/5 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm"
+          class="border-warning/40 bg-warning/5 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm"
         >
-          <TriangleAlert
-            class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
-            aria-hidden="true"
-          />
+          <TriangleAlert class="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
           <span>
             That card wasn't recognised. Keep it flat, fill the guide, and use a contrasting
             background — or add it by name below.

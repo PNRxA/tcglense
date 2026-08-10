@@ -26,8 +26,8 @@ use crate::{
         api_keys::{create_api_key, list_api_keys, revoke_api_key},
         auth::{
             complete_registration, forgot_password, login, logout, me, refresh, register,
-            resend_verification, reset_password, set_currency, set_username, username_available,
-            verify_email,
+            resend_verification, reset_password, set_accent, set_currency, set_username,
+            username_available, verify_email,
         },
         cache::{
             conditional_request_layer, no_store_layer, public_cache_layer,
@@ -172,6 +172,7 @@ pub fn build_router(state: AppState) -> Router {
         // (a read-only API key can't claim a handle).
         .route("/api/auth/username", put(set_username))
         .route("/api/auth/currency", put(set_currency))
+        .route("/api/auth/accent", put(set_accent))
         .route("/api/auth/username/available", get(username_available))
         // API-key management for the public API (issue #284). Session-only (a key
         // cannot manage keys — SessionUser rejects an API-key credential), so these

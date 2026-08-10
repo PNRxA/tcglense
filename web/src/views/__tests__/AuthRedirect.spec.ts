@@ -41,6 +41,7 @@ const USER = {
   discriminator: null,
   handle: null,
   currency: 'USD',
+  accent: 'pink',
 }
 
 function makeRouter() {

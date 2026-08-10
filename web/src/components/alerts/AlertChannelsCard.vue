@@ -281,7 +281,7 @@ async function onTestAll() {
             :class="[
               'flex items-start gap-1.5 text-xs',
               discordStatus.tone === 'ok'
-                ? 'text-emerald-600 dark:text-emerald-400'
+                ? 'text-success'
                 : discordStatus.tone === 'fail'
                   ? 'text-destructive'
                   : 'text-muted-foreground',
@@ -351,7 +351,7 @@ async function onTestAll() {
             :class="[
               'flex items-start gap-1.5 text-xs sm:col-span-2',
               telegramStatus.tone === 'ok'
-                ? 'text-emerald-600 dark:text-emerald-400'
+                ? 'text-success'
                 : telegramStatus.tone === 'fail'
                   ? 'text-destructive'
                   : 'text-muted-foreground',
@@ -433,10 +433,7 @@ async function onTestAll() {
           <TriangleAlert class="mt-0.5 size-4 shrink-0" />
           <span>{{ saveError }}</span>
         </p>
-        <p
-          v-else-if="saved"
-          class="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400"
-        >
+        <p v-else-if="saved" class="flex items-center gap-1.5 text-sm text-success">
           <Check class="size-4" /> Channels saved.
         </p>
 
@@ -447,7 +444,7 @@ async function onTestAll() {
           </p>
           <ul v-else class="space-y-1 text-sm">
             <li v-for="result in testResults" :key="result.channel" class="flex items-center gap-2">
-              <Check v-if="result.ok" class="size-4 text-emerald-600 dark:text-emerald-400" />
+              <Check v-if="result.ok" class="size-4 text-success" />
               <TriangleAlert v-else class="text-destructive size-4" />
               <span class="capitalize">{{ result.channel }}</span>
               <span v-if="!result.ok && result.detail" class="text-muted-foreground text-xs">

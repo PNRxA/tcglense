@@ -42,13 +42,11 @@ function handleError() {
     Corners match a real MTG card: a 63×88 mm card has a ~3 mm corner radius, so the
     radius is 3/63 ≈ 4.76% of the width and, against this frame's own 61:85 border-box,
     3.42% of the height — and because 3.42% × 85/61 ≈ 4.76%, the corner stays a true
-    circle rather than an ellipse at every card size. `shadow-sm` lifts the card off
-    the page; CardTile deepens it (and scales the card up) on hover. In dark mode a
-    black shadow is invisible against the near-black background, so we swap in a
-    larger, higher-opacity shadow so the lift still reads. -->
-  <div
-    class="relative aspect-[61/85] overflow-hidden rounded-[4.76%_/_3.42%] shadow-sm dark:shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
-  >
+    circle rather than an ellipse at every card size. `shadow-card` lifts the card off
+    the page; CardTile deepens it to `shadow-lift` (and scales the card up) on hover.
+    Both tokens swap per theme in main.css — a light-mode shadow is invisible against
+    the near-black dark background, so the dark values are larger and higher-opacity. -->
+  <div class="shadow-card relative aspect-[61/85] overflow-hidden rounded-[4.76%_/_3.42%]">
     <template v-if="hasImage && !failed">
       <!-- `object-contain`, not `object-cover`: a standard printing matches the 61:85
         frame exactly, but off-ratio printings (landscape plane/scheme/art-series

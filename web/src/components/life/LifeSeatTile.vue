@@ -72,14 +72,14 @@ const accent = computed(() => seatColor(props.view.seat.position))
 
 const lifeClass = computed(() => {
   if (props.view.life <= 0) return 'text-destructive'
-  if (danger.value) return 'text-amber-600 dark:text-amber-400'
+  if (danger.value) return 'text-warning'
   return ''
 })
 
 const tileClass = computed(() => {
-  if (props.winner) return 'border-emerald-500/50 bg-emerald-500/10'
+  if (props.winner) return 'border-success/50 bg-success/10'
   if (dead.value) return 'border-destructive/40 bg-destructive/5'
-  if (danger.value) return 'border-amber-500/40'
+  if (danger.value) return 'border-warning/40'
   return ''
 })
 
@@ -126,11 +126,7 @@ const announcement = computed(() => `${props.view.seat.name}: ${props.view.life}
           {{ view.seat.commander_name }}
         </RouterLink>
       </div>
-      <Crown
-        v-if="winner"
-        class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-        aria-label="Winner"
-      />
+      <Crown v-if="winner" class="size-4 shrink-0 text-success" aria-label="Winner" />
       <Skull
         v-else-if="dead"
         class="text-destructive size-4 shrink-0"

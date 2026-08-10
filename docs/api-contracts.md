@@ -15,10 +15,13 @@ the parser detail is logged only).
 ## Auth API contract
 
 `User` shape: `{ id: number, email: string, created_at: string (RFC3339 UTC), username:
-string | null, discriminator: number | null, handle: string | null, currency: string }`.
+string | null, discriminator: number | null, handle: string | null, currency: string,
+accent: string }`.
 `currency` is the account's ISO 4217 display preference (`USD` by default; one of
 `USD`/`AUD`/`CAD`/`EUR`/`GBP`/`JPY`/`NZD`). Catalog prices and valuation fields remain
-canonical USD on the API.
+canonical USD on the API. `accent` is the UI accent-colour preset slug (`pink` by
+default; one of `pink`/`ember`/`violet`/`teal`/`blue`/`green` — the design system's
+validated presets, see `docs/design-system.md`).
 
 **Two-token model:** a short-lived **access token** (JWT, 15 min, returned as
 `access_token`, kept in memory on the client) plus a long-lived **refresh token**
@@ -67,6 +70,7 @@ email bypass is active.
 | `POST /api/auth/logout` | — (refresh cookie) | `204` (revokes that login family + clears cookie) | idempotent |
 | `GET /api/auth/me` | — (`Authorization: Bearer <access_token>`) | `200 { user }` | `401` if missing/invalid/expired |
 | `PUT /api/auth/currency` | `{ currency }` (`Authorization: Bearer <access_token>`) | `200 User` — persists the account's preferred display currency | `422` unsupported currency · read-only API key `403` |
+| `PUT /api/auth/accent` | `{ accent }` (`Authorization: Bearer <access_token>`) | `200 User` — persists the account's UI accent-colour preset | `422` non-preset slug · read-only API key `403` |
 | `POST /api/auth/verify-email` | `{ token }` | `204` (stamps `users.email_verified_at`; no session) | `401 "invalid or expired token"` |
 | `POST /api/auth/resend-verification` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown; only re-sends for a grandfathered password-bearing unverified account — a pending registration re-sends via `register`) | `422` invalid email shape |
 | `POST /api/auth/forgot-password` | `{ email }` | `204` **always** (anti-enumeration; async send, 60s cooldown) | `422` invalid email shape |

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CircleDollarSign, LayoutGrid, Wallet } from '@lucide/vue'
+import { Check, CircleDollarSign, LayoutGrid, Palette, Wallet } from '@lucide/vue'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   NumberField,
@@ -17,8 +17,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useSetAccentMutation } from '@/composables/useAccent'
 import { useSetCurrencyMutation } from '@/composables/useCurrency'
 import { ApiError } from '@/lib/api'
+import { ACCENT_OPTIONS, isAccent } from '@/lib/accent'
 import {
   MAX_BULK_THRESHOLD_CENTS,
   MIN_BULK_THRESHOLD_CENTS,
@@ -28,6 +30,7 @@ import {
 import { CARD_SIZE_OPTIONS, isCardSize } from '@/lib/cardSize'
 import { CURRENCY_OPTIONS, isSupportedCurrency } from '@/lib/currency'
 import { usePageMeta } from '@/lib/seo'
+import { useAccentStore } from '@/stores/accent'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useAuthStore } from '@/stores/auth'
@@ -53,6 +56,23 @@ async function onCurrency(value: unknown) {
   } catch (error) {
     currencyError.value =
       error instanceof ApiError ? error.message : 'Could not save the currency. Please try again.'
+  }
+}
+
+// Accent — account-scoped like currency; the accent store repaints <html>'s
+// data-accent as soon as the mutation replaces the auth user.
+const accentStore = useAccentStore()
+const setAccent = useSetAccentMutation()
+const accentError = ref<string | null>(null)
+
+async function onAccent(value: unknown) {
+  if (!isAccent(value) || value === accentStore.accent) return
+  accentError.value = null
+  try {
+    await setAccent.mutateAsync({ accent: value })
+  } catch (error) {
+    accentError.value =
+      error instanceof ApiError ? error.message : 'Could not save the accent. Please try again.'
   }
 }
 
@@ -116,6 +136,45 @@ const maxDollars = centsToDollars(MAX_BULK_THRESHOLD_CENTS)
           </Select>
           <p v-if="currencyError" class="text-destructive mt-2 text-sm" role="alert">
             {{ currencyError }}
+          </p>
+        </CardContent>
+      </Card>
+
+      <!-- Accent color — the design system's brand hue; follows the account. -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2 text-lg">
+            <Palette class="size-5" /> Accent color
+          </CardTitle>
+          <CardDescription>
+            The color TCGLense uses for buttons, links, and highlights, on every device you sign in
+            on. Every preset keeps text readable in light and dark mode.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <!-- aria-pressed toggle buttons (the ChartSeriesLegend idiom), not radios — the
+            radio role would promise arrow-key movement these separate buttons don't have. -->
+          <div class="flex flex-wrap gap-2" role="group" aria-label="Accent color">
+            <button
+              v-for="option in ACCENT_OPTIONS"
+              :key="option.value"
+              type="button"
+              :aria-pressed="accentStore.accent === option.value"
+              :aria-label="option.label"
+              :title="option.label"
+              :disabled="setAccent.isPending.value"
+              class="focus-visible:ring-ring focus-visible:ring-offset-background flex size-9 items-center justify-center rounded-full border outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none"
+              :class="accentStore.accent === option.value ? 'border-foreground/40' : ''"
+              :style="{ backgroundColor: option.swatch }"
+              @click="onAccent(option.value)"
+            >
+              <!-- The check is the non-color selection cue; its dark ink reads on
+                every swatch (all are vivid mid-tones). -->
+              <Check v-if="accentStore.accent === option.value" class="size-4 text-black/70" />
+            </button>
+          </div>
+          <p v-if="accentError" class="text-destructive mt-2 text-sm" role="alert">
+            {{ accentError }}
           </p>
         </CardContent>
       </Card>

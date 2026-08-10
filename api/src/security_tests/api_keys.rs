@@ -223,6 +223,14 @@ async fn read_only_key_can_read_but_not_write() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
+    // Same for the accent-colour preset.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer("PUT", "/api/auth/accent", &key, json!({ "accent": "teal" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
     // The wish-list write is likewise forbidden.
     let (status, _, _) = send(
         &app,

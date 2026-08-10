@@ -3,6 +3,9 @@
 // third-party request on the critical path (the old Google Fonts @import was a
 // render-blocking hop that, moreover, was never actually applied).
 import '@fontsource-variable/inter/index.css'
+// Bricolage Grotesque (variable weight), the display face applied to headings via
+// --font-heading in main.css (see docs/design-system.md).
+import '@fontsource-variable/bricolage-grotesque/index.css'
 import './assets/main.css'
 // MTG mana/cost symbol icon font (used by ManaSymbols.vue to render `{W}`, `{T}`, …).
 // The woff2 override must load AFTER the package CSS to win the "Mana" @font-face.

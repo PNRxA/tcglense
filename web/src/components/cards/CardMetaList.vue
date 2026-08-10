@@ -43,7 +43,7 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
              specific label, so it's suppressed here and shown in its own row below. -->
         <span
           v-if="card.secret_lair_bonus && !card.secret_lair_spend_incentive"
-          class="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400"
+          class="bg-warning/15 text-warning inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold"
           title="Chase card — the optional bonus card given with a qualifying Secret Lair purchase."
         >
           <Sparkles class="size-3" />
@@ -59,7 +59,7 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
       <dt class="text-muted-foreground">Promo</dt>
       <dd>
         <span
-          class="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
+          class="bg-success/15 text-success inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold"
           title="Spend reward — a promo card given for reaching a spend threshold during the Secret Lair superdrop, not included with a single drop."
         >
           <Coins class="size-3" />

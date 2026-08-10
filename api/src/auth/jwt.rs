@@ -88,6 +88,7 @@ mod tests {
             discriminator: None,
             session_version: 0,
             currency: crate::currency::DEFAULT_CURRENCY.to_string(),
+            accent: crate::accent::DEFAULT_ACCENT.to_string(),
         }
     }
 

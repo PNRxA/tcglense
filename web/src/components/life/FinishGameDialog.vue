@@ -87,7 +87,7 @@ function submit() {
           :key="seat.id"
           type="button"
           class="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors"
-          :class="choice === seat.id ? 'border-emerald-500/60 bg-emerald-500/10' : ''"
+          :class="choice === seat.id ? 'border-success/60 bg-success/10' : ''"
           :aria-pressed="choice === seat.id"
           @click="choice = seat.id"
         >
@@ -113,7 +113,7 @@ function submit() {
           <span class="shrink-0 text-lg font-semibold tabular-nums">{{ seat.life }}</span>
           <Trophy
             v-if="choice === seat.id"
-            class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+            class="size-4 shrink-0 text-success"
             aria-hidden="true"
           />
         </button>

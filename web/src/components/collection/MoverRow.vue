@@ -97,15 +97,11 @@ const pctText = computed(() => {
 })
 const valueNow = computed(() => money.formatUsd(props.mover.value_now))
 
-// Light-mode uses the -700 greens/reds (not -600): -600 falls under the 4.5:1 WCAG AA
-// contrast threshold on the white card, matching the -700 the chips already use.
-const deltaClass = computed(() =>
-  isGain.value ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400',
-)
+// The success/destructive tokens keep the 4.5:1 WCAG AA contrast threshold on the
+// white card, matching the chips.
+const deltaClass = computed(() => (isGain.value ? 'text-success' : 'text-destructive'))
 const chipClass = computed(() =>
-  isGain.value
-    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-    : 'bg-red-500/15 text-red-700 dark:text-red-400',
+  isGain.value ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive',
 )
 </script>
 

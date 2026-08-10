@@ -1,3 +1,4 @@
+mod accent;
 mod alerts;
 mod analytics_cache;
 mod auth;

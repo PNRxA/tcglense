@@ -157,16 +157,16 @@ export function deckIssueLabel(status: DeckIssueStatus): string {
 /**
  * Text colour per breach, for the chip both deck views overlay on a tile and the one
  * DeckCardRow puts in its list column (the same three renderers, so it lives here rather
- * than being copy-pasted a third time): red for outright illegal, muted for merely
- * out-of-format, amber for "you're running it wrong".
+ * than being copy-pasted a third time): destructive for outright illegal, muted for merely
+ * out-of-format, warning for "you're running it wrong".
  */
 export const DECK_ISSUE_TEXT_CLASS: Record<DeckIssueStatus, string> = {
-  banned: 'text-red-600 dark:text-red-400',
+  banned: 'text-destructive',
   not_legal: 'text-muted-foreground',
-  commander_only: 'text-amber-600 dark:text-amber-400',
-  off_colour: 'text-amber-600 dark:text-amber-400',
-  over_limit: 'text-amber-600 dark:text-amber-400',
-  restricted: 'text-amber-600 dark:text-amber-400',
+  commander_only: 'text-warning',
+  off_colour: 'text-warning',
+  over_limit: 'text-warning',
+  restricted: 'text-warning',
 }
 
 /**

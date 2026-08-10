@@ -230,7 +230,7 @@ watch(
         </p>
       </div>
 
-      <p v-if="toBottom > 0" class="text-amber-600 text-sm dark:text-amber-400">
+      <p v-if="toBottom > 0" class="text-warning text-sm">
         Put {{ toBottom }} card{{ toBottom === 1 ? '' : 's' }} on the bottom — click
         {{ toBottom === 1 ? 'one' : 'them' }} in your hand.
       </p>
