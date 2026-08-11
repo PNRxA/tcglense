@@ -21,6 +21,8 @@ pub use super::ingest_state::Entity as IngestState;
 pub use super::life_event::Entity as LifeEvent;
 pub use super::life_session::Entity as LifeSession;
 pub use super::life_session_player::Entity as LifeSessionPlayer;
+pub use super::precon_deck::Entity as PreconDeck;
+pub use super::precon_deck_card::Entity as PreconDeckCard;
 pub use super::price_alert::Entity as PriceAlert;
 pub use super::product::Entity as Product;
 pub use super::product_price_history::Entity as ProductPriceHistory;

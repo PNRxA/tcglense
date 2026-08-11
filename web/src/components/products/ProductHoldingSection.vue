@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { RouterLink } from 'vue-router'
-import ProductSetTile from '@/components/products/ProductSetTile.vue'
+import SetCountTile from '@/components/shared/SetCountTile.vue'
 import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
@@ -118,13 +118,13 @@ const sealedStats = computed(() => {
     <!-- One tile per held-product set (server order = newest set first), each linking to the
          surface's set-scoped products list — matching the card landing's held-sets grid. -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <ProductSetTile
+      <SetCountTile
         v-for="set in sets"
         :key="set.code"
         :game="game"
         :code="set.code"
         :name="set.name"
-        :products="set.unique_products"
+        :count="set.unique_products"
         :copies="set.total_products"
         :catalog-set="catalogSetByCode[set.code]"
         :to="`${basePath}/${game}/products/sets/${set.code}`"

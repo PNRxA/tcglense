@@ -93,6 +93,9 @@ describe('NAV destinations', () => {
 describe('resolveItem', () => {
   it('expands a per-game item over every game', () => {
     expect(warmTargets('cards')).toEqual(['/cards', '/cards/mtg', '/cards/pkm'])
+    // The one item whose landing and per-game rows sit under different prefixes: precons are
+    // catalog data, but the browser itself lives inside the deck section.
+    expect(warmTargets('precons')).toEqual(['/precons', '/decks/mtg/precons', '/decks/pkm/precons'])
   })
 
   it('drops games with no tools but still warms the hub', () => {
@@ -133,7 +136,12 @@ describe('the consolidation', () => {
     expect(browse.label).toBe('Browse')
     expect(browse.groups.map((group) => group.id)).toEqual(['catalog', 'library'])
     expect(browse.groups.map((group) => group.label)).toEqual(['Catalog', 'Your library'])
-    expect(browse.groups[0]?.items.map((item) => item.id)).toEqual(['cards', 'sealed', 'keywords'])
+    expect(browse.groups[0]?.items.map((item) => item.id)).toEqual([
+      'cards',
+      'sealed',
+      'precons',
+      'keywords',
+    ])
     expect(browse.groups[1]?.items.map((item) => item.id)).toEqual([
       'collection',
       'decks',

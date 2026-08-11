@@ -60,6 +60,7 @@ const routes = [
   { path: '/wishlist/:game/cards', name: 'wishlist-cards', component: { template: '<div />' } },
   { path: '/wishlist/:game/sets/:code', name: 'wishlist-set', component: { template: '<div />' } },
   { path: '/sealed/:game/:id', name: 'sealed-product', component: { template: '<div />' } },
+  { path: '/decks/:game/precons/:slug', name: 'precon', component: { template: '<div />' } },
   { path: '/cards/:game/cards/:id', name: 'card', component: Host() },
 ]
 
@@ -156,6 +157,16 @@ describe('useCardBackLink', () => {
     expect(await backLink('/collection/other/cards?card=dummy-blb-0001')).toEqual({
       to: '/cards/mtg/sets/blb',
       label: 'Bloomburrow',
+    })
+  })
+
+  // A precon page's card tiles open the modal over the precon route, so this only bites when a
+  // card's full page is reached directly from one — a new tab, or the tile's anchor followed
+  // rather than clicked. It used to fall through to the card's set page.
+  it('returns to the preconstructed deck it was opened from', async () => {
+    expect(await backLink('/decks/mtg/precons/avengers-assemble-msc')).toEqual({
+      to: '/decks/mtg/precons/avengers-assemble-msc',
+      label: 'Preconstructed deck',
     })
   })
 })

@@ -13,7 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckStatBars from '@/components/decks/DeckStatBars.vue'
-import { useDeckStatsQuery, usePublicDeckStatsQuery } from '@/composables/useDeckAnalysis'
+import {
+  useDeckStatsQuery,
+  usePreconStatsQuery,
+  usePublicDeckStatsQuery,
+} from '@/composables/useDeckAnalysis'
 import type { DeckSection } from '@/lib/api'
 
 // The deck page's analytics panel. Everything it shows is computed server-side (issue
@@ -50,9 +54,13 @@ import type { DeckSection } from '@/lib/api'
 // selected once below.
 const props = defineProps<{
   game: string
-  deckId: number
+  /** Addressing is fixed at mount and mutually exclusive: a deck id (the owner's own deck),
+   *  a `handle` + deck id (a shared deck), or a `preconSlug` (a published catalog decklist,
+   *  which has no deck row and no numeric id). Exactly one applies. */
+  deckId?: number
   sections: DeckSection[]
   handle?: string
+  preconSlug?: string
 }>()
 
 // `null` means "whatever the server picks" — the default library is its answer, not ours,
@@ -84,11 +92,16 @@ const params = computed(() => ({
 }))
 
 const game = toRef(props, 'game')
-const deckId = toRef(props, 'deckId')
+const deckId = computed(() => props.deckId ?? 0)
 const handle = computed(() => props.handle ?? '')
-const statsQuery = props.handle
-  ? usePublicDeckStatsQuery(handle, deckId, params)
-  : useDeckStatsQuery(game, deckId, params)
+const preconSlug = computed(() => props.preconSlug ?? '')
+// Three addressing modes, selected ONCE at mount (a component never changes mode), so only
+// the hook for the mode this page is in ever fetches.
+const statsQuery = props.preconSlug
+  ? usePreconStatsQuery(game, preconSlug, params)
+  : props.handle
+    ? usePublicDeckStatsQuery(handle, deckId, params)
+    : useDeckStatsQuery(game, deckId, params)
 const analytics = computed(() => statsQuery.data.value)
 const stats = computed(() => analytics.value?.deck)
 const library = computed(() => analytics.value?.library)

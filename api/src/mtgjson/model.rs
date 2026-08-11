@@ -13,6 +13,7 @@
 //! the mapping is unit-tested against a synthetic fixture.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 
@@ -196,15 +197,120 @@ pub struct Sheet {
     pub cards: HashMap<String, serde::de::IgnoredAny>,
 }
 
-/// A precon decklist: its main board + commander cards (each by `uuid`, with a foil flag).
+/// A precon decklist: its three boards (each card by `uuid`, with a count + foil flag) plus
+/// the metadata the precon browser publishes ([`crate::mtgjson::precons`]) — upstream's
+/// category, release date, and the sealed products that ship it.
+///
+/// Sealed-contents resolution reads only `main_board` + `commander` (a deck reference means
+/// "this product physically holds these cards"); the rest is the browser's.
 #[derive(Debug, Deserialize)]
 pub struct Deck {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, rename = "mainBoard")]
-    pub main_board: Vec<DeckCard>,
+    /// The set the deck ships with — usually the key it's filed under, but stated per deck
+    /// because a few decks are attributed to another set.
     #[serde(default)]
+    pub code: Option<String>,
+    /// Upstream's category: "Commander Deck", "Secret Lair Drop", "Jumpstart", …
+    #[serde(default, rename = "type")]
+    pub deck_type: Option<String>,
+    /// ISO release date of the deck itself, which can differ from its set's.
+    #[serde(default, rename = "releaseDate")]
+    pub release_date: Option<String>,
+    #[serde(
+        default,
+        rename = "mainBoard",
+        deserialize_with = "main_board_or_empty"
+    )]
+    pub main_board: Vec<DeckCard>,
+    #[serde(
+        default,
+        rename = "sideBoard",
+        deserialize_with = "side_board_or_empty"
+    )]
+    pub side_board: Vec<DeckCard>,
+    #[serde(default, deserialize_with = "commander_or_empty")]
     pub commander: Vec<DeckCard>,
+    /// `uuid`s of the sealed products that contain this deck (resolved to a
+    /// `tcgplayerProductId` through the same product index the contents walk uses).
+    #[serde(
+        default,
+        rename = "sealedProductUuids",
+        deserialize_with = "null_as_empty"
+    )]
+    pub sealed_product_uuids: Vec<String>,
+}
+
+/// Deserialize a sequence upstream may state as an explicit `null`.
+///
+/// `#[serde(default)]` only covers an **absent** key — a stated `null` is still a hard
+/// type error, and one of those fails the whole ~600 MB document, taking every pass that
+/// reads it down together (the contents walk and the precon build share one fetch). 933
+/// decks state `"sealedProductUuids": null`, the first of them in `10E`, so without this
+/// the parse dies ~3 MB in and the sealed-contents sync never runs either. Same lesson as
+/// the Scryfall bulk model: treat every upstream field as optional.
+///
+/// Silent, because on this field a `null` is routine — warning would cost ~933 lines a tick.
+fn null_as_empty<'de, D, T>(de: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(de)?.unwrap_or_default())
+}
+
+/// As [`null_as_empty`], but **warns once per process** the first time it swallows a `null`.
+///
+/// The boards carry the decklist itself, and upstream states none of them as `null` today.
+/// Tolerating it is still the right default — a null board resolves to no cards, and
+/// [`super::precons`] already drops a deck that resolves to none, so the blast radius is one
+/// missing precon instead of a dead catalog sync. But unlike `sealedProductUuids`, where an
+/// empty list is a truthful "no products named", an empty *board* is upstream changing shape
+/// under us: the same null would also silently cost that product its `contains` rows in the
+/// membership walk. Hence non-fatal **and** visible — once per field, so a wholesale upstream
+/// change is one line rather than a five-figure log flood.
+fn null_as_empty_warned<'de, D, T>(
+    de: D,
+    field: &'static str,
+    seen: &AtomicBool,
+) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let parsed = Option::<Vec<T>>::deserialize(de)?;
+    if parsed.is_none() && !seen.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            field,
+            "mtgjson: deck board stated as null; reading it as empty (cards from it are lost)"
+        );
+    }
+    Ok(parsed.unwrap_or_default())
+}
+
+static MAIN_BOARD_WAS_NULL: AtomicBool = AtomicBool::new(false);
+static SIDE_BOARD_WAS_NULL: AtomicBool = AtomicBool::new(false);
+static COMMANDER_WAS_NULL: AtomicBool = AtomicBool::new(false);
+
+fn main_board_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "mainBoard", &MAIN_BOARD_WAS_NULL)
+}
+
+fn side_board_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "sideBoard", &SIDE_BOARD_WAS_NULL)
+}
+
+fn commander_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "commander", &COMMANDER_WAS_NULL)
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,6 +319,10 @@ pub struct DeckCard {
     pub uuid: Option<String>,
     #[serde(default, rename = "isFoil")]
     pub is_foil: bool,
+    /// Copies of the printing on that board. Absent reads as one (membership resolution
+    /// ignores it entirely — a card is in the deck or it isn't).
+    #[serde(default)]
+    pub count: Option<i32>,
 }
 
 // ---------- Pure resolution: contents -> per-card membership rows ----------
@@ -261,6 +371,7 @@ pub struct RawComponent {
 /// refs, which name cards by `uuid`) or a `(set, number) -> scryfallId` map (direct card
 /// refs that carry only set + collector number). A product with no
 /// `tcgplayerProductId`, or a card that resolves to no Scryfall id, is skipped.
+#[cfg(test)]
 pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
     memberships_from(all, &Indexes::build(all))
 }
@@ -276,12 +387,13 @@ pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
 /// link target); a `card` component resolves to a Scryfall id the same way card resolution
 /// does. A product with no `tcgplayerProductId` or no `contents` contributes nothing; an
 /// unresolved link is kept as text (the line item still carries name + quantity).
+#[cfg(test)]
 pub fn build_compositions(all: &AllPrintings) -> Vec<RawComponent> {
     compositions_from(all, &Indexes::build(all))
 }
 
 /// The membership walk over a prebuilt [`Indexes`] (see [`build_memberships`]).
-fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
+pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
     let resolver = Resolver { idx };
     let mut out: HashSet<RawMembership> = HashSet::new();
     for data in all.data.values() {
@@ -299,7 +411,7 @@ fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
 }
 
 /// The composition walk over a prebuilt [`Indexes`] (see [`build_compositions`]).
-fn compositions_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawComponent> {
+pub(super) fn compositions_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawComponent> {
     let mut out: Vec<RawComponent> = Vec::new();
     for data in all.data.values() {
         for product in &data.sealed_product {
@@ -378,10 +490,14 @@ fn push_component(
     });
 }
 
-/// Lookups built once over the parsed document, shared by the card-membership walk and the
-/// composition builder: sets by lowercased code, `uuid` / `(set, number)` -> Scryfall id,
-/// and sealed-product `uuid` -> the product it names.
-struct Indexes<'a> {
+/// Lookups built once over the parsed document, shared by the card-membership walk, the
+/// composition builder, and the precon builder ([`super::precons`]): sets by lowercased
+/// code, `uuid` / `(set, number)` -> Scryfall id, and sealed-product `uuid` -> the product
+/// it names.
+///
+/// Building it walks every card in `AllPrintings` (~600k rows), so [`super::ingest`] builds
+/// **one** and lends it to all three passes rather than each pass building its own.
+pub(super) struct Indexes<'a> {
     sets: HashMap<String, &'a SetData>,
     uuid_to_scryfall: HashMap<&'a str, &'a str>,
     setnum_to_scryfall: HashMap<(String, String), &'a str>,
@@ -389,7 +505,7 @@ struct Indexes<'a> {
 }
 
 impl<'a> Indexes<'a> {
-    fn build(all: &'a AllPrintings) -> Self {
+    pub(super) fn build(all: &'a AllPrintings) -> Self {
         // Index sets by lowercased code (data keys are uppercase; refs are lowercase).
         let sets: HashMap<String, &SetData> = all
             .data
@@ -430,6 +546,20 @@ impl<'a> Indexes<'a> {
             setnum_to_scryfall,
             product_by_uuid,
         }
+    }
+
+    /// Resolve a card `uuid` to its Scryfall id — the bridge every board / booster-sheet
+    /// reference crosses, since those name cards by `uuid` alone.
+    pub(super) fn scryfall_by_uuid(&self, uuid: &str) -> Option<&str> {
+        self.uuid_to_scryfall.get(uuid).copied()
+    }
+
+    /// Resolve a sealed product `uuid` to its TCGplayer product id (the join onto our
+    /// `products` table), when the product it names carries one.
+    pub(super) fn product_tcg_id(&self, uuid: &str) -> Option<&str> {
+        self.product_by_uuid
+            .get(uuid)
+            .and_then(|p| p.identifiers.tcgplayer_product_id.as_deref())
     }
 
     /// Resolve a direct card reference to a Scryfall id (by `uuid`, else `(set, number)`).
@@ -721,6 +851,46 @@ mod tests {
         // Precon deck (1003): the main-board card + the foil commander are definitely in.
         assert!(has(&rows, "1003", "sf-alpha", "contains", false));
         assert!(has(&rows, "1003", "sf-promo", "contains", true));
+    }
+
+    /// Upstream states `"sealedProductUuids": null` on 933 decks (the first in `10E`, ~3 MB
+    /// into the document), and a stated `null` is not covered by `#[serde(default)]`. Parsing
+    /// is all-or-nothing over one shared fetch, so this one field failing took the precon
+    /// build *and* the sealed-contents walk down with it. Pinned against the real shape.
+    #[test]
+    fn deck_tolerates_a_null_sealed_product_uuids() {
+        let deck: Deck = serde_json::from_str(
+            r#"{"code":"10E","commander":[],"mainBoard":[],"name":"Black Deck A",
+                "releaseDate":"2008-05-02","sealedProductUuids":null,"sideBoard":[],
+                "type":"Sample Deck"}"#,
+        )
+        .expect("a stated null must read as an empty list, not fail the document");
+        assert!(deck.sealed_product_uuids.is_empty());
+        // An absent key and a stated list still behave as before.
+        let absent: Deck = serde_json::from_str(r#"{"name":"No key"}"#).unwrap();
+        assert!(absent.sealed_product_uuids.is_empty());
+        let stated: Deck =
+            serde_json::from_str(r#"{"name":"Stated","sealedProductUuids":["a","b"]}"#).unwrap();
+        assert_eq!(stated.sealed_product_uuids, vec!["a", "b"]);
+    }
+
+    /// The boards are never `null` upstream today, but the whole document is parsed
+    /// all-or-nothing, so one of them turning null must degrade to a dropped deck (see
+    /// [`null_as_empty_warned`]) rather than take the sealed sync down with it.
+    #[test]
+    fn deck_tolerates_null_boards() {
+        let deck: Deck = serde_json::from_str(
+            r#"{"name":"Null boards","mainBoard":null,"sideBoard":null,"commander":null}"#,
+        )
+        .expect("a stated null board must not fail the document");
+        assert!(deck.main_board.is_empty());
+        assert!(deck.side_board.is_empty());
+        assert!(deck.commander.is_empty());
+        // A stated board still reads normally.
+        let stated: Deck =
+            serde_json::from_str(r#"{"mainBoard":[{"uuid":"u-1","count":3}]}"#).unwrap();
+        assert_eq!(stated.main_board.len(), 1);
+        assert_eq!(stated.main_board[0].count, Some(3));
     }
 
     #[test]

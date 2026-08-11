@@ -309,6 +309,66 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
   a lightweight deck header; Moxfield live URLs keep the collection import gate.
+- **Preconstructed decks** (`/api/games/{game}/precons*`) are the **catalog** side of the deck
+  idea, not a second user surface: rows derived from MTGJSON's per-set `decks[]` during the
+  sealed sync (`mtgjson::precons` — the same fetch, the same parse, and the same
+  `model::Indexes` the membership + composition passes use; a fourth copy of any of the three
+  would re-walk a 600 MB document for data that already arrived). So the three reads are
+  anonymous and live in the router's **`public`** group beside `products`, and the one write —
+  copying one into your decks — is authed under `/api/decks/{game}/precons/{slug}/copy`.
+  The tables are **rebuilt wholesale** every sync, so a row id is not stable and never reaches
+  the wire: **`slug` is the identity**, derived deterministically (sets walked in sorted order,
+  numeric suffix on collision) — a change to how it's derived needs a `DERIVATION_VERSION` bump,
+  since the sync is otherwise ETag-gated. The browse tile's facets (`card_count`,
+  `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
+  own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
+  a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
+  The browse is a set-tile **landing** (`/decks/{game}/precons`, the deck mirror of
+  `/cards/{game}`, whose tiles **nest a set's related sub-sets** the way `groupSets` nests them
+  there) and **three route shapes**, each offered only the groupings that answer something
+  (`?view=`, validated against *that route's* option list — a mode a route hides can't be
+  reached by hand-writing the query either): `/precons/all` groups **by set** (default) or not
+  at all, since the type split pours every set's decks into ~40 buckets and loses the one
+  landmark a precon has; `/precons/sets/{code}` groups **by type** (default) or not at all —
+  136 of 295 sets ship more than one deck type, and by-set on one set is a single group;
+  and `/precons/sets/{code}?related=1` — the landing's grouped "All N decks" link, spanning the
+  set's whole catalog group through the shared `load_group_set_codes` seam — offers all three,
+  defaulting to **by type**, because it is the one shape holding several sets. All read through
+  **one filter builder** server-side
+  (`filtered_query`), so a filter can only change the layout, never the matches; a grouping may
+  reorder (by-type leads with the biggest category), which is why the test that pins this
+  compares deck *sets*, not sequences. The nav registry carries precons in **Catalog**, not
+  "Your library" — published game data, like a card — and it's the one item whose landing
+  (`/precons`) and per-game rows (`/decks/{game}/precons`) sit under different prefixes, so both
+  come from `lib/precons.ts`'s `preconsPath`.
+  A precon row is a **single finish**, and a board may list one printing in **both** (every
+  Jumpstart theme, every bundle land pack): two rows by design, since the ingest keys on
+  `(card, finish)`. Everything that turns those rows into *deck* rows must therefore **fold by
+  card** — `deck_cards` is unique on `(deck_id, card_id, section_id)`, so emitting the pair
+  separately isn't a duplicate tile, it's a failed insert and a 500 on the copy. Both sides do
+  it (`precons::copy`'s `push_folded`, `web/src/lib/precons.ts`), which is also what makes the
+  page and the deck you copy from it show the same counts.
+  **Board → section is decided once, in the copy**: the command zone becomes a section named
+  exactly `Commander` and the sideboard exactly `Sideboard`, because those spellings are what
+  `decks::analysis::rules` reads a deck's zones off, and the mainboard is filed through
+  `deck_import::categorize::preset_section` rather than a second copy of that table. A precon
+  row is a **single finish** (that's how a decklist reads) and folds into the deck card's
+  regular/foil pair. The copy rides `decks::copy`'s `insert_deck_with_cards` seam — both copies
+  hold internal card ids already — and only ever sets a `format` the deck *type* states
+  (`Commander Deck` → `commander`; a type that states no format gets none, or the page would
+  judge a 30-card theme deck against Commander's rules).
+  **A Secret Lair drop is not a preconstructed deck** and never reaches this surface: MTGJSON
+  files one under a set's `decks[]` because a drop is a fixed card list, but that's a
+  *product's contents* — nothing in it is a deck anyone plays. `mtgjson::precons`'
+  `NOT_A_DECK_TYPES` drops them **at derivation**, before card resolution and before a slug is
+  claimed (a same-named drop walked first would otherwise take the base slug and push the real
+  deck onto `-2`), so no count can disagree with a listing — facets, the landing's per-set tile,
+  the browse totals and the group headings all count the same rows. They were 712 of 2,986 rows
+  and buried `sld`'s 8 real precons. A drop is already modelled properly on the sealed side, as
+  a product with `sealed_contents`. Excluding a category is a derivation change, so it needs a
+  `DERIVATION_VERSION` bump like any other. The SPA **mirrors** the board vocabulary in
+  `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) and adapts boards into
+  sections so the precon page renders through the *deck* display engine, not a second one.
 - **Price alerts** (`/api/alerts*`, issue #525) are **session-only** (`SessionUser` — never an
   API key: the channel settings hold delivery credentials) and **allow-listed out of the
   OpenAPI doc** (an account/session-flow surface, like username/currency). The engine is

@@ -29,7 +29,7 @@ import type { CardListTarget } from '@/composables/useOwnedCountEditor'
 import type { OwnedCountsMap } from '@/lib/api'
 
 // The set-scoped (and all-products) sealed-holdings grid — the click-through target of the
-// landing's ProductSetTile grid, the sealed mirror of CollectionBrowseView. ONE component serves
+// landing's SetCountTile grid, the sealed mirror of CollectionBrowseView. ONE component serves
 // four routes: collection/wishlist × all/set-scoped. Collection and wish list are twin surfaces,
 // so the surface (`list`) only picks which query hooks to instantiate and the wording; the whole
 // template is shared. `code` (undefined = the all-products view) is the only per-route difference

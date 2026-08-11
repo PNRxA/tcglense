@@ -214,6 +214,47 @@ const router = createRouter({
       component: () => import('@/views/DeckNeededView.vue'),
       props: true,
     },
+    // Preconstructed decks: the published decklists that shipped with a set, browsable
+    // beside your own. Public catalog data (no `requiresAuth`) and indexable — signing in
+    // only adds "Copy to my decks". Static `precons` outranks the dynamic `:id` below in
+    // vue-router, the same precedence `needed` above relies on.
+    // The all-games precon hub. It sits at the top level (beside `/cards`, `/sealed`,
+    // `/keywords`) because that's what it is — a catalog landing, and the shape the nav
+    // registry expands every catalog item into; its per-game rows land in the deck section,
+    // where the surface itself lives.
+    {
+      path: '/precons',
+      name: 'precon-games',
+      component: () => import('@/views/PreconGamesView.vue'),
+    },
+    {
+      path: '/decks/:game/precons',
+      name: 'precons',
+      component: () => import('@/views/PreconsView.vue'),
+      props: true,
+    },
+    // Static `all` / `sets` are declared BEFORE the `:slug` detail below, so a precon slug can
+    // never shadow them — the same ordering `/decks/:game/needed` relies on above. One
+    // component serves both browse routes (the set-scoped one just pins its filter), exactly
+    // as SealedBrowseView serves the sealed pair.
+    {
+      path: '/decks/:game/precons/all',
+      name: 'precons-all',
+      component: () => import('@/views/PreconsBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/decks/:game/precons/sets/:code',
+      name: 'precon-set',
+      component: () => import('@/views/PreconsBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/decks/:game/precons/:slug',
+      name: 'precon',
+      component: () => import('@/views/PreconDeckView.vue'),
+      props: true,
+    },
     {
       path: '/decks/:game/:id',
       name: 'deck',

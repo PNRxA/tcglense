@@ -44,7 +44,7 @@ pub(crate) use pagination::{
 };
 pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
 pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
-pub(crate) use search::search_condition;
+pub(crate) use search::{every_word_matches, search_condition};
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
 pub(crate) use validate::{validate_name, validate_optional};
 #[cfg(test)]

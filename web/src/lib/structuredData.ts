@@ -402,6 +402,21 @@ export function sealedCrumbs(game: string, p: Product): Crumb[] {
   return [{ label: 'Home', to: '/' }, { label: 'Sealed', to: `/sealed/${game}` }, { label: p.name }]
 }
 
+/** Home › Preconstructed › {Game} › {Deck} — the published-decklist trail.
+ *
+ * Deliberately NOT the visible trail, which routes through `/decks` and `/decks/{game}` — the
+ * signed-in deck surfaces, both `noindex: true`. Marking those up would advertise a path
+ * through pages a crawler is told to ignore. This roots at the indexable `/precons` hub
+ * instead, the same way `sealedCrumbs` roots at `/sealed`. */
+export function preconCrumbs(game: string, gameName: string, name: string): Crumb[] {
+  return [
+    { label: 'Home', to: '/' },
+    { label: 'Preconstructed', to: '/precons' },
+    { label: gameName, to: `/decks/${game}/precons` },
+    { label: name },
+  ]
+}
+
 /** Home › Keywords › {Keyword} — the glossary trail. The middle crumb points at the
  * game's own index, which is where "all keywords" means something. */
 export function keywordCrumbs(game: string, name: string): Crumb[] {

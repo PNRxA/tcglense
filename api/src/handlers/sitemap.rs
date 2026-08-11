@@ -2,8 +2,9 @@
 //!
 //! A sitemap **index** (`GET /sitemap.xml`) points at child sitemaps for the
 //! static/landing pages (including each game's flat sealed-product browse), every
-//! card set (plus every sealed-catalog set that actually holds products), the
-//! cards, and the sealed products (both chunked — see [`MAX_URLS_PER_SITEMAP`]).
+//! card set (plus every sealed-catalog set that actually holds products, and every set
+//! that published a preconstructed deck), the cards, the sealed products, and the
+//! preconstructed decks (the last three chunked — see [`MAX_URLS_PER_SITEMAP`]).
 //! The `<loc>`s are the SPA's own routes (e.g. `/cards/mtg/sets/blb`,
 //! `/sealed/mtg/sets/blb`), built against the configured public site origin
 //! ([`crate::config::Config::public_site_url`]) — not the API's `/api/...` URLs.
@@ -30,8 +31,8 @@ use sea_orm::{
 };
 
 use crate::catalog;
-use crate::entities::prelude::{Card, CardSet, IngestState, Product};
-use crate::entities::{card, card_set, ingest_state, product};
+use crate::entities::prelude::{Card, CardSet, IngestState, PreconDeck, Product};
+use crate::entities::{card, card_set, ingest_state, precon_deck, product};
 use crate::error::AppError;
 use crate::extract::Path;
 use crate::state::AppState;
@@ -84,6 +85,17 @@ pub async fn sitemap_index(State(state): State<AppState>) -> Result<Response, Ap
             .count(&state.db)
             .await?,
     );
+    // Preconstructed decks are public, indexable catalog pages like a card or a sealed
+    // product, so they are advertised the same way. Bounded (~2 300 for MTG today), but
+    // chunked all the same — the count only grows, and this costs nothing while it fits
+    // in one file.
+    let precon_chunks = chunk_count(
+        PreconDeck::find()
+            .select_only()
+            .column(precon_deck::Column::Id)
+            .count(&state.db)
+            .await?,
+    );
 
     let mut body = String::new();
     push_sitemap(
@@ -111,6 +123,13 @@ pub async fn sitemap_index(State(state): State<AppState>) -> Result<Response, Ap
             lastmod.as_deref(),
         );
     }
+    for n in 1..=precon_chunks {
+        push_sitemap(
+            &mut body,
+            &format!("{base}/sitemaps/precons-{n}.xml"),
+            lastmod.as_deref(),
+        );
+    }
 
     Ok(xml_response(sitemapindex(body)))
 }
@@ -132,6 +151,8 @@ pub async fn sitemap_child(
                 cards_sitemap(&state, base, n).await
             } else if let Some(n) = parse_chunk(other, "products") {
                 products_sitemap(&state, base, n).await
+            } else if let Some(n) = parse_chunk(other, "precons") {
+                precons_sitemap(&state, base, n).await
             } else {
                 Err(AppError::NotFound(format!("unknown sitemap '{name}'")))
             }
@@ -158,6 +179,23 @@ fn pages_body(base: &str) -> String {
         push_url(
             &mut body,
             &format!("{base}/sealed/{}/products", game.id),
+            None,
+        );
+    }
+    // Preconstructed decks: the all-games hub plus each game's set-tile landing and its
+    // flat all-decks browse — the deck mirror of the `/cards` and `/sealed` entries above.
+    // The per-set and per-deck pages are DB-backed, so they live in `sets.xml` and the
+    // chunked `precons-{n}.xml` children respectively.
+    push_url(&mut body, &format!("{base}/precons"), None);
+    for game in catalog::GAMES {
+        push_url(
+            &mut body,
+            &format!("{base}/decks/{}/precons", game.id),
+            None,
+        );
+        push_url(
+            &mut body,
+            &format!("{base}/decks/{}/precons/all", game.id),
             None,
         );
     }
@@ -255,6 +293,31 @@ async fn sets_sitemap(state: &AppState, base: &str) -> Result<Response, AppError
         );
     }
 
+    // And every distinct (game, set_code) that published a preconstructed deck — the
+    // landing's click-through target. Same shape and same bounded cost as the sealed loop
+    // above (~290 rows for MTG), reusing the same release-date lookup for `<lastmod>`.
+    let precon_sets: Vec<(String, String)> = PreconDeck::find()
+        .select_only()
+        .column(precon_deck::Column::Game)
+        .column(precon_deck::Column::SetCode)
+        .distinct()
+        .filter(precon_deck::Column::SetCode.ne(""))
+        .order_by_asc(precon_deck::Column::Game)
+        .order_by_asc(precon_deck::Column::SetCode)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    for (game, code) in precon_sets {
+        let lastmod = released_by_set
+            .get(&(game.clone(), code.clone()))
+            .and_then(|v| v.as_deref());
+        push_url(
+            &mut body,
+            &format!("{base}/decks/{game}/precons/sets/{code}"),
+            lastmod,
+        );
+    }
+
     Ok(xml_response(urlset(body)))
 }
 
@@ -327,6 +390,45 @@ async fn products_sitemap(state: &AppState, base: &str, n: u64) -> Result<Respon
         push_url(
             &mut body,
             &format!("{base}/sealed/{game}/{external_id}"),
+            released_at.as_deref(),
+        );
+    }
+    Ok(xml_response(urlset(body)))
+}
+
+/// One chunk of preconstructed-deck detail pages (`n` is 1-based), the same keyset-windowed
+/// shape as [`cards_sitemap`] / [`products_sitemap`] — see [`chunk_start_id`] for why the
+/// payload seeks rather than `OFFSET`s.
+///
+/// `<lastmod>` is the deck's own release date. A precon is addressed by its **slug**, not its
+/// id (the tables are rebuilt wholesale each sync, so ids are re-minted while the slug is
+/// stable) — which is exactly what makes these URLs safe to advertise to a crawler. Slugs are
+/// ASCII by construction (`mtgjson::precons::slugify`), though `push_url` escapes regardless.
+async fn precons_sitemap(state: &AppState, base: &str, n: u64) -> Result<Response, AppError> {
+    let Some(start_id) =
+        chunk_start_id(&state.db, PreconDeck::find(), precon_deck::Column::Id, n).await?
+    else {
+        return Err(AppError::NotFound(format!(
+            "sitemap precon chunk {n} is out of range"
+        )));
+    };
+    let rows: Vec<(String, String, Option<String>)> = PreconDeck::find()
+        .select_only()
+        .column(precon_deck::Column::Game)
+        .column(precon_deck::Column::Slug)
+        .column(precon_deck::Column::ReleasedAt)
+        .filter(precon_deck::Column::Id.gte(start_id))
+        .order_by_asc(precon_deck::Column::Id)
+        .limit(MAX_URLS_PER_SITEMAP)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+
+    let mut body = String::new();
+    for (game, slug, released_at) in rows {
+        push_url(
+            &mut body,
+            &format!("{base}/decks/{game}/precons/{slug}"),
             released_at.as_deref(),
         );
     }
@@ -597,6 +699,36 @@ mod tests {
         }
         // The tools themselves are per-user, so nothing below the index is listed.
         assert!(!body.contains("/tools/mtg/life"));
+    }
+
+    #[test]
+    fn pages_body_covers_the_preconstructed_deck_landings() {
+        // Precons are public, indexable catalog data (the routes carry no `requiresAuth` and
+        // every view sets a canonical URL), so the hub and each game's two landings have to be
+        // advertised or 2 000+ canonical pages have no discovery path at all.
+        let body = pages_body("https://x.test");
+        assert!(body.contains("<loc>https://x.test/precons</loc>"));
+        for game in catalog::GAMES {
+            assert!(
+                body.contains(&format!(
+                    "<loc>https://x.test/decks/{}/precons</loc>",
+                    game.id
+                )),
+                "missing precon landing for {}",
+                game.id
+            );
+            assert!(
+                body.contains(&format!(
+                    "<loc>https://x.test/decks/{}/precons/all</loc>",
+                    game.id
+                )),
+                "missing all-decks browse for {}",
+                game.id
+            );
+        }
+        // The per-set and per-deck pages are DB-backed and belong to sets.xml / precons-{n}.xml,
+        // so this static body must not try to guess them.
+        assert!(!body.contains("/precons/sets/"));
     }
 
     #[test]

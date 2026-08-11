@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { LayoutGrid } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
@@ -7,12 +7,11 @@ import { buttonVariants } from '@/components/ui/button'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
-import ProductSetTile from '@/components/products/ProductSetTile.vue'
-import { useGameName, useSetsQuery } from '@/composables/useCatalog'
+import SetCountTile from '@/components/shared/SetCountTile.vue'
+import { useGameName } from '@/composables/useCatalog'
 import { useProductFacetsQuery } from '@/composables/useProducts'
+import { useSetTileSections } from '@/composables/useSetTileSections'
 import { usePageMeta } from '@/lib/seo'
-import { partitionPinnedBy } from '@/lib/setGroups'
-import type { CardSet, ProductSetRef } from '@/lib/api'
 
 // The per-game sealed-product landing — the sealed mirror of the card catalog's GameView. It
 // lists the sets that have sealed products as set tiles (grouped into release-year sections)
@@ -60,87 +59,11 @@ usePageMeta({
 const facetsQuery = useProductFacetsQuery(game)
 const facetSets = computed(() => facetsQuery.data.value?.data.sets ?? [])
 
-// Client-side filter box: the whole facet list is already in memory, so narrowing by name/code
-// is instant. Cleared when `game` changes, since the route reuses this component across `:game`
-// (mirroring useFilteredSetGroups).
-const filter = ref('')
-watch(game, () => {
-  filter.value = ''
-})
-const trimmedFilter = computed(() => filter.value.trim())
-const filtering = computed(() => trimmedFilter.value.length > 0)
-const filteredSets = computed(() => {
-  const q = trimmedFilter.value.toLowerCase()
-  if (!q) return facetSets.value
-  return facetSets.value.filter(
-    (set) => set.name?.toLowerCase().includes(q) || set.code.toLowerCase().includes(q),
-  )
-})
-
-// The public (cached) catalog set list — the same source the card landing uses — resolves each
-// product set's code to its catalog row for the tile's icon + release date, and for the
-// year sectioning. A set with no catalog row falls back gracefully (Package icon, no date) and
-// sinks into the trailing "Unknown year" section.
-const catalogSetsQuery = useSetsQuery(game)
-const catalogSetByCode = computed(() => {
-  const map: Record<string, CardSet> = {}
-  for (const set of catalogSetsQuery.data.value?.data ?? []) map[set.code] = set
-  return map
-})
-const releasedAtOf = (set: ProductSetRef) => catalogSetByCode.value[set.code]?.released_at ?? ''
-
-// Pull pinned sets (Secret Lair) out of the (filtered) list so they lead the listing in a
-// "Featured" section regardless of release date; the rest stay year-sectioned. Runs over the
-// filtered sets, so filtering that excludes the pinned set drops it from Featured too (mirroring
-// the card landing). A no-op for a game with no pinned set.
-const partitioned = computed(() => partitionPinnedBy(filteredSets.value, (set) => set.code))
-
-// Bucket the non-pinned product sets into release-year sections — newest year first, undated
-// sets in a trailing "Unknown year" section — resolving each set's year from the catalog row.
-// Within a year the newest release leads (then code), matching the card landing's year sections.
-const yearSections = computed(() => {
-  const byYear = new Map<number | null, ProductSetRef[]>()
-  for (const set of partitioned.value.rest) {
-    const releasedAt = releasedAtOf(set)
-    // Slice the leading four digits rather than parsing to a Date — avoids a timezone shift
-    // across New Year (matching lib/setGroups.ts's releaseYear).
-    const parsed = releasedAt ? Number.parseInt(releasedAt.slice(0, 4), 10) : NaN
-    const year = Number.isNaN(parsed) ? null : parsed
-    const bucket = byYear.get(year)
-    if (bucket) bucket.push(set)
-    else byYear.set(year, [set])
-  }
-  return [...byYear.entries()]
-    .map(([year, sets]) => ({
-      key: year === null ? 'unknown' : String(year),
-      label: year === null ? 'Unknown year' : String(year),
-      sets: sets.sort((a, b) => {
-        // Newest release first; then code for a stable order.
-        const da = releasedAtOf(a)
-        const db = releasedAtOf(b)
-        if (da !== db) return da < db ? 1 : -1
-        return a.code.localeCompare(b.code)
-      }),
-    }))
-    .sort((a, b) => {
-      // Newest year first; undated (null) sinks to the bottom.
-      const ya = a.key === 'unknown' ? null : Number(a.key)
-      const yb = b.key === 'unknown' ? null : Number(b.key)
-      if (ya === yb) return 0
-      if (ya === null) return 1
-      if (yb === null) return -1
-      return yb - ya
-    })
-})
-
-// One flat list of sections to render: the pinned "Featured" section first (when present),
-// then the year sections. Every section is `{ key, label, sets }`, so the template renders
-// featured and year sections through the same tile grid.
-const sections = computed(() => {
-  const featured = partitioned.value.pinned
-  if (!featured.length) return yearSections.value
-  return [{ key: 'featured', label: 'Featured', sets: featured }, ...yearSections.value]
-})
+// Filtering, the pinned "Featured" split and the release-year sections are the shared
+// set-tile landing engine (`useSetTileSections`) — the same one the preconstructed-deck
+// landing runs, so the two can't drift on how a set list is laid out.
+const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sections } =
+  useSetTileSections(game, facetSets)
 </script>
 
 <template>
@@ -200,13 +123,13 @@ const sections = computed(() => {
           </span>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <ProductSetTile
+          <SetCountTile
             v-for="set in section.sets"
             :key="set.code"
             :game="game"
             :code="set.code"
             :name="set.name"
-            :products="set.product_count"
+            :count="set.product_count"
             :catalog-set="catalogSetByCode[set.code]"
             :to="`/sealed/${game}/sets/${set.code}`"
           />

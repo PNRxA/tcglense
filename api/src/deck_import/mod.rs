@@ -5,7 +5,10 @@
 //! engine. A deck is a new container with sections and cards, inserted all-or-nothing.
 
 mod archidekt;
-mod categorize;
+// `pub(crate)` for one function: `categorize::preset_section` is the type-line -> section
+// bucket table, and the precon copy (`handlers::precons::copy`) files a copied mainboard
+// with it rather than growing a second copy of the same table.
+pub(crate) mod categorize;
 mod moxfield;
 mod parser;
 mod types;

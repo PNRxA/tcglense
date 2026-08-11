@@ -47,6 +47,32 @@ function compareChildren(a: CardSet, b: CardSet): number {
 }
 
 /**
+ * Walk a set code up its `parent_set_code` chain to the top-level **root** it belongs to.
+ *
+ * Guards both ways the data can be broken: a parent that isn't in the catalogue (an orphan)
+ * and a cycle both stop the walk where they're found, so this always terminates and always
+ * returns a code. A code with no row of its own is its own root.
+ *
+ * The one seam both set landings resolve group membership through — {@link groupSets} for the
+ * card catalog, `lib/preconSetGroups` for the preconstructed-deck landing — so a set nests
+ * under the same parent on both, and the client answer matches the server's
+ * `handlers::shared::lookup::group_set_codes`.
+ */
+export function rootSetCode(
+  code: string,
+  byCode: ReadonlyMap<string, { parent_set_code?: string | null }>,
+): string {
+  let current = code
+  const seen = new Set<string>()
+  for (;;) {
+    const parent = byCode.get(current)?.parent_set_code
+    if (!parent || !byCode.has(parent) || seen.has(current)) return current
+    seen.add(current)
+    current = parent
+  }
+}
+
+/**
  * Group a flat list of sets so that sub-sets (tokens, promos, Commander decks,
  * art series, …) are nested under the main set they belong to.
  *
@@ -64,21 +90,7 @@ export function groupSets(sets: CardSet[]): SetGroup[] {
   const byCode = new Map(sets.map((set) => [set.code, set]))
   const position = new Map(sets.map((set, index) => [set.code, index]))
 
-  // Walk parent links to the top-level root, guarding against missing parents
-  // and (defensively) cycles in the data.
-  const rootOf = (set: CardSet): CardSet => {
-    let current = set
-    const seen = new Set<string>()
-    while (
-      current.parent_set_code &&
-      byCode.has(current.parent_set_code) &&
-      !seen.has(current.code)
-    ) {
-      seen.add(current.code)
-      current = byCode.get(current.parent_set_code)!
-    }
-    return current
-  }
+  const rootOf = (set: CardSet): CardSet => byCode.get(rootSetCode(set.code, byCode)) ?? set
 
   const groups = new Map<string, SetGroup>()
   const ensure = (main: CardSet): SetGroup => {

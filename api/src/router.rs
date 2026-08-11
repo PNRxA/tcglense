@@ -69,6 +69,10 @@ use crate::{
             scryfall_file, scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
         },
         openapi::openapi_json,
+        precons::{
+            copy_precon_deck, get_precon, list_precon_groups, list_precons, precon_bracket,
+            precon_facets, precon_goldfish, precon_legality, precon_stats,
+        },
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
             public_deck_goldfish, public_deck_legality, public_deck_stats, public_decks,
@@ -452,6 +456,16 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/decks/{deck_id}/copy",
             post(copy_public_deck),
         )
+        // Copy a published preconstructed deck into the caller's own decks. The source is a
+        // public catalog row (read at `/api/games/{game}/precons/{slug}`), but this is an
+        // authenticated write, so it sits in this `private`, no-store group like the public
+        // deck copy above. Filed under `/api/decks/...` because what it *creates* is one of
+        // the caller's decks; `precons` is a static segment, so it wins over the sibling
+        // `/api/decks/{game}/{deck_id}` routes in axum.
+        .route(
+            "/api/decks/{game}/precons/{slug}/copy",
+            post(copy_precon_deck),
+        )
         // Tools (`/api/tools/{game}/...`): the play aids that sit beside the catalog rather
         // than inside it. Grouped under a `tools` namespace so a second tool adds a path
         // segment instead of a new top-level route family — the API mirror of the SPA's
@@ -594,6 +608,39 @@ pub fn build_router(state: AppState) -> Router {
         // Sealed products (booster boxes, bundles, decks, …) from TCGCSV. `facets`
         // is a static sibling of `/products/{id}` (static segments win in axum), so
         // it never collides with a product id.
+        // Preconstructed decks: the decklists that shipped inside those products —
+        // Commander decks, Planeswalker / Challenger decks, Jumpstart themes, Secret Lair
+        // drops. Catalog data (derived from MTGJSON during the sealed sync), so it belongs
+        // in this public, CDN-cached group beside `products` rather than the authed deck
+        // group — a precon is the same public game data a card is. `facets` is a static
+        // sibling of `/precons/{slug}` (static segments win in axum), so it never collides
+        // with a slug; the one *write* (copying one into your own decks) lives in the
+        // authed group under `/api/decks/...`.
+        .route("/api/games/{game}/precons", get(list_precons))
+        .route("/api/games/{game}/precons/facets", get(precon_facets))
+        // The same decks bucketed — by the set that published them, or by deck type
+        // (`?group=type`) — and paginated by group: the precon mirror of `/sets/{code}/drops`.
+        // Another static sibling of `/{slug}`.
+        .route("/api/games/{game}/precons/groups", get(list_precon_groups))
+        .route("/api/games/{game}/precons/{slug}", get(get_precon))
+        // The deck page's four analyses, mirrored for a published decklist (issue #596's core,
+        // third caller). Anonymous like every other precon read — a precon has no owner and no
+        // visibility flag — and computed by the same `analyse_*` functions a deck uses, so a
+        // precon and the deck you copy from it can never disagree. The goldfish sets its own
+        // `no-store` when asked without a seed; the other three are CDN-cacheable.
+        .route("/api/games/{game}/precons/{slug}/stats", get(precon_stats))
+        .route(
+            "/api/games/{game}/precons/{slug}/legality",
+            get(precon_legality),
+        )
+        .route(
+            "/api/games/{game}/precons/{slug}/bracket",
+            get(precon_bracket),
+        )
+        .route(
+            "/api/games/{game}/precons/{slug}/goldfish",
+            get(precon_goldfish),
+        )
         .route("/api/games/{game}/products", get(list_products))
         .route("/api/games/{game}/products/facets", get(product_facets))
         .route("/api/games/{game}/products/{id}", get(get_product))

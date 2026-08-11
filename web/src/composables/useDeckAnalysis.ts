@@ -1,6 +1,11 @@
 import { keepPreviousData, useQuery, type QueryClient } from '@tanstack/vue-query'
 import type { Ref } from 'vue'
+import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import {
+  getPreconBracket,
+  getPreconGoldfish,
+  getPreconLegality,
+  getPreconStats,
   getDeckBracket,
   getDeckGoldfish,
   getDeckLegality,
@@ -192,4 +197,76 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-goldfish', game, deckId],
         ]
   for (const queryKey of keys) qc.invalidateQueries({ queryKey })
+}
+
+// ----- Preconstructed decks (published catalog decklists) -----
+//
+// A third address for the same four reads. Their own key prefix on purpose: a precon is
+// immutable catalog data rebuilt only by the daily sync, so it must NOT be swept by
+// `invalidateDeckAnalysis` when an unrelated deck is edited — and a slug would otherwise
+// share a key space with a numeric deck id. `staleTime` matches the rest of the precon
+// surface for the same reason.
+
+/** A precon's composition and draw odds. */
+export function usePreconStatsQuery(
+  game: Ref<string>,
+  slug: Ref<string>,
+  params: Ref<DeckStatsParams>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckAnalytics, ApiError>({
+    queryKey: ['precon-stats', game, slug, params],
+    queryFn: () => getPreconStats(game.value, slug.value, params.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A precon's legality verdict — `null` for the ~9 in 10 whose type states no format. */
+export function usePreconLegalityQuery(
+  game: Ref<string>,
+  slug: Ref<string>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<{ data: DeckLegality | null }, ApiError>({
+    queryKey: ['precon-legality', game, slug],
+    queryFn: () => getPreconLegality(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** A precon's estimated Commander bracket — `null` outside Commander. */
+export function usePreconBracketQuery(
+  game: Ref<string>,
+  slug: Ref<string>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<{ data: DeckBracketEstimate | null }, ApiError>({
+    queryKey: ['precon-bracket', game, slug],
+    queryFn: () => getPreconBracket(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** A seeded sample hand from a precon. Not `staleTime`d like its siblings: the hand is a
+ *  function of its params, and those change as the player mulligans. */
+export function usePreconGoldfishQuery(
+  game: Ref<string>,
+  slug: Ref<string>,
+  params: Ref<GoldfishParams>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<GoldfishHand, ApiError>({
+    queryKey: ['precon-goldfish', game, slug, params],
+    queryFn: () => getPreconGoldfish(game.value, slug.value, params.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
 }

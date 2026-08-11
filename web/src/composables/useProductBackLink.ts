@@ -7,8 +7,9 @@ import { onBeforeRouteUpdate, useRouter } from 'vue-router'
  * reached from the sealed catalog (a product tile on the flat browse or a set-scoped
  * list), collection/wish-list sealed section, a card's "Sealed products" section (the
  * card's full detail page, or the
- * browse-grid card modal `?card=<id>` which can sit over any list route), or another
- * sealed product's "What's in the box" section (a linked sub-product it contains).
+ * browse-grid card modal `?card=<id>` which can sit over any list route), another
+ * sealed product's "What's in the box" section (a linked sub-product it contains), or a
+ * preconstructed deck's "Buy sealed" link.
  * vue-router records the previous entry's path in history state (null on a direct load
  * or a freshly-opened tab); we resolve it so "back" returns to exactly that page —
  * re-opening the card modal, or preserving the originating list's state — and fall
@@ -58,6 +59,13 @@ export function useProductBackLink(game: Ref<string>) {
       from.name === 'game-sealed-set'
     ) {
       return { to: from.fullPath, label: 'Sealed products' }
+    }
+
+    // Opened from a preconstructed deck's "Buy sealed" link — back returns to that decklist.
+    // Without this arm a precon fell through to the fallback below and sent the visitor to the
+    // sealed browse, which is not where they came from and loses the deck they were reading.
+    if (from.name === 'precon') {
+      return { to: from.fullPath, label: 'Preconstructed deck' }
     }
 
     // Opened from the wish list's sealed-products section — return to the wish list,

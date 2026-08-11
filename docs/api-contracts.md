@@ -1267,6 +1267,57 @@ owner handle (no email/PII).
 | `GET /api/u/{handle}/decks/{deck_id}/bracket` | `{ data: DeckBracketEstimate \| null }` — the public mirror of the owner's bracket read, through the same `analyse_bracket` core. `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/goldfish` | `GoldfishHand` — the public mirror of the goldfish read, same query parameters; one seed deals one hand whoever asks. Shared-cacheable **only when `seed` is given** — without it the server mints a random one, so the response is not a function of its URL and is returned `no-store` rather than letting a CDN pin one visitor's roll for the whole TTL. `404` if private/absent |
 
+## Preconstructed decks API contract
+
+The decklists a publisher **shipped**: Commander decks, Planeswalker / Challenger / Starter
+decks, Jumpstart themes, intro packs. A **Secret Lair drop is not a preconstructed deck** —
+MTGJSON files one under `decks[]` because it is a fixed card list, but it is a product's
+contents, so `NOT_A_DECK_TYPES` excludes the category at derivation and it appears in no
+listing, facet or count (it is already modelled as a sealed product with `sealed_contents`).
+Derived from MTGJSON's per-set `decks[]` during
+the sealed-contents sync (no extra fetch: it's the same `AllPrintings.json`, and the same
+parse — see `api/src/mtgjson/precons.rs`), so they are **catalog** data, not the user's: the
+three reads are anonymous, live in the router's `public` group beside `/products`
+(`PUBLIC_CATALOG_CACHE`, ETag'd) and take no token. The one write — copying a precon into
+your own decks — is authenticated and filed under `/api/decks/...`, because what it creates
+is one of the caller's decks.
+
+Two tables: `entities/precon_deck.rs` (`precon_decks` — the deck row, with the facets folded
+at ingest: `card_count`, `sideboard_count`, `color_identity`, a `face_card_id` and the
+`product_id` of the sealed product that ships it) and `precon_deck_card.rs`
+(`precon_deck_cards` — one row per `(deck, board, card, finish)`; `board` is `commander` /
+`main` / `side`, and a row states a **single finish**, because that is how a published
+decklist reads). Both are **rebuilt wholesale** on every sync, so a row's `id` is not stable
+and never appears on the wire: a precon is addressed by its **`slug`** (`turtle-power-tmc`),
+derived deterministically from `(name, set)` with a numeric suffix on collision. Card ids are
+internal `cards.id` with no FK, so a precon card survives a catalog re-import and a card whose
+row is gone is LEFT-joined away — the same tolerance `deck_cards` has.
+
+| Method & path | Returns |
+|---------------|---------|
+| `GET /api/games/{game}/precons?page&page_size&q&set&type&sort` | `Page<PreconDeck>` — the game's precons, newest first (`sort=name` orders alphabetically). `q` matches each whitespace-separated word as an order-independent name substring (the sealed list's rule, not Scryfall syntax); `set` and `type` are equality filters over the facet vocabulary. `PreconDeck = { slug, game, name, set_code, set_name, deck_type, released_at, color_identity, card_count, sideboard_count, face_card }` |
+| `GET /api/games/{game}/precons/groups?group&page&page_size&q&set&type&sort` | `Page<PreconGroup>` — the same decks bucketed and **paginated by group**, so a group is never split across a boundary (the precon mirror of `/sets/{code}/drops`). `group=set` (default) buckets by the publishing set, newest **set** first — a set's date is the catalog's, not its decks', so a Secret Lair deck released years after the `sld` set still sits with `sld`. `group=type` buckets by deck category, **biggest first** (the facets dropdown's own order), which is what makes a 70-deck set readable — Marvel ships 51 Jumpstart themes beside 12 Box Sets, and 136 of 295 sets span more than one type. `sort=name` orders either grouping by heading. `PreconGroup = { slug, title, released_at, set_code, deck_count, decks }` — the drop/sub-type group shape, so one client component renders either. Shares the flat list's filter builder, so a filter selects exactly the same decks in every view (a test pins that; only the order may differ) |
+| `GET /api/games/{game}/precons/facets` | `{ data: PreconFacets }` — `{ types: { type, count }[]` (most decks first)`, sets: { code, name, count, released_at }[]` (newest first)`, total }`. Published rather than hardcoded: upstream adds deck categories over time. `facets` is a static segment, so it wins over `/{slug}` in axum |
+| `GET /api/games/{game}/precons/{slug}` | `PreconDeckDetail` — the header (flattened) plus `summary` (the deck proper), `sideboard_summary`, `cards: PreconCardEntry[] = { card, board, quantity, foil }` in board order (command zone → deck → sideboard, upstream's order within each), and `product` — the sealed product it ships in, when the catalog holds it. Returned whole; a precon is bounded. `404` for an unknown game or slug |
+| `POST /api/decks/{game}/precons/{slug}/copy` | `DeckDetail` — copy the precon into the caller's own decks (`WritableUser`, so a read-only key is **403**), returning the new deck. The copy is private and loose, named after the precon, and takes a format **only when the deck type states one** (`Commander Deck` → `commander`; a Secret Lair drop or a theme deck gets none, since a wrong guess would have the deck page judge it against rules it was never built for). `404` unknown game/slug; `422` at the per-game deck cap, or when nothing in the list is still in the catalog |
+
+**`color_identity` is the deck list's own three-state answer**, folded by the same rule
+(`api/src/handlers/decks/facets.rs`): the command zone's colours when the deck has one, the
+union over its mainboard otherwise — never its sideboard. `["W","U"]` = those colours, `[]` =
+genuinely colourless, **`null`** = there was nothing to read a colour off.
+
+**Board → section is decided once, by the copy** (`handlers/precons/copy.rs`): the command
+zone becomes a section named exactly `Commander` and the sideboard exactly `Sideboard`,
+because those spellings are what `decks::analysis::rules` reads a deck's zones off — a
+commander filed anywhere else comes back as "no commander". The mainboard is filed into the
+preset type buckets through `deck_import::categorize::preset_section`, the same table a deck
+import uses, so a copied precon arrives sorted rather than as one pile, and a precon row's
+single finish folds back into the deck card's regular/foil pair — **by card**, since a board
+may list one printing in both finishes (two rows by design) and `deck_cards` is unique on
+`(deck, card, section)`. The SPA mirrors that board
+vocabulary in `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) so the
+precon page renders through the *deck* display engine rather than a second one.
+
 ## Price alerts API contract (issue #525)
 
 Per-user **price alerts**: a below/above threshold on a single card's or sealed product's

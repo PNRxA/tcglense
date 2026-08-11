@@ -2,6 +2,7 @@ import type { Component } from 'vue'
 import {
   BookCopy,
   BookOpen,
+  Boxes,
   Code,
   Compass,
   Heart,
@@ -12,6 +13,7 @@ import {
   Wrench,
 } from '@lucide/vue'
 import type { Game } from '@/lib/api'
+import { preconsPath } from '@/lib/precons'
 import { toolPath, toolsFor, toolsPath } from '@/lib/tools'
 
 /**
@@ -108,6 +110,18 @@ export const NAV: readonly NavRoot[] = [
             icon: Package,
             landing: '/sealed',
             gameLinks: perGame('/sealed'),
+          },
+          {
+            id: 'precons',
+            // Catalog, not "Your library": a precon is published game data anyone can read,
+            // like a card or a sealed product — the library column is the per-user surfaces.
+            // Its per-game rows point into the deck section, where the browser lives, so the
+            // path comes from `lib/precons` rather than the usual `perGame(base)` (the one
+            // item whose landing and rows sit under different prefixes).
+            label: 'Preconstructed decks',
+            icon: Boxes,
+            landing: '/precons',
+            gameLinks: (game) => [{ label: game.name, to: preconsPath(game.id) }],
           },
           {
             id: 'keywords',

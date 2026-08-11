@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils'
 // / `hasSubtypes`) and the `select` handler (which restarts paging / keeps its own view
 // state); this is just the two-button presentation. `label` is the grouped button's text
 // ("By drop" or "By treatment"), sourced from the grouping's `groupLabel`.
+//
+// The precon browse deliberately does NOT use this: it has three groupings (by set, by deck
+// type, none), which is a picker, not a toggle — see `RadioSelectMenu`.
 defineProps<{ grouped: boolean; label: string }>()
 const emit = defineEmits<{ select: ['grouped' | 'all'] }>()
 </script>
