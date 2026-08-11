@@ -17,7 +17,7 @@ usePageMeta({
   title: 'Preconstructed decks',
   description:
     'Browse every preconstructed deck a trading-card game shipped — Commander decks, ' +
-    'Planeswalker and Challenger decks, Jumpstart themes and Secret Lair drops — with full ' +
+    'Planeswalker and Challenger decks, Jumpstart themes and intro packs — with full ' +
     'decklists, prices, and one-click copying into your own decks.',
   canonicalPath: '/precons',
 })

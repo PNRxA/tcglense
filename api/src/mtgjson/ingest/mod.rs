@@ -86,7 +86,7 @@ const VERSION_SEP: char = '\u{1f}';
 /// change takes effect, since the sync is otherwise ETag-gated. Bump it whenever any of that
 /// logic changes (including a change to how a precon slug is derived, since the slug is the
 /// browser's URL identity).
-const DERIVATION_VERSION: &str = "booster-pool-1+precon-1";
+const DERIVATION_VERSION: &str = "booster-pool-1+precon-2";
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and

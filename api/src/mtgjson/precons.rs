@@ -40,6 +40,19 @@ const MAX_SLUG: usize = 120;
 /// rather than an empty chip.
 const UNTYPED: &str = "Preconstructed Deck";
 
+/// Upstream categories that are **not preconstructed decks**, dropped before a row is built.
+///
+/// MTGJSON files a Secret Lair drop under a set's `decks[]` because a drop is a fixed list of
+/// cards, but that's a *product's contents*, not a deck anyone plays or builds from — nothing
+/// in it is a 60/100-card list with a command zone. Left in, they were 712 of 2,986 rows and
+/// buried `sld`'s 8 real precons (7 Commander decks and a Dandan deck) under 712 drops.
+///
+/// Dropped at derivation rather than filtered at read, so a count can't disagree with a
+/// listing: the facets, the landing's per-set tile, the browse totals and the group headings
+/// all count the same rows. The sealed side already models a drop properly — it's a product
+/// with `sealed_contents`, browsable at `/sealed/{game}`.
+const NOT_A_DECK_TYPES: [&str; 1] = ["Secret Lair Drop"];
+
 /// One resolved precon deck: its metadata plus every board's cards, keyed by **external**
 /// ids (Scryfall id for cards, TCGplayer product id for the sealed products that ship it) so
 /// the DB layer resolves both sides to internal ids — the same shape
@@ -132,6 +145,18 @@ fn build_one(
         .unwrap_or(fallback_set)
         .to_lowercase();
 
+    let deck_type = deck
+        .deck_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or(UNTYPED);
+    // Before any card resolution, and before a slug is claimed — an excluded entry must leave
+    // no trace, or it would still push a same-named real deck onto a `-2` slug.
+    if NOT_A_DECK_TYPES.contains(&deck_type) {
+        return None;
+    }
+
     // Boards in reading order: the command zone leads, then the deck, then the sideboard.
     let mut cards: Vec<RawPreconCard> = Vec::new();
     resolve_board(&deck.commander, PreconBoard::Commander, idx, &mut cards);
@@ -151,13 +176,7 @@ fn build_one(
         slug: unique_slug(name, &set_code, used_slugs),
         name: name.to_string(),
         set_code,
-        deck_type: deck
-            .deck_type
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .unwrap_or(UNTYPED)
-            .to_string(),
+        deck_type: deck_type.to_string(),
         released_at: deck
             .release_date
             .as_deref()
@@ -271,7 +290,8 @@ mod tests {
     use super::*;
 
     /// A two-set document: a Commander precon (command zone + deck + a sideboard card, one
-    /// card listed twice) and two same-named Secret Lair drops that must slug apart.
+    /// card listed twice) and, in `sld`, two same-named decks that must slug apart plus the
+    /// entries that must be dropped (unnamed, unresolvable, and a Secret Lair drop).
     fn fixture() -> AllPrintings {
         let json = serde_json::json!({
             "data": {
@@ -308,17 +328,24 @@ mod tests {
                         { "uuid": "u-drop", "identifiers": { "scryfallId": "sf-drop" } }
                     ],
                     "decks": [
+                        // A Secret Lair drop: a product's contents, not a deck — dropped whole,
+                        // and deliberately first + same-named so it would steal the slug below
+                        // if it were excluded any later than it is.
                         { "code": "SLD", "name": "A Box of Rocks", "type": "Secret Lair Drop",
                           "releaseDate": "2021-03-15",
                           "mainBoard": [ { "count": 1, "uuid": "u-drop" } ] },
+                        // The real decks `sld` does publish (it ships Commander decks too).
+                        { "code": "SLD", "name": "A Box of Rocks", "type": "Commander Deck",
+                          "releaseDate": "2021-03-15",
+                          "mainBoard": [ { "count": 1, "uuid": "u-drop" } ] },
                         // Punctuation-only difference: the two slugs must not be the same URL.
-                        { "code": "SLD", "name": "A Box of Rocks!", "type": "Secret Lair Drop",
+                        { "code": "SLD", "name": "A Box of Rocks!", "type": "Commander Deck",
                           "releaseDate": "2021-03-15",
                           "mainBoard": [ { "count": 1, "uuid": "u-drop", "isFoil": true } ] },
                         // No name, and a named deck whose every card is unresolvable: both dropped.
-                        { "code": "SLD", "type": "Secret Lair Drop",
+                        { "code": "SLD", "type": "Commander Deck",
                           "mainBoard": [ { "count": 1, "uuid": "u-drop" } ] },
-                        { "code": "SLD", "name": "Ghost Drop", "type": "Secret Lair Drop",
+                        { "code": "SLD", "name": "Ghost Deck", "type": "Commander Deck",
                           "mainBoard": [ { "count": 1, "uuid": "u-nope" } ] }
                     ]
                 }
@@ -407,8 +434,31 @@ mod tests {
         let precons = build_precons(&fixture());
         assert_eq!(precons.len(), 3, "{:?}", slugs(&precons));
         assert!(
-            !precons.iter().any(|p| p.name == "Ghost Drop"),
+            !precons.iter().any(|p| p.name == "Ghost Deck"),
             "a deck whose every card is unresolvable is not a deck"
+        );
+    }
+
+    /// A Secret Lair drop is a product's contents, not a preconstructed deck — MTGJSON just
+    /// files it under `decks[]` because it's a fixed card list. Upstream, they were 712 of
+    /// 2,986 rows and buried `sld`'s 8 real precons.
+    #[test]
+    fn secret_lair_drops_are_not_decks() {
+        let precons = build_precons(&fixture());
+        assert!(
+            !precons.iter().any(|p| p.deck_type == "Secret Lair Drop"),
+            "a drop must not reach the browser: {:?}",
+            precons.iter().map(|p| &p.deck_type).collect::<Vec<_>>()
+        );
+        // The rest of `sld` is untouched — the set's real decks still publish.
+        assert!(precons.iter().any(|p| p.set_code == "sld"));
+
+        // And the drop leaves no trace: it is same-named and walked *first*, so had it been
+        // excluded any later it would already have claimed the base slug and pushed the real
+        // deck onto `-2`.
+        assert_eq!(
+            find(&precons, "a-box-of-rocks-sld").deck_type,
+            "Commander Deck"
         );
     }
 
