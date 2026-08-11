@@ -170,8 +170,10 @@ pub struct PreconGroup {
     /// The set code this group links to, when grouping by set — the group heading's own page.
     /// `null` for a type group, which has no set page.
     pub set_code: Option<String>,
-    /// How many decks are in this group (`decks.len()`, carried so a client can label the
-    /// heading without counting).
+    /// How many decks are in this group **in total** — which is not always `decks.len()`:
+    /// `decks` is capped at a preview (see `MAX_DECKS_PER_GROUP`), so `deck_count >
+    /// decks.len()` means the group was truncated and the client should link out to the
+    /// filtered listing rather than imply it is showing everything.
     pub deck_count: usize,
     pub decks: Vec<PreconDeckResponse>,
 }

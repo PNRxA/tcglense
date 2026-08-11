@@ -33,6 +33,15 @@ use super::{
     precon_response,
 };
 
+/// Decks shipped per group in the grouped listings — a preview, not the group.
+///
+/// A page is a page of groups and a group is unbounded (`group=type` puts 570 decks in
+/// `Jumpstart` alone), so without this an anonymous request returned every deck header in the
+/// game — ~788 KB, buffered whole to compute its `ETag`. Eight rows of three on a desktop grid,
+/// which covers most groups outright: the true size always rides `deck_count`, so a client can
+/// tell a preview from a whole group and link out to the (uncapped) filtered listing.
+const MAX_DECKS_PER_GROUP: usize = 24;
+
 /// List preconstructed decks
 ///
 /// `GET /api/games/{game}/precons` -> the published decklists that shipped with the game's
@@ -424,22 +433,34 @@ pub async fn list_precon_groups(
 
     let total = buckets.len() as u64;
     let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
-    let on_page: Vec<(String, Vec<precon_deck::Model>)> = buckets
+    // A page is a page of *groups*, and a group is unbounded: `group=type` buckets every deck
+    // in the game into ~40 categories, one of which (Jumpstart) holds 570 — so an anonymous
+    // request was answering with ~788 KB, every byte of it buffered in memory again by
+    // `conditional_request_layer` to compute the `ETag`. Each group therefore ships a preview
+    // and states its real size in `deck_count`; `deck_count > decks.len()` is the client's
+    // signal to link out to the filtered listing, which is never truncated.
+    let on_page: Vec<(String, usize, Vec<precon_deck::Model>)> = buckets
         .into_iter()
         .skip(start)
         .take(page_size as usize)
+        .map(|(key, mut decks)| {
+            let in_group = decks.len();
+            decks.truncate(MAX_DECKS_PER_GROUP);
+            (key, in_group, decks)
+        })
         .collect();
 
-    // One face-card lookup for the whole page, not one per group.
+    // One face-card lookup for the whole page, not one per group — and only for the decks
+    // actually shipped, so the truncation saves the join too.
     let page_rows: Vec<precon_deck::Model> = on_page
         .iter()
-        .flat_map(|(_, decks)| decks.iter().cloned())
+        .flat_map(|(_, _, decks)| decks.iter().cloned())
         .collect();
     let faces = face_cards(&state, &page_rows).await?;
 
     let data: Vec<PreconGroup> = on_page
         .into_iter()
-        .map(|(key, decks)| {
+        .map(|(key, in_group, decks)| {
             let shaped: Vec<PreconDeckResponse> = decks
                 .iter()
                 .map(|row| {
@@ -451,7 +472,8 @@ pub async fn list_precon_groups(
                 })
                 .collect();
             PreconGroup {
-                deck_count: shaped.len(),
+                // The group's real size, not the preview's — see the truncation above.
+                deck_count: in_group,
                 decks: shaped,
                 // A set group is dated and links to its own page; a type group is neither.
                 released_at: by_set

@@ -157,6 +157,69 @@ async fn include_related_spans_the_sets_whole_group() {
     assert_eq!(body["total"], unfiltered["total"]);
 }
 
+/// A group is unbounded — `group=type` puts every Jumpstart deck in the game in one bucket —
+/// so a grouped page ships a **preview** per group and states the real size in `deck_count`.
+/// Seeds past the cap on purpose: a fixture that never exceeds it would assert nothing.
+#[tokio::test]
+async fn a_group_ships_a_preview_and_states_its_real_size() {
+    use crate::entities::precon_deck;
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
+
+    let app = test_app_with_catalog().await;
+    let now = chrono::Utc::now();
+    // 40 decks of one type, comfortably past MAX_DECKS_PER_GROUP (24).
+    for n in 0..40 {
+        precon_deck::ActiveModel {
+            id: NotSet,
+            game: Set("mtg".to_string()),
+            slug: Set(format!("bulk-theme-{n}-dmb")),
+            name: Set(format!("Bulk Theme {n}")),
+            set_code: Set("dmb".to_string()),
+            deck_type: Set("Bulk Theme".to_string()),
+            released_at: Set(Some("2024-01-15".to_string())),
+            color_identity: Set(None),
+            card_count: Set(60),
+            sideboard_count: Set(0),
+            face_card_id: Set(None),
+            product_id: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&app.state.db)
+        .await
+        .expect("insert bulk precon");
+    }
+
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons/groups?group=type&type=Bulk%20Theme"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let group = &body["data"][0];
+    assert_eq!(group["title"], "Bulk Theme");
+    assert_eq!(
+        group["deck_count"], 40,
+        "deck_count is the group's real size, not the preview's"
+    );
+    let shipped = group["decks"].as_array().unwrap().len();
+    assert!(
+        shipped < 40,
+        "an unbounded group would ship all 40 decks: {shipped}"
+    );
+    assert_eq!(shipped, 24, "the preview is the documented cap");
+
+    // The flat listing is the uncapped escape hatch the truncation points at, and it agrees
+    // with the count the group advertised.
+    let (_, _, flat) = send(
+        &app,
+        get("/api/games/mtg/precons?type=Bulk%20Theme&page_size=200"),
+    )
+    .await;
+    assert_eq!(flat["total"], 40);
+    assert_eq!(flat["data"].as_array().unwrap().len(), 40);
+}
+
 #[tokio::test]
 async fn precon_facets_publish_the_filter_vocabulary() {
     let app = test_app_with_catalog().await;
