@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
 import { RouterLink, useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import { Layers } from '@lucide/vue'
+import { Layers, LayoutGrid } from '@lucide/vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
   Select,
@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select'
 import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
-import GroupViewToggle from '@/components/cards/GroupViewToggle.vue'
+import RadioSelectMenu from '@/components/cards/RadioSelectMenu.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
@@ -23,12 +23,13 @@ import { useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
 import { useClampPage } from '@/composables/useClampPage'
 import {
+  PRECON_GROUP_PAGE_SIZE,
   PRECON_PAGE_SIZE,
-  PRECON_SET_PAGE_SIZE,
   usePreconFacetsQuery,
-  usePreconSetsQuery,
+  usePreconGroupsQuery,
   usePreconsQuery,
 } from '@/composables/usePrecons'
+import type { PreconGrouping } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
 // The precon *browse*, serving two routes the way `SealedBrowseView` serves its two:
@@ -81,18 +82,50 @@ const effectiveSet = computed(() => (scoped.value ? (props.code ?? '') : setFilt
 const SORT_OPTIONS = ['released', 'name']
 const { page, searchInput, query, sort } = useCardSearch('released', SORT_OPTIONS)
 
-// The by-set view is a URL mode (`?view=sets`), like the card set view's by-drop grouping, so
-// it's shareable and survives a reload. Switching restarts paging: a page of *sets* and a page
-// of decks don't mean the same thing, so carrying the number across would land you nowhere near
-// where you were.
-const grouped = computed(() => !scoped.value && route.query.view === 'sets')
-function selectView(next: 'grouped' | 'all') {
-  const query: LocationQueryRaw = { ...route.query }
-  if (next === 'grouped') query.view = 'sets'
-  else delete query.view
-  delete query.page
-  router.replace({ query })
-}
+// How the decks are laid out, as a URL mode (`?view=`) so it's shareable and survives a
+// reload — the card set view's own treatment of by-drop.
+//
+// The **defaults differ by route**, because the useful answer does. On a set's own page the
+// decks are already one set, and the thing that makes 70 of them readable is the *type* split
+// (Marvel ships 51 Jumpstart themes beside 12 Box Sets and 5 Welcome Decks), so it opens
+// grouped by type. The all-decks view opens flat — a browser you arrive at wanting to search.
+//
+// Switching restarts paging: a page of groups and a page of decks don't mean the same thing,
+// so carrying the number across would land you nowhere near where you were.
+type PreconView = 'sets' | 'types' | 'all'
+const DEFAULT_VIEW = computed<PreconView>(() => (scoped.value ? 'types' : 'all'))
+const view = computed<PreconView>(() => {
+  const raw = route.query.view
+  // A set page has no by-set view to offer — every deck on it is in the one set.
+  const allowed: PreconView[] = scoped.value ? ['types', 'all'] : ['sets', 'types', 'all']
+  return allowed.find((mode) => mode === raw) ?? DEFAULT_VIEW.value
+})
+const grouped = computed(() => view.value !== 'all')
+const grouping = computed<PreconGrouping>(() => (view.value === 'sets' ? 'set' : 'type'))
+
+const VIEW_OPTIONS: { value: PreconView; label: string }[] = [
+  { value: 'sets', label: 'By set' },
+  { value: 'types', label: 'By deck type' },
+  { value: 'all', label: 'No grouping' },
+]
+const viewOptions = computed(() =>
+  VIEW_OPTIONS.filter((option) => !(scoped.value && option.value === 'sets')),
+)
+const viewModel = computed({
+  get: () => view.value,
+  set: (next: string) => {
+    const query: LocationQueryRaw = { ...route.query }
+    // The route's own default is the absent state, so a shared URL carries only a deliberate
+    // choice and the default can change without breaking old links.
+    if (next === DEFAULT_VIEW.value) delete query.view
+    else query.view = next
+    delete query.page
+    router.replace({ query })
+  },
+})
+const viewLabel = computed(
+  () => VIEW_OPTIONS.find((option) => option.value === view.value)?.label ?? 'Grouping',
+)
 
 const facetsQuery = usePreconFacetsQuery(game)
 const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
@@ -116,30 +149,32 @@ const preconsQuery = usePreconsQuery(game, {
   ...listOptions,
   enabled: computed(() => !grouped.value),
 })
-const setsQuery = usePreconSetsQuery(game, { ...listOptions, enabled: grouped })
-const activeQuery = computed(() => (grouped.value ? setsQuery : preconsQuery))
+const groupsQuery = usePreconGroupsQuery(game, { ...listOptions, enabled: grouped }, grouping)
+const activeQuery = computed(() => (grouped.value ? groupsQuery : preconsQuery))
 
 const precons = computed(() => preconsQuery.data.value?.data ?? [])
-const setGroups = computed(() => setsQuery.data.value?.data ?? [])
+const groups = computed(() => groupsQuery.data.value?.data ?? [])
 const total = computed(() =>
-  grouped.value ? (setsQuery.data.value?.total ?? 0) : (preconsQuery.data.value?.total ?? 0),
+  grouped.value ? (groupsQuery.data.value?.total ?? 0) : (preconsQuery.data.value?.total ?? 0),
 )
-// The count line names what a page holds: sets in the grouped view, decks in the flat one.
+// The count line names what a page actually holds: groups in a grouped view (in the noun that
+// grouping counts), decks in the flat one.
 const totalLabel = computed(() => {
   if (!grouped.value)
     return `${total.value.toLocaleString()} ${total.value === 1 ? 'deck' : 'decks'}`
-  const decks = setGroups.value.reduce((sum, group) => sum + group.deck_count, 0)
-  const sets = `${total.value.toLocaleString()} ${total.value === 1 ? 'set' : 'sets'}`
+  const noun = grouping.value === 'set' ? 'set' : 'deck type'
+  const heads = `${total.value.toLocaleString()} ${total.value === 1 ? noun : `${noun}s`}`
+  const decks = groups.value.reduce((sum, group) => sum + group.deck_count, 0)
   return decks
-    ? `${sets} · ${decks.toLocaleString()} ${decks === 1 ? 'deck' : 'decks'} on this page`
-    : sets
+    ? `${heads} · ${decks.toLocaleString()} ${decks === 1 ? 'deck' : 'decks'} on this page`
+    : heads
 })
 const resultsTop = ref<HTMLElement | null>(null)
 
 useClampPage(page, () => ({
   ready: activeQuery.value.isSuccess.value,
   total: total.value,
-  pageSize: grouped.value ? PRECON_SET_PAGE_SIZE : PRECON_PAGE_SIZE,
+  pageSize: grouped.value ? PRECON_GROUP_PAGE_SIZE : PRECON_PAGE_SIZE,
 }))
 
 usePageMeta({
@@ -237,14 +272,15 @@ usePageMeta({
         <template v-else>{{ totalLabel }}</template>
         <template v-if="query"> matching “{{ query }}”</template>
       </p>
-      <!-- By set / all decks, the by-drop view's own control. Hidden in scoped mode, where
-           every deck is already in the one set. -->
-      <GroupViewToggle
-        v-if="!scoped"
-        :grouped="grouped"
-        label="By set"
-        all-label="All decks"
-        @select="selectView"
+      <!-- How the decks are laid out. A menu rather than the by-drop view's two-button
+           toggle, because there are three answers here (and two on a set page). -->
+      <RadioSelectMenu
+        v-model="viewModel"
+        :options="viewOptions"
+        label="Grouping"
+        :trigger-icon="LayoutGrid"
+        :trigger-label="viewLabel"
+        content-class="w-44"
       />
     </div>
 
@@ -257,17 +293,19 @@ usePageMeta({
     <template v-else>
       <div ref="resultsTop" class="scroll-mt-40 sm:scroll-mt-24" />
       <UpdatingOverlay :loading="activeQuery.isPlaceholderData.value">
-        <!-- Grouped by set: one heading per set (linking to that set's own page), then its
-             decks in the same tile grid the flat view uses. -->
+        <!-- Grouped: one heading per group — a set (linking to its own page) or a deck type —
+             then its decks in the same tile grid the flat view uses. -->
         <div v-if="grouped" class="space-y-10">
-          <section v-for="group in setGroups" :id="group.code" :key="group.code">
+          <section v-for="group in groups" :id="group.slug" :key="group.slug">
             <div class="mb-3 flex flex-wrap items-baseline gap-2 border-b pb-1.5">
               <RouterLink
-                :to="`/decks/${game}/precons/sets/${group.code}`"
+                v-if="group.set_code"
+                :to="`/decks/${game}/precons/sets/${group.set_code}`"
                 class="text-xl font-semibold tracking-tight hover:underline"
               >
-                {{ group.name ?? group.code.toUpperCase() }}
+                {{ group.title }}
               </RouterLink>
+              <h2 v-else class="text-xl font-semibold tracking-tight">{{ group.title }}</h2>
               <span class="text-muted-foreground text-sm tabular-nums">
                 {{ group.deck_count }} {{ group.deck_count === 1 ? 'deck' : 'decks' }}
                 <template v-if="group.released_at"> · {{ group.released_at }}</template>
@@ -291,7 +329,7 @@ usePageMeta({
       <div class="mt-10">
         <CardPagination
           v-model:page="page"
-          :page-size="grouped ? PRECON_SET_PAGE_SIZE : PRECON_PAGE_SIZE"
+          :page-size="grouped ? PRECON_GROUP_PAGE_SIZE : PRECON_PAGE_SIZE"
           :total="total"
           :loading="activeQuery.isPlaceholderData.value"
           :scroll-target="resultsTop"

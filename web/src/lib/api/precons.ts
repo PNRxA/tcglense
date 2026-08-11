@@ -5,7 +5,7 @@ import type {
   PreconDeck,
   PreconDeckDetail,
   PreconFacets,
-  PreconSetGroup,
+  PreconGroup,
 } from './generated'
 
 // ---------- Preconstructed decks (public catalog + one authed write) ----------
@@ -21,14 +21,17 @@ import type {
 // rebuilt wholesale on every sync, so ids are re-minted while a slug is stable.
 
 export type { PreconCardEntry, PreconDeck, PreconDeckDetail, PreconFacets } from './generated'
-export type { PreconFaceCard, PreconSetGroup, PreconSetRef, PreconTypeRef } from './generated'
+export type { PreconFaceCard, PreconGroup, PreconSetRef, PreconTypeRef } from './generated'
 
 /** A page of precon decks plus pagination cursors. */
 export type PreconPage = Page<PreconDeck>
 
-/** A page of **sets**, each with its precon decks — the by-set view's payload. Paginated by
- *  set, so a set's decks are never split across a page boundary. */
-export type PreconSetPage = Page<PreconSetGroup>
+/** A page of **groups**, each with its precon decks — the grouped views' payload. Paginated by
+ *  group, so a group's decks are never split across a page boundary. */
+export type PreconGroupPage = Page<PreconGroup>
+
+/** What a grouped listing buckets by: the set that published the decks, or the deck type. */
+export type PreconGrouping = 'set' | 'type'
 
 /** Reactive list controls for the precon browse view. Like the sealed list, `q` is a plain
  * name substring (not Scryfall syntax) and `set`/`type` are equality filters. */
@@ -42,6 +45,8 @@ export interface PreconListParams {
   type?: string
   /** `released` (default, newest first) or `name`. */
   sort?: string
+  /** Grouped listings only: `set` (default) or `type`. */
+  group?: PreconGrouping
 }
 
 /** Encode the precon-list query params, skipping falsy values, in a fixed order. */
@@ -53,6 +58,7 @@ function preconQuery(params: PreconListParams = {}): string {
   if (params.set) search.set('set', params.set)
   if (params.type) search.set('type', params.type)
   if (params.sort) search.set('sort', params.sort)
+  if (params.group) search.set('group', params.group)
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }
@@ -68,13 +74,13 @@ export function listPrecons(
   return request<PreconPage>(`${base(game)}${preconQuery(params)}`, { signal })
 }
 
-/** The same decks bucketed into the sets that published them, paginated by set. */
-export function listPreconSets(
+/** The same decks bucketed — by set (default) or by deck type — and paginated by group. */
+export function listPreconGroups(
   game: string,
   params?: PreconListParams,
   signal?: AbortSignal,
-): Promise<PreconSetPage> {
-  return request<PreconSetPage>(`${base(game)}/sets${preconQuery(params)}`, { signal })
+): Promise<PreconGroupPage> {
+  return request<PreconGroupPage>(`${base(game)}/groups${preconQuery(params)}`, { signal })
 }
 
 /** The deck types + sets that actually have precons, with counts — the filter vocabulary. */

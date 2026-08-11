@@ -13,6 +13,14 @@ import type { DeckCardEntry, DeckSection, PreconCardEntry } from '@/lib/api'
 // board added on one side only would render here as an unnamed bucket. The tests below pin
 // the list, so a fourth board fails here rather than showing up blank in the UI.
 
+/** Where a game's preconstructed decks live. They're catalog data but they sit *inside* the
+ *  deck section (that's the point — your decks and the published ones, side by side), so the
+ *  path isn't derivable from the section prefix the way `/cards/{game}` is. The nav registry
+ *  and the all-games hub both build it from here rather than spelling it out. */
+export function preconsPath(game: string): string {
+  return `/decks/${encodeURIComponent(game)}/precons`
+}
+
 /** The boards a published decklist is stated in, in reading order. */
 export const PRECON_BOARDS = ['commander', 'main', 'side'] as const
 

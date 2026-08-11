@@ -218,6 +218,15 @@ const router = createRouter({
     // beside your own. Public catalog data (no `requiresAuth`) and indexable — signing in
     // only adds "Copy to my decks". Static `precons` outranks the dynamic `:id` below in
     // vue-router, the same precedence `needed` above relies on.
+    // The all-games precon hub. It sits at the top level (beside `/cards`, `/sealed`,
+    // `/keywords`) because that's what it is — a catalog landing, and the shape the nav
+    // registry expands every catalog item into; its per-game rows land in the deck section,
+    // where the surface itself lives.
+    {
+      path: '/precons',
+      name: 'precon-games',
+      component: () => import('@/views/PreconGamesView.vue'),
+    },
     {
       path: '/decks/:game/precons',
       name: 'precons',

@@ -1,13 +1,14 @@
 import type { Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { copyPrecon, getPrecon, getPreconFacets, listPreconSets, listPrecons } from '@/lib/api'
+import { copyPrecon, getPrecon, getPreconFacets, listPreconGroups, listPrecons } from '@/lib/api'
 import type {
   ApiError,
   DeckDetail,
   PreconDeckDetail,
   PreconFacets,
+  PreconGrouping,
+  PreconGroupPage,
   PreconPage,
-  PreconSetPage,
 } from '@/lib/api'
 import { useAuthedMutation } from '@/lib/queries'
 import { invalidateDeck } from '@/composables/useDecks'
@@ -25,9 +26,9 @@ import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 /** Precons per page in the flat browse grid. */
 export const PRECON_PAGE_SIZE = 24
 
-/** **Sets** per page in the by-set view — a page here holds a handful of decks per set, so it
- *  counts groups, matching the by-drop view's own smaller page size. */
-export const PRECON_SET_PAGE_SIZE = 8
+/** **Groups** per page in the grouped views — a page here holds a handful of decks per group,
+ *  so it counts groups, matching the by-drop view's own smaller page size. */
+export const PRECON_GROUP_PAGE_SIZE = 8
 
 /** Reactive controls for the precon list; all carried in the key.
  *
@@ -69,21 +70,27 @@ export function usePreconsQuery(game: Ref<string>, opts: PreconListQueryOptions)
   })
 }
 
-/** The same decks grouped into their sets, paginated by set. Shares the list's filters (and
- *  its query-key shape), so switching the view keeps the search and filters you had. */
-export function usePreconSetsQuery(game: Ref<string>, opts: PreconListQueryOptions) {
-  return useQuery<PreconSetPage, ApiError>({
-    queryKey: ['precon-sets', game, opts.query, opts.set, opts.type, opts.sort, opts.page],
+/** The same decks bucketed by `group` (set or deck type), paginated by group. Shares the list's
+ *  filters — and carries the grouping in its key — so switching the view keeps the search and
+ *  filters you had, and each grouping caches independently. */
+export function usePreconGroupsQuery(
+  game: Ref<string>,
+  opts: PreconListQueryOptions,
+  group: Ref<PreconGrouping>,
+) {
+  return useQuery<PreconGroupPage, ApiError>({
+    queryKey: ['precon-groups', game, group, opts.query, opts.set, opts.type, opts.sort, opts.page],
     queryFn: ({ signal }) =>
-      listPreconSets(
+      listPreconGroups(
         game.value,
         {
           q: opts.query.value || undefined,
           set: opts.set.value || undefined,
           type: opts.type.value || undefined,
           sort: opts.sort.value || undefined,
+          group: group.value,
           page: opts.page.value,
-          pageSize: PRECON_SET_PAGE_SIZE,
+          pageSize: PRECON_GROUP_PAGE_SIZE,
         },
         signal,
       ),

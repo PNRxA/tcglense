@@ -323,10 +323,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
   own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
   a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
-  The browse is three routes over two reads: a set-tile **landing** (`/decks/{game}/precons`,
-  the deck mirror of `/cards/{game}`), a flat/by-set browse (`/precons/all`, `?view=sets`) and a
-  set-scoped one (`/precons/sets/{code}`) — and the flat list and the by-set grouping **share
-  one filter builder** server-side, so a filter can only change the layout, never the matches.
+  The browse is a set-tile **landing** (`/decks/{game}/precons`, the deck mirror of
+  `/cards/{game}`), a browse that groups **by set or by deck type** or not at all
+  (`/precons/all`, `?view=`), and a set-scoped one (`/precons/sets/{code}`) that **defaults to
+  the type grouping** — 136 of 295 sets ship more than one deck type, and a set page is a wall
+  of mixed tiles without it. All three read through **one filter builder** server-side
+  (`filtered_query`), so a filter can only change the layout, never the matches; a grouping may
+  reorder (by-type leads with the biggest category), which is why the test that pins this
+  compares deck *sets*, not sequences. The nav registry carries precons in **Catalog**, not
+  "Your library" — published game data, like a card — and it's the one item whose landing
+  (`/precons`) and per-game rows (`/decks/{game}/precons`) sit under different prefixes, so both
+  come from `lib/precons.ts`'s `preconsPath`.
   A precon row is a **single finish**, and a board may list one printing in **both** (every
   Jumpstart theme, every bundle land pack): two rows by design, since the ingest keys on
   `(card, finish)`. Everything that turns those rows into *deck* rows must therefore **fold by

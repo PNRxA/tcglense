@@ -30,7 +30,8 @@ use crate::state::AppState;
 
 use super::{
     PreconCardEntry, PreconDeckDetail, PreconDeckResponse, PreconFaceCard, PreconFacets,
-    PreconListParams, PreconSetGroup, PreconSetRef, PreconTypeRef, load_precon, precon_response,
+    PreconGroup, PreconGrouping, PreconListParams, PreconSetRef, PreconTypeRef, load_precon,
+    precon_response,
 };
 
 /// List preconstructed decks
@@ -330,36 +331,40 @@ fn sorted_query(query: Select<PreconDeck>, params: &PreconListParams) -> Select<
     }
 }
 
-/// List preconstructed decks grouped by set
+/// List preconstructed decks grouped
 ///
-/// `GET /api/games/{game}/precons/sets` -> the same decks the flat list returns, bucketed into
-/// the sets that published them and **paginated by set** (so a set is never split across a page
-/// boundary), newest set first. The by-set mirror of the card catalog's by-drop view.
+/// `GET /api/games/{game}/precons/groups` -> the same decks the flat list returns, bucketed and
+/// **paginated by group** (so a group is never split across a page boundary). `group=set` (the
+/// default) buckets by the set that published them, newest set first; `group=type` buckets by
+/// upstream's deck category — "Commander Deck", "Jumpstart", "Secret Lair Drop" — biggest first,
+/// which is what makes a 70-deck set readable instead of a wall of mixed tiles. The by-set /
+/// by-type mirror of the card catalog's by-drop view.
 #[utoipa::path(
     get,
-    path = "/api/games/{game}/precons/sets",
+    path = "/api/games/{game}/precons/groups",
     tag = "Preconstructed decks",
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
-        ("page" = Option<u64>, Query, description = "1-based page number (pages are sets, not decks)"),
-        ("page_size" = Option<u64>, Query, description = "Sets per page (default 20, max 100)"),
+        ("group" = Option<String>, Query, description = "`set` (default) or `type`"),
+        ("page" = Option<u64>, Query, description = "1-based page number (pages are groups, not decks)"),
+        ("page_size" = Option<u64>, Query, description = "Groups per page (default 20, max 100)"),
         ("q" = Option<String>, Query, description = "Name substring; every word must match"),
-        ("set" = Option<String>, Query, description = "Set code, e.g. `tmc` — narrows to that one group"),
+        ("set" = Option<String>, Query, description = "Set code, e.g. `tmc`"),
         ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
-        ("sort" = Option<String>, Query, description = "`released` (default, newest first) or `name`"),
+        ("sort" = Option<String>, Query, description = "`released` (default) or `name`; also orders the groups"),
     ),
     responses(
-        (status = 200, description = "A page of sets, each with its preconstructed decks.", body = Page<PreconSetGroup>),
+        (status = 200, description = "A page of groups, each with its preconstructed decks.", body = Page<PreconGroup>),
         (status = 404, description = "Unknown game."),
     ),
 )]
-pub async fn list_precon_sets(
+pub async fn list_precon_groups(
     State(state): State<AppState>,
     Path(game): Path<String>,
     Query(params): Query<PreconListParams>,
-) -> Result<Json<Page<PreconSetGroup>>, AppError> {
+) -> Result<Json<Page<PreconGroup>>, AppError> {
     require_game(&game)?;
-    // Pages are *sets* here, each holding a handful of decks, so this uses the by-drop
+    // Pages are *groups* here, each holding a handful of decks, so this uses the by-drop
     // endpoints' smaller page bounds rather than the card list's.
     let (page, page_size) = resolve_page(
         params.page,
@@ -378,7 +383,16 @@ pub async fn list_precon_sets(
 
     let names = set_name_map(&state, &game).await?;
     let set_dates = set_release_map(&state, &game).await?;
-    let mut buckets = group_by_set(rows);
+    let by_set = params.group == PreconGrouping::Set;
+    // Bucket on the chosen key, keeping the order the rows arrived in (so every group leads
+    // with whatever the list's own sort put first), then order the groups themselves.
+    let mut buckets = group_rows(rows, |row| {
+        if by_set {
+            row.set_code.clone()
+        } else {
+            row.deck_type.clone()
+        }
+    });
     sort_buckets(&mut buckets, &set_dates, &names, &params);
 
     let total = buckets.len() as u64;
@@ -396,11 +410,10 @@ pub async fn list_precon_sets(
         .collect();
     let faces = face_cards(&state, &page_rows).await?;
 
-    let data: Vec<PreconSetGroup> = on_page
+    let data: Vec<PreconGroup> = on_page
         .into_iter()
-        .map(|(code, decks)| PreconSetGroup {
-            deck_count: decks.len(),
-            decks: decks
+        .map(|(key, decks)| {
+            let shaped: Vec<PreconDeckResponse> = decks
                 .iter()
                 .map(|row| {
                     precon_response(
@@ -409,49 +422,92 @@ pub async fn list_precon_sets(
                         row.face_card_id.and_then(|id| faces.get(&id).cloned()),
                     )
                 })
-                .collect(),
-            // The set's own release date when the catalog knows it, else the newest deck in
-            // the group — an undated group still sorts and labels sensibly.
-            released_at: set_dates.get(&code).cloned().flatten().or_else(|| {
-                decks
-                    .iter()
-                    .filter_map(|deck| deck.released_at.clone())
-                    .max()
-            }),
-            name: names.get(&code).cloned(),
-            code,
+                .collect();
+            PreconGroup {
+                deck_count: shaped.len(),
+                decks: shaped,
+                // A set group is dated and links to its own page; a type group is neither.
+                released_at: by_set
+                    .then(|| {
+                        set_dates.get(&key).cloned().flatten().or_else(|| {
+                            decks
+                                .iter()
+                                .filter_map(|deck| deck.released_at.clone())
+                                .max()
+                        })
+                    })
+                    .flatten(),
+                title: if by_set {
+                    names
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| key.to_uppercase())
+                } else {
+                    key.clone()
+                },
+                set_code: by_set.then(|| key.clone()),
+                slug: if by_set { key } else { slugify_type(&key) },
+            }
         })
         .collect();
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
-/// Bucket precon rows by set code, preserving the order the rows arrived in **both** for the
-/// groups (first row of a set names its position) and within each group. Every group therefore
-/// leads with whatever the list's own sort put first.
-fn group_by_set(rows: Vec<precon_deck::Model>) -> Vec<(String, Vec<precon_deck::Model>)> {
+/// A deck type as an anchor-safe key (`Commander Deck` -> `commander-deck`). Only ever a
+/// fragment/`v-for` key — the wire filter is still the type verbatim, so nothing has to invert
+/// this.
+fn slugify_type(deck_type: &str) -> String {
+    let mut out = String::with_capacity(deck_type.len());
+    let mut pending = false;
+    for ch in deck_type.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending && !out.is_empty() {
+                out.push('-');
+            }
+            pending = false;
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            pending = true;
+        }
+    }
+    out
+}
+
+/// Bucket precon rows by a key, preserving the order the rows arrived in **both** for the
+/// groups (the first row of a key names its position) and within each group. Every group
+/// therefore leads with whatever the list's own sort put first.
+fn group_rows(
+    rows: Vec<precon_deck::Model>,
+    key_of: impl Fn(&precon_deck::Model) -> String,
+) -> Vec<(String, Vec<precon_deck::Model>)> {
     let mut order: Vec<String> = Vec::new();
-    let mut by_set: HashMap<String, Vec<precon_deck::Model>> = HashMap::new();
+    let mut by_key: HashMap<String, Vec<precon_deck::Model>> = HashMap::new();
     for row in rows {
-        let code = row.set_code.clone();
-        by_set
-            .entry(code.clone())
+        let key = key_of(&row);
+        by_key
+            .entry(key.clone())
             .or_insert_with(|| {
-                order.push(code.clone());
+                order.push(key);
                 Vec::new()
             })
             .push(row);
     }
     order
         .into_iter()
-        .filter_map(|code| by_set.remove(&code).map(|decks| (code, decks)))
+        .filter_map(|key| by_key.remove(&key).map(|decks| (key, decks)))
         .collect()
 }
 
-/// Order the groups: newest **set** first (`sort=name`: by set name, then code).
+/// Order the groups.
 ///
-/// A set's date is the catalog's, not its decks' — a Secret Lair deck released years after the
-/// `sld` set still belongs to `sld`, and the group should sit where the set does. A set the
-/// catalog doesn't know falls back to its newest deck, then sorts last if it has neither.
+/// * **By set:** newest set first. A set's date is the catalog's, not its decks' — a Secret Lair
+///   deck released years after the `sld` set still belongs to `sld`, and the group should sit
+///   where the set does. A set the catalog doesn't know falls back to its newest deck, then
+///   sorts last if it has neither.
+/// * **By type:** biggest category first, ties alphabetical — the same order the facets
+///   endpoint gives the type dropdown, so the sections and the filter agree on what leads.
+///
+/// `sort=name` orders either grouping by heading instead, matching what it does to the decks.
 fn sort_buckets(
     buckets: &mut [(String, Vec<precon_deck::Model>)],
     set_dates: &HashMap<String, Option<String>>,
@@ -459,6 +515,7 @@ fn sort_buckets(
     params: &PreconListParams,
 ) {
     let by_name = trim_query(params.sort.as_deref()) == Some("name");
+    let by_set = params.group == PreconGrouping::Set;
     let date_of = |code: &String, decks: &Vec<precon_deck::Model>| -> String {
         set_dates
             .get(code)
@@ -467,16 +524,34 @@ fn sort_buckets(
             .or_else(|| decks.iter().filter_map(|d| d.released_at.clone()).max())
             .unwrap_or_default()
     };
-    buckets.sort_by(|(a_code, a_decks), (b_code, b_decks)| {
+    let title_of = |key: &String| -> String {
+        if by_set {
+            names
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| key.to_uppercase())
+        } else {
+            key.clone()
+        }
+    };
+    buckets.sort_by(|(a_key, a_decks), (b_key, b_decks)| {
         if by_name {
-            let a_name = names.get(a_code).unwrap_or(a_code);
-            let b_name = names.get(b_code).unwrap_or(b_code);
-            return a_name.cmp(b_name).then_with(|| a_code.cmp(b_code));
+            return title_of(a_key)
+                .cmp(&title_of(b_key))
+                .then_with(|| a_key.cmp(b_key));
+        }
+        if !by_set {
+            // Biggest category first: a set page should open on its Commander decks, not on
+            // whichever category happens to sort first alphabetically.
+            return b_decks
+                .len()
+                .cmp(&a_decks.len())
+                .then_with(|| a_key.cmp(b_key));
         }
         // Newest first; an undated set sinks below every dated one rather than leading.
-        date_of(b_code, b_decks)
-            .cmp(&date_of(a_code, a_decks))
-            .then_with(|| a_code.cmp(b_code))
+        date_of(b_key, b_decks)
+            .cmp(&date_of(a_key, a_decks))
+            .then_with(|| a_key.cmp(b_key))
     });
 }
 

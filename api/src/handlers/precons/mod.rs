@@ -39,11 +39,11 @@ mod copy;
 mod read;
 
 pub use copy::copy_precon_deck;
-pub use read::{get_precon, list_precon_sets, list_precons, precon_facets};
+pub use read::{get_precon, list_precon_groups, list_precons, precon_facets};
 
 pub use copy::__path_copy_precon_deck;
 pub use read::{
-    __path_get_precon, __path_list_precon_sets, __path_list_precons, __path_precon_facets,
+    __path_get_precon, __path_list_precon_groups, __path_list_precons, __path_precon_facets,
 };
 
 // ---------- Response DTOs ----------
@@ -131,19 +131,45 @@ pub struct PreconDeckDetail {
     pub product: Option<ProductResponse>,
 }
 
-/// One set's preconstructed decks, for the by-set view — the precon mirror of the card
-/// catalog's by-drop grouping, and paginated the same way: a page is a page of **sets**, so a
-/// set's decks are never split across a boundary.
+/// How a grouped listing buckets its decks.
+///
+/// The two questions a precon browser gets asked: "what came in this set" and "show me the
+/// Commander decks". They're one endpoint rather than two because everything else about the
+/// response — the filters, the per-group pagination, the shaping — is identical; only the key
+/// function differs.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PreconGrouping {
+    /// By the set that published them (the default).
+    #[default]
+    Set,
+    /// By upstream's deck category — "Commander Deck", "Jumpstart", "Secret Lair Drop", …
+    Type,
+}
+
+/// One group of preconstructed decks — a set, or a deck type — for the grouped views.
+///
+/// The precon mirror of the card catalog's by-drop grouping, and paginated the same way: a page
+/// is a page of **groups**, so a group's decks are never split across a boundary. It carries
+/// the drop/sub-type group shape (`slug` + `title` + a count + the items) for the same reason
+/// those two do: one DTO the client renders through one section component, whichever grouping
+/// produced it.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "PreconSetGroup"))]
-pub struct PreconSetGroup {
-    /// Set code, lowercased (`tmc`) — the anchor/link key.
-    pub code: String,
-    /// The set's catalog name, when it has one.
-    pub name: Option<String>,
-    /// The **set's** release date (not its decks'), falling back to the newest deck in the
-    /// group when the catalog doesn't know the set. What the groups are ordered by.
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "PreconGroup"))]
+pub struct PreconGroup {
+    /// Stable key for anchors/links: the set code (`tmc`) when grouping by set, a slugified
+    /// deck type (`commander-deck`) when grouping by type.
+    pub slug: String,
+    /// Heading text: the set's catalog name (falling back to its upper-cased code), or the
+    /// deck type verbatim.
+    pub title: String,
+    /// The **set's** release date when grouping by set (not its decks' — a Secret Lair deck
+    /// published years after the `sld` set still belongs to `sld`), falling back to the newest
+    /// deck in the group. Always `null` when grouping by type, which has no date.
     pub released_at: Option<String>,
+    /// The set code this group links to, when grouping by set — the group heading's own page.
+    /// `null` for a type group, which has no set page.
+    pub set_code: Option<String>,
     /// How many decks are in this group (`decks.len()`, carried so a client can label the
     /// heading without counting).
     pub deck_count: usize,
@@ -197,6 +223,9 @@ pub(crate) struct PreconListParams {
     pub deck_type: Option<String>,
     /// `released` (default, newest first) or `name`.
     pub sort: Option<String>,
+    /// Grouped listings only: what to bucket by (`set`, the default, or `type`).
+    #[serde(default)]
+    pub group: PreconGrouping,
 }
 
 // ---------- Shared helpers ----------

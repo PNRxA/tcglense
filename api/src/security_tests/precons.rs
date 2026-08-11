@@ -26,7 +26,7 @@ async fn precon_list_is_publicly_readable_and_shared_cacheable() {
         Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
         "a precon is public catalog data, so its list is browser + CDN cacheable"
     );
-    assert_eq!(body["total"], 3);
+    assert_eq!(body["total"], 5);
     let data = body["data"].as_array().expect("data array");
 
     // Newest first: the 2024 sets lead the 2019 Secret Lair.
@@ -91,7 +91,7 @@ async fn precon_facets_publish_the_filter_vocabulary() {
         cache_control(&headers),
         Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE)
     );
-    assert_eq!(body["data"]["total"], 3);
+    assert_eq!(body["data"]["total"], 5);
     let types: Vec<&str> = body["data"]["types"]
         .as_array()
         .expect("types")
@@ -115,13 +115,13 @@ async fn precon_facets_publish_the_filter_vocabulary() {
 async fn precons_group_by_set_and_paginate_by_group() {
     let app = test_app_with_catalog().await;
 
-    let (status, headers, body) = send(&app, get("/api/games/mtg/precons/sets")).await;
+    let (status, headers, body) = send(&app, get("/api/games/mtg/precons/groups")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         cache_control(&headers),
         Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE)
     );
-    // The page counts SETS, not decks — three seeded precons, one per set.
+    // The page counts SETS, not decks: five seeded precons across three sets.
     assert_eq!(body["total"], 3);
     let groups = body["data"].as_array().expect("groups");
     assert_eq!(groups.len(), 3);
@@ -129,10 +129,14 @@ async fn precons_group_by_set_and_paginate_by_group() {
     // Newest SET first: dmu (2024-06) then dmb (2024-01) then sld (2019).
     let codes: Vec<&str> = groups
         .iter()
-        .map(|g| g["code"].as_str().expect("code"))
+        .map(|g| g["slug"].as_str().expect("slug"))
         .collect();
     assert_eq!(codes, vec!["dmu", "dmb", "sld"]);
-    assert_eq!(groups[0]["name"], "Dummy Universe");
+    assert_eq!(groups[0]["title"], "Dummy Universe");
+    assert_eq!(
+        groups[0]["set_code"], "dmu",
+        "a set group links to its own page"
+    );
     assert_eq!(groups[0]["deck_count"], 1);
     // Each group carries its decks in full, tile facets and all.
     let deck = &groups[0]["decks"][0];
@@ -140,35 +144,100 @@ async fn precons_group_by_set_and_paginate_by_group() {
     assert!(deck["face_card"]["card_id"].as_str().is_some());
 
     // A group is never split across a page boundary: one set per page here.
-    let (_, _, body) = send(&app, get("/api/games/mtg/precons/sets?page_size=1&page=2")).await;
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons/groups?page_size=1&page=2"),
+    )
+    .await;
     assert_eq!(body["total"], 3, "the total still counts sets");
     assert_eq!(body["data"].as_array().expect("groups").len(), 1);
-    assert_eq!(body["data"][0]["code"], "dmb");
+    assert_eq!(body["data"][0]["slug"], "dmb");
     assert_eq!(body["has_more"], true);
+}
+
+#[tokio::test]
+async fn precons_group_by_deck_type_biggest_category_first() {
+    let app = test_app_with_catalog().await;
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/precons/groups?group=type")).await;
+    assert_eq!(status, StatusCode::OK);
+    // One group per deck type the game has, not per set.
+    assert_eq!(body["total"], 4);
+    let groups = body["data"].as_array().expect("groups");
+    let titles: Vec<&str> = groups
+        .iter()
+        .map(|g| g["title"].as_str().expect("title"))
+        .collect();
+    assert!(titles.contains(&"Commander Deck"), "{titles:?}");
+    assert!(titles.contains(&"Secret Lair Drop"), "{titles:?}");
+    // Biggest category first: two Jumpstart themes outrank every one-deck type.
+    assert_eq!(titles[0], "Jumpstart", "{titles:?}");
+    assert_eq!(groups[0]["deck_count"], 2);
+    // Every group carries its decks, anchor-safe slug, and no set link/date (a type has
+    // neither) — the two things the set grouping fills in.
+    let commander = groups
+        .iter()
+        .find(|g| g["title"] == "Commander Deck")
+        .expect("a Commander Deck group");
+    assert_eq!(commander["slug"], "commander-deck");
+    assert!(commander["set_code"].is_null());
+    assert!(commander["released_at"].is_null());
+    assert_eq!(commander["deck_count"], 1);
+    assert_eq!(commander["decks"][0]["slug"], COMMANDER_SLUG);
+
+    // Scoping to a set groups *that set's* decks by type — the set page's default view, and
+    // the reason it exists: the base set's three decks split into two named sections.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons/groups?group=type&set=dmb"),
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+    let titles: Vec<&str> = body["data"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .map(|g| g["title"].as_str().expect("title"))
+        .collect();
+    assert_eq!(titles, vec!["Jumpstart", "Starter Deck"]);
 }
 
 #[tokio::test]
 async fn grouped_and_flat_views_agree_on_what_matches() {
     let app = test_app_with_catalog().await;
 
-    // The two share one filter builder, so a filter must select the same decks either way.
-    for query in ["?type=Commander%20Deck", "?q=dummy%20starter", "?set=sld"] {
+    // Every view shares one filter builder, so a filter must select the same decks whichever
+    // layout is asked for — only the grouping may differ.
+    for query in [
+        "?type=Commander%20Deck",
+        "?q=dummy%20starter",
+        "?set=sld",
+        "?group=type",
+        "?q=dummy&group=type",
+    ] {
         let (_, _, flat) = send(&app, get(&format!("/api/games/mtg/precons{query}"))).await;
-        let (_, _, grouped) = send(&app, get(&format!("/api/games/mtg/precons/sets{query}"))).await;
-        let flat_slugs: Vec<&str> = flat["data"]
+        let (_, _, grouped) =
+            send(&app, get(&format!("/api/games/mtg/precons/groups{query}"))).await;
+        // Compared as *sets*: the claim is which decks match, not the sequence. A grouping is
+        // free to reorder (by-type leads with the biggest category), which is exactly the part
+        // a shared filter builder is not responsible for.
+        let mut flat_slugs: Vec<&str> = flat["data"]
             .as_array()
             .expect("decks")
             .iter()
             .map(|d| d["slug"].as_str().expect("slug"))
             .collect();
-        let grouped_slugs: Vec<&str> = grouped["data"]
+        let mut grouped_slugs: Vec<&str> = grouped["data"]
             .as_array()
             .expect("groups")
             .iter()
             .flat_map(|g| g["decks"].as_array().expect("decks"))
             .map(|d| d["slug"].as_str().expect("slug"))
             .collect();
+        flat_slugs.sort_unstable();
+        grouped_slugs.sort_unstable();
         assert_eq!(flat_slugs, grouped_slugs, "disagreement on {query}");
+        assert!(!flat_slugs.is_empty(), "{query} matched nothing to compare");
     }
 }
 
@@ -233,7 +302,7 @@ async fn unknown_precon_and_game_are_no_store_404s() {
         "/api/games/mtg/precons/does-not-exist",
         "/api/games/nope/precons",
         "/api/games/nope/precons/facets",
-        "/api/games/nope/precons/sets",
+        "/api/games/nope/precons/groups",
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");

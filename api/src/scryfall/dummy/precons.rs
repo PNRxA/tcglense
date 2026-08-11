@@ -69,6 +69,16 @@ fn dummy_precons() -> Vec<SeedPrecon> {
         .collect();
     starter_cards.push((PreconBoard::Side, card("dmb", 10), 3, false));
 
+    // Two Jumpstart-style themes in the base set, so one set carries several decks across
+    // several types — the shape that makes the by-type grouping worth having (Marvel ships 51
+    // Jumpstart themes beside 12 Box Sets; 136 of 295 real sets span more than one type). With
+    // one deck per set the grouped views would render but demonstrate nothing.
+    let theme = |first: i32| -> Vec<(PreconBoard, String, i32, bool)> {
+        (first..first + 4)
+            .map(|n| (PreconBoard::Main, card("dmb", n), 2, false))
+            .collect()
+    };
+
     vec![
         SeedPrecon {
             slug: "dummy-universe-commander-dmu",
@@ -96,6 +106,24 @@ fn dummy_precons() -> Vec<SeedPrecon> {
             released_at: "2024-01-15",
             product_external_id: None,
             cards: starter_cards,
+        },
+        SeedPrecon {
+            slug: "dummy-base-set-jumpstart-ember-dmb",
+            name: "Dummy Base Set Jumpstart: Ember",
+            set_code: "dmb",
+            deck_type: "Jumpstart",
+            released_at: "2024-01-15",
+            product_external_id: None,
+            cards: theme(2),
+        },
+        SeedPrecon {
+            slug: "dummy-base-set-jumpstart-tide-dmb",
+            name: "Dummy Base Set Jumpstart: Tide",
+            set_code: "dmb",
+            deck_type: "Jumpstart",
+            released_at: "2024-01-15",
+            product_external_id: None,
+            cards: theme(6),
         },
     ]
 }
@@ -292,6 +320,17 @@ mod tests {
             precons
                 .iter()
                 .any(|p| p.cards.iter().any(|(b, ..)| *b == PreconBoard::Side))
+        );
+        // One set with several decks across several types — what the grouped views are for.
+        let dmb: Vec<&SeedPrecon> = precons.iter().filter(|p| p.set_code == "dmb").collect();
+        assert!(dmb.len() >= 3, "the base set carries several decks");
+        assert!(
+            dmb.iter()
+                .map(|p| p.deck_type)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                >= 2,
+            "…across more than one deck type"
         );
     }
 
