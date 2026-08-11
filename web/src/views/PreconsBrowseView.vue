@@ -34,12 +34,16 @@ import { usePageMeta } from '@/lib/seo'
 
 // The precon *browse*, serving two routes the way `SealedBrowseView` serves its two:
 //
-//   /decks/:game/precons/all            — every precon, flat (newest first) or grouped by set
-//   /decks/:game/precons/sets/:code     — one set's precons, the landing's click-through
+//   /decks/:game/precons/all                  — every precon, grouped by set
+//   /decks/:game/precons/sets/:code           — one set's precons, the landing's click-through
+//   /decks/:game/precons/sets/:code?related=1 — that set *and its related sub-sets*, the
+//                                               landing's grouped "All N decks" link
 //
 // `code` (undefined = the all-decks view) is the only per-route difference: it pins the set
-// filter, hides the set `<Select>`, and hides the by-set toggle (a single set grouped by set is
-// one group — the flat grid is what you want). Public, like the rest of the catalog.
+// filter and hides the set `<Select>`. It makes three shapes rather than two, because a spanned
+// group holds several sets and so behaves like the all-decks view wherever "how many sets are
+// on screen" matters — see `singleSet` and the grouping options below. Public, like the rest
+// of the catalog.
 const props = defineProps<{ game: string; code?: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
@@ -93,34 +97,49 @@ const { page, searchInput, query, sort } = useCardSearch('released', SORT_OPTION
 // How the decks are laid out, as a URL mode (`?view=`) so it's shareable and survives a
 // reload — the card set view's own treatment of by-drop.
 //
-// The **defaults differ by route**, because the useful answer does. On a set's own page the
-// decks are already one set, and the thing that makes 70 of them readable is the *type* split
-// (Marvel ships 51 Jumpstart themes beside 12 Box Sets and 5 Welcome Decks), so it opens
-// grouped by type. The all-decks view opens grouped **by set**: 2,986 decks flat is a wall
-// with no landmarks, and the set that published them is how people remember a precon.
-//
 // Switching restarts paging: a page of groups and a page of decks don't mean the same thing,
 // so carrying the number across would land you nowhere near where you were.
 type PreconView = 'sets' | 'types' | 'all'
-const DEFAULT_VIEW = computed<PreconView>(() => (singleSet.value ? 'types' : 'sets'))
-const view = computed<PreconView>(() => {
-  const raw = route.query.view
-  // A *single* set page has no by-set view to offer — every deck on it is in the one set. A
-  // spanned group does: splitting by set is exactly what tells the sub-sets apart.
-  const allowed: PreconView[] = singleSet.value ? ['types', 'all'] : ['sets', 'types', 'all']
-  return allowed.find((mode) => mode === raw) ?? DEFAULT_VIEW.value
-})
-const grouped = computed(() => view.value !== 'all')
-const grouping = computed<PreconGrouping>(() => (view.value === 'sets' ? 'set' : 'type'))
 
 const VIEW_OPTIONS: { value: PreconView; label: string }[] = [
   { value: 'sets', label: 'By set' },
   { value: 'types', label: 'By deck type' },
   { value: 'all', label: 'No grouping' },
 ]
+
+// Which groupings this route can offer at all — each is dropped where it answers nothing:
+//
+// * A **single set** grouped by set is one group. What makes 70 decks readable there is the
+//   type split (Marvel ships 51 Jumpstart themes beside 12 Box Sets and 5 Welcome Decks).
+// * **All decks** grouped by type is every set's decks poured into ~40 buckets, which loses
+//   the one landmark a precon actually has — the set that published it.
+//
+// A **spanned group** (`?related=1`) is the only route that offers all three: it holds a
+// handful of sets, so both splits say something.
 const viewOptions = computed(() =>
-  VIEW_OPTIONS.filter((option) => !(singleSet.value && option.value === 'sets')),
+  VIEW_OPTIONS.filter((option) => {
+    if (singleSet.value && option.value === 'sets') return false
+    if (!scoped.value && option.value === 'types') return false
+    return true
+  }),
 )
+
+// The **defaults differ by route**, because the useful answer does. Anything set-scoped opens
+// by deck type — on one set that's the only split, and on a spanned group the sub-sets are
+// mostly *why* the types differ ("Commander" is a whole sub-set), so type is the sharper cut.
+// The all-decks view opens by set: 2,274 decks flat is a wall with no landmarks.
+const DEFAULT_VIEW = computed<PreconView>(() => (scoped.value ? 'types' : 'sets'))
+const view = computed<PreconView>(() => {
+  const raw = route.query.view
+  // Read straight off the offered options, so a mode this route hides can't be reached by
+  // hand-writing the query either — the two can't drift apart.
+  return (
+    viewOptions.value.map((option) => option.value).find((mode) => mode === raw) ??
+    DEFAULT_VIEW.value
+  )
+})
+const grouped = computed(() => view.value !== 'all')
+const grouping = computed<PreconGrouping>(() => (view.value === 'sets' ? 'set' : 'type'))
 const viewModel = computed({
   get: () => view.value,
   set: (next: string) => {
