@@ -554,6 +554,38 @@ catalog) is planned but not implemented.
   and the synchronous response returns only the lightweight deck header; the full card DTOs are
   loaded through the normal deck-detail read after navigation.
 
+## Preconstructed decks (issue #363's catalog sibling)
+
+- **The grouped listings ship every deck in a group, uncapped — deliberately.** A review
+  flagged `GET /api/games/{game}/precons/groups?group=type&page_size=100` returning ~788 KB
+  (every deck header in the game, `Jumpstart` alone holding 570) and buffered again in memory
+  by `conditional_request_layer` to compute its `ETag`. A per-group preview cap was tried and
+  **reverted**: it bought little on any path a user takes and cost the thing the page is for.
+  The numbers behind that call:
+  - The SPA asks for **8 groups a page** (`PRECON_GROUP_PAGE_SIZE`), not the server's default
+    of 20, and by-deck-type is offered only on a **set-scoped** route — so the largest request
+    the app itself can make is one set's decks, not the whole game's. Measured against the full
+    MTG catalog (2,274 decks), raw / gzipped:
+
+    | request | raw | gzip |
+    |---|---|---|
+    | `group=set&page_size=8` (the browse) | 38 KB | **6 KB** |
+    | `group=type&page_size=8&set=msh` (a 70-deck set page) | 24 KB | **4 KB** |
+    | `group=type&page_size=100` (hand-crafted, not reachable from the SPA) | 788 KB | 124 KB |
+
+  - These are anonymous `PUBLIC_CATALOG_CACHE` reads (`s-maxage=3600`, plus
+    `stale-while-revalidate`), so a shared cache absorbs the repeats. Note the **origin does not
+    compress** (there is no compression layer in `router.rs`) — the gzip column is what an edge
+    that compresses would put on the wire, so it is a statement about the CDN, not about
+    origin→edge transfer.
+  - Truncating meant a group heading saying "570 decks" above 24 tiles, which needs a
+    "view all" affordance, a second uncapped endpoint to link to, and a `deck_count` that no
+    longer means `decks.len()` — complexity on every client to save bytes on a cached path.
+  A test pins the uncapped contract (`a_group_ships_every_deck_it_counts`), so reintroducing a
+  cap is a deliberate act with a failing test attached rather than a silent regression. If this
+  ever does need bounding, bound it where the cost actually is — the origin's ETag buffering —
+  rather than by lying to the client about how big a group is.
+
 ## Data ingest & datasets
 
 - **Card data import:** runs in the background on boot, streaming Scryfall's

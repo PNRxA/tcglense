@@ -333,12 +333,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   136 of 295 sets ship more than one deck type, and by-set on one set is a single group;
   and `/precons/sets/{code}?related=1` — the landing's grouped "All N decks" link, spanning the
   set's whole catalog group through the shared `load_group_set_codes` seam — offers all three,
-  defaulting to **by type**, because it is the one shape holding several sets.
-  A grouped page ships a **capped preview** per group with the group's real size in
-  `deck_count` (a group is unbounded — `group=type` puts 570 decks in one bucket — and the whole
-  page is buffered again to compute its `ETag`), so a client must read `deck_count >
-  decks.length` as "truncated" and link out to the uncapped flat listing rather than imply it is
-  showing everything. All read through **one filter builder** server-side
+  defaulting to **by type**, because it is the one shape holding several sets. All read through
+  **one filter builder** server-side
   (`filtered_query`), so a filter can only change the layout, never the matches; a grouping may
   reorder (by-type leads with the biggest category), which is why the test that pins this
   compares deck *sets*, not sequences. The nav registry carries precons in **Catalog**, not

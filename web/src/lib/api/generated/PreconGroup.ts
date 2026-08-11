@@ -33,9 +33,7 @@ released_at: string | null,
  */
 set_code: string | null, 
 /**
- * How many decks are in this group **in total** — which is not always `decks.len()`:
- * `decks` is capped at a preview (see `MAX_DECKS_PER_GROUP`), so `deck_count >
- * decks.len()` means the group was truncated and the client should link out to the
- * filtered listing rather than imply it is showing everything.
+ * How many decks are in this group (`decks.len()`, carried so a client can label the
+ * heading without counting).
  */
 deck_count: number, decks: Array<PreconDeck>, };

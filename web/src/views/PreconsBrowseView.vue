@@ -1,12 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import {
-  RouterLink,
-  useRoute,
-  useRouter,
-  type LocationQueryRaw,
-  type RouteLocationRaw,
-} from 'vue-router'
+import { RouterLink, useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { Layers, LayoutGrid } from '@lucide/vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
@@ -36,7 +30,7 @@ import {
   usePreconGroupsQuery,
   usePreconsQuery,
 } from '@/composables/usePrecons'
-import type { PreconGroup, PreconGrouping } from '@/lib/api'
+import type { PreconGrouping } from '@/lib/api'
 import { usePageMeta } from '@/lib/seo'
 
 // The precon *browse*, serving two routes the way `SealedBrowseView` serves its two:
@@ -162,18 +156,6 @@ const viewModel = computed({
 const viewLabel = computed(
   () => VIEW_OPTIONS.find((option) => option.value === view.value)?.label ?? 'Grouping',
 )
-
-// Where a truncated group's "view all" goes: the same decks with no grouping, so nothing is
-// capped. A set group has its own page (and `?set=` is ignored on a set-scoped route, so the
-// path has to carry it); a type group stays on this route and pins `?type=`, which also keeps
-// any active search and the `?related=1` span.
-const groupAllLink = (group: PreconGroup): RouteLocationRaw =>
-  group.set_code
-    ? { path: `/decks/${game.value}/precons/sets/${group.set_code}`, query: { view: 'all' } }
-    : {
-        path: route.path,
-        query: { ...route.query, type: group.title, view: 'all', page: undefined },
-      }
 
 const facetsQuery = usePreconFacetsQuery(game)
 const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
@@ -397,18 +379,6 @@ usePageMeta({
                 :game="game"
               />
             </div>
-            <!-- A grouped page ships a preview per group, so a big group is truncated. Say so
-                 and link to the ungrouped listing for that group, which is never capped —
-                 otherwise the heading's count and the tiles below it would disagree in
-                 silence. -->
-            <p v-if="group.decks.length < group.deck_count" class="mt-3 text-sm">
-              <RouterLink
-                :to="groupAllLink(group)"
-                class="text-muted-foreground hover:text-foreground underline underline-offset-4"
-              >
-                Showing {{ group.decks.length }} of {{ group.deck_count }} — view all
-              </RouterLink>
-            </p>
           </DropSection>
         </div>
 
