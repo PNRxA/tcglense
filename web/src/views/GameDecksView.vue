@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { FolderPlus, Layers, Plus, ShoppingCart, TriangleAlert } from '@lucide/vue'
+import { Boxes, FolderPlus, Layers, Plus, ShoppingCart, TriangleAlert } from '@lucide/vue'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -247,6 +247,15 @@ function removeFolder(folderId: number, name: string) {
           >Create account</RouterLink
         >
       </div>
+      <!-- Preconstructed decks are public catalog data, so there's something to read here
+           without an account — and a precon is a good first deck to copy once there is one. -->
+      <p class="text-muted-foreground mt-6 text-sm">
+        Or browse the
+        <RouterLink :to="`/decks/${game}/precons`" class="text-primary underline"
+          >preconstructed decks</RouterLink
+        >
+        — every list {{ gameName }} shipped, no account needed.
+      </p>
     </div>
 
     <template v-else>
@@ -281,6 +290,13 @@ function removeFolder(folderId: number, name: string) {
             :to="`/decks/${game}/needed`"
           >
             <ShoppingCart class="size-4" /> Cards needed
+          </RouterLink>
+          <!-- The published decklists, beside your own (they're catalog data, not yours). -->
+          <RouterLink
+            :class="buttonVariants({ variant: 'outline' })"
+            :to="`/decks/${game}/precons`"
+          >
+            <Boxes class="size-4" /> Preconstructed
           </RouterLink>
           <DeckImportDialog :game="game" />
           <Dialog v-model:open="folderOpen">
@@ -365,7 +381,10 @@ function removeFolder(folderId: number, name: string) {
         v-else-if="decks.length === 0 && folders.length === 0"
         class="text-muted-foreground py-16 text-center"
       >
-        You haven't built any decks yet. Hit <strong>New deck</strong> to start one.
+        You haven't built any decks yet. Hit <strong>New deck</strong> to start one, or copy a
+        <RouterLink :to="`/decks/${game}/precons`" class="text-primary underline"
+          >preconstructed deck</RouterLink
+        >.
       </p>
 
       <div v-else class="space-y-8">

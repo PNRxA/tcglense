@@ -214,6 +214,22 @@ const router = createRouter({
       component: () => import('@/views/DeckNeededView.vue'),
       props: true,
     },
+    // Preconstructed decks: the published decklists that shipped with a set, browsable
+    // beside your own. Public catalog data (no `requiresAuth`) and indexable — signing in
+    // only adds "Copy to my decks". Static `precons` outranks the dynamic `:id` below in
+    // vue-router, the same precedence `needed` above relies on.
+    {
+      path: '/decks/:game/precons',
+      name: 'precons',
+      component: () => import('@/views/PreconsView.vue'),
+      props: true,
+    },
+    {
+      path: '/decks/:game/precons/:slug',
+      name: 'precon',
+      component: () => import('@/views/PreconDeckView.vue'),
+      props: true,
+    },
     {
       path: '/decks/:game/:id',
       name: 'deck',

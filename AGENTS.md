@@ -309,6 +309,31 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
   throttling, foil, and card-resolution seams; imports are capped at 2000 source rows and return
   a lightweight deck header; Moxfield live URLs keep the collection import gate.
+- **Preconstructed decks** (`/api/games/{game}/precons*`) are the **catalog** side of the deck
+  idea, not a second user surface: rows derived from MTGJSON's per-set `decks[]` during the
+  sealed sync (`mtgjson::precons` — the same fetch, the same parse, and the same
+  `model::Indexes` the membership + composition passes use; a fourth copy of any of the three
+  would re-walk a 600 MB document for data that already arrived). So the three reads are
+  anonymous and live in the router's **`public`** group beside `products`, and the one write —
+  copying one into your decks — is authed under `/api/decks/{game}/precons/{slug}/copy`.
+  The tables are **rebuilt wholesale** every sync, so a row id is not stable and never reaches
+  the wire: **`slug` is the identity**, derived deterministically (sets walked in sorted order,
+  numeric suffix on collision) — a change to how it's derived needs a `DERIVATION_VERSION` bump,
+  since the sync is otherwise ETag-gated. The browse tile's facets (`card_count`,
+  `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
+  own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
+  a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
+  **Board → section is decided once, in the copy**: the command zone becomes a section named
+  exactly `Commander` and the sideboard exactly `Sideboard`, because those spellings are what
+  `decks::analysis::rules` reads a deck's zones off, and the mainboard is filed through
+  `deck_import::categorize::preset_section` rather than a second copy of that table. A precon
+  row is a **single finish** (that's how a decklist reads) and folds into the deck card's
+  regular/foil pair. The copy rides `decks::copy`'s `insert_deck_with_cards` seam — both copies
+  hold internal card ids already — and only ever sets a `format` the deck *type* states
+  (`Commander Deck` → `commander`; a Secret Lair drop gets none, or the page would judge a
+  30-card drop against Commander's rules). The SPA **mirrors** the board vocabulary in
+  `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) and adapts boards into
+  sections so the precon page renders through the *deck* display engine, not a second one.
 - **Price alerts** (`/api/alerts*`, issue #525) are **session-only** (`SessionUser` — never an
   API key: the channel settings hold delivery credentials) and **allow-listed out of the
   OpenAPI doc** (an account/session-flow surface, like username/currency). The engine is
