@@ -41,6 +41,9 @@ export interface PreconListParams {
   q?: string
   /** Restrict to one set (its `set_code`). */
   set?: string
+  /** With `set`, span its whole catalog group (root + related sub-sets) instead of the one
+   *  code — the precon mirror of the card listing's own related view. */
+  includeRelated?: boolean
   /** Restrict to one deck type, e.g. `Commander Deck` (see the facets endpoint). */
   type?: string
   /** `released` (default, newest first) or `name`. */
@@ -56,6 +59,9 @@ function preconQuery(params: PreconListParams = {}): string {
   if (params.pageSize) search.set('page_size', String(params.pageSize))
   if (params.q) search.set('q', params.q)
   if (params.set) search.set('set', params.set)
+  // Only meaningful alongside a set, and the server ignores it otherwise — but keep it off the
+  // URL entirely there, so an unscoped listing has one canonical (cacheable) query string.
+  if (params.set && params.includeRelated) search.set('include_related', 'true')
   if (params.type) search.set('type', params.type)
   if (params.sort) search.set('sort', params.sort)
   if (params.group) search.set('group', params.group)

@@ -29,6 +29,13 @@ export interface SetTileSection<T> {
 export function useSetTileSections<T extends { code: string; name?: string | null }>(
   game: Ref<string>,
   sets: Ref<T[]>,
+  opts: {
+    /** An extra match predicate OR-ed into the filter, for an entry that stands for more than
+     *  its own name — the precon landing passes one so a group whose *related* sub-set matches
+     *  survives the filter whole, instead of being orphaned (the card landing's issue #128
+     *  rule). `needle` arrives trimmed + lower-cased. Omitted = name/code only. */
+    alsoMatches?: (set: T, needle: string) => boolean
+  } = {},
 ) {
   // Client-side filter box: the whole facet list is already in memory, so narrowing by
   // name/code is instant. Cleared when `game` changes, since these routes reuse the component
@@ -43,7 +50,10 @@ export function useSetTileSections<T extends { code: string; name?: string | nul
     const needle = trimmedFilter.value.toLowerCase()
     if (!needle) return sets.value
     return sets.value.filter(
-      (set) => set.name?.toLowerCase().includes(needle) || set.code.toLowerCase().includes(needle),
+      (set) =>
+        set.name?.toLowerCase().includes(needle) ||
+        set.code.toLowerCase().includes(needle) ||
+        opts.alsoMatches?.(set, needle),
     )
   })
 

@@ -18,35 +18,77 @@ import { prefetchRouteChunks } from '@/lib/prefetch'
 // thing that differs between those callers, so it's a prop rather than a forked tile. The
 // catalog set (icon + release date) is optional: a set with no catalog row falls back to a
 // Package icon and drops the release date. No completion count (none of these are fixed-size
-// sets) and no height-reserving spacer (these tiles never nest sub-sets, so rows can't get out
-// of step).
-const props = defineProps<{
-  game: string
-  // Set identity — the tile shows `name`, falling back to the upper-cased `code`.
-  code: string
-  name: string | null
-  // The count shown on the stats line (the sealed landing's per-set product count, the holdings
-  // section's unique held products, or the precon landing's deck count).
-  count: number
-  // Singular noun for that count; pluralised with a bare "s". Defaults to "product".
-  noun?: string
-  // The matching catalog set — the icon and release-date source. Undefined when the set's code
-  // has no catalog row.
-  catalogSet?: CardSet
-  // Where the tile links (the set-scoped list).
-  to: string
-  // Total copies including duplicates (the holdings section's `total_products`). Shown as
-  // "N copies" only when it exceeds `count`; omitted by the catalog landings, where each set
-  // has a single count.
-  copies?: number
-  // Preformatted total value (e.g. "$123.45"), shown as "TOTAL $X" on the identity line. The
-  // parent formats it via useCurrency, matching SetTile's `ownedValue`. Null hides the stat.
-  value?: string | null
-}>()
+// sets). Sub-sets nest only on the precon landing, so the height-reserving spacer that keeps a
+// childless tile level with a grouped one is opt-in (`reserveGroupSpace`) rather than always on
+// as it is on SetTile.
+const props = withDefaults(
+  defineProps<{
+    game: string
+    // Set identity — the tile shows `name`, falling back to the upper-cased `code`.
+    code: string
+    name: string | null
+    // The count shown on the stats line (the sealed landing's per-set product count, the holdings
+    // section's unique held products, or the precon landing's deck count).
+    count: number
+    // Singular noun for that count; pluralised with a bare "s". Defaults to "product".
+    noun?: string
+    // The matching catalog set — the icon and release-date source. Undefined when the set's code
+    // has no catalog row.
+    catalogSet?: CardSet
+    // Where the tile links (the set-scoped list).
+    to: string
+    // Total copies including duplicates (the holdings section's `total_products`). Shown as
+    // "N copies" only when it exceeds `count`; omitted by the catalog landings, where each set
+    // has a single count.
+    copies?: number
+    // Preformatted total value (e.g. "$123.45"), shown as "TOTAL $X" on the identity line. The
+    // parent formats it via useCurrency, matching SetTile's `ownedValue`. Null hides the stat.
+    value?: string | null
+    // How the tile is chromed, mirroring SetTile's vocabulary so the two landings' groups look
+    // the same: a standalone bordered card by default, `plain` as the head of a group card
+    // (the group draws the border), `nested` for a sub-set row inside one.
+    variant?: 'default' | 'plain' | 'nested'
+    // Visible label override — a sub-set drops the redundant parent prefix ("Bloomburrow
+    // Commander" → "Commander"), exactly as SetTile's own `label` does.
+    label?: string | null
+    // Reserve the height of the footer row a group tile renders below its header, so a
+    // childless tile lines up with the grouped tiles sharing its row instead of looking
+    // stunted. Opt-in rather than SetTile's unconditional spacer, because two of the three
+    // landings that use this tile have no groups at all — reserving there would be dead space.
+    reserveGroupSpace?: boolean
+  }>(),
+  {
+    noun: 'product',
+    catalogSet: undefined,
+    copies: undefined,
+    value: null,
+    variant: 'default',
+    label: null,
+    reserveGroupSpace: false,
+  },
+)
 
 const noun = computed(() => props.noun ?? 'product')
 
-const displayName = computed(() => props.name ?? props.code.toUpperCase())
+const rootClass = computed(() => {
+  switch (props.variant) {
+    case 'plain':
+      return 'hover:bg-accent/40 rounded-t-xl p-3'
+    case 'nested':
+      return 'hover:bg-accent/50 rounded-lg p-2'
+    default:
+      return 'bg-card hover:border-ring/60 hover:bg-accent/40 rounded-xl border p-3'
+  }
+})
+
+// When the visible label is abbreviated (a stripped sub-set name), keep the full set name as
+// the link's accessible name so it stays unambiguous out of its visual group (WCAG 2.4.4) —
+// SetTile's own rule.
+const linkLabel = computed(() =>
+  props.label && props.label !== props.name ? (props.name ?? undefined) : undefined,
+)
+
+const displayName = computed(() => props.label ?? props.name ?? props.code.toUpperCase())
 
 // Warm the destination's JS chunk on hover/focus so the click opens a loaded view
 // (see lib/prefetch.ts — chunks only, never data/images).
@@ -85,7 +127,9 @@ const copiesLabel = computed(() =>
 <template>
   <RouterLink
     :to="to"
-    class="bg-card hover:border-ring/60 hover:bg-accent/40 block rounded-xl border p-3 transition-colors"
+    class="block transition-colors"
+    :class="rootClass"
+    :aria-label="linkLabel"
     @pointerenter="warm"
     @focusin="warm"
   >
@@ -131,5 +175,11 @@ const copiesLabel = computed(() =>
         </div>
       </div>
     </div>
+    <!-- Matches the footer row PreconSetGroup renders below its header (2.75rem = the min-h-9
+         "Show N related sets" toggle that drives the row height + its pb-2), so a set with no
+         related sets isn't visibly shorter than the grouped tiles beside it. Only once the
+         grid is multi-column (sm+): in the single-column layout there is no row neighbour to
+         match, so the tile stays compact. SetTile's own spacer, same measurements. -->
+    <div v-if="reserveGroupSpace" aria-hidden="true" class="hidden h-11 sm:block"></div>
   </RouterLink>
 </template>

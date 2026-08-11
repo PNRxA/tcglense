@@ -1,5 +1,5 @@
 //! **Preconstructed decks**: the decklists a publisher shipped — Commander decks,
-//! Planeswalker / Challenger / Starter decks, Jumpstart themes, Secret Lair drops.
+//! Planeswalker / Challenger / Starter decks, Jumpstart themes, intro packs.
 //!
 //! Where [`decks`](crate::handlers::decks) is a *user's* container surface, this is the
 //! **catalog** side of the same idea: rows derived from MTGJSON's per-set `decks[]` during
@@ -219,6 +219,11 @@ pub(crate) struct PreconListParams {
     /// Name substring; every whitespace-separated word must match (the sealed list's rule).
     pub q: Option<String>,
     pub set: Option<String>,
+    /// With `set`, span that set's whole catalog **group** (its top-level root plus every
+    /// related sub-set) instead of the one code — the precon mirror of the card listing's
+    /// own `include_related`, and what the landing's grouped "All decks" link rides.
+    /// Ignored without a `set`, which already spans everything.
+    pub include_related: Option<bool>,
     #[serde(rename = "type")]
     pub deck_type: Option<String>,
     /// `released` (default, newest first) or `name`.

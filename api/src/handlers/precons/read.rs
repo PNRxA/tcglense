@@ -22,8 +22,8 @@ use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
-    MAX_PAGE_SIZE, Page, build_page, product_response, require_game, resolve_page, set_name_map,
-    summarize_holdings, trim_query,
+    MAX_PAGE_SIZE, Page, build_page, load_group_set_codes, product_response, require_game,
+    resolve_page, set_name_map, summarize_holdings, trim_query,
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
@@ -38,7 +38,7 @@ use super::{
 ///
 /// `GET /api/games/{game}/precons` -> the published decklists that shipped with the game's
 /// sets, newest first: Commander decks, Planeswalker / Challenger / Starter decks, Jumpstart
-/// themes, Secret Lair drops. Filter by `set`, by `type` (see the facets endpoint for the
+/// themes, intro packs. Filter by `set`, by `type` (see the facets endpoint for the
 /// vocabulary), or by a name substring `q`; `sort=name` orders alphabetically instead.
 #[utoipa::path(
     get,
@@ -50,6 +50,7 @@ use super::{
         ("page_size" = Option<u64>, Query, description = "Rows per page (default 60, max 200)"),
         ("q" = Option<String>, Query, description = "Name substring; every word must match"),
         ("set" = Option<String>, Query, description = "Set code, e.g. `tmc`"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span its whole group (root + related sub-sets)"),
         ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
         ("sort" = Option<String>, Query, description = "`released` (default, newest first) or `name`"),
     ),
@@ -71,7 +72,8 @@ pub async fn list_precons(
         MAX_PAGE_SIZE,
     );
 
-    let query = sorted_query(filtered_query(&game, &params), &params);
+    let scope = set_scope(&state, &game, &params).await?;
+    let query = sorted_query(filtered_query(&game, &params, scope.as_deref()), &params);
     let paginator = query.paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -281,9 +283,39 @@ pub async fn get_precon(
     }))
 }
 
+/// The set codes a listing runs over: just the `set` filter, or — with `include_related` —
+/// its whole catalog group, resolved through the same [`load_group_set_codes`] seam the card
+/// listing's own related view uses, so "All decks" on the precon landing spans exactly the
+/// sets "View all" spans there. `None` = no set filter (the unscoped browse).
+///
+/// The code is a *filter*, not a route: an unknown one resolves to itself and yields an empty
+/// page rather than a 404 (`group_set_codes`'s own fallback), matching how `set` already behaves.
+async fn set_scope(
+    state: &AppState,
+    game: &str,
+    params: &PreconListParams,
+) -> Result<Option<Vec<String>>, AppError> {
+    let Some(set) = trim_query(params.set.as_deref()) else {
+        return Ok(None);
+    };
+    let code = set.to_lowercase();
+    if params.include_related.unwrap_or(false) {
+        Ok(Some(load_group_set_codes(state, game, &code).await?))
+    } else {
+        Ok(Some(vec![code]))
+    }
+}
+
 /// The precon list's filters, shared by the flat list and the by-set grouping so the two can
 /// never disagree about what a query matches — only about how the matches are laid out.
-fn filtered_query(game: &str, params: &PreconListParams) -> Select<PreconDeck> {
+///
+/// The set scope arrives pre-resolved (see [`set_scope`]) because resolving a group needs the
+/// DB, and this stays a pure query builder.
+fn filtered_query(
+    game: &str,
+    params: &PreconListParams,
+    scope: Option<&[String]>,
+) -> Select<PreconDeck> {
     let mut query = PreconDeck::find().filter(precon_deck::Column::Game.eq(game));
     if let Some(term) = trim_query(params.q.as_deref()) {
         // Every whitespace-separated word as its own order-independent name substring,
@@ -301,8 +333,8 @@ fn filtered_query(game: &str, params: &PreconListParams) -> Select<PreconDeck> {
             );
         }
     }
-    if let Some(set) = trim_query(params.set.as_deref()) {
-        query = query.filter(precon_deck::Column::SetCode.eq(set.to_lowercase()));
+    if let Some(codes) = scope {
+        query = query.filter(precon_deck::Column::SetCode.is_in(codes.iter().cloned()));
     }
     if let Some(deck_type) = trim_query(params.deck_type.as_deref()) {
         query = query.filter(precon_deck::Column::DeckType.eq(deck_type));
@@ -350,6 +382,7 @@ fn sorted_query(query: Select<PreconDeck>, params: &PreconListParams) -> Select<
         ("page_size" = Option<u64>, Query, description = "Groups per page (default 20, max 100)"),
         ("q" = Option<String>, Query, description = "Name substring; every word must match"),
         ("set" = Option<String>, Query, description = "Set code, e.g. `tmc`"),
+        ("include_related" = Option<bool>, Query, description = "With `set`, span its whole group (root + related sub-sets)"),
         ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
         ("sort" = Option<String>, Query, description = "`released` (default) or `name`; also orders the groups"),
     ),
@@ -377,7 +410,8 @@ pub async fn list_precon_groups(
     // filtered set is fetched and bucketed in memory — the same trade the by-drop endpoint
     // makes with a set's cards, and what keeps every group complete regardless of where the
     // page boundary falls. Only the groups actually on the page are then shaped into DTOs.
-    let rows = sorted_query(filtered_query(&game, &params), &params)
+    let scope = set_scope(&state, &game, &params).await?;
+    let rows = sorted_query(filtered_query(&game, &params, scope.as_deref()), &params)
         .all(&state.db)
         .await?;
 

@@ -40,6 +40,9 @@ interface PreconListQueryOptions {
   page: Ref<number>
   query: Ref<string>
   set: Ref<string>
+  /** With `set`, span its whole catalog group rather than the one code. In the key, so the
+   *  spanned and single-set listings cache apart instead of overwriting each other. */
+  includeRelated?: Ref<boolean>
   type: Ref<string>
   sort: Ref<string>
   enabled?: Ref<boolean>
@@ -49,13 +52,23 @@ interface PreconListQueryOptions {
  *  next page loads, matching the sealed + card grids. */
 export function usePreconsQuery(game: Ref<string>, opts: PreconListQueryOptions) {
   return useQuery<PreconPage, ApiError>({
-    queryKey: ['precons', game, opts.query, opts.set, opts.type, opts.sort, opts.page],
+    queryKey: [
+      'precons',
+      game,
+      opts.query,
+      opts.set,
+      opts.includeRelated,
+      opts.type,
+      opts.sort,
+      opts.page,
+    ],
     queryFn: ({ signal }) =>
       listPrecons(
         game.value,
         {
           q: opts.query.value || undefined,
           set: opts.set.value || undefined,
+          includeRelated: opts.includeRelated?.value || undefined,
           type: opts.type.value || undefined,
           sort: opts.sort.value || undefined,
           page: opts.page.value,
@@ -79,13 +92,24 @@ export function usePreconGroupsQuery(
   group: Ref<PreconGrouping>,
 ) {
   return useQuery<PreconGroupPage, ApiError>({
-    queryKey: ['precon-groups', game, group, opts.query, opts.set, opts.type, opts.sort, opts.page],
+    queryKey: [
+      'precon-groups',
+      game,
+      group,
+      opts.query,
+      opts.set,
+      opts.includeRelated,
+      opts.type,
+      opts.sort,
+      opts.page,
+    ],
     queryFn: ({ signal }) =>
       listPreconGroups(
         game.value,
         {
           q: opts.query.value || undefined,
           set: opts.set.value || undefined,
+          includeRelated: opts.includeRelated?.value || undefined,
           type: opts.type.value || undefined,
           sort: opts.sort.value || undefined,
           group: group.value,

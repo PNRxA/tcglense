@@ -8,9 +8,11 @@ import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import SetCountTile from '@/components/shared/SetCountTile.vue'
-import { useGameName } from '@/composables/useCatalog'
+import PreconSetGroupTile from '@/components/decks/PreconSetGroup.vue'
+import { useGameName, useSetsQuery } from '@/composables/useCatalog'
 import { usePreconFacetsQuery } from '@/composables/usePrecons'
 import { useSetTileSections } from '@/composables/useSetTileSections'
+import { groupPreconSets, preconGroupMatchesRelated } from '@/lib/preconSetGroups'
 import { usePageMeta } from '@/lib/seo'
 
 // The preconstructed-deck landing: the sets that published precons, as set tiles that click
@@ -27,7 +29,7 @@ usePageMeta({
   title: () => `${gameName.value} preconstructed decks`,
   description: () =>
     `Browse preconstructed ${gameName.value} decks by set — Commander decks, Planeswalker and ` +
-    `Challenger decks, Jumpstart themes and Secret Lair drops — with full decklists, prices ` +
+    `Challenger decks, Jumpstart themes and intro packs — with full decklists, prices ` +
     `and one-click copying into your own decks on TCGLense.`,
   canonicalPath: () => `/decks/${game.value}/precons`,
 })
@@ -38,10 +40,37 @@ const facetsQuery = usePreconFacetsQuery(game)
 const facetSets = computed(() => facetsQuery.data.value?.data.sets ?? [])
 const total = computed(() => facetsQuery.data.value?.data.total ?? 0)
 
+// Nest each set's related sub-sets under it, the way the card landing groups `/cards/{game}`:
+// a set that shipped both a main deck and a Commander sub-set reads as one entry with the
+// siblings tucked inside, instead of two tiles a year apart. Grouping happens **before**
+// filtering and sectioning so a group is filtered and dated as a unit — a child that matches
+// the filter keeps its whole group (via `alsoMatches`), and the group sits in its *main* set's
+// release year rather than being split across two.
+const catalogSetsQuery = useSetsQuery(game)
+const groups = computed(() =>
+  groupPreconSets(facetSets.value, catalogSetsQuery.data.value?.data ?? []),
+)
+
 // Filtering, the pinned "Featured" split and the release-year sections come from the shared
-// set-tile landing engine — the same one the sealed landing runs.
+// set-tile landing engine — the same one the sealed landing runs, here fed groups rather than
+// bare sets (a group exposes its main's `code`/`name`, which is all the engine reads).
 const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sections } =
-  useSetTileSections(game, facetSets)
+  useSetTileSections(
+    game,
+    computed(() => groups.value.map((group) => ({ ...group, ...group.main }))),
+    { alsoMatches: (group, needle) => preconGroupMatchesRelated(group, needle) },
+  )
+
+// Every set on screen, counting a group's nested sub-sets — the tiles are fewer than the sets.
+const shownSetCount = computed(() =>
+  filteredSets.value.reduce((sum, group) => sum + 1 + group.children.length, 0),
+)
+
+// Whether a section holds any grouped tile, so the plain tiles beside them reserve the height
+// of a group's toggle row and the row stays level. Per section rather than globally: most
+// years ship no related-set pairs at all, and reserving there would just add dead space.
+const sectionHasGroup = (section: { sets: { children: unknown[] }[] }) =>
+  section.sets.some((entry) => entry.children.length > 0)
 </script>
 
 <template>
@@ -58,10 +87,12 @@ const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sectio
       <h1 class="text-3xl font-semibold tracking-tight">Preconstructed decks</h1>
       <p class="text-muted-foreground mt-1">
         The decklists {{ gameName }} shipped — Commander decks, Planeswalker and Challenger decks,
-        Jumpstart themes and Secret Lair drops.
+        Jumpstart themes and intro packs.
       </p>
       <p class="text-muted-foreground mt-1 text-sm">
-        {{ filteredSets.length }} {{ filteredSets.length === 1 ? 'set' : 'sets' }}
+        <!-- Sets, not tiles: a group is one tile standing for itself plus its sub-sets, and
+             the honest count is how many sets published decks. -->
+        {{ shownSetCount }} {{ shownSetCount === 1 ? 'set' : 'sets' }}
         <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
         <template v-else-if="total"> · {{ total.toLocaleString() }} decks</template>
       </p>
@@ -111,18 +142,29 @@ const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sectio
             {{ section.sets.length }} {{ section.sets.length === 1 ? 'set' : 'sets' }}
           </span>
         </div>
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <SetCountTile
-            v-for="set in section.sets"
-            :key="set.code"
-            :game="game"
-            :code="set.code"
-            :name="set.name"
-            :count="set.count"
-            noun="deck"
-            :catalog-set="catalogSetByCode[set.code]"
-            :to="`/decks/${game}/precons/sets/${set.code}`"
-          />
+        <!-- items-start so a group that expands its sub-sets grows downwards instead of
+             stretching every tile in its row (the card landing's grid does the same). -->
+        <div class="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <template v-for="entry in section.sets" :key="entry.code">
+            <SetCountTile
+              v-if="!entry.children.length"
+              :game="game"
+              :code="entry.main.code"
+              :name="entry.main.name"
+              :count="entry.main.count"
+              noun="deck"
+              :reserve-group-space="sectionHasGroup(section)"
+              :catalog-set="catalogSetByCode[entry.main.code]"
+              :to="`/decks/${game}/precons/sets/${entry.main.code}`"
+            />
+            <PreconSetGroupTile
+              v-else
+              :game="game"
+              :group="entry"
+              :catalog-set-by-code="catalogSetByCode"
+              :query="trimmedFilter"
+            />
+          </template>
         </div>
       </section>
     </div>

@@ -76,6 +76,14 @@ const typeSelect = computed({
 // in scoped mode, where the set `<Select>` is hidden).
 const effectiveSet = computed(() => (scoped.value ? (props.code ?? '') : setFilter.value))
 
+// Span the set's whole catalog group — its root plus every related sub-set — the precon mirror
+// of the card set page's own `?related=1`, and where the landing's grouped "All decks" lands.
+// Only meaningful on a set-scoped route: the all-decks view already spans every set.
+const includeRelated = computed(() => scoped.value && route.query.related === '1')
+// One set actually on screen. Not the same as `scoped`: a spanned group is a set-scoped route
+// showing several sets, so it behaves like the all-decks view for grouping purposes.
+const singleSet = computed(() => scoped.value && !includeRelated.value)
+
 // Page, name search and sort live in the URL, shared with every other browse view. The two
 // sorts are the API's own vocabulary — newest first (the default: a precon browser is mostly
 // "what came out recently") or by name.
@@ -88,16 +96,18 @@ const { page, searchInput, query, sort } = useCardSearch('released', SORT_OPTION
 // The **defaults differ by route**, because the useful answer does. On a set's own page the
 // decks are already one set, and the thing that makes 70 of them readable is the *type* split
 // (Marvel ships 51 Jumpstart themes beside 12 Box Sets and 5 Welcome Decks), so it opens
-// grouped by type. The all-decks view opens flat — a browser you arrive at wanting to search.
+// grouped by type. The all-decks view opens grouped **by set**: 2,986 decks flat is a wall
+// with no landmarks, and the set that published them is how people remember a precon.
 //
 // Switching restarts paging: a page of groups and a page of decks don't mean the same thing,
 // so carrying the number across would land you nowhere near where you were.
 type PreconView = 'sets' | 'types' | 'all'
-const DEFAULT_VIEW = computed<PreconView>(() => (scoped.value ? 'types' : 'all'))
+const DEFAULT_VIEW = computed<PreconView>(() => (singleSet.value ? 'types' : 'sets'))
 const view = computed<PreconView>(() => {
   const raw = route.query.view
-  // A set page has no by-set view to offer — every deck on it is in the one set.
-  const allowed: PreconView[] = scoped.value ? ['types', 'all'] : ['sets', 'types', 'all']
+  // A *single* set page has no by-set view to offer — every deck on it is in the one set. A
+  // spanned group does: splitting by set is exactly what tells the sub-sets apart.
+  const allowed: PreconView[] = singleSet.value ? ['types', 'all'] : ['sets', 'types', 'all']
   return allowed.find((mode) => mode === raw) ?? DEFAULT_VIEW.value
 })
 const grouped = computed(() => view.value !== 'all')
@@ -109,7 +119,7 @@ const VIEW_OPTIONS: { value: PreconView; label: string }[] = [
   { value: 'all', label: 'No grouping' },
 ]
 const viewOptions = computed(() =>
-  VIEW_OPTIONS.filter((option) => !(scoped.value && option.value === 'sets')),
+  VIEW_OPTIONS.filter((option) => !(singleSet.value && option.value === 'sets')),
 )
 const viewModel = computed({
   get: () => view.value,
@@ -131,14 +141,22 @@ const facetsQuery = usePreconFacetsQuery(game)
 const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
 const setOptions = computed(() => facetsQuery.data.value?.data.sets ?? [])
 const scopedSetRef = computed(() => setOptions.value.find((s) => s.code === props.code))
+const setName = computed(
+  () => scopedSetRef.value?.name ?? props.code?.toUpperCase() ?? props.code ?? '',
+)
 const heading = computed(() =>
-  scoped.value ? (scopedSetRef.value?.name ?? props.code?.toUpperCase() ?? '') : 'All decks',
+  scoped.value
+    ? includeRelated.value
+      ? `${setName.value} & related sets`
+      : setName.value
+    : 'All decks',
 )
 
 const listOptions = {
   page,
   query,
   set: effectiveSet,
+  includeRelated,
   type: typeFilter,
   sort,
 }
@@ -187,7 +205,7 @@ usePageMeta({
       ? `Every preconstructed ${gameName.value} deck from ${heading.value} — full decklists, ` +
         `prices, and one-click copying into your own decks on TCGLense.`
       : `Browse and filter every preconstructed ${gameName.value} deck — Commander decks, ` +
-        `Planeswalker and Challenger decks, Jumpstart themes and Secret Lair drops — with full ` +
+        `Planeswalker and Challenger decks, Jumpstart themes and intro packs — with full ` +
         `decklists and prices on TCGLense.`,
   canonicalPath: () =>
     scoped.value
@@ -213,6 +231,15 @@ usePageMeta({
         <p class="text-muted-foreground mt-1 text-sm">
           Open one to see the full list, or copy it into your own decks.
         </p>
+        <!-- The way back out of a spanned group. The landing is the only way in, so the
+             single-set page needs no matching "span the group" link of its own. -->
+        <RouterLink
+          v-if="includeRelated"
+          :to="`/decks/${game}/precons/sets/${code}`"
+          class="text-muted-foreground hover:text-foreground mt-1 inline-block text-sm underline underline-offset-4"
+        >
+          View just {{ setName }}
+        </RouterLink>
       </div>
       <RouterLink :class="buttonVariants({ variant: 'outline' })" :to="`/decks/${game}`">
         <Layers class="size-4" aria-hidden="true" /> Your decks

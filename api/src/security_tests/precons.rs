@@ -81,6 +81,59 @@ async fn precon_list_filters_by_set_type_and_name() {
     assert_eq!(body["total"], 0);
 }
 
+/// `include_related` spans the set's whole catalog group, which is what the landing's grouped
+/// "All decks" link rides. Driven from the **child** side (`tdmb`, a sub-set of `dmb` with no
+/// precons of its own) because that's the real shape — a set's Commander sub-set carries the
+/// decks while another sub-set carries none — and because it can't pass by accident: without
+/// the span, `tdmb` matches nothing at all.
+#[tokio::test]
+async fn include_related_spans_the_sets_whole_group() {
+    let app = test_app_with_catalog().await;
+
+    // The root's own decks, and the sub-set's (none) — the two ends of the group.
+    let (_, _, body) = send(&app, get("/api/games/mtg/precons?set=dmb")).await;
+    let in_root = body["total"].as_i64().unwrap();
+    assert!(in_root > 0, "the base set seeds precons");
+    let (_, _, body) = send(&app, get("/api/games/mtg/precons?set=tdmb")).await;
+    assert_eq!(
+        body["total"], 0,
+        "the token sub-set has no precons of its own"
+    );
+
+    // Spanning the group reaches the root's decks from either end.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons?set=tdmb&include_related=true"),
+    )
+    .await;
+    assert_eq!(body["total"], in_root);
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons?set=dmb&include_related=true"),
+    )
+    .await;
+    assert_eq!(body["total"], in_root);
+
+    // The grouped view spans the same sets — the two must never disagree about what matches.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons/groups?set=tdmb&include_related=true"),
+    )
+    .await;
+    let grouped: i64 = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|group| group["deck_count"].as_i64().unwrap())
+        .sum();
+    assert_eq!(grouped, in_root);
+
+    // Without a `set` there is nothing to span, so the flag is a no-op rather than a filter.
+    let (_, _, unfiltered) = send(&app, get("/api/games/mtg/precons")).await;
+    let (_, _, body) = send(&app, get("/api/games/mtg/precons?include_related=true")).await;
+    assert_eq!(body["total"], unfiltered["total"]);
+}
+
 #[tokio::test]
 async fn precon_facets_publish_the_filter_vocabulary() {
     let app = test_app_with_catalog().await;
