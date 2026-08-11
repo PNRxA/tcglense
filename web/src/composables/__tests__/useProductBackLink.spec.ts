@@ -29,6 +29,11 @@ const routes = [
   { path: '/sealed/:game/:id', name: 'sealed-product', component: Host() },
   { path: '/wishlist/:game', name: 'game-wishlist', component: { template: '<div />' } },
   { path: '/collection/:game', name: 'game-collection', component: { template: '<div />' } },
+  {
+    path: '/decks/:game/precons/:slug',
+    name: 'precon',
+    component: { template: '<div />' },
+  },
 ]
 
 // Product-route component: calls the composable with the route's `:game` and renders the
@@ -103,6 +108,15 @@ describe('useProductBackLink', () => {
     expect(await backLink('/collection/mtg')).toEqual({
       to: '/collection/mtg',
       label: 'Collection',
+    })
+  })
+
+  // A precon page's "Buy sealed" link opens the product it ships in. Back must return to the
+  // decklist being read, not dump the visitor on the sealed browse.
+  it('returns to the preconstructed deck it was opened from', async () => {
+    expect(await backLink('/decks/mtg/precons/avengers-assemble-msc')).toEqual({
+      to: '/decks/mtg/precons/avengers-assemble-msc',
+      label: 'Preconstructed deck',
     })
   })
 

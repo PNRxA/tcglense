@@ -18,6 +18,10 @@ const FROM_LABELS: Record<string, string> = {
   // A sealed product's "Cards in this product" section (the card modal sits over the
   // product page as `?card=<id>`); back returns to that product's page.
   'sealed-product': 'Sealed product',
+  // A published decklist. Its tiles open the card modal over the precon route, so this only
+  // applies when the card's full page is reached directly (a new tab, or the tile's anchor
+  // followed rather than clicked) — which otherwise fell through to the card's set page.
+  precon: 'Preconstructed deck',
 }
 
 // List routes scoped to a single set (catalog / collection / wish list): every card on
