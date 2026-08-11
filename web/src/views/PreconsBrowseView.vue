@@ -357,6 +357,16 @@ usePageMeta({
 
     <template v-else>
       <div ref="resultsTop" class="scroll-mt-40 sm:scroll-mt-24" />
+      <!-- Top pager mirrors the one below (#264) so a long grid can be paged from the top too. -->
+      <div class="mb-6">
+        <CardPagination
+          v-model:page="page"
+          :page-size="grouped ? PRECON_GROUP_PAGE_SIZE : PRECON_PAGE_SIZE"
+          :total="total"
+          :loading="activeQuery.isPlaceholderData.value"
+          :scroll-target="resultsTop"
+        />
+      </div>
       <UpdatingOverlay :loading="activeQuery.isPlaceholderData.value">
         <!-- Grouped: one heading per group — a set (linking to its own page) or a deck type —
              then its decks in the same tile grid the flat view uses. -->
