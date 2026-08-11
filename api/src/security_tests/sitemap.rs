@@ -226,6 +226,48 @@ async fn sitemap_products_chunk_lists_sealed_products_and_out_of_range_is_404() 
     assert_eq!(cache_control(&headers), Some("no-store"));
 }
 
+/// Preconstructed decks are public, indexable pages, so they need a discovery path: the index
+/// must advertise a `precons-{n}` child, that child must list deck URLs by **slug** (the stable
+/// identity — ids are re-minted every sync), and each set that published one must appear in
+/// `sets.xml`. Without these, 2 000+ canonical pages exist with nothing linking a crawler to
+/// them.
+#[tokio::test]
+async fn sitemap_covers_preconstructed_decks_by_slug_and_set() {
+    let app = test_app_with_catalog().await;
+
+    let (_, _, index) = send_text(&app, get("/sitemap.xml")).await;
+    assert!(
+        index.contains("<loc>https://sitemap.test/sitemaps/precons-1.xml</loc>"),
+        "the index must advertise the precon child: {index}"
+    );
+
+    let (status, headers, body) = send_text(&app, get("/sitemaps/precons-1.xml")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some(SITEMAP_CACHE_CONTROL));
+    assert!(
+        body.contains(
+            "<loc>https://sitemap.test/decks/mtg/precons/dummy-universe-commander-dmu</loc>"
+        ),
+        "the seeded precon's slug URL is missing: {body}"
+    );
+    // Slug, never id — the tables are rebuilt wholesale each sync, so an id URL would rot.
+    assert!(
+        !body.contains("/precons/1<"),
+        "precons must be advertised by slug, not id: {body}"
+    );
+
+    let (status, headers, _b) = send_text(&app, get("/sitemaps/precons-9999.xml")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // The per-set browse pages ride sets.xml, beside the card and sealed set entries.
+    let (_, _, sets) = send_text(&app, get("/sitemaps/sets.xml")).await;
+    assert!(
+        sets.contains("<loc>https://sitemap.test/decks/mtg/precons/sets/dmu</loc>"),
+        "a set that published precons must be listed: {sets}"
+    );
+}
+
 // The chunk tests above only reach chunk 1 (the dummy seed is far smaller than
 // MAX_URLS_PER_SITEMAP), where the keyset window starts at offset 0 and matches every
 // row — a degenerate case indistinguishable from the old OFFSET query. The two tests
