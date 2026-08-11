@@ -101,6 +101,10 @@ const deckBase = (game: string, deckId: number): string =>
   `/api/decks/${encodeURIComponent(game)}/${deckId}`
 const publicBase = (handle: string, deckId: number): string =>
   `/api/u/${encodeURIComponent(handle)}/decks/${deckId}`
+/** The catalog's published decklists — addressed by slug, since a precon has no deck row and
+ *  its table ids are re-minted on every sync. Anonymous, like every other precon read. */
+const preconBase = (game: string, slug: string): string =>
+  `/api/games/${encodeURIComponent(game)}/precons/${encodeURIComponent(slug)}`
 
 // ----- Analytics -----
 
@@ -195,4 +199,45 @@ export function getPublicDeckGoldfish(
  * non-browser clients don't have to hard-code the list. */
 export function getDeckFormats(game: string): Promise<{ data: DeckFormat[] }> {
   return request<{ data: DeckFormat[] }>(`/api/games/${encodeURIComponent(game)}/formats`)
+}
+
+// ----- Preconstructed decks -----
+//
+// The third address for the same four reads. The server computes them with the very same
+// core it uses for a deck, so these return byte-identical payloads to the two above — which
+// is what lets the deck panels render a precon unchanged.
+
+/** Composition + draw odds for a published decklist. */
+export function getPreconStats(
+  game: string,
+  slug: string,
+  params: DeckStatsParams = {},
+): Promise<DeckAnalytics> {
+  return request<DeckAnalytics>(`${preconBase(game, slug)}/stats${statsQuery(params)}`)
+}
+
+/** A precon's legality verdict, or `null` when its deck *type* states no format (a Jumpstart
+ *  theme, an intro pack) — most precons, so a null here is the common case, not a failure. */
+export function getPreconLegality(
+  game: string,
+  slug: string,
+): Promise<{ data: DeckLegality | null }> {
+  return request<{ data: DeckLegality | null }>(`${preconBase(game, slug)}/legality`)
+}
+
+/** A precon's estimated Commander bracket, or `null` outside Commander. */
+export function getPreconBracket(
+  game: string,
+  slug: string,
+): Promise<{ data: DeckBracketEstimate | null }> {
+  return request<{ data: DeckBracketEstimate | null }>(`${preconBase(game, slug)}/bracket`)
+}
+
+/** A seeded sample hand from a published decklist. */
+export function getPreconGoldfish(
+  game: string,
+  slug: string,
+  params: GoldfishParams = {},
+): Promise<GoldfishHand> {
+  return request<GoldfishHand>(`${preconBase(game, slug)}/goldfish${goldfishQuery(params)}`)
 }

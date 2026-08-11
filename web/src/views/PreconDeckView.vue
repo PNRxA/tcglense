@@ -9,13 +9,18 @@ import CardTile from '@/components/cards/CardTile.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
+import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
+import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
+import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
+import { usePreconLegalityQuery } from '@/composables/useDeckAnalysis'
 import { useGameName } from '@/composables/useCatalog'
 import { useCopyPreconMutation, usePreconQuery } from '@/composables/usePrecons'
 import { ApiError } from '@/lib/api'
@@ -48,6 +53,14 @@ const router = useRouter()
 
 const preconQuery = usePreconQuery(game, slug)
 const precon = computed(() => preconQuery.data.value)
+
+// Legality is fetched here rather than by a panel, because the same verdict feeds two things:
+// the banner above the list and the per-card status chip on every row and tile (the deck views
+// do exactly this). Null is the common case — only a precon whose *type* states a format
+// (Commander, Brawl) is judged at all.
+const legalityQuery = usePreconLegalityQuery(game, slug)
+const legality = computed(() => legalityQuery.data.value?.data ?? null)
+const cardLegalityStatus = (cardId: string) => legality.value?.card_statuses?.[cardId] ?? null
 
 const { sections, entries } = (() => {
   const adapted = computed(() => preconBoards(precon.value?.cards ?? []))
@@ -247,6 +260,15 @@ usePageMeta({
         No cards in this deck match your filter.
       </p>
 
+      <!-- The same analyses a deck page shows, over the published list: the server computes
+           them with the same core, so a precon and the deck you copy from it agree. Each
+           renders nothing when it has no answer — legality and the bracket are null for every
+           precon whose type states no format, which is most of them. -->
+      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+      <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
+      <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
+      <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
+
       <div
         v-if="visibleSections.length > 0"
         class="xl:grid xl:grid-cols-[12rem_minmax(0,1fr)] xl:gap-6"
@@ -278,7 +300,7 @@ usePageMeta({
                 :key="`${entry.card.id}-${entry.section_id}`"
                 :game="game"
                 :entry="entry"
-                :legality-status="null"
+                :legality-status="cardLegalityStatus(entry.card.id)"
               >
                 <template #control>
                   <span class="text-sm font-medium tabular-nums"

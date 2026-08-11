@@ -7,7 +7,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import CardImage from '@/components/cards/CardImage.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
-import { useDeckGoldfishQuery, usePublicDeckGoldfishQuery } from '@/composables/useDeckAnalysis'
+import {
+  useDeckGoldfishQuery,
+  usePreconGoldfishQuery,
+  usePublicDeckGoldfishQuery,
+} from '@/composables/useDeckAnalysis'
 
 // "Test hand" (issue #596): shuffle up, draw seven, mulligan, and step through draws — the
 // thing every deckbuilder does a dozen times while tuning a list.
@@ -21,8 +25,12 @@ import { useDeckGoldfishQuery, usePublicDeckGoldfishQuery } from '@/composables/
 // `handle` puts it in public mode (a deck someone shared), like the analytics panel.
 const props = defineProps<{
   game: string
-  deckId: number
+  /** Addressing is fixed at mount and mutually exclusive: a deck id (the owner's own deck),
+   *  a `handle` + deck id (a shared deck), or a `preconSlug` (a published catalog decklist,
+   *  which has no deck row and no numeric id). Exactly one applies. */
+  deckId?: number
   handle?: string
+  preconSlug?: string
 }>()
 
 /** The opening hand size the format deals. */
@@ -73,12 +81,16 @@ const params = computed(() => ({
 }))
 
 const game = toRef(props, 'game')
-const deckId = toRef(props, 'deckId')
+const deckId = computed(() => props.deckId ?? 0)
 const handle = computed(() => props.handle ?? '')
+const preconSlug = computed(() => props.preconSlug ?? '')
 const enabled = computed(() => seed.value !== null)
-const handQuery = props.handle
-  ? usePublicDeckGoldfishQuery(handle, deckId, params, enabled)
-  : useDeckGoldfishQuery(game, deckId, params, enabled)
+// Three addressing modes, selected ONCE at mount — see the props.
+const handQuery = props.preconSlug
+  ? usePreconGoldfishQuery(game, preconSlug, params, enabled)
+  : props.handle
+    ? usePublicDeckGoldfishQuery(handle, deckId, params, enabled)
+    : useDeckGoldfishQuery(game, deckId, params, enabled)
 const hand = computed(() => (seed.value === null ? undefined : handQuery.data.value))
 // A refetch really can fail: edit the deck after bottoming a card and the invalidated query
 // re-asks with a `bottom` that is no longer in the reshuffled hand, which is a 422 the retry
@@ -141,8 +153,12 @@ function applySeed() {
 }
 
 // Editing the deck invalidates the hand: it was dealt from a library that no longer exists.
+// The hand was dealt from a library that no longer applies — whether the deck was edited or
+// the route swapped the subject entirely. vue-router reuses the precon page across `:slug`,
+// so watching only `deckId` would carry a seed (and a `bottom` naming cards that aren't in
+// the new deck, which is a 422) into a different decklist.
 watch(
-  () => props.deckId,
+  () => [props.deckId, props.preconSlug],
   () => {
     seed.value = null
   },

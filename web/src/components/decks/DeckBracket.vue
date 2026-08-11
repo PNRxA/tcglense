@@ -3,7 +3,11 @@ import { computed, ref, toRef, useId } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import { Card, CardContent } from '@/components/ui/card'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
-import { useDeckBracketQuery, usePublicDeckBracketQuery } from '@/composables/useDeckAnalysis'
+import {
+  useDeckBracketQuery,
+  usePreconBracketQuery,
+  usePublicDeckBracketQuery,
+} from '@/composables/useDeckAnalysis'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import { bracketBar, bracketTone, ESTIMATABLE_BRACKETS } from '@/lib/bracket'
 import { normalizeFormatKey } from '@/lib/legality'
@@ -36,15 +40,20 @@ import { normalizeFormatKey } from '@/lib/legality'
 // per mount, so the query hook is selected once below.
 const props = defineProps<{
   game: string
-  deckId: number
+  /** Addressing is fixed at mount and mutually exclusive: a deck id (the owner's own deck),
+   *  a `handle` + deck id (a shared deck), or a `preconSlug` (a published catalog decklist,
+   *  which has no deck row and no numeric id). Exactly one applies. */
+  deckId?: number
   /** The deck's own format label. Optional — omitted means "ask anyway". */
   format?: string | null
   handle?: string
+  preconSlug?: string
 }>()
 
 const game = toRef(props, 'game')
-const deckId = toRef(props, 'deckId')
+const deckId = computed(() => props.deckId ?? 0)
 const handle = computed(() => props.handle ?? '')
+const preconSlug = computed(() => props.preconSlug ?? '')
 
 // The ladder is defined for Commander alone, so every other deck's answer is a guaranteed
 // `null` — and this read shares the per-user `Analytics` quota with the deck's stats,
@@ -57,9 +66,12 @@ const handle = computed(() => props.handle ?? '')
 const canBeEstimated = computed(
   () => props.format === undefined || normalizeFormatKey(props.format) === 'commander',
 )
-const bracketQuery = props.handle
-  ? usePublicDeckBracketQuery(handle, deckId, canBeEstimated)
-  : useDeckBracketQuery(game, deckId, canBeEstimated)
+// Three addressing modes, selected ONCE at mount — see the props.
+const bracketQuery = props.preconSlug
+  ? usePreconBracketQuery(game, preconSlug, canBeEstimated)
+  : props.handle
+    ? usePublicDeckBracketQuery(handle, deckId, canBeEstimated)
+    : useDeckBracketQuery(game, deckId, canBeEstimated)
 
 // `null` is the answer for every deck that isn't a Commander deck — the ladder is defined
 // for that format alone — so the panel renders nothing at all rather than an empty card.

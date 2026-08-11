@@ -77,3 +77,31 @@ describe('PRECON_BOARDS', () => {
     expect([...PRECON_BOARDS]).toEqual(['commander', 'main', 'side'])
   })
 })
+
+// The server synthesises the same sections for its analysis reads (`handlers/precons/analysis.rs`
+// `SECTIONS`), and the stats panel round-trips their ids: it builds its library checkboxes from
+// THIS side's sections but ticks them against the server's `default_library_section_ids` and
+// echoes them back as `?sections=`. A divergence is not a type error — it is every checkbox
+// unchecked and a filter that matches nothing. Pinned on both sides, like `lifeLayout.ts`.
+describe('precon section vocabulary (mirrored server-side)', () => {
+  it('assigns the ids and names handlers/precons/analysis.rs assigns', () => {
+    const { sections } = preconBoards([
+      entry('side', 'c', 1),
+      entry('main', 'b', 1),
+      entry('commander', 'a', 1),
+    ])
+    expect(sections.map((s) => [s.id, s.name])).toEqual([
+      [0, 'Command zone'],
+      [1, 'Deck'],
+      [2, 'Sideboard'],
+    ])
+  })
+
+  it('keys ids to the board, not to which boards are present', () => {
+    // A precon with no command zone still gives its mainboard id 1 — the server does the
+    // same, so a `?sections=1` round-trip means the same thing on both sides.
+    const { sections } = preconBoards([entry('main', 'b', 1), entry('side', 'c', 1)])
+    expect(sections.map((s) => s.id)).toEqual([1, 2])
+    expect(PRECON_BOARDS.indexOf('main')).toBe(1)
+  })
+})
