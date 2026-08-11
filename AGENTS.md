@@ -324,10 +324,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
   a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
   The browse is a set-tile **landing** (`/decks/{game}/precons`, the deck mirror of
-  `/cards/{game}`), a browse that groups **by set or by deck type** or not at all
-  (`/precons/all`, `?view=`), and a set-scoped one (`/precons/sets/{code}`) that **defaults to
-  the type grouping** — 136 of 295 sets ship more than one deck type, and a set page is a wall
-  of mixed tiles without it. All three read through **one filter builder** server-side
+  `/cards/{game}`, whose tiles **nest a set's related sub-sets** the way `groupSets` nests them
+  there) and **three route shapes**, each offered only the groupings that answer something
+  (`?view=`, validated against *that route's* option list — a mode a route hides can't be
+  reached by hand-writing the query either): `/precons/all` groups **by set** (default) or not
+  at all, since the type split pours every set's decks into ~40 buckets and loses the one
+  landmark a precon has; `/precons/sets/{code}` groups **by type** (default) or not at all —
+  136 of 295 sets ship more than one deck type, and by-set on one set is a single group;
+  and `/precons/sets/{code}?related=1` — the landing's grouped "All N decks" link, spanning the
+  set's whole catalog group through the shared `load_group_set_codes` seam — offers all three,
+  defaulting to **by type**, because it is the one shape holding several sets. All read through
+  **one filter builder** server-side
   (`filtered_query`), so a filter can only change the layout, never the matches; a grouping may
   reorder (by-type leads with the biggest category), which is why the test that pins this
   compares deck *sets*, not sequences. The nav registry carries precons in **Catalog**, not
@@ -348,8 +355,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   row is a **single finish** (that's how a decklist reads) and folds into the deck card's
   regular/foil pair. The copy rides `decks::copy`'s `insert_deck_with_cards` seam — both copies
   hold internal card ids already — and only ever sets a `format` the deck *type* states
-  (`Commander Deck` → `commander`; a Secret Lair drop gets none, or the page would judge a
-  30-card drop against Commander's rules). The SPA **mirrors** the board vocabulary in
+  (`Commander Deck` → `commander`; a type that states no format gets none, or the page would
+  judge a 30-card theme deck against Commander's rules).
+  **A Secret Lair drop is not a preconstructed deck** and never reaches this surface: MTGJSON
+  files one under a set's `decks[]` because a drop is a fixed card list, but that's a
+  *product's contents* — nothing in it is a deck anyone plays. `mtgjson::precons`'
+  `NOT_A_DECK_TYPES` drops them **at derivation**, before card resolution and before a slug is
+  claimed (a same-named drop walked first would otherwise take the base slug and push the real
+  deck onto `-2`), so no count can disagree with a listing — facets, the landing's per-set tile,
+  the browse totals and the group headings all count the same rows. They were 712 of 2,986 rows
+  and buried `sld`'s 8 real precons. A drop is already modelled properly on the sealed side, as
+  a product with `sealed_contents`. Excluding a category is a derivation change, so it needs a
+  `DERIVATION_VERSION` bump like any other. The SPA **mirrors** the board vocabulary in
   `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) and adapts boards into
   sections so the precon page renders through the *deck* display engine, not a second one.
 - **Price alerts** (`/api/alerts*`, issue #525) are **session-only** (`SessionUser` — never an

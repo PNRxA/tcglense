@@ -11,7 +11,8 @@ import type {
 // ---------- Preconstructed decks (public catalog + one authed write) ----------
 //
 // The decklists a publisher shipped: Commander decks, Planeswalker / Challenger / Starter
-// decks, Jumpstart themes, Secret Lair drops — derived from MTGJSON during the sealed sync.
+// decks, Jumpstart themes, intro packs — derived from MTGJSON during the sealed sync. A Secret
+// Lair drop is a product's contents, not a deck, so it is excluded at derivation.
 // They're *catalog* data, not the user's, so the list/facets/detail reads take no token and
 // live beside `products` rather than `decks`. The one write — copying a precon into your own
 // decks — is authed and returns a normal `DeckDetail`, so the caller navigates to the deck

@@ -1270,7 +1270,11 @@ owner handle (no email/PII).
 ## Preconstructed decks API contract
 
 The decklists a publisher **shipped**: Commander decks, Planeswalker / Challenger / Starter
-decks, Jumpstart themes, Secret Lair drops. Derived from MTGJSON's per-set `decks[]` during
+decks, Jumpstart themes, intro packs. A **Secret Lair drop is not a preconstructed deck** —
+MTGJSON files one under `decks[]` because it is a fixed card list, but it is a product's
+contents, so `NOT_A_DECK_TYPES` excludes the category at derivation and it appears in no
+listing, facet or count (it is already modelled as a sealed product with `sealed_contents`).
+Derived from MTGJSON's per-set `decks[]` during
 the sealed-contents sync (no extra fetch: it's the same `AllPrintings.json`, and the same
 parse — see `api/src/mtgjson/precons.rs`), so they are **catalog** data, not the user's: the
 three reads are anonymous, live in the router's `public` group beside `/products`
