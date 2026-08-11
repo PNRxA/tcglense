@@ -2,9 +2,9 @@
 //! shared-cacheable and filter correctly, and copying one into your own decks is an
 //! authenticated write that produces a deck the rest of the app understands.
 //!
-//! Drives the real router over the seeded dummy catalog (which seeds three precons — a
-//! Commander deck, a Secret Lair drop, and a starter deck with a sideboard), so the reads
-//! answer in the real wire shapes and the copy lands real cards.
+//! Drives the real router over the seeded dummy catalog (five precons — a Commander deck, a
+//! small all-foil deck with no command zone, a starter deck with a sideboard, and two Jumpstart
+//! themes), so the reads answer in the real wire shapes and the copy lands real cards.
 
 use super::harness::*;
 
@@ -29,7 +29,7 @@ async fn precon_list_is_publicly_readable_and_shared_cacheable() {
     assert_eq!(body["total"], 5);
     let data = body["data"].as_array().expect("data array");
 
-    // Newest first: the 2024 sets lead the 2019 Secret Lair.
+    // Newest first: the 2024 sets lead the 2019 `sld` deck.
     let released: Vec<&str> = data
         .iter()
         .map(|d| d["released_at"].as_str().unwrap_or(""))
@@ -63,7 +63,7 @@ async fn precon_list_filters_by_set_type_and_name() {
 
     let (_, _, body) = send(&app, get("/api/games/mtg/precons?set=sld")).await;
     assert_eq!(body["total"], 1);
-    assert_eq!(body["data"][0]["deck_type"], "Secret Lair Drop");
+    assert_eq!(body["data"][0]["deck_type"], "Dandan Deck");
 
     let (_, _, body) = send(&app, get("/api/games/mtg/precons?type=Commander%20Deck")).await;
     assert_eq!(body["total"], 1);
@@ -175,7 +175,7 @@ async fn precon_facets_publish_the_filter_vocabulary() {
         .map(|t| t["type"].as_str().expect("type"))
         .collect();
     assert!(types.contains(&"Commander Deck"));
-    assert!(types.contains(&"Secret Lair Drop"));
+    assert!(types.contains(&"Dandan Deck"));
     let sets = body["data"]["sets"].as_array().expect("sets");
     assert_eq!(sets.len(), 3);
     assert!(
@@ -245,7 +245,7 @@ async fn precons_group_by_deck_type_biggest_category_first() {
         .map(|g| g["title"].as_str().expect("title"))
         .collect();
     assert!(titles.contains(&"Commander Deck"), "{titles:?}");
-    assert!(titles.contains(&"Secret Lair Drop"), "{titles:?}");
+    assert!(titles.contains(&"Dandan Deck"), "{titles:?}");
     // Biggest category first: two Jumpstart themes outrank every one-deck type.
     assert_eq!(titles[0], "Jumpstart", "{titles:?}");
     assert_eq!(groups[0]["deck_count"], 2);

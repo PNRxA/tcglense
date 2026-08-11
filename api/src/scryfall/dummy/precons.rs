@@ -1,5 +1,6 @@
-//! Fabricated preconstructed decks for the offline dummy catalog: a Commander deck, a
-//! Secret Lair drop, and a starter deck with a sideboard, over the seeded dummy cards — so
+//! Fabricated preconstructed decks for the offline dummy catalog: a Commander deck, a small
+//! all-foil deck with no command zone, a starter deck with a sideboard and two Jumpstart
+//! themes, over the seeded dummy cards — so
 //! the precon browser (list, facets, detail, copy) has data to serve with no network, and
 //! the e2e suite has something to click.
 //!
@@ -57,9 +58,11 @@ fn dummy_precons() -> Vec<SeedPrecon> {
     commander_cards.push((PreconBoard::Main, card("dmb", 1), 20, false));
     commander_cards.push((PreconBoard::Main, card("dmb", 1), 1, true));
 
-    // A Secret Lair drop: no command zone, all foil, a handful of cards in the drop's own
-    // order — the shape 714 of MTGJSON's real "decks" have.
-    let drop_cards = (1..=4)
+    // A small all-foil deck with no command zone, in its own order. It sits in `sld` because
+    // that set really does still publish precons (7 Commander decks and a Dandan deck) once the
+    // Secret Lair *drops* are excluded — and its type must stay outside `NOT_A_DECK_TYPES`, or
+    // the offline catalog would seed rows the real derivation refuses to create.
+    let dandan_cards = (1..=4)
         .map(|n| (PreconBoard::Main, card("sld", n), 1, true))
         .collect();
 
@@ -90,13 +93,13 @@ fn dummy_precons() -> Vec<SeedPrecon> {
             cards: commander_cards,
         },
         SeedPrecon {
-            slug: "dummy-secret-lair-drop-sld",
-            name: "Dummy Secret Lair Drop",
+            slug: "dummy-dandan-deck-sld",
+            name: "Dummy Dandan Deck",
             set_code: "sld",
-            deck_type: "Secret Lair Drop",
+            deck_type: "Dandan Deck",
             released_at: "2019-12-02",
             product_external_id: Some("900006"),
-            cards: drop_cards,
+            cards: dandan_cards,
         },
         SeedPrecon {
             slug: "dummy-base-set-starter-dmb",
@@ -297,6 +300,25 @@ pub(super) async fn seed_precons(db: &DatabaseConnection) -> Result<u64, IngestE
 mod tests {
     use super::*;
     use crate::test_support::migrated_memory_db;
+
+    /// The offline catalog must not seed a shape the real derivation refuses to produce.
+    ///
+    /// `mtgjson::precons` drops `NOT_A_DECK_TYPES` at derivation, so a dummy precon in one of
+    /// those categories would put a row in dev and e2e that no synced instance can ever hold —
+    /// and the dummy seed is exactly where such a contradiction hides, because it bypasses the
+    /// derivation entirely. Reads the real list rather than restating it, so adding a category
+    /// there fails here instead of silently diverging.
+    #[test]
+    fn no_seeded_precon_uses_an_excluded_deck_type() {
+        for precon in dummy_precons() {
+            assert!(
+                !crate::mtgjson::precons::NOT_A_DECK_TYPES.contains(&precon.deck_type),
+                "{} seeds `{}`, which the derivation excludes",
+                precon.slug,
+                precon.deck_type
+            );
+        }
+    }
 
     /// The declared decks are internally sound: unique slugs, a non-empty card list each,
     /// and the three shapes the browser has to render (command zone / none / sideboard).

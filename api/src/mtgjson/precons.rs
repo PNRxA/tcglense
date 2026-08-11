@@ -51,7 +51,7 @@ const UNTYPED: &str = "Preconstructed Deck";
 /// listing: the facets, the landing's per-set tile, the browse totals and the group headings
 /// all count the same rows. The sealed side already models a drop properly — it's a product
 /// with `sealed_contents`, browsable at `/sealed/{game}`.
-const NOT_A_DECK_TYPES: [&str; 1] = ["Secret Lair Drop"];
+pub(crate) const NOT_A_DECK_TYPES: [&str; 1] = ["Secret Lair Drop"];
 
 /// One resolved precon deck: its metadata plus every board's cards, keyed by **external**
 /// ids (Scryfall id for cards, TCGplayer product id for the sealed products that ship it) so
