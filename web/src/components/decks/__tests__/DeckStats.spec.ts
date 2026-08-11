@@ -8,6 +8,10 @@ import type { DeckAnalytics, DeckSection } from '@/lib/api'
 // two controls that choose *which* question is asked — which sections are the shuffled
 // library, and which card the odds are for — plus that the odds slider reads the curve the
 // response already carries instead of refetching per tick.
+//
+// The panel now rests collapsed, so every one of those controls is behind the disclosure:
+// each case below opens it through the same button a viewer clicks (`expand`), and the
+// resting state has cases of its own.
 
 // Capture the params ref the component passes in, so the controls can be asserted through it.
 const captured = vi.hoisted(() => ({
@@ -22,6 +26,20 @@ const SECTION_CARDS: Record<number, { size: number; card: string }> = {
   2: { size: 15, card: 'Pyroblast' },
   3: { size: 2, card: 'Black Lotus' },
 }
+
+/** A curve with a real shape, not one filled bucket: the collapsed strip scales every bar
+ * against the TALLEST one, so a stub whose buckets are all-or-nothing would let a broken
+ * scale (sum, bucket count, a fixed denominator) pass unnoticed. The server always emits all
+ * eight buckets including the zeroes (`compose`), and this mirrors that. */
+const CURVE = [0, 12, 8, 4, 0, 0, 0, 0]
+
+/** More than one colour, so "the pips carry weights, not just which colours" is testable —
+ * and `C`, which the server emits like any other non-zero bucket. */
+const COLOURS = [
+  { key: 'R', label: 'Red', count: 40, color: '#ef4444' },
+  { key: 'G', label: 'Green', count: 25, color: '#22c55e' },
+  { key: 'C', label: 'Colorless', count: 10, color: '#a1a1aa' },
+]
 
 /** Analytics for the sections the request asked for; stands in for the server's fold so the
  * component's own wiring is what's under test. Mirrors the two server behaviours the panel
@@ -38,10 +56,15 @@ function analytics(sections: number[] | undefined, card: string | undefined): De
   const composition = (copies: number, cardOdds: typeof odds_) => ({
     total_copies: copies,
     unique_cards: cardOdds.length,
-    land_copies: 0,
-    average_mana_value: copies > 0 ? 1 : null,
-    mana_curve: [{ key: '1', label: '1', count: copies, color: null }],
-    colors: [{ key: 'R', label: 'Red', count: copies, color: '#ef4444' }],
+    land_copies: stub.landsOnly ? copies : 30,
+    average_mana_value: copies > 0 && !stub.landsOnly ? 1 : null,
+    mana_curve: CURVE.map((count, index) => ({
+      key: String(index),
+      label: index === 7 ? '7+' : String(index),
+      count: stub.landsOnly ? 0 : count,
+      color: null,
+    })),
+    colors: COLOURS,
     card_types: [{ key: 'Instant', label: 'Instant', count: copies, color: null }],
     card_odds: cardOdds,
   })
@@ -70,6 +93,10 @@ function analytics(sections: number[] | undefined, card: string | undefined): De
 /** The query's own state, read at mount — each loading case mounts its own panel, the way
  * the goldfish spec's `failNext` does. */
 const query = vi.hoisted(() => ({ pending: false, fetching: false, failed: false }))
+
+/** Shape knobs for the stubbed composition, for the cases that need a differently built
+ * deck than the default one (today: a deck with no nonland spells to curve). */
+const stub = vi.hoisted(() => ({ landsOnly: false }))
 
 vi.mock('@/composables/useDeckAnalysis', async () => {
   const { computed: vueComputed } = await import('vue')
@@ -103,6 +130,7 @@ beforeEach(() => {
   query.pending = false
   query.fetching = false
   query.failed = false
+  stub.landsOnly = false
 })
 
 const SECTIONS: DeckSection[] = [
@@ -115,9 +143,132 @@ function mountPanel() {
   return mount(DeckStats, { props: { game: 'mtg', deckId: 7, sections: SECTIONS } })
 }
 
+/** The panel rests collapsed, so a case about the controls opens it the way a viewer does —
+ * through the disclosure, not by reaching into the component's state.
+ *
+ * Scoped to the header rather than matched on `[aria-expanded]`: the body it opens contains
+ * the card select, which is a combobox and carries that attribute too. */
+function disclosure(wrapper: ReturnType<typeof mountPanel>) {
+  return wrapper.get<HTMLButtonElement>('[data-slot="card-header"] button')
+}
+async function expand(wrapper: ReturnType<typeof mountPanel>) {
+  await disclosure(wrapper).trigger('click')
+}
+
+describe('DeckStats resting state', () => {
+  it('rests collapsed, with none of the panel mounted', () => {
+    const wrapper = mountPanel()
+
+    // Not merely hidden: the heavy half isn't in the DOM at all until it's asked for.
+    expect(disclosure(wrapper).attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Draw probability')
+    expect(wrapper.text()).not.toContain('Card types')
+  })
+
+  it('says what the deck is without opening it', () => {
+    const wrapper = mountPanel()
+    const text = wrapper.text()
+
+    // The land ratio prints its own denominator: `total_copies` is the deck proper, which
+    // counts a sideboard and a command zone, so a bare "40%" would be read against the 60 or
+    // 99 the player has in mind.
+    expect(text).toContain('Lands')
+    expect(text).toContain('30')
+    expect(text).toContain('40% of 75')
+    expect(text).toContain('Avg mana value')
+    expect(text).toContain('1.00')
+    // The colour weights — one row per colour the deck plays, each carrying HOW MUCH. The
+    // pips are decorative (`aria-hidden`), so the sr-only label is what names the colour.
+    expect(wrapper.findAll('ul li').map((item) => item.text().replace(/\s+/g, ' '))).toEqual([
+      'Red:40',
+      'Green:25',
+      'Colorless:10',
+    ])
+    // The curve strip — every bucket the server sent, zeroes included.
+    expect(text).toContain('Mana curve (nonlands)')
+    expect(wrapper.findAll('[role="img"][aria-label*="copies"]')).toHaveLength(8)
+  })
+
+  it('scales the strip against its tallest bucket, and fills only the ones with copies', () => {
+    const wrapper = mountPanel()
+    const tracks = wrapper.findAll('[role="img"][aria-label*="copies"]')
+    const heightOf = (index: number) =>
+      Number(/height:\s*([\d.]+)%/.exec(tracks[index]!.find('div').attributes('style') ?? '')?.[1])
+
+    // CURVE is [0, 12, 8, 4, 0…]: the 12 is the full height and the rest are its fractions.
+    // Scaling by anything else — the sum, the bucket count, a fixed denominator — leaves the
+    // strip a row of slivers, which is the whole feature gone.
+    expect(heightOf(1)).toBe(100)
+    expect(heightOf(2)).toBeCloseTo(66.67, 1)
+    expect(heightOf(3)).toBeCloseTo(33.33, 1)
+    expect(heightOf(0)).toBe(0)
+
+    // An empty bucket keeps its track but paints nothing, so a zero can't read as "one or
+    // two"; a bucket with copies is never thinner than the floor.
+    expect(tracks[0]!.find('div').classes()).not.toContain('min-h-0.5')
+    expect(tracks[3]!.find('div').classes()).toContain('min-h-0.5')
+  })
+
+  it('words a curve of nothing rather than drawing eight empty tracks', () => {
+    stub.landsOnly = true
+    const wrapper = mountPanel()
+
+    expect(wrapper.text()).toContain('No nonland spells yet.')
+    expect(wrapper.find('[role="img"][aria-label*="copies"]').exists()).toBe(false)
+    // Nothing to average is "—", not a zero the deck never claimed.
+    expect(wrapper.text()).toContain('—')
+  })
+
+  it('keeps the viewer own draw question when the panel closes again', async () => {
+    const wrapper = mountPanel()
+    // At rest the server's default pick is whatever the deck holds most of — a basic land on
+    // most decks — so the panel says nothing about draw odds until asked.
+    expect(wrapper.text()).not.toContain('to see one in')
+
+    await expand(wrapper)
+    ;(wrapper.vm as unknown as { selectedCard: string }).selectedCard = 'Lightning Bolt'
+    await wrapper.vm.$nextTick()
+    await expand(wrapper)
+
+    expect(disclosure(wrapper).attributes('aria-expanded')).toBe('false')
+    // The pool is named, because the checkboxes that chose it are behind the disclosure.
+    expect(wrapper.text()).toContain('Lightning Bolt')
+    expect(wrapper.text()).toContain('to see one in 7 cards from a')
+    expect(wrapper.text()).toContain('60')
+  })
+
+  it('opens and closes the panel without asking the server anything new', async () => {
+    const wrapper = mountPanel()
+    const before = { ...captured.params!.value }
+
+    await expand(wrapper)
+    expect(disclosure(wrapper).attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('input[type="range"]').exists()).toBe(true)
+    // The whole response is already here — a disclosure is not a question.
+    expect(captured.params!.value).toEqual(before)
+
+    // The body it controls is only addressable while it is showing.
+    const detailsId = disclosure(wrapper).attributes('aria-controls')
+    expect(detailsId).toBeTruthy()
+    expect(wrapper.find(`#${detailsId}`).exists()).toBe(true)
+
+    await expand(wrapper)
+    expect(disclosure(wrapper).attributes('aria-controls')).toBeUndefined()
+  })
+
+  it('names itself, so the page two disclosures are told apart', () => {
+    // `DeckBracket` puts a second button reading "Details" a few rows up this page.
+    const label = disclosure(mountPanel()).attributes('aria-label')
+    expect(label).toBe('Details for deck analytics')
+  })
+})
+
 describe('DeckStats draw sections', () => {
   it('starts on the library the server picked and lets the viewer widen it', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
 
     // No explicit selection is sent until the viewer makes one — the default library is the
     // server's answer, and asking for it by id would mean reproducing the rule that picks it.
@@ -136,6 +287,7 @@ describe('DeckStats draw sections', () => {
 
   it('selects and deselects every section via the controls', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
 
     const buttons = wrapper.findAll<HTMLButtonElement>('fieldset button')
     const selectAll = buttons.find((button) => button.text() === 'Select all')!
@@ -160,6 +312,7 @@ describe('DeckStats draw sections', () => {
 
   it('resets to the server default when the section list changes underneath it', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
     const checkboxes = wrapper.findAll<HTMLInputElement>('input[type="checkbox"]')
     await checkboxes[1]!.setValue(true)
     expect(captured.params!.value.sections).toEqual([1, 2])
@@ -175,6 +328,7 @@ describe('DeckStats draw sections', () => {
 describe('DeckStats draw odds', () => {
   it('reads the probability off the curve the response carries', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
 
     // The default library is 60 cards, so the curve runs to 30 (the server's cap) and the
     // default seven cards seen reads curve[6] = 7/30.
@@ -188,8 +342,9 @@ describe('DeckStats draw odds', () => {
     expect(captured.params!.value).toEqual({ sections: undefined, card: undefined })
   })
 
-  it('renders the composition the server folded', () => {
+  it('renders the composition the server folded', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
     const text = wrapper.text()
     expect(text).toContain('75')
     expect(text).toContain('Red')
@@ -198,13 +353,16 @@ describe('DeckStats draw odds', () => {
 })
 
 describe('DeckStats public mode', () => {
-  it('renders from the handle-addressed mirror when given a handle', () => {
+  it('renders from the handle-addressed mirror when given a handle', async () => {
     captured.params = null
     const wrapper = mount(DeckStats, {
       props: { game: 'mtg', deckId: 7, sections: SECTIONS, handle: 'alice-0001' },
     })
     // The public hook was selected at mount, so the authed one never ran.
     expect(captured.params).toBeNull()
+    // A shared deck gets the same resting summary and the same way into the rest of it.
+    expect(wrapper.text()).toContain('40% of 75')
+    await expand(wrapper)
     expect(wrapper.text()).toContain('60 cards from 1 selected section')
   })
 })
@@ -224,14 +382,24 @@ describe('DeckStats loading states', () => {
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
   })
 
+  it('keeps the disclosure in place while the first numbers are in flight', () => {
+    // The control is present but dead, so the header's right edge doesn't shift the moment
+    // the response lands — the whole point of drawing the resting shape.
+    query.pending = true
+    const wrapper = mountPanel()
+    expect(disclosure(wrapper).element.disabled).toBe(true)
+  })
+
   it('says so when the numbers cannot be worked out', () => {
     query.failed = true
     const wrapper = mountPanel()
     expect(wrapper.text()).toContain("couldn't be worked out")
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    // Nothing to disclose, so nothing offers to.
+    expect(wrapper.find('[data-slot="card-header"] button').exists()).toBe(false)
   })
 
-  it('marks the previous answer as being replaced while a new one is in flight', () => {
+  it('marks the previous answer as being replaced while a new one is in flight', async () => {
     query.fetching = true
     const wrapper = mountPanel()
 
@@ -239,6 +407,7 @@ describe('DeckStats loading states', () => {
     // only thing distinguishing "your click did nothing" from "your click is in the air".
     expect(wrapper.text()).toContain('Recalculating…')
     expect(wrapper.find('[data-slot="card"]').attributes('aria-busy')).toBe('true')
+    await expand(wrapper)
     // The count line describes the *previous* selection while the next is in flight.
     expect(wrapper.text()).not.toContain('60 cards from 1 selected section')
     expect(wrapper.text()).toContain('Updating…')
@@ -260,6 +429,7 @@ describe('DeckStats stale selections', () => {
     // `undefined` and rendered 0% for a card certain to be drawn — and the viewer's position
     // must come back when the library grows again.
     const wrapper = mountPanel()
+    await expand(wrapper)
     const boxes = () => wrapper.findAll<HTMLInputElement>('input[type="checkbox"]')
     const slider = () => wrapper.find<HTMLInputElement>('input[type="range"]')
 
@@ -283,6 +453,7 @@ describe('DeckStats stale selections', () => {
 
   it('stops asking about a card that has left the library', async () => {
     const wrapper = mountPanel()
+    await expand(wrapper)
     const boxes = () => wrapper.findAll<HTMLInputElement>('input[type="checkbox"]')
 
     // Add the Sideboard, then pick the card only it contributes.
