@@ -382,7 +382,7 @@ function removeFolder(folderId: number, name: string) {
         class="text-muted-foreground py-16 text-center"
       >
         You haven't built any decks yet. Hit <strong>New deck</strong> to start one, or copy a
-        <RouterLink :to="`/decks/${game}/precons`" class="text-primary underline"
+        <RouterLink :to="`/decks/${game}/precons/all`" class="text-primary underline"
           >preconstructed deck</RouterLink
         >.
       </p>

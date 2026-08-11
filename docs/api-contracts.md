@@ -1292,6 +1292,7 @@ row is gone is LEFT-joined away — the same tolerance `deck_cards` has.
 | Method & path | Returns |
 |---------------|---------|
 | `GET /api/games/{game}/precons?page&page_size&q&set&type&sort` | `Page<PreconDeck>` — the game's precons, newest first (`sort=name` orders alphabetically). `q` matches each whitespace-separated word as an order-independent name substring (the sealed list's rule, not Scryfall syntax); `set` and `type` are equality filters over the facet vocabulary. `PreconDeck = { slug, game, name, set_code, set_name, deck_type, released_at, color_identity, card_count, sideboard_count, face_card }` |
+| `GET /api/games/{game}/precons/sets?page&page_size&q&set&type&sort` | `Page<PreconSetGroup>` — the same decks bucketed into the sets that published them and **paginated by set**, so a set is never split across a boundary (the precon mirror of `/sets/{code}/drops`). Newest **set** first — a set's date is the catalog's, not its decks', so a Secret Lair deck released years after the `sld` set still sits with `sld`; `sort=name` orders by set name. `PreconSetGroup = { code, name, released_at, deck_count, decks }`. Shares the flat list's filter builder, so a filter selects exactly the same decks either way (a test pins that) |
 | `GET /api/games/{game}/precons/facets` | `{ data: PreconFacets }` — `{ types: { type, count }[]` (most decks first)`, sets: { code, name, count, released_at }[]` (newest first)`, total }`. Published rather than hardcoded: upstream adds deck categories over time. `facets` is a static segment, so it wins over `/{slug}` in axum |
 | `GET /api/games/{game}/precons/{slug}` | `PreconDeckDetail` — the header (flattened) plus `summary` (the deck proper), `sideboard_summary`, `cards: PreconCardEntry[] = { card, board, quantity, foil }` in board order (command zone → deck → sideboard, upstream's order within each), and `product` — the sealed product it ships in, when the catalog holds it. Returned whole; a precon is bounded. `404` for an unknown game or slug |
 | `POST /api/decks/{game}/precons/{slug}/copy` | `DeckDetail` — copy the precon into the caller's own decks (`WritableUser`, so a read-only key is **403**), returning the new deck. The copy is private and loose, named after the precon, and takes a format **only when the deck type states one** (`Commander Deck` → `commander`; a Secret Lair drop or a theme deck gets none, since a wrong guess would have the deck page judge it against rules it was never built for). `404` unknown game/slug; `422` at the per-game deck cap, or when nothing in the list is still in the catalog |
@@ -1307,7 +1308,9 @@ because those spellings are what `decks::analysis::rules` reads a deck's zones o
 commander filed anywhere else comes back as "no commander". The mainboard is filed into the
 preset type buckets through `deck_import::categorize::preset_section`, the same table a deck
 import uses, so a copied precon arrives sorted rather than as one pile, and a precon row's
-single finish folds back into the deck card's regular/foil pair. The SPA mirrors that board
+single finish folds back into the deck card's regular/foil pair — **by card**, since a board
+may list one printing in both finishes (two rows by design) and `deck_cards` is unique on
+`(deck, card, section)`. The SPA mirrors that board
 vocabulary in `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) so the
 precon page renders through the *deck* display engine rather than a second one.
 

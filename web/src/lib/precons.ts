@@ -41,11 +41,16 @@ function isKnownBoard(board: string): board is PreconBoard {
 /** A precon's cards as deck sections + deck card entries.
  *
  * Only boards that actually carry cards become sections, so a 60-card starter deck shows no
- * empty "Command zone" heading. A precon row's single finish folds into the deck card's
- * regular/foil pair — the same fold the copy endpoint performs server-side, so the page and
- * the deck you copy from it show the same counts. An unknown board (the API added one this
- * build doesn't know) is **kept**, filed under its raw name rather than dropped: a card
- * missing from a decklist is a worse failure than an oddly-named section.
+ * empty "Command zone" heading. An unknown board (the API added one this build doesn't know)
+ * is **kept**, filed under its raw name rather than dropped: a card missing from a decklist is
+ * a worse failure than an oddly-named section.
+ *
+ * A precon row is one finish, and a board may list the **same printing in both** (a Jumpstart
+ * theme's foil rare beside its non-foil copy, a bundle land pack's foil basics) — so the rows
+ * of a printing fold into one entry carrying the deck card's regular/foil pair. That is the
+ * same fold the copy endpoint performs server-side, so this page and the deck you copy from it
+ * show the same counts; it also keeps `card.id + section_id` unique, which is what the `v-for`
+ * keys below are built from.
  */
 export function preconBoards(cards: PreconCardEntry[]): {
   sections: DeckSection[]
@@ -55,6 +60,9 @@ export function preconBoards(cards: PreconCardEntry[]): {
   const seen = new Map<number, string>()
   // Unknown boards get ids past the known ones, in first-seen order.
   const unknownIds = new Map<string, number>()
+  // Where each `(section, printing)` already sits in `entries`, so a second finish of the same
+  // printing merges into it rather than becoming a second tile with the same key.
+  const indexByKey = new Map<string, number>()
 
   for (const card of cards) {
     let sectionId: number
@@ -68,11 +76,22 @@ export function preconBoards(cards: PreconCardEntry[]): {
       name = card.board
     }
     seen.set(sectionId, name)
+
+    const regular = card.foil ? 0 : card.quantity
+    const foil = card.foil ? card.quantity : 0
+    const key = `${sectionId}:${card.card.id}`
+    const existing = indexByKey.get(key)
+    if (existing !== undefined) {
+      entries[existing]!.quantity += regular
+      entries[existing]!.foil_quantity += foil
+      continue
+    }
+    indexByKey.set(key, entries.length)
     entries.push({
       card: card.card,
       section_id: sectionId,
-      quantity: card.foil ? 0 : card.quantity,
-      foil_quantity: card.foil ? card.quantity : 0,
+      quantity: regular,
+      foil_quantity: foil,
     })
   }
 

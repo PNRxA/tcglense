@@ -7,35 +7,44 @@ import { formatCopies } from '@/lib/ownership'
 import { useImageLoad } from '@/composables/useImageLoad'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 
-// A standalone bordered tile for one product set — the sealed-product mirror of the cards
-// landing's SetTile (default variant). Shared by the two sealed set-tile landings: the public
-// catalog landing (SealedGameView, a plain product count) and the collection/wish-list holdings
-// section (ProductHoldingSection, which also passes the held copies + total value). It clicks
-// through to a set-scoped products list rather than rendering the products inline. The catalog
-// set (icon + release date) is optional: a set with no catalog row falls back to a Package icon
-// and drops the release date. No completion count (sealed products aren't a fixed-size set) and
-// no height-reserving spacer (these tiles never nest sub-sets, so rows can't get out of step).
+// A standalone bordered tile for one set with a count of *something* in it — the count-driven
+// mirror of the cards landing's SetTile (default variant). Three landings share it: the public
+// sealed catalog (SealedGameView, a plain product count), the collection/wish-list sealed
+// holdings section (ProductHoldingSection, which also passes the held copies + total value), and
+// the preconstructed-deck landing (PreconsView, counting decks). It clicks through to a
+// set-scoped list rather than rendering the items inline.
+//
+// `noun` is what the count is counted in ("product" by default, "deck" for precons) — the only
+// thing that differs between those callers, so it's a prop rather than a forked tile. The
+// catalog set (icon + release date) is optional: a set with no catalog row falls back to a
+// Package icon and drops the release date. No completion count (none of these are fixed-size
+// sets) and no height-reserving spacer (these tiles never nest sub-sets, so rows can't get out
+// of step).
 const props = defineProps<{
   game: string
   // Set identity — the tile shows `name`, falling back to the upper-cased `code`.
   code: string
   name: string | null
-  // The distinct-product count shown on the stats line (the catalog set's product count, or the
-  // holdings section's unique held products).
-  products: number
+  // The count shown on the stats line (the sealed landing's per-set product count, the holdings
+  // section's unique held products, or the precon landing's deck count).
+  count: number
+  // Singular noun for that count; pluralised with a bare "s". Defaults to "product".
+  noun?: string
   // The matching catalog set — the icon and release-date source. Undefined when the set's code
   // has no catalog row.
   catalogSet?: CardSet
-  // Where the tile links (the set-scoped products list).
+  // Where the tile links (the set-scoped list).
   to: string
   // Total copies including duplicates (the holdings section's `total_products`). Shown as
-  // "N copies" only when it exceeds `products`; omitted by the catalog landing, where each set
+  // "N copies" only when it exceeds `count`; omitted by the catalog landings, where each set
   // has a single count.
   copies?: number
   // Preformatted total value (e.g. "$123.45"), shown as "TOTAL $X" on the identity line. The
   // parent formats it via useCurrency, matching SetTile's `ownedValue`. Null hides the stat.
   value?: string | null
 }>()
+
+const noun = computed(() => props.noun ?? 'product')
 
 const displayName = computed(() => props.name ?? props.code.toUpperCase())
 
@@ -65,11 +74,11 @@ const released = computed(() => {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
 })
 
-// The total copies (with duplicates) as "N copies", shown next to the product count only when
-// there are more copies than distinct products — otherwise it just restates the count (SetTile's
-// copies rule). The catalog landing omits `copies` entirely, so it never shows.
+// The total copies (with duplicates) as "N copies", shown next to the count only when there are
+// more copies than distinct items — otherwise it just restates the count (SetTile's copies
+// rule). The catalog landings omit `copies` entirely, so it never shows.
 const copiesLabel = computed(() =>
-  props.copies != null && props.copies > props.products ? formatCopies(props.copies) : null,
+  props.copies != null && props.copies > props.count ? formatCopies(props.copies) : null,
 )
 </script>
 
@@ -113,11 +122,11 @@ const copiesLabel = computed(() =>
             {{ value }}
           </span>
         </div>
-        <!-- The held-product stats: distinct products, plus total copies when there are
+        <!-- The stats line: the count in its noun, plus total copies when there are
              duplicates. -->
         <div class="text-muted-foreground mt-0.5 truncate text-xs tabular-nums">
-          {{ products.toLocaleString() }}
-          {{ products === 1 ? 'product' : 'products'
+          {{ count.toLocaleString() }}
+          {{ count === 1 ? noun : `${noun}s`
           }}<template v-if="copiesLabel"> · {{ copiesLabel }}</template>
         </div>
       </div>

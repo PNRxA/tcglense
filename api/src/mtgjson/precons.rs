@@ -233,10 +233,15 @@ fn unique_slug(name: &str, set_code: &str, used: &mut HashMap<String, u32>) -> S
     let count = used.entry(base.clone()).or_insert(0);
     *count += 1;
     if *count == 1 {
-        base
-    } else {
-        format!("{base}-{count}")
+        return base;
     }
+    // Claim the suffixed slug too, not just the base. A suffixed slug can't collide with
+    // another *base* today (a base always ends in the set's own slug, and a set code is never
+    // a bare digit), but that's an argument the reader has to reconstruct — reserving what we
+    // hand out makes uniqueness a property of this function instead.
+    let suffixed = format!("{base}-{count}");
+    used.insert(suffixed.clone(), 1);
+    suffixed
 }
 
 /// Lowercase ASCII slug: alphanumerics kept, every other character a separator, runs
@@ -449,6 +454,17 @@ mod tests {
 
     /// A name that slugifies to nothing still gets a usable, unique URL rather than an
     /// empty one (which would collide with every other such deck).
+    /// Every slug the builder hands out is claimed, so a later deck whose *base* happens to
+    /// equal an earlier suffixed slug is pushed along instead of colliding with it.
+    #[test]
+    fn a_suffixed_slug_is_reserved_against_a_later_base() {
+        let mut used = HashMap::new();
+        assert_eq!(unique_slug("Rocks", "sld", &mut used), "rocks-sld");
+        assert_eq!(unique_slug("Rocks", "sld", &mut used), "rocks-sld-2");
+        // A different deck whose own base lands on that suffixed slug takes the next one.
+        assert_eq!(unique_slug("Rocks Sld", "2", &mut used), "rocks-sld-2-2");
+    }
+
     #[test]
     fn unnameable_decks_fall_back_to_the_set_code() {
         let mut used = HashMap::new();

@@ -39,10 +39,12 @@ mod copy;
 mod read;
 
 pub use copy::copy_precon_deck;
-pub use read::{get_precon, list_precons, precon_facets};
+pub use read::{get_precon, list_precon_sets, list_precons, precon_facets};
 
 pub use copy::__path_copy_precon_deck;
-pub use read::{__path_get_precon, __path_list_precons, __path_precon_facets};
+pub use read::{
+    __path_get_precon, __path_list_precon_sets, __path_list_precons, __path_precon_facets,
+};
 
 // ---------- Response DTOs ----------
 
@@ -127,6 +129,25 @@ pub struct PreconDeckDetail {
     pub cards: Vec<PreconCardEntry>,
     /// The sealed product this deck ships in, for the "buy it" link + its price.
     pub product: Option<ProductResponse>,
+}
+
+/// One set's preconstructed decks, for the by-set view — the precon mirror of the card
+/// catalog's by-drop grouping, and paginated the same way: a page is a page of **sets**, so a
+/// set's decks are never split across a boundary.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "PreconSetGroup"))]
+pub struct PreconSetGroup {
+    /// Set code, lowercased (`tmc`) — the anchor/link key.
+    pub code: String,
+    /// The set's catalog name, when it has one.
+    pub name: Option<String>,
+    /// The **set's** release date (not its decks'), falling back to the newest deck in the
+    /// group when the catalog doesn't know the set. What the groups are ordered by.
+    pub released_at: Option<String>,
+    /// How many decks are in this group (`decks.len()`, carried so a client can label the
+    /// heading without counting).
+    pub deck_count: usize,
+    pub decks: Vec<PreconDeckResponse>,
 }
 
 /// A deck type that actually occurs, with how many decks carry it — the browse filter's

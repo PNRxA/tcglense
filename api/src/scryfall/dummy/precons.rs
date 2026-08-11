@@ -49,8 +49,13 @@ fn dummy_precons() -> Vec<SeedPrecon> {
     for n in 2..=12 {
         commander_cards.push((PreconBoard::Main, card("dmu", n), 1, false));
     }
-    // A pile of basics, so a copied deck has a realistic Lands section.
+    // A pile of basics, so a copied deck has a realistic Lands section — plus a foil copy of
+    // that same printing. A board listing one printing in both finishes is two rows by design
+    // (the ingest keys on `(card, finish)`), and it's the shape every Jumpstart theme and
+    // bundle land pack has, so the offline catalog carries it: a copy must fold the pair into
+    // one deck card rather than trip `deck_cards`' unique key.
     commander_cards.push((PreconBoard::Main, card("dmb", 1), 20, false));
+    commander_cards.push((PreconBoard::Main, card("dmb", 1), 1, true));
 
     // A Secret Lair drop: no command zone, all foil, a handful of cards in the drop's own
     // order — the shape 714 of MTGJSON's real "decks" have.

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use axum::{Json, extract::State};
 use sea_orm::{
-    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::{Expr, Func, LikeExpr, NullOrdering},
 };
 
@@ -21,15 +21,16 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
-    CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, build_page, product_response,
-    require_game, resolve_page, set_name_map, summarize_holdings, trim_query,
+    CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
+    MAX_PAGE_SIZE, Page, build_page, product_response, require_game, resolve_page, set_name_map,
+    summarize_holdings, trim_query,
 };
 use crate::scryfall::search::escape_like;
 use crate::state::AppState;
 
 use super::{
     PreconCardEntry, PreconDeckDetail, PreconDeckResponse, PreconFaceCard, PreconFacets,
-    PreconListParams, PreconSetRef, PreconTypeRef, load_precon, precon_response,
+    PreconListParams, PreconSetGroup, PreconSetRef, PreconTypeRef, load_precon, precon_response,
 };
 
 /// List preconstructed decks
@@ -69,47 +70,7 @@ pub async fn list_precons(
         MAX_PAGE_SIZE,
     );
 
-    let mut query = PreconDeck::find().filter(precon_deck::Column::Game.eq(game.as_str()));
-    if let Some(term) = trim_query(params.q.as_deref()) {
-        // Every whitespace-separated word as its own order-independent name substring,
-        // AND-ed — the sealed product list's rule (issue #273), so a precon and a sealed
-        // product answer "commander tarkir" the same way. LOWER both sides so the match is
-        // case-insensitive on Postgres too.
-        for word in term.split_whitespace() {
-            let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
-            query = query.filter(
-                Expr::expr(Func::lower(Expr::col((
-                    precon_deck::Entity,
-                    precon_deck::Column::Name,
-                ))))
-                .like(LikeExpr::new(pattern).escape('\\')),
-            );
-        }
-    }
-    if let Some(set) = trim_query(params.set.as_deref()) {
-        query = query.filter(precon_deck::Column::SetCode.eq(set.to_lowercase()));
-    }
-    if let Some(deck_type) = trim_query(params.deck_type.as_deref()) {
-        query = query.filter(precon_deck::Column::DeckType.eq(deck_type));
-    }
-
-    // Newest first by default. `released_at` is nullable (upstream doesn't date every deck),
-    // and a NULL must sort *last* in both dialects rather than first on one of them — hence
-    // the explicit null ordering, matching the product list's.
-    let query = match trim_query(params.sort.as_deref()) {
-        Some("name") => query
-            .order_by_asc(precon_deck::Column::Name)
-            .order_by_asc(precon_deck::Column::Slug),
-        _ => query
-            .order_by_with_nulls(
-                precon_deck::Column::ReleasedAt,
-                sea_orm::Order::Desc,
-                NullOrdering::Last,
-            )
-            .order_by_asc(precon_deck::Column::Name)
-            .order_by_asc(precon_deck::Column::Slug),
-    };
-
+    let query = sorted_query(filtered_query(&game, &params), &params);
     let paginator = query.paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -317,6 +278,223 @@ pub async fn get_precon(
         cards,
         product: product.map(|p| product_response(p, &names)),
     }))
+}
+
+/// The precon list's filters, shared by the flat list and the by-set grouping so the two can
+/// never disagree about what a query matches — only about how the matches are laid out.
+fn filtered_query(game: &str, params: &PreconListParams) -> Select<PreconDeck> {
+    let mut query = PreconDeck::find().filter(precon_deck::Column::Game.eq(game));
+    if let Some(term) = trim_query(params.q.as_deref()) {
+        // Every whitespace-separated word as its own order-independent name substring,
+        // AND-ed — the sealed product list's rule (issue #273), so a precon and a sealed
+        // product answer "commander tarkir" the same way. LOWER both sides so the match is
+        // case-insensitive on Postgres too.
+        for word in term.split_whitespace() {
+            let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
+            query = query.filter(
+                Expr::expr(Func::lower(Expr::col((
+                    precon_deck::Entity,
+                    precon_deck::Column::Name,
+                ))))
+                .like(LikeExpr::new(pattern).escape('\\')),
+            );
+        }
+    }
+    if let Some(set) = trim_query(params.set.as_deref()) {
+        query = query.filter(precon_deck::Column::SetCode.eq(set.to_lowercase()));
+    }
+    if let Some(deck_type) = trim_query(params.deck_type.as_deref()) {
+        query = query.filter(precon_deck::Column::DeckType.eq(deck_type));
+    }
+    query
+}
+
+/// The list's order: newest first by default, `sort=name` alphabetical.
+///
+/// `released_at` is nullable (upstream doesn't date every deck), and a NULL must sort **last**
+/// in both dialects rather than first on one of them — hence the explicit null ordering,
+/// matching the product list's. `slug` breaks the final tie so a page boundary is stable.
+fn sorted_query(query: Select<PreconDeck>, params: &PreconListParams) -> Select<PreconDeck> {
+    match trim_query(params.sort.as_deref()) {
+        Some("name") => query
+            .order_by_asc(precon_deck::Column::Name)
+            .order_by_asc(precon_deck::Column::Slug),
+        _ => query
+            .order_by_with_nulls(
+                precon_deck::Column::ReleasedAt,
+                sea_orm::Order::Desc,
+                NullOrdering::Last,
+            )
+            .order_by_asc(precon_deck::Column::Name)
+            .order_by_asc(precon_deck::Column::Slug),
+    }
+}
+
+/// List preconstructed decks grouped by set
+///
+/// `GET /api/games/{game}/precons/sets` -> the same decks the flat list returns, bucketed into
+/// the sets that published them and **paginated by set** (so a set is never split across a page
+/// boundary), newest set first. The by-set mirror of the card catalog's by-drop view.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/precons/sets",
+    tag = "Preconstructed decks",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("page" = Option<u64>, Query, description = "1-based page number (pages are sets, not decks)"),
+        ("page_size" = Option<u64>, Query, description = "Sets per page (default 20, max 100)"),
+        ("q" = Option<String>, Query, description = "Name substring; every word must match"),
+        ("set" = Option<String>, Query, description = "Set code, e.g. `tmc` — narrows to that one group"),
+        ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
+        ("sort" = Option<String>, Query, description = "`released` (default, newest first) or `name`"),
+    ),
+    responses(
+        (status = 200, description = "A page of sets, each with its preconstructed decks.", body = Page<PreconSetGroup>),
+        (status = 404, description = "Unknown game."),
+    ),
+)]
+pub async fn list_precon_sets(
+    State(state): State<AppState>,
+    Path(game): Path<String>,
+    Query(params): Query<PreconListParams>,
+) -> Result<Json<Page<PreconSetGroup>>, AppError> {
+    require_game(&game)?;
+    // Pages are *sets* here, each holding a handful of decks, so this uses the by-drop
+    // endpoints' smaller page bounds rather than the card list's.
+    let (page, page_size) = resolve_page(
+        params.page,
+        params.page_size,
+        DEFAULT_DROP_PAGE_SIZE,
+        MAX_DROP_PAGE_SIZE,
+    );
+
+    // A game's precons are bounded (~3 000 header rows for MTG, no cards joined), so the whole
+    // filtered set is fetched and bucketed in memory — the same trade the by-drop endpoint
+    // makes with a set's cards, and what keeps every group complete regardless of where the
+    // page boundary falls. Only the groups actually on the page are then shaped into DTOs.
+    let rows = sorted_query(filtered_query(&game, &params), &params)
+        .all(&state.db)
+        .await?;
+
+    let names = set_name_map(&state, &game).await?;
+    let set_dates = set_release_map(&state, &game).await?;
+    let mut buckets = group_by_set(rows);
+    sort_buckets(&mut buckets, &set_dates, &names, &params);
+
+    let total = buckets.len() as u64;
+    let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
+    let on_page: Vec<(String, Vec<precon_deck::Model>)> = buckets
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
+
+    // One face-card lookup for the whole page, not one per group.
+    let page_rows: Vec<precon_deck::Model> = on_page
+        .iter()
+        .flat_map(|(_, decks)| decks.iter().cloned())
+        .collect();
+    let faces = face_cards(&state, &page_rows).await?;
+
+    let data: Vec<PreconSetGroup> = on_page
+        .into_iter()
+        .map(|(code, decks)| PreconSetGroup {
+            deck_count: decks.len(),
+            decks: decks
+                .iter()
+                .map(|row| {
+                    precon_response(
+                        row,
+                        names.get(&row.set_code).cloned(),
+                        row.face_card_id.and_then(|id| faces.get(&id).cloned()),
+                    )
+                })
+                .collect(),
+            // The set's own release date when the catalog knows it, else the newest deck in
+            // the group — an undated group still sorts and labels sensibly.
+            released_at: set_dates.get(&code).cloned().flatten().or_else(|| {
+                decks
+                    .iter()
+                    .filter_map(|deck| deck.released_at.clone())
+                    .max()
+            }),
+            name: names.get(&code).cloned(),
+            code,
+        })
+        .collect();
+    Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// Bucket precon rows by set code, preserving the order the rows arrived in **both** for the
+/// groups (first row of a set names its position) and within each group. Every group therefore
+/// leads with whatever the list's own sort put first.
+fn group_by_set(rows: Vec<precon_deck::Model>) -> Vec<(String, Vec<precon_deck::Model>)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_set: HashMap<String, Vec<precon_deck::Model>> = HashMap::new();
+    for row in rows {
+        let code = row.set_code.clone();
+        by_set
+            .entry(code.clone())
+            .or_insert_with(|| {
+                order.push(code.clone());
+                Vec::new()
+            })
+            .push(row);
+    }
+    order
+        .into_iter()
+        .filter_map(|code| by_set.remove(&code).map(|decks| (code, decks)))
+        .collect()
+}
+
+/// Order the groups: newest **set** first (`sort=name`: by set name, then code).
+///
+/// A set's date is the catalog's, not its decks' — a Secret Lair deck released years after the
+/// `sld` set still belongs to `sld`, and the group should sit where the set does. A set the
+/// catalog doesn't know falls back to its newest deck, then sorts last if it has neither.
+fn sort_buckets(
+    buckets: &mut [(String, Vec<precon_deck::Model>)],
+    set_dates: &HashMap<String, Option<String>>,
+    names: &HashMap<String, String>,
+    params: &PreconListParams,
+) {
+    let by_name = trim_query(params.sort.as_deref()) == Some("name");
+    let date_of = |code: &String, decks: &Vec<precon_deck::Model>| -> String {
+        set_dates
+            .get(code)
+            .cloned()
+            .flatten()
+            .or_else(|| decks.iter().filter_map(|d| d.released_at.clone()).max())
+            .unwrap_or_default()
+    };
+    buckets.sort_by(|(a_code, a_decks), (b_code, b_decks)| {
+        if by_name {
+            let a_name = names.get(a_code).unwrap_or(a_code);
+            let b_name = names.get(b_code).unwrap_or(b_code);
+            return a_name.cmp(b_name).then_with(|| a_code.cmp(b_code));
+        }
+        // Newest first; an undated set sinks below every dated one rather than leading.
+        date_of(b_code, b_decks)
+            .cmp(&date_of(a_code, a_decks))
+            .then_with(|| a_code.cmp(b_code))
+    });
+}
+
+/// Every set's release date for a game, keyed by code — what orders the groups above.
+async fn set_release_map(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, Option<String>>, AppError> {
+    Ok(CardSet::find()
+        .select_only()
+        .column(card_set::Column::Code)
+        .column(card_set::Column::ReleasedAt)
+        .filter(card_set::Column::Game.eq(game))
+        .into_tuple::<(String, Option<String>)>()
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .collect())
 }
 
 /// Resolve a page of precons' face cards in one query, keyed by internal card id.

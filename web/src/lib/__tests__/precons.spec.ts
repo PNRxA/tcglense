@@ -35,6 +35,26 @@ describe('preconBoards', () => {
     expect(entries[1]).toMatchObject({ quantity: 3, foil_quantity: 0, section_id: 1 })
   })
 
+  it('folds the two finishes of one printing on a board into a single entry', () => {
+    // The Jumpstart / bundle-land-pack shape: upstream lists the printing twice, once per
+    // finish. Two entries here would render two tiles under one `v-for` key — and would not
+    // match the deck the copy endpoint writes, which folds them.
+    const { entries } = preconBoards([
+      entry('main', 'a', 20),
+      entry('main', 'a', 1, true),
+      entry('main', 'b', 1),
+    ])
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ quantity: 20, foil_quantity: 1 })
+    expect(entries[1]!.card.id).toBe('b')
+  })
+
+  it('keeps the same printing apart when it sits on different boards', () => {
+    const { entries } = preconBoards([entry('commander', 'a', 1, true), entry('main', 'a', 1)])
+    expect(entries).toHaveLength(2)
+    expect(entries.map((e) => e.section_id)).toEqual([0, 1])
+  })
+
   it('keeps a card on an unrecognised board rather than dropping it', () => {
     // The API grew a board this build doesn't know: a decklist missing cards is worse than
     // an oddly-named section.

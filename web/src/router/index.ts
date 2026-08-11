@@ -224,6 +224,22 @@ const router = createRouter({
       component: () => import('@/views/PreconsView.vue'),
       props: true,
     },
+    // Static `all` / `sets` are declared BEFORE the `:slug` detail below, so a precon slug can
+    // never shadow them — the same ordering `/decks/:game/needed` relies on above. One
+    // component serves both browse routes (the set-scoped one just pins its filter), exactly
+    // as SealedBrowseView serves the sealed pair.
+    {
+      path: '/decks/:game/precons/all',
+      name: 'precons-all',
+      component: () => import('@/views/PreconsBrowseView.vue'),
+      props: true,
+    },
+    {
+      path: '/decks/:game/precons/sets/:code',
+      name: 'precon-set',
+      component: () => import('@/views/PreconsBrowseView.vue'),
+      props: true,
+    },
     {
       path: '/decks/:game/precons/:slug',
       name: 'precon',

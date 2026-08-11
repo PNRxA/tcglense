@@ -1,5 +1,12 @@
 import { request } from './client'
-import type { DeckDetail, Page, PreconDeck, PreconDeckDetail, PreconFacets } from './generated'
+import type {
+  DeckDetail,
+  Page,
+  PreconDeck,
+  PreconDeckDetail,
+  PreconFacets,
+  PreconSetGroup,
+} from './generated'
 
 // ---------- Preconstructed decks (public catalog + one authed write) ----------
 //
@@ -14,10 +21,14 @@ import type { DeckDetail, Page, PreconDeck, PreconDeckDetail, PreconFacets } fro
 // rebuilt wholesale on every sync, so ids are re-minted while a slug is stable.
 
 export type { PreconCardEntry, PreconDeck, PreconDeckDetail, PreconFacets } from './generated'
-export type { PreconFaceCard, PreconSetRef, PreconTypeRef } from './generated'
+export type { PreconFaceCard, PreconSetGroup, PreconSetRef, PreconTypeRef } from './generated'
 
 /** A page of precon decks plus pagination cursors. */
 export type PreconPage = Page<PreconDeck>
+
+/** A page of **sets**, each with its precon decks — the by-set view's payload. Paginated by
+ *  set, so a set's decks are never split across a page boundary. */
+export type PreconSetPage = Page<PreconSetGroup>
 
 /** Reactive list controls for the precon browse view. Like the sealed list, `q` is a plain
  * name substring (not Scryfall syntax) and `set`/`type` are equality filters. */
@@ -55,6 +66,15 @@ export function listPrecons(
   signal?: AbortSignal,
 ): Promise<PreconPage> {
   return request<PreconPage>(`${base(game)}${preconQuery(params)}`, { signal })
+}
+
+/** The same decks bucketed into the sets that published them, paginated by set. */
+export function listPreconSets(
+  game: string,
+  params?: PreconListParams,
+  signal?: AbortSignal,
+): Promise<PreconSetPage> {
+  return request<PreconSetPage>(`${base(game)}/sets${preconQuery(params)}`, { signal })
 }
 
 /** The deck types + sets that actually have precons, with counts — the filter vocabulary. */

@@ -1,7 +1,14 @@
 import type { Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { copyPrecon, getPrecon, getPreconFacets, listPrecons } from '@/lib/api'
-import type { ApiError, DeckDetail, PreconDeckDetail, PreconFacets, PreconPage } from '@/lib/api'
+import { copyPrecon, getPrecon, getPreconFacets, listPreconSets, listPrecons } from '@/lib/api'
+import type {
+  ApiError,
+  DeckDetail,
+  PreconDeckDetail,
+  PreconFacets,
+  PreconPage,
+  PreconSetPage,
+} from '@/lib/api'
 import { useAuthedMutation } from '@/lib/queries'
 import { invalidateDeck } from '@/composables/useDecks'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
@@ -15,16 +22,26 @@ import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
  * family, exactly as the public-deck copy does.
  */
 
-/** Precons per page in the browse grid. */
+/** Precons per page in the flat browse grid. */
 export const PRECON_PAGE_SIZE = 24
 
-/** Reactive controls for the precon list; all carried in the key. */
+/** **Sets** per page in the by-set view — a page here holds a handful of decks per set, so it
+ *  counts groups, matching the by-drop view's own smaller page size. */
+export const PRECON_SET_PAGE_SIZE = 8
+
+/** Reactive controls for the precon list; all carried in the key.
+ *
+ * `enabled` is what keeps the browse view honest: it mounts BOTH the flat and the by-set
+ * query so toggling between them is instant off the cache, and gates each on whether its view
+ * is the one showing — without it, every page load and every filter change would fire two
+ * requests for one grid. */
 interface PreconListQueryOptions {
   page: Ref<number>
   query: Ref<string>
   set: Ref<string>
   type: Ref<string>
   sort: Ref<string>
+  enabled?: Ref<boolean>
 }
 
 /** A page of a game's precon decks. `keepPreviousData` holds the current grid up while the
@@ -46,7 +63,32 @@ export function usePreconsQuery(game: Ref<string>, opts: PreconListQueryOptions)
         signal,
       ),
     placeholderData: keepPreviousData,
+    enabled: opts.enabled,
     // Precons turn over only when the daily sealed sync runs.
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** The same decks grouped into their sets, paginated by set. Shares the list's filters (and
+ *  its query-key shape), so switching the view keeps the search and filters you had. */
+export function usePreconSetsQuery(game: Ref<string>, opts: PreconListQueryOptions) {
+  return useQuery<PreconSetPage, ApiError>({
+    queryKey: ['precon-sets', game, opts.query, opts.set, opts.type, opts.sort, opts.page],
+    queryFn: ({ signal }) =>
+      listPreconSets(
+        game.value,
+        {
+          q: opts.query.value || undefined,
+          set: opts.set.value || undefined,
+          type: opts.type.value || undefined,
+          sort: opts.sort.value || undefined,
+          page: opts.page.value,
+          pageSize: PRECON_SET_PAGE_SIZE,
+        },
+        signal,
+      ),
+    placeholderData: keepPreviousData,
+    enabled: opts.enabled,
     staleTime: PRICED_CATALOG_STALE_MS,
   })
 }

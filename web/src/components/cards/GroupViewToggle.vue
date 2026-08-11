@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { cn } from '@/lib/utils'
 
-// The "<grouped> / All cards" segmented control for a set that can be browsed grouped —
-// by Secret Lair drop or by card sub-type (treatment). Shared by the catalog set view and
-// the collection/wish-list browse views. The caller owns the visibility guard (`hasDrops`
-// / `hasSubtypes`) and the `select` handler (which restarts paging / keeps its own view
-// state); this is just the two-button presentation. `label` is the grouped button's text
-// ("By drop" or "By treatment"), sourced from the grouping's `groupLabel`.
-defineProps<{ grouped: boolean; label: string }>()
+// The "<grouped> / <all>" segmented control for a listing that can be browsed grouped — by
+// Secret Lair drop, by card sub-type (treatment), or by set (the precon browse). Shared by the
+// catalog set view, the collection/wish-list browse views and the precon browse. The caller
+// owns the visibility guard (`hasDrops` / `hasSubtypes`) and the `select` handler (which
+// restarts paging / keeps its own view state); this is just the two-button presentation.
+//
+// `label` is the grouped button's text ("By drop" / "By treatment" / "By set"), sourced from
+// the grouping's `groupLabel`. `allLabel` is the ungrouped button's — "All cards" for every
+// card listing (the default, so those callers are unchanged), "All decks" for precons.
+withDefaults(defineProps<{ grouped: boolean; label: string; allLabel?: string }>(), {
+  allLabel: 'All cards',
+})
 const emit = defineEmits<{ select: ['grouped' | 'all'] }>()
 </script>
 
@@ -35,7 +40,7 @@ const emit = defineEmits<{ select: ['grouped' | 'all'] }>()
       "
       @click="emit('select', 'all')"
     >
-      All cards
+      {{ allLabel }}
     </button>
   </div>
 </template>

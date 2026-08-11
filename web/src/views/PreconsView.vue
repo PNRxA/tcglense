@@ -1,98 +1,47 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
-import { RouterLink, useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import { Layers } from '@lucide/vue'
+import { computed, toRef } from 'vue'
+import { RouterLink } from 'vue-router'
+import { LayoutGrid } from '@lucide/vue'
 import { buttonVariants } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import CardPagination from '@/components/cards/CardPagination.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
+import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
-import UpdatingCue from '@/components/cards/UpdatingCue.vue'
-import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
-import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
-import PreconTile from '@/components/decks/PreconTile.vue'
-import { useCardSearch } from '@/composables/useCardSearch'
+import SetCountTile from '@/components/shared/SetCountTile.vue'
 import { useGameName } from '@/composables/useCatalog'
-import { useClampPage } from '@/composables/useClampPage'
-import { PRECON_PAGE_SIZE, usePreconFacetsQuery, usePreconsQuery } from '@/composables/usePrecons'
+import { usePreconFacetsQuery } from '@/composables/usePrecons'
+import { useSetTileSections } from '@/composables/useSetTileSections'
 import { usePageMeta } from '@/lib/seo'
 
-// Preconstructed decks: the lists a publisher shipped, browsable beside your own decks.
-// Public catalog data (no auth) — a visitor can browse and read every decklist; signing in
-// only adds "Copy to my decks" on the detail page.
+// The preconstructed-deck landing: the sets that published precons, as set tiles that click
+// through to that set's decks — the deck mirror of the card catalog's `/cards/{game}` and the
+// sealed landing's `/sealed/{game}`. "All decks" opens the flat browse instead.
+//
+// Public, like the rest of the catalog: a precon is published game data, so a visitor with no
+// account can read every list.
 const props = defineProps<{ game: string }>()
 const game = toRef(props, 'game')
 const gameName = useGameName(game)
 
-// The set + type filters live in the URL. reka's Select reserves '' for "no selection", so
-// an `all` sentinel means "no filter"; writes merge into the query and reset paging.
-const route = useRoute()
-const router = useRouter()
-const ALL = 'all'
-function patchFilter(key: 'set' | 'type', value: string) {
-  const next: LocationQueryRaw = { ...route.query }
-  if (value === ALL) delete next[key]
-  else next[key] = value
-  delete next.page
-  router.replace({ query: next })
-}
-function readFilter(key: 'set' | 'type'): string {
-  const raw = route.query[key]
-  return typeof raw === 'string' && raw ? raw : ''
-}
-const setFilter = computed(() => readFilter('set'))
-const typeFilter = computed(() => readFilter('type'))
-const setSelect = computed({
-  get: () => setFilter.value || ALL,
-  set: (value: string) => patchFilter('set', value),
-})
-const typeSelect = computed({
-  get: () => typeFilter.value || ALL,
-  set: (value: string) => patchFilter('type', value),
-})
-
-// Page, name search and sort live in the URL, shared with every other browse view. The two
-// sorts are the API's own vocabulary — newest first (the default: a precon browser is mostly
-// "what came out recently") or by name.
-const SORT_OPTIONS = ['released', 'name']
-const { page, searchInput, query, sort } = useCardSearch('released', SORT_OPTIONS)
-
-const facetsQuery = usePreconFacetsQuery(game)
-const typeOptions = computed(() => facetsQuery.data.value?.data.types ?? [])
-const setOptions = computed(() => facetsQuery.data.value?.data.sets ?? [])
-
-const preconsQuery = usePreconsQuery(game, {
-  page,
-  query,
-  set: setFilter,
-  type: typeFilter,
-  sort,
-})
-const precons = computed(() => preconsQuery.data.value?.data ?? [])
-const total = computed(() => preconsQuery.data.value?.total ?? 0)
-const resultsTop = ref<HTMLElement | null>(null)
-
-useClampPage(page, () => ({
-  ready: preconsQuery.isSuccess.value,
-  total: total.value,
-  pageSize: PRECON_PAGE_SIZE,
-}))
-
 usePageMeta({
   title: () => `${gameName.value} preconstructed decks`,
   description: () =>
-    `Browse every preconstructed ${gameName.value} deck — Commander decks, Planeswalker and ` +
+    `Browse preconstructed ${gameName.value} decks by set — Commander decks, Planeswalker and ` +
     `Challenger decks, Jumpstart themes and Secret Lair drops — with full decklists, prices ` +
     `and one-click copying into your own decks on TCGLense.`,
   canonicalPath: () => `/decks/${game.value}/precons`,
 })
+
+// The sets that actually have precons (code + name + count), from the same facets read the
+// browse's set filter uses. Effectively static per game.
+const facetsQuery = usePreconFacetsQuery(game)
+const facetSets = computed(() => facetsQuery.data.value?.data.sets ?? [])
+const total = computed(() => facetsQuery.data.value?.data.total ?? 0)
+
+// Filtering, the pinned "Featured" split and the release-year sections come from the shared
+// set-tile landing engine — the same one the sealed landing runs.
+const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sections } =
+  useSetTileSections(game, facetSets)
 </script>
 
 <template>
@@ -105,95 +54,77 @@ usePageMeta({
       ]"
     />
 
-    <header class="mb-4 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 class="text-3xl font-semibold tracking-tight">Preconstructed decks</h1>
-        <p class="text-muted-foreground mt-1 text-sm">
-          The decklists {{ gameName }} shipped — Commander decks, Planeswalker and Challenger decks,
-          Jumpstart themes and Secret Lair drops. Open one to see the full list, or copy it into
-          your own decks.
-        </p>
-      </div>
-      <RouterLink :class="buttonVariants({ variant: 'outline' })" :to="`/decks/${game}`">
-        <Layers class="size-4" aria-hidden="true" /> Your decks
-      </RouterLink>
+    <header class="mb-4">
+      <h1 class="text-3xl font-semibold tracking-tight">Preconstructed decks</h1>
+      <p class="text-muted-foreground mt-1">
+        The decklists {{ gameName }} shipped — Commander decks, Planeswalker and Challenger decks,
+        Jumpstart themes and Secret Lair drops.
+      </p>
+      <p class="text-muted-foreground mt-1 text-sm">
+        {{ filteredSets.length }} {{ filteredSets.length === 1 ? 'set' : 'sets' }}
+        <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
+        <template v-else-if="total"> · {{ total.toLocaleString() }} decks</template>
+      </p>
     </header>
 
-    <StickySearchBar>
-      <div class="flex flex-wrap items-center gap-2">
-        <CardSearchBox
-          v-model="searchInput"
-          placeholder="Search preconstructed decks…"
-          aria-label="Search preconstructed decks"
-          class="min-w-48 flex-1"
-        />
-        <Select v-model="typeSelect">
-          <SelectTrigger size="sm" class="w-48" aria-label="Filter by deck type">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem :value="ALL">All types</SelectItem>
-            <SelectItem v-for="t in typeOptions" :key="t.type" :value="t.type">
-              {{ t.type }} ({{ t.count }})
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <Select v-model="setSelect">
-          <SelectTrigger size="sm" class="w-44" aria-label="Filter by set">
-            <SelectValue placeholder="All sets" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem :value="ALL">All sets</SelectItem>
-            <SelectItem v-for="s in setOptions" :key="s.code" :value="s.code">
-              {{ s.name ?? s.code.toUpperCase() }} ({{ s.count }})
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <Select v-model="sort">
-          <SelectTrigger size="sm" class="w-36" aria-label="Sort decks">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="released">Newest first</SelectItem>
-            <SelectItem value="name">Name (A–Z)</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+    <!-- The filter bar sticks to the top of the viewport so it stays reachable while scrolling
+         the set list; its fixed height is what the year headings below offset against (their
+         sticky `top-15`) so the two never overlap. -->
+    <StickySearchBar class="mb-6 flex items-center gap-3">
+      <CardSearchBox
+        v-if="facetSets.length"
+        v-model="filter"
+        class="w-full sm:w-64"
+        aria-label="Filter sets by name or code"
+        placeholder="Filter sets…"
+      />
+      <RouterLink
+        :to="`/decks/${game}/precons/all`"
+        :class="buttonVariants({ variant: 'default' })"
+        class="shrink-0"
+      >
+        <LayoutGrid />
+        All decks
+      </RouterLink>
     </StickySearchBar>
 
-    <p class="text-muted-foreground mt-4 mb-6 text-sm">
-      <template v-if="preconsQuery.isFetching.value && !precons.length">Searching…</template>
-      <template v-else-if="preconsQuery.isFetching.value && preconsQuery.isPlaceholderData.value">
-        <UpdatingCue />
-      </template>
-      <template v-else>{{ total.toLocaleString() }} {{ total === 1 ? 'deck' : 'decks' }}</template>
-      <template v-if="query"> matching “{{ query }}”</template>
-    </p>
-
-    <LoadingRow v-if="preconsQuery.isPending.value" label="Loading preconstructed decks…" />
-    <p v-else-if="preconsQuery.isError.value" class="text-destructive py-12">
+    <SetGridSkeleton v-if="facetsQuery.isPending.value" />
+    <p v-else-if="facetsQuery.isError.value" class="text-destructive py-12">
       Couldn't load preconstructed decks. Please retry.
     </p>
-    <p v-else-if="!precons.length" class="text-muted-foreground py-12">
-      No preconstructed decks found.
+    <p v-else-if="!facetSets.length" class="text-muted-foreground py-12">
+      No preconstructed decks available yet.
+    </p>
+    <p v-else-if="filtering && !filteredSets.length" class="text-muted-foreground py-12">
+      No sets match “{{ trimmedFilter }}”.
     </p>
 
-    <template v-else>
-      <div ref="resultsTop" class="scroll-mt-40 sm:scroll-mt-24" />
-      <UpdatingOverlay :loading="preconsQuery.isPlaceholderData.value">
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <PreconTile v-for="precon in precons" :key="precon.slug" :precon="precon" :game="game" />
+    <div v-else class="space-y-10">
+      <section v-for="section in sections" :key="section.key">
+        <!-- Stuck below the sticky filter bar above (top-15 = its height) so the two stack
+             rather than overlap at the top of the viewport. -->
+        <div
+          class="bg-background/85 sticky top-15 z-10 -mx-4 mb-3 flex items-baseline gap-2 border-b px-4 py-2 backdrop-blur"
+        >
+          <h2 class="text-xl font-semibold tracking-tight">{{ section.label }}</h2>
+          <span class="text-muted-foreground text-sm">
+            {{ section.sets.length }} {{ section.sets.length === 1 ? 'set' : 'sets' }}
+          </span>
         </div>
-      </UpdatingOverlay>
-      <div class="mt-10">
-        <CardPagination
-          v-model:page="page"
-          :page-size="PRECON_PAGE_SIZE"
-          :total="total"
-          :loading="preconsQuery.isPlaceholderData.value"
-          :scroll-target="resultsTop"
-        />
-      </div>
-    </template>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <SetCountTile
+            v-for="set in section.sets"
+            :key="set.code"
+            :game="game"
+            :code="set.code"
+            :name="set.name"
+            :count="set.count"
+            noun="deck"
+            :catalog-set="catalogSetByCode[set.code]"
+            :to="`/decks/${game}/precons/sets/${set.code}`"
+          />
+        </div>
+      </section>
+    </div>
   </div>
 </template>

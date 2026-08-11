@@ -69,7 +69,7 @@ use crate::{
             scryfall_file, scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
         },
         openapi::openapi_json,
-        precons::{copy_precon_deck, get_precon, list_precons, precon_facets},
+        precons::{copy_precon_deck, get_precon, list_precon_sets, list_precons, precon_facets},
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
             public_deck_goldfish, public_deck_legality, public_deck_stats, public_decks,
@@ -615,6 +615,9 @@ pub fn build_router(state: AppState) -> Router {
         // authed group under `/api/decks/...`.
         .route("/api/games/{game}/precons", get(list_precons))
         .route("/api/games/{game}/precons/facets", get(precon_facets))
+        // The same decks bucketed into the sets that published them, paginated **by set** —
+        // the precon mirror of `/sets/{code}/drops`. Another static sibling of `/{slug}`.
+        .route("/api/games/{game}/precons/sets", get(list_precon_sets))
         .route("/api/games/{game}/precons/{slug}", get(get_precon))
         .route("/api/games/{game}/products", get(list_products))
         .route("/api/games/{game}/products/facets", get(product_facets))

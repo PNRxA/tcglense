@@ -323,6 +323,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
   own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
   a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
+  The browse is three routes over two reads: a set-tile **landing** (`/decks/{game}/precons`,
+  the deck mirror of `/cards/{game}`), a flat/by-set browse (`/precons/all`, `?view=sets`) and a
+  set-scoped one (`/precons/sets/{code}`) — and the flat list and the by-set grouping **share
+  one filter builder** server-side, so a filter can only change the layout, never the matches.
+  A precon row is a **single finish**, and a board may list one printing in **both** (every
+  Jumpstart theme, every bundle land pack): two rows by design, since the ingest keys on
+  `(card, finish)`. Everything that turns those rows into *deck* rows must therefore **fold by
+  card** — `deck_cards` is unique on `(deck_id, card_id, section_id)`, so emitting the pair
+  separately isn't a duplicate tile, it's a failed insert and a 500 on the copy. Both sides do
+  it (`precons::copy`'s `push_folded`, `web/src/lib/precons.ts`), which is also what makes the
+  page and the deck you copy from it show the same counts.
   **Board → section is decided once, in the copy**: the command zone becomes a section named
   exactly `Commander` and the sideboard exactly `Sideboard`, because those spellings are what
   `decks::analysis::rules` reads a deck's zones off, and the mainboard is filed through

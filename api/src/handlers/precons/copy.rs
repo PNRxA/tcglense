@@ -16,7 +16,12 @@
 //! * the mainboard is filed into the preset type buckets through
 //!   `deck_import::categorize::preset_section`, the same table a deck import uses, so a
 //!   copied precon arrives sorted into Creatures / Lands / Ramp rather than as one pile;
-//! * a precon's per-row single finish folds back into the deck card's regular/foil pair.
+//! * a precon's per-row single finish folds back into the deck card's regular/foil pair — and
+//!   because a board may list one printing in **both** finishes (two rows by design: the ingest
+//!   keys on `(card, finish)`), the two rows must fold into **one** deck card. `deck_cards`
+//!   carries a unique `(deck_id, card_id, section_id)`, so emitting them separately is not a
+//!   duplicate tile — it's a failed insert, i.e. a 500 on every Jumpstart theme and bundle
+//!   land pack. `push_folded` is what makes that impossible.
 //!
 //! Sections are created in a fixed display order (command zone, the type buckets in the
 //! deck's own preset order, then the sideboard) and an empty one is never created, so a
@@ -127,6 +132,27 @@ pub async fn copy_precon_deck(
     Ok(Json(deck_detail(&state, &deck, handle_of(&user)).await?))
 }
 
+/// Add a card to a section, merging into the copy already there when the section holds that
+/// printing — which happens whenever a board lists it in both finishes (a Jumpstart theme's
+/// foil rare beside its non-foil copy, a bundle land pack's foil basics).
+///
+/// This is not cosmetic de-duplication: `deck_cards` is unique on
+/// `(deck_id, card_id, section_id)`, so two entries for one printing make the whole copy's
+/// `insert_many` fail — a 500, and no deck. Folding here is also what makes the deck a copy
+/// *of* the precon: 3 regular + 1 foil is one card the deck holds four of.
+fn push_folded(section: &mut Vec<NewDeckCard>, entry: NewDeckCard) {
+    match section
+        .iter_mut()
+        .find(|card| card.card_id == entry.card_id)
+    {
+        Some(existing) => {
+            existing.quantity += entry.quantity;
+            existing.foil_quantity += entry.foil_quantity;
+        }
+        None => section.push(entry),
+    }
+}
+
 /// One precon row about to be planned: the row itself plus the only thing about its card the
 /// plan depends on. Narrow on purpose — it keeps the pure planner testable without
 /// fabricating a whole catalog row.
@@ -155,12 +181,12 @@ fn plan_sections(rows: &[PlannedCard<'_>]) -> Vec<NewDeckSection> {
             foil_quantity: if row.foil { row.quantity } else { 0 },
         };
         match row.board.as_str() {
-            b if b == PreconBoard::Commander.as_str() => commander.push(entry),
-            b if b == PreconBoard::Side.as_str() => sideboard.push(entry),
+            b if b == PreconBoard::Commander.as_str() => push_folded(&mut commander, entry),
+            b if b == PreconBoard::Side.as_str() => push_folded(&mut sideboard, entry),
             _ => {
                 let bucket = crate::deck_import::categorize::preset_section(*type_line)
                     .unwrap_or(MAINBOARD_SECTION);
-                main.entry(bucket).or_default().push(entry);
+                push_folded(main.entry(bucket).or_default(), entry);
             }
         }
     }
@@ -310,6 +336,50 @@ mod tests {
         assert_eq!((commander.quantity, commander.foil_quantity), (0, 1));
         let creature = &sections[1].cards[0];
         assert_eq!((creature.quantity, creature.foil_quantity), (3, 0));
+    }
+
+    /// A printing listed in **both** finishes on one board is two precon rows by design — and
+    /// must fold into ONE deck card, or the copy's insert violates `deck_cards`' unique
+    /// `(deck, card, section)` key and the whole request 500s.
+    #[test]
+    fn a_printing_in_both_finishes_folds_into_one_deck_card() {
+        let rows = vec![
+            (row(PreconBoard::Main, 1, 3, false), Some("Creature")),
+            // Same printing, foil — MTGJSON lists these as separate entries.
+            (row(PreconBoard::Main, 1, 1, true), Some("Creature")),
+            (row(PreconBoard::Main, 2, 1, false), Some("Creature")),
+        ];
+        let sections = plan_sections(&planned(&rows));
+        assert_eq!(sections.len(), 1);
+        let cards = &sections[0].cards;
+        assert_eq!(cards.len(), 2, "one entry per printing, not per finish");
+        let folded = cards
+            .iter()
+            .find(|c| c.card_id == 1)
+            .expect("the mixed-finish printing");
+        assert_eq!((folded.quantity, folded.foil_quantity), (3, 1));
+    }
+
+    /// The same fold applies to the command zone and the sideboard, which don't go through the
+    /// type-bucket map at all.
+    #[test]
+    fn both_finishes_fold_on_every_board() {
+        for board in [PreconBoard::Commander, PreconBoard::Side] {
+            let rows = vec![
+                (row(board, 7, 1, false), Some("Legendary Creature")),
+                (row(board, 7, 1, true), Some("Legendary Creature")),
+            ];
+            let sections = plan_sections(&planned(&rows));
+            assert_eq!(sections[0].cards.len(), 1, "{board:?}");
+            assert_eq!(
+                (
+                    sections[0].cards[0].quantity,
+                    sections[0].cards[0].foil_quantity
+                ),
+                (1, 1),
+                "{board:?}"
+            );
+        }
     }
 
     /// A card with no usable type line still lands somewhere, and a precon with no command

@@ -112,6 +112,67 @@ async fn precon_facets_publish_the_filter_vocabulary() {
 }
 
 #[tokio::test]
+async fn precons_group_by_set_and_paginate_by_group() {
+    let app = test_app_with_catalog().await;
+
+    let (status, headers, body) = send(&app, get("/api/games/mtg/precons/sets")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE)
+    );
+    // The page counts SETS, not decks — three seeded precons, one per set.
+    assert_eq!(body["total"], 3);
+    let groups = body["data"].as_array().expect("groups");
+    assert_eq!(groups.len(), 3);
+
+    // Newest SET first: dmu (2024-06) then dmb (2024-01) then sld (2019).
+    let codes: Vec<&str> = groups
+        .iter()
+        .map(|g| g["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(codes, vec!["dmu", "dmb", "sld"]);
+    assert_eq!(groups[0]["name"], "Dummy Universe");
+    assert_eq!(groups[0]["deck_count"], 1);
+    // Each group carries its decks in full, tile facets and all.
+    let deck = &groups[0]["decks"][0];
+    assert_eq!(deck["slug"], COMMANDER_SLUG);
+    assert!(deck["face_card"]["card_id"].as_str().is_some());
+
+    // A group is never split across a page boundary: one set per page here.
+    let (_, _, body) = send(&app, get("/api/games/mtg/precons/sets?page_size=1&page=2")).await;
+    assert_eq!(body["total"], 3, "the total still counts sets");
+    assert_eq!(body["data"].as_array().expect("groups").len(), 1);
+    assert_eq!(body["data"][0]["code"], "dmb");
+    assert_eq!(body["has_more"], true);
+}
+
+#[tokio::test]
+async fn grouped_and_flat_views_agree_on_what_matches() {
+    let app = test_app_with_catalog().await;
+
+    // The two share one filter builder, so a filter must select the same decks either way.
+    for query in ["?type=Commander%20Deck", "?q=dummy%20starter", "?set=sld"] {
+        let (_, _, flat) = send(&app, get(&format!("/api/games/mtg/precons{query}"))).await;
+        let (_, _, grouped) = send(&app, get(&format!("/api/games/mtg/precons/sets{query}"))).await;
+        let flat_slugs: Vec<&str> = flat["data"]
+            .as_array()
+            .expect("decks")
+            .iter()
+            .map(|d| d["slug"].as_str().expect("slug"))
+            .collect();
+        let grouped_slugs: Vec<&str> = grouped["data"]
+            .as_array()
+            .expect("groups")
+            .iter()
+            .flat_map(|g| g["decks"].as_array().expect("decks"))
+            .map(|d| d["slug"].as_str().expect("slug"))
+            .collect();
+        assert_eq!(flat_slugs, grouped_slugs, "disagreement on {query}");
+    }
+}
+
+#[tokio::test]
 async fn precon_detail_returns_boards_summary_and_product() {
     let app = test_app_with_catalog().await;
 
@@ -172,6 +233,7 @@ async fn unknown_precon_and_game_are_no_store_404s() {
         "/api/games/mtg/precons/does-not-exist",
         "/api/games/nope/precons",
         "/api/games/nope/precons/facets",
+        "/api/games/nope/precons/sets",
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
@@ -251,6 +313,21 @@ async fn copying_a_precon_creates_a_deck_the_rules_understand() {
         "a foil precon row copies as a foil deck card"
     );
     assert_eq!(in_zone[0]["quantity"], 0);
+
+    // The seeded precon lists one printing in both finishes (the Jumpstart/bundle shape): the
+    // copy must hold it as ONE card with both counts, not two rows — which `deck_cards`'
+    // unique `(deck, card, section)` key would reject outright.
+    let lands: Vec<&Value> = cards
+        .iter()
+        .filter(|c| c["card"]["id"] == "dummy-dmb-0001")
+        .collect();
+    assert_eq!(
+        lands.len(),
+        1,
+        "the mixed-finish printing folded: {lands:?}"
+    );
+    assert_eq!(lands[0]["quantity"], 20);
+    assert_eq!(lands[0]["foil_quantity"], 1);
 
     // …and the copy is a normal deck: it lists, and the deck analysis reads it.
     let deck_id = deck["id"].as_i64().expect("deck id");

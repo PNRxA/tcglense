@@ -23,6 +23,7 @@ import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { colorLettersToText } from '@/lib/mana'
+import { formatReleaseLabel } from '@/lib/releaseDate'
 import { preconBoards } from '@/lib/precons'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -70,6 +71,17 @@ const {
 
 const cardSize = useCardSizeStore()
 const deckView = useDeckViewStore()
+
+// "released 14 Nov 2026" / "releases 14 Nov 2026" — MTGJSON ships upcoming sets, and the
+// browse defaults to newest-first, so a precon that hasn't come out yet leads the grid. The
+// shared helper flips the verb by tense (and parses the date as local midnight, so the day
+// doesn't slip a timezone).
+const releaseLabel = computed(() => {
+  const label = formatReleaseLabel(precon.value?.released_at, 'short')?.label
+  // Only the leading verb is lowercased: this sits mid-sentence in the meta line, but the
+  // month keeps its capital ("released Jun 20, 2024", not "jun").
+  return label ? label.charAt(0).toLowerCase() + label.slice(1) : null
+})
 
 const identityText = computed(() => {
   const letters = precon.value?.color_identity
@@ -161,7 +173,7 @@ usePageMeta({
                 {{ precon.set_name }}
               </RouterLink>
             </span>
-            <span v-if="precon.released_at"> · released {{ precon.released_at }}</span>
+            <span v-if="releaseLabel"> · {{ releaseLabel }}</span>
             · {{ precon.card_count }} card{{ precon.card_count === 1 ? '' : 's' }}
             <span v-if="precon.sideboard_count"> · +{{ precon.sideboard_count }} sideboard</span>
             <span v-if="money.formatUsd(precon.summary.total_value_usd)">
@@ -176,7 +188,7 @@ usePageMeta({
             <RouterLink
               v-if="precon.product"
               :class="buttonVariants({ variant: 'outline', size: 'sm' })"
-              :to="`/sealed/${game}/products/${precon.product.id}`"
+              :to="`/sealed/${game}/${precon.product.id}`"
             >
               <Package class="size-4" aria-hidden="true" />
               <span v-if="money.formatUsd(precon.product.prices.usd)">
@@ -288,13 +300,16 @@ usePageMeta({
                     class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
                     >×{{ entry.quantity + entry.foil_quantity }}</span
                   >
-                  <!-- A foil line is its own row upstream, so mark it rather than merging it
-                    into the copy count. -->
+                  <!-- Which of those copies are foil. The count above is every copy the deck
+                    ships (the two finish rows are folded, as the copy endpoint folds them), so
+                    a printing that comes partly foil says how many rather than tagging the
+                    whole tile "Foil". -->
                   <span
                     v-if="entry.foil_quantity > 0"
                     class="bg-background/90 text-foil pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    >Foil</span
                   >
+                    {{ entry.quantity > 0 ? `${entry.foil_quantity} foil` : 'Foil' }}
+                  </span>
                 </template>
               </CardTile>
             </div>
