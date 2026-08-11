@@ -18,6 +18,7 @@ import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import DropSection from '@/components/cards/DropSection.vue'
 import PreconTile from '@/components/decks/PreconTile.vue'
 import { useCardSearch } from '@/composables/useCardSearch'
 import { useGameName } from '@/composables/useCatalog'
@@ -341,22 +342,25 @@ usePageMeta({
       <UpdatingOverlay :loading="activeQuery.isPlaceholderData.value">
         <!-- Grouped: one heading per group — a set (linking to its own page) or a deck type —
              then its decks in the same tile grid the flat view uses. -->
-        <div v-if="grouped" class="space-y-10">
-          <section v-for="group in groups" :id="group.slug" :key="group.slug">
-            <div class="mb-3 flex flex-wrap items-baseline gap-2 border-b pb-1.5">
-              <RouterLink
-                v-if="group.set_code"
-                :to="`/decks/${game}/precons/sets/${group.set_code}`"
-                class="text-xl font-semibold tracking-tight hover:underline"
-              >
-                {{ group.title }}
-              </RouterLink>
-              <h2 v-else class="text-xl font-semibold tracking-tight">{{ group.title }}</h2>
-              <span class="text-muted-foreground text-sm tabular-nums">
-                {{ group.deck_count }} {{ group.deck_count === 1 ? 'deck' : 'decks' }}
-                <template v-if="group.released_at"> · {{ group.released_at }}</template>
+        <div v-if="grouped">
+          <!-- Through the same section component the card catalog's by-drop and by-treatment
+               groupings use, which is what `PreconGroup` carries the drop shape for — so these
+               collapse exactly like those, and the anchor/`scroll-mt` behaviour comes free.
+               Keyed on the grouping too, so switching by-set <-> by-type remounts the sections
+               open rather than carrying a collapse across two different meanings of "group". -->
+          <DropSection
+            v-for="group in groups"
+            :key="`${grouping}:${group.slug}`"
+            :drop="group"
+            :count="group.deck_count"
+            noun="deck"
+            :to="group.set_code ? `/decks/${game}/precons/sets/${group.set_code}` : undefined"
+          >
+            <template v-if="group.released_at" #meta>
+              <span class="text-muted-foreground text-sm font-normal tabular-nums">
+                {{ group.released_at }}
               </span>
-            </div>
+            </template>
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <PreconTile
                 v-for="precon in group.decks"
@@ -365,7 +369,7 @@ usePageMeta({
                 :game="game"
               />
             </div>
-          </section>
+          </DropSection>
         </div>
 
         <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

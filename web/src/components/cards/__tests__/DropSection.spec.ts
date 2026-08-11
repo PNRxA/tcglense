@@ -74,4 +74,42 @@ describe('DropSection', () => {
     expect(collapsed(wrapper)).toBe(false)
     expect(chevronTurned(wrapper)).toBe(false)
   })
+
+  // The precon browse counts decks, not cards, and heads each set group with a link to that
+  // set's page — the two ways a group can differ from a card group.
+  describe('non-card groups', () => {
+    const preconGroup = { slug: 'tmc', title: 'Tarkir: Dragonstorm' }
+    const mountPrecon = (props: Record<string, unknown> = {}) =>
+      mount(DropSection, {
+        props: { drop: preconGroup, count: 7, noun: 'deck', ...props },
+        slots: { default: '<div class="grid-body">decks</div>' },
+        global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+      })
+
+    it('counts in the given noun instead of cards', () => {
+      expect(mountPrecon().text()).toContain('7 decks')
+      expect(mountPrecon({ count: 1 }).text()).toContain('1 deck')
+      expect(mountPrecon().text()).not.toContain('card')
+    })
+
+    it('keeps the title a link outside the toggle, which stays operable', async () => {
+      const wrapper = mountPrecon({ to: '/decks/mtg/precons/sets/tmc' })
+      // A link nested inside a button is neither valid nor operable, so it sits beside it.
+      expect(wrapper.find('button[aria-expanded] a').exists()).toBe(false)
+      expect(wrapper.find('h2 a').exists()).toBe(true)
+      // The button loses its text, so it names itself.
+      expect(toggle(wrapper).attributes('aria-label')).toContain('Tarkir: Dragonstorm')
+      // …and still collapses.
+      await toggle(wrapper).trigger('click')
+      expect(collapsed(wrapper)).toBe(true)
+    })
+
+    it('keeps the title inside the toggle when there is nowhere to link', () => {
+      // A deck-type group ("Commander Deck") has no page of its own.
+      const wrapper = mountPrecon()
+      expect(wrapper.find('h2 a').exists()).toBe(false)
+      expect(toggle(wrapper).text()).toContain('Tarkir: Dragonstorm')
+      expect(toggle(wrapper).attributes('aria-label')).toBeUndefined()
+    })
+  })
 })
