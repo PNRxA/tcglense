@@ -13,6 +13,7 @@
 //! the mapping is unit-tested against a synthetic fixture.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 
@@ -216,16 +217,100 @@ pub struct Deck {
     /// ISO release date of the deck itself, which can differ from its set's.
     #[serde(default, rename = "releaseDate")]
     pub release_date: Option<String>,
-    #[serde(default, rename = "mainBoard")]
+    #[serde(
+        default,
+        rename = "mainBoard",
+        deserialize_with = "main_board_or_empty"
+    )]
     pub main_board: Vec<DeckCard>,
-    #[serde(default, rename = "sideBoard")]
+    #[serde(
+        default,
+        rename = "sideBoard",
+        deserialize_with = "side_board_or_empty"
+    )]
     pub side_board: Vec<DeckCard>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "commander_or_empty")]
     pub commander: Vec<DeckCard>,
     /// `uuid`s of the sealed products that contain this deck (resolved to a
     /// `tcgplayerProductId` through the same product index the contents walk uses).
-    #[serde(default, rename = "sealedProductUuids")]
+    #[serde(
+        default,
+        rename = "sealedProductUuids",
+        deserialize_with = "null_as_empty"
+    )]
     pub sealed_product_uuids: Vec<String>,
+}
+
+/// Deserialize a sequence upstream may state as an explicit `null`.
+///
+/// `#[serde(default)]` only covers an **absent** key — a stated `null` is still a hard
+/// type error, and one of those fails the whole ~600 MB document, taking every pass that
+/// reads it down together (the contents walk and the precon build share one fetch). 933
+/// decks state `"sealedProductUuids": null`, the first of them in `10E`, so without this
+/// the parse dies ~3 MB in and the sealed-contents sync never runs either. Same lesson as
+/// the Scryfall bulk model: treat every upstream field as optional.
+///
+/// Silent, because on this field a `null` is routine — warning would cost ~933 lines a tick.
+fn null_as_empty<'de, D, T>(de: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(de)?.unwrap_or_default())
+}
+
+/// As [`null_as_empty`], but **warns once per process** the first time it swallows a `null`.
+///
+/// The boards carry the decklist itself, and upstream states none of them as `null` today.
+/// Tolerating it is still the right default — a null board resolves to no cards, and
+/// [`super::precons`] already drops a deck that resolves to none, so the blast radius is one
+/// missing precon instead of a dead catalog sync. But unlike `sealedProductUuids`, where an
+/// empty list is a truthful "no products named", an empty *board* is upstream changing shape
+/// under us: the same null would also silently cost that product its `contains` rows in the
+/// membership walk. Hence non-fatal **and** visible — once per field, so a wholesale upstream
+/// change is one line rather than a five-figure log flood.
+fn null_as_empty_warned<'de, D, T>(
+    de: D,
+    field: &'static str,
+    seen: &AtomicBool,
+) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let parsed = Option::<Vec<T>>::deserialize(de)?;
+    if parsed.is_none() && !seen.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            field,
+            "mtgjson: deck board stated as null; reading it as empty (cards from it are lost)"
+        );
+    }
+    Ok(parsed.unwrap_or_default())
+}
+
+static MAIN_BOARD_WAS_NULL: AtomicBool = AtomicBool::new(false);
+static SIDE_BOARD_WAS_NULL: AtomicBool = AtomicBool::new(false);
+static COMMANDER_WAS_NULL: AtomicBool = AtomicBool::new(false);
+
+fn main_board_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "mainBoard", &MAIN_BOARD_WAS_NULL)
+}
+
+fn side_board_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "sideBoard", &SIDE_BOARD_WAS_NULL)
+}
+
+fn commander_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    null_as_empty_warned(de, "commander", &COMMANDER_WAS_NULL)
 }
 
 #[derive(Debug, Deserialize)]
@@ -766,6 +851,46 @@ mod tests {
         // Precon deck (1003): the main-board card + the foil commander are definitely in.
         assert!(has(&rows, "1003", "sf-alpha", "contains", false));
         assert!(has(&rows, "1003", "sf-promo", "contains", true));
+    }
+
+    /// Upstream states `"sealedProductUuids": null` on 933 decks (the first in `10E`, ~3 MB
+    /// into the document), and a stated `null` is not covered by `#[serde(default)]`. Parsing
+    /// is all-or-nothing over one shared fetch, so this one field failing took the precon
+    /// build *and* the sealed-contents walk down with it. Pinned against the real shape.
+    #[test]
+    fn deck_tolerates_a_null_sealed_product_uuids() {
+        let deck: Deck = serde_json::from_str(
+            r#"{"code":"10E","commander":[],"mainBoard":[],"name":"Black Deck A",
+                "releaseDate":"2008-05-02","sealedProductUuids":null,"sideBoard":[],
+                "type":"Sample Deck"}"#,
+        )
+        .expect("a stated null must read as an empty list, not fail the document");
+        assert!(deck.sealed_product_uuids.is_empty());
+        // An absent key and a stated list still behave as before.
+        let absent: Deck = serde_json::from_str(r#"{"name":"No key"}"#).unwrap();
+        assert!(absent.sealed_product_uuids.is_empty());
+        let stated: Deck =
+            serde_json::from_str(r#"{"name":"Stated","sealedProductUuids":["a","b"]}"#).unwrap();
+        assert_eq!(stated.sealed_product_uuids, vec!["a", "b"]);
+    }
+
+    /// The boards are never `null` upstream today, but the whole document is parsed
+    /// all-or-nothing, so one of them turning null must degrade to a dropped deck (see
+    /// [`null_as_empty_warned`]) rather than take the sealed sync down with it.
+    #[test]
+    fn deck_tolerates_null_boards() {
+        let deck: Deck = serde_json::from_str(
+            r#"{"name":"Null boards","mainBoard":null,"sideBoard":null,"commander":null}"#,
+        )
+        .expect("a stated null board must not fail the document");
+        assert!(deck.main_board.is_empty());
+        assert!(deck.side_board.is_empty());
+        assert!(deck.commander.is_empty());
+        // A stated board still reads normally.
+        let stated: Deck =
+            serde_json::from_str(r#"{"mainBoard":[{"uuid":"u-1","count":3}]}"#).unwrap();
+        assert_eq!(stated.main_board.len(), 1);
+        assert_eq!(stated.main_board[0].count, Some(3));
     }
 
     #[test]
