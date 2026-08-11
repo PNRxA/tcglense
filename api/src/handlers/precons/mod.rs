@@ -35,12 +35,17 @@ use crate::error::AppError;
 use crate::handlers::shared::{CardResponse, CollectionSummary, ProductResponse};
 use crate::state::AppState;
 
+mod analysis;
 mod copy;
 mod read;
 
+pub use analysis::{precon_bracket, precon_goldfish, precon_legality, precon_stats};
 pub use copy::copy_precon_deck;
 pub use read::{get_precon, list_precon_groups, list_precons, precon_facets};
 
+pub use analysis::{
+    __path_precon_bracket, __path_precon_goldfish, __path_precon_legality, __path_precon_stats,
+};
 pub use copy::__path_copy_precon_deck;
 pub use read::{
     __path_get_precon, __path_list_precon_groups, __path_list_precons, __path_precon_facets,
@@ -122,6 +127,12 @@ pub struct PreconDeckDetail {
     #[serde(flatten)]
     #[schema(inline)]
     pub deck: PreconDeckResponse,
+    /// The deck format its *type* states (`Commander Deck` -> `commander`), or `None` when the
+    /// type states none — the same mapping the copy writes onto the deck it creates, so the
+    /// page judges the list against exactly what a copy of it would be judged against. The SPA
+    /// needs it to know whether to ask for a bracket at all: `deck_type` itself doesn't
+    /// normalise to a format key, so passing that through would silently never ask.
+    pub format: Option<String>,
     /// Value / copy aggregates over the deck proper (commander + mainboard).
     pub summary: CollectionSummary,
     /// The same aggregates over the sideboard alone; all-zero when there isn't one.

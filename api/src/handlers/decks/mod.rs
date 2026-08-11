@@ -102,10 +102,15 @@ pub(crate) use analysis::rules::COLOUR_ORDER;
 // (`crate::handlers::sharing::decks`) so a shared deck's analysis is the identical
 // computation its owner sees.
 pub(crate) use analysis::{
-    DeckAnalytics, DeckBracketEstimate, DeckLegality, GoldfishHand, GoldfishParams, StatsParams,
-    analyse_bracket, analyse_goldfish, analyse_legality, analyse_stats, load_analysis,
-    load_analysis_with_cards,
+    AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
+    GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality,
+    analyse_stats, load_analysis, load_analysis_with_cards,
 };
+// The section-name -> zone rule. Re-exported because the precon analysis mirror synthesises
+// its own section names and must be able to prove they land in the zones they claim: the
+// command zone and the sideboard are found by NAME, so a rename that still compiles would
+// silently report "no commander" for every Commander precon.
+pub(crate) use analysis::rules::{DeckZone, deck_zone};
 
 // The `deck_id`-parameterised detail core, reused by the public sharing handler
 // (`crate::handlers::sharing::decks`) so a public deck read shares the exact query/shaping.

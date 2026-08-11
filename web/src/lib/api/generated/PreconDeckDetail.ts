@@ -14,6 +14,14 @@ import type { Product } from "./Product";
  */
 export type PreconDeckDetail = { 
 /**
+ * The deck format its *type* states (`Commander Deck` -> `commander`), or `None` when the
+ * type states none — the same mapping the copy writes onto the deck it creates, so the
+ * page judges the list against exactly what a copy of it would be judged against. The SPA
+ * needs it to know whether to ask for a bracket at all: `deck_type` itself doesn't
+ * normalise to a format key, so passing that through would silently never ask.
+ */
+format: string | null, 
+/**
  * Value / copy aggregates over the deck proper (commander + mainboard).
  */
 summary: CollectionSummary, 

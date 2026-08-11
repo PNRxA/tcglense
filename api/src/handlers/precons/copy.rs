@@ -254,11 +254,16 @@ fn copy_description(precon: &crate::entities::precon_deck::Model) -> String {
 
 /// Guess the copy's format from upstream's deck type — only where the type *states* it.
 ///
+/// Shared with the analysis mirror ([`super::analysis`]) rather than re-derived there: the
+/// legality verdict and the bracket a precon *page* reports must be the ones the deck you copy
+/// from it would report, and two derivations of "which format is this" is exactly how that
+/// guarantee rots.
+///
 /// A "Commander Deck" is a Commander deck; a "Theme Deck" or a "Secret Lair Drop" says
 /// nothing about a format, and a wrong guess is worse than none (the deck page would judge a
 /// 30-card drop against Commander's rules and call it illegal). So everything else copies
 /// with no format, exactly as a blank deck starts.
-fn precon_format(deck_type: &str) -> Option<String> {
+pub(super) fn precon_format(deck_type: &str) -> Option<String> {
     let lowered = deck_type.to_ascii_lowercase();
     if lowered.contains("commander") {
         Some("commander".to_string())

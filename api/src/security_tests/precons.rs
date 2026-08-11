@@ -207,6 +207,209 @@ async fn a_group_ships_every_deck_it_counts() {
     );
 }
 
+/// The whole point of the precon analysis mirror: a published decklist must report the SAME
+/// verdicts the deck you get from "Copy to my decks" reports. They are two different section
+/// vocabularies over the same cards — the page synthesises one section per board, the copy
+/// files the mainboard into type buckets — so this proves the thing that actually matters:
+/// both zone-split identically, because `rules::deck_zone` reads the section NAME.
+///
+/// If the synthesised names ever stop landing in the zones they claim, this catches it as a
+/// disagreement rather than as a plausible-looking wrong answer.
+#[tokio::test]
+async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "precon-analyst@example.com", PW).await;
+
+    // The precon page's answers, anonymous.
+    let (status, headers, precon_legality) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/legality")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "anonymous read: {precon_legality:?}"
+    );
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "a precon's analysis is public catalog data, so it is CDN-cacheable"
+    );
+    let (_, _, precon_bracket) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/bracket")),
+    )
+    .await;
+    let (_, _, precon_stats) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/stats")),
+    )
+    .await;
+
+    // Now copy it and ask the deck the same three questions.
+    let (_, _, deck) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/decks/mtg/precons/{COMMANDER_SLUG}/copy"),
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let (_, _, deck_legality) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/legality"), &access),
+    )
+    .await;
+    let (_, _, deck_bracket) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/bracket"), &access),
+    )
+    .await;
+    let (_, _, deck_stats) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/stats"), &access),
+    )
+    .await;
+
+    // Both nullable answers ride `DataBody`, like every other mirror — unwrap once so a
+    // comparison can't pass by reading two absent fields as equal.
+    let precon_legality = &precon_legality["data"];
+    let deck_legality = &deck_legality["data"];
+    let precon_bracket = &precon_bracket["data"];
+    let deck_bracket = &deck_bracket["data"];
+    assert!(
+        precon_legality.is_object(),
+        "a Commander Deck states its format, so it is judged: {precon_legality:?}"
+    );
+    assert!(
+        precon_bracket.is_object(),
+        "and the bracket ladder is defined for it: {precon_bracket:?}"
+    );
+
+    // The verdict, its construction breaches and the bracket must be identical.
+    assert_eq!(
+        precon_legality["format_key"], deck_legality["format_key"],
+        "precon {precon_legality:?} vs copy {deck_legality:?}"
+    );
+    assert_eq!(
+        precon_legality["violations"], deck_legality["violations"],
+        "the deck-wide construction breaches must agree — this is what the zone split decides"
+    );
+    // Which names are a problem, why, and how many copies — compared exactly. NOT the
+    // issue's `card_id`, which is "one printing (for keys/links)" and is therefore whichever
+    // printing of that name the surface's own row order reached first: this loader tie-breaks
+    // on the catalog's stable `cards.id`, while a copied deck's rows are ordered by the
+    // insertion order `plan_sections` produced. A name held in two sets (the seeded
+    // "Dummy White Sentinel" is in both `dmb` and `dmu`) legitimately reports a different
+    // representative printing on each surface; the verdict about it is identical.
+    let names = |v: &serde_json::Value| -> Vec<(String, String, i64)> {
+        v["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .map(|i| {
+                (
+                    i["name"].as_str().unwrap_or_default().to_string(),
+                    i["status"].as_str().unwrap_or_default().to_string(),
+                    i["quantity"].as_i64().unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(precon_legality),
+        names(deck_legality),
+        "the same cards must be flagged, for the same reason, in the same numbers"
+    );
+    assert!(
+        !names(precon_legality).is_empty(),
+        "the seeded precon is deliberately illegal, so this comparison has something to compare"
+    );
+    assert_eq!(
+        precon_bracket["bracket"], deck_bracket["bracket"],
+        "precon {precon_bracket:?} vs copy {deck_bracket:?}"
+    );
+    assert_eq!(precon_bracket["categories"], deck_bracket["categories"]);
+
+    // And the composition: same cards, so the same copies in the deck proper.
+    assert_eq!(
+        precon_stats["deck"]["total_copies"], deck_stats["deck"]["total_copies"],
+        "precon {:?} vs copy {:?}",
+        precon_stats["deck"], deck_stats["deck"]
+    );
+}
+
+/// The synthesised sections are the SPA's own vocabulary, and the stats panel round-trips their
+/// ids through `?sections=` — so the ids the response advertises must be the ones it accepts.
+#[tokio::test]
+async fn precon_stats_sections_are_the_spa_vocabulary() {
+    let app = test_app_with_catalog().await;
+
+    let (_, _, stats) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/stats")),
+    )
+    .await;
+    // The seeded Commander precon has a command zone (0) and a mainboard (1); the library
+    // defaults to the deck proper minus the command zone.
+    let default_ids: Vec<i64> = stats["default_library_section_ids"]
+        .as_array()
+        .expect("default library")
+        .iter()
+        .map(|v| v.as_i64().expect("id"))
+        .collect();
+    assert!(
+        !default_ids.contains(&0),
+        "the command zone is not shuffled into the library: {default_ids:?}"
+    );
+    assert!(default_ids.contains(&1), "the deck is: {default_ids:?}");
+
+    // Those ids are accepted back, which is what the panel's checkboxes do.
+    let (status, _, scoped) = send(
+        &app,
+        get(&format!(
+            "/api/games/mtg/precons/{COMMANDER_SLUG}/stats?sections=1"
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(scoped["library"]["total_copies"].as_i64().unwrap() > 0);
+}
+
+/// A seedless goldfish must not be cached: the roll is random, so the response is not a
+/// function of its URL, and these routes carry a CDN TTL of an hour plus a day of
+/// stale-while-revalidate. A seeded one is reproducible and cacheable.
+#[tokio::test]
+async fn a_seedless_precon_goldfish_is_never_cached() {
+    let app = test_app_with_catalog().await;
+
+    let (status, headers, hand) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/goldfish")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{hand:?}");
+    assert_eq!(
+        cache_control(&headers),
+        Some("no-store"),
+        "a random hand pinned at a CDN would be everyone's hand"
+    );
+
+    // Seeded: reproducible, and therefore safe to cache.
+    let seeded = format!("/api/games/mtg/precons/{COMMANDER_SLUG}/goldfish?seed=42");
+    let (_, headers, first) = send(&app, get(&seeded)).await;
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE)
+    );
+    let (_, _, again) = send(&app, get(&seeded)).await;
+    assert_eq!(first["hand"], again["hand"], "a seed reproduces its hand");
+}
+
 #[tokio::test]
 async fn precon_facets_publish_the_filter_vocabulary() {
     let app = test_app_with_catalog().await;

@@ -69,7 +69,10 @@ use crate::{
             scryfall_file, scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
         },
         openapi::openapi_json,
-        precons::{copy_precon_deck, get_precon, list_precon_groups, list_precons, precon_facets},
+        precons::{
+            copy_precon_deck, get_precon, list_precon_groups, list_precons, precon_bracket,
+            precon_facets, precon_goldfish, precon_legality, precon_stats,
+        },
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
             public_deck_goldfish, public_deck_legality, public_deck_stats, public_decks,
@@ -620,6 +623,24 @@ pub fn build_router(state: AppState) -> Router {
         // Another static sibling of `/{slug}`.
         .route("/api/games/{game}/precons/groups", get(list_precon_groups))
         .route("/api/games/{game}/precons/{slug}", get(get_precon))
+        // The deck page's four analyses, mirrored for a published decklist (issue #596's core,
+        // third caller). Anonymous like every other precon read — a precon has no owner and no
+        // visibility flag — and computed by the same `analyse_*` functions a deck uses, so a
+        // precon and the deck you copy from it can never disagree. The goldfish sets its own
+        // `no-store` when asked without a seed; the other three are CDN-cacheable.
+        .route("/api/games/{game}/precons/{slug}/stats", get(precon_stats))
+        .route(
+            "/api/games/{game}/precons/{slug}/legality",
+            get(precon_legality),
+        )
+        .route(
+            "/api/games/{game}/precons/{slug}/bracket",
+            get(precon_bracket),
+        )
+        .route(
+            "/api/games/{game}/precons/{slug}/goldfish",
+            get(precon_goldfish),
+        )
         .route("/api/games/{game}/products", get(list_products))
         .route("/api/games/{game}/products/facets", get(product_facets))
         .route("/api/games/{game}/products/{id}", get(get_product))

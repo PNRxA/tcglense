@@ -274,6 +274,8 @@ pub async fn get_precon(
     };
 
     Ok(Json(PreconDeckDetail {
+        // The same mapping the copy uses, so the page and the copy are judged alike.
+        format: super::copy::precon_format(&precon.deck_type),
         deck: precon_response(&precon, names.get(&precon.set_code).cloned(), face_card),
         summary,
         sideboard_summary,

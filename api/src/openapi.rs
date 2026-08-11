@@ -107,6 +107,10 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::precons::list_precon_groups,
         crate::handlers::precons::precon_facets,
         crate::handlers::precons::get_precon,
+        crate::handlers::precons::precon_stats,
+        crate::handlers::precons::precon_legality,
+        crate::handlers::precons::precon_bracket,
+        crate::handlers::precons::precon_goldfish,
         crate::handlers::precons::copy_precon_deck,
         // --- Collection ---
         crate::handlers::collection::list_collection,
