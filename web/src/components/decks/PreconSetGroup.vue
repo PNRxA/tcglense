@@ -92,8 +92,12 @@ watch(
       </RouterLink>
     </div>
 
+    <!-- `v-show`, not `v-if`: visually identical, but the sub-set links stay in the DOM while
+         collapsed. With `v-if` the landing emitted 254 links for 290 sets, leaving 36 set
+         pages (j25's 121 decks, tle's 66, most modern Commander sub-sets) reachable only from
+         the sitemap. -->
     <ul
-      v-if="expanded"
+      v-show="expanded"
       class="space-y-0.5 border-t px-2 pt-1.5 pb-2"
       :aria-label="`Sets related to ${group.main.name ?? group.main.code}`"
     >

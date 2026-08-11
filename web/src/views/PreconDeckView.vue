@@ -30,7 +30,9 @@ import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { colorLettersToText } from '@/lib/mana'
 import { formatReleaseLabel } from '@/lib/releaseDate'
 import { preconBoards } from '@/lib/precons'
+import { productTypeLabel } from '@/lib/productType'
 import { usePageMeta } from '@/lib/seo'
+import { graph, breadcrumbList, preconCrumbs, sealedProductNode } from '@/lib/structuredData'
 import { useAuthStore } from '@/stores/auth'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -130,18 +132,66 @@ async function copyToMyDecks() {
   }
 }
 
+// The set a deck shipped with, as the title and description word it.
+const setLabel = computed(() =>
+  precon.value ? (precon.value.set_name ?? precon.value.set_code.toUpperCase()) : '',
+)
+
+// A dead slug: the query resolved to nothing. Distinct from "still loading".
+const notFound = computed(() => preconQuery.isError.value)
+
+// One crumb source for the visible trail and the structured one, so the two can never say
+// different things about where this page sits.
+const crumbs = computed(() =>
+  precon.value ? preconCrumbs(game.value, gameName.value, precon.value.name) : [],
+)
+
 usePageMeta({
+  // The set disambiguates: 278 of 2,274 precon titles collide without it — eight different
+  // sets each ship a "Black Deck — Welcome Deck", and ten ship "Fixed Content — Deck
+  // Builder's Toolkit". Same reason CardDetailView names the set for a reprint.
   title: computed(() =>
-    precon.value ? `${precon.value.name} — ${precon.value.deck_type}` : 'Preconstructed deck',
+    precon.value
+      ? `${precon.value.name} — ${precon.value.deck_type} · ${setLabel.value}`
+      : 'Preconstructed deck',
   ),
   description: computed(() =>
     precon.value
       ? `The full decklist for ${precon.value.name}, the ${precon.value.deck_type} from ` +
-        `${precon.value.set_name ?? precon.value.set_code.toUpperCase()} — ` +
-        `${precon.value.card_count} cards, with prices, on TCGLense.`
+        `${setLabel.value} — ${precon.value.card_count} cards, with prices, on TCGLense.`
       : undefined,
   ),
-  canonicalPath: computed(() => `/decks/${game.value}/precons/${slug.value}`),
+  // A slug that resolves to nothing must not be an indexable 200 with a canonical pointing at
+  // itself — that is how dead URLs accumulate in the index. `noindex` plus the dropped
+  // canonical is the soft-404 signal, exactly as KeywordView does it for an unknown keyword.
+  noindex: () => notFound.value,
+  canonicalPath: computed(() =>
+    precon.value ? `/decks/${game.value}/precons/${slug.value}` : null,
+  ),
+  // Breadcrumbs for the trail (this is the deepest surface in the app), plus a Product node
+  // when the deck ships in a sealed product the catalog prices — the precon page is a better
+  // landing for "<deck> decklist" than the product page, and today only the product page
+  // carries the markup.
+  jsonLd: computed(() =>
+    precon.value
+      ? graph(
+          breadcrumbList(crumbs.value),
+          // `graph()` drops nulls, so the 1,308 product-less precons need no branch — and
+          // `sealedProductNode` itself returns null without a real offer. The price is the
+          // product's own; `summary.total_value_usd` is a sum of singles and would be a
+          // fabricated offer, which this module's header bans.
+          precon.value.product
+            ? sealedProductNode(
+                game.value,
+                precon.value.product,
+                productTypeLabel(precon.value.product.product_type),
+                setLabel.value,
+                [],
+              )
+            : null,
+        )
+      : null,
+  ),
 })
 </script>
 
@@ -163,6 +213,9 @@ usePageMeta({
     </div>
 
     <template v-else-if="precon">
+      <!-- The visible trail routes through the signed-in deck surfaces, which is where a
+           reader actually came from. The structured trail deliberately differs: `/decks` and
+           `/decks/{game}` are `noindex`, so `preconCrumbs` roots at the `/precons` hub. -->
       <PageBreadcrumbs
         :items="[
           { label: 'Decks', to: '/decks' },
@@ -182,7 +235,14 @@ usePageMeta({
             {{ precon.deck_type }}
             <span v-if="precon.set_name">
               ·
-              <RouterLink :to="`/cards/${game}/sets/${precon.set_code}`" class="hover:underline">
+              <!-- The set's PRECON page, not the card catalog's: the sibling decklists are what
+                   a reader here wants next, and it is the only in-content link those pages get
+                   (32 of 290 had none, so they were sitemap-only). The card set stays one hop
+                   away via the breadcrumb trail. -->
+              <RouterLink
+                :to="`/decks/${game}/precons/sets/${precon.set_code}`"
+                class="hover:underline"
+              >
                 {{ precon.set_name }}
               </RouterLink>
             </span>
