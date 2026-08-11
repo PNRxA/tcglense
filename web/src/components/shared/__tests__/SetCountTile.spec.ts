@@ -16,6 +16,8 @@ function mountTile(props: {
   copies?: number
   value?: string | null
   catalogSet?: CardSet
+  noun?: string
+  reserveGroupSpace?: boolean
 }) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -38,6 +40,17 @@ describe('SetCountTile', () => {
     const wrapper = mountTile({ count: 3 })
     expect(wrapper.get('p.font-medium').text()).toBe('Bloomburrow')
     expect(wrapper.text()).toContain('3 products')
+  })
+
+  // `noun` is why this tile was generalized out of ProductSetTile: the precon landing and its
+  // set groups count decks, not products. Four call sites depend on it, so a regression to a
+  // hardcoded literal would silently relabel every precon set tile.
+  it('counts in the caller\'s noun, pluralised, instead of "product"', () => {
+    const decks = mountTile({ count: 3, noun: 'deck' })
+    expect(decks.text()).toContain('3 decks')
+    expect(decks.text()).not.toContain('product')
+    expect(mountTile({ count: 1, noun: 'deck' }).text()).toContain('1 deck')
+    expect(mountTile({ count: 1, noun: 'deck' }).text()).not.toContain('1 decks')
   })
 
   it('reads "1 product" (singular) for a single product', () => {

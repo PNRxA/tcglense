@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { CardSet } from '@/lib/api'
 
 // The engine reads the catalog set list for each set's icon + release date; stub that one query
@@ -34,9 +34,13 @@ interface Facet {
   count: number
 }
 
-function setup(facets: Facet[], catalog: CardSet[]) {
+function setup(
+  facets: Facet[],
+  catalog: CardSet[],
+  opts?: { alsoMatches?: (set: Facet, needle: string) => boolean },
+) {
   catalogSets.value = catalog
-  return useSetTileSections(ref('mtg'), ref(facets))
+  return useSetTileSections(ref('mtg'), ref(facets), opts)
 }
 
 describe('useSetTileSections', () => {
@@ -117,5 +121,27 @@ describe('useSetTileSections', () => {
       ],
     )
     expect(sections.value[0]!.sets.map((s) => s.code)).toEqual(['ccc', 'aaa', 'bbb'])
+  })
+
+  // `alsoMatches` exists so an entry standing for more than itself — the precon landing's set
+  // groups — survives a filter that only matches one of its nested sub-sets. Without it the
+  // whole group is dropped and the matching decks become unreachable from the filter box.
+  it('keeps an entry whose related sub-set matches, via alsoMatches', async () => {
+    const facets = [{ code: 'blb', name: 'Bloomburrow', count: 2 }]
+    const catalog = [catalogSet('blb', '2024-08-01')]
+    // Stands in for preconGroupMatchesRelated: 'commander' matches a nested sub-set, not the
+    // main set's own name or code.
+    const withHook = setup(facets, catalog, {
+      alsoMatches: (_set, needle) => needle === 'commander',
+    })
+    withHook.filter.value = 'commander'
+    await nextTick()
+    expect(withHook.filteredSets.value.map((s) => s.code)).toEqual(['blb'])
+
+    // Same filter, no hook: the entry is dropped, which is the regression this pins.
+    const without = setup(facets, catalog)
+    without.filter.value = 'commander'
+    await nextTick()
+    expect(without.filteredSets.value).toEqual([])
   })
 })
