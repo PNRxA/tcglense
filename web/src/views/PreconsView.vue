@@ -62,9 +62,11 @@ const { filter, trimmedFilter, filtering, filteredSets, catalogSetByCode, sectio
   )
 
 // Every set on screen, counting a group's nested sub-sets — the tiles are fewer than the sets.
-const shownSetCount = computed(() =>
-  filteredSets.value.reduce((sum, group) => sum + 1 + group.children.length, 0),
-)
+// One rule, used by both the header total and each section heading, so they can't disagree.
+const countSets = (entries: { children: unknown[] }[]) =>
+  entries.reduce((sum, entry) => sum + 1 + entry.children.length, 0)
+const shownSetCount = computed(() => countSets(filteredSets.value))
+const sectionSetCount = (section: { sets: { children: unknown[] }[] }) => countSets(section.sets)
 
 // Whether a section holds any grouped tile, so the plain tiles beside them reserve the height
 // of a group's toggle row and the row stays level. Per section rather than globally: most
@@ -139,7 +141,10 @@ const sectionHasGroup = (section: { sets: { children: unknown[] }[] }) =>
         >
           <h2 class="text-xl font-semibold tracking-tight">{{ section.label }}</h2>
           <span class="text-muted-foreground text-sm">
-            {{ section.sets.length }} {{ section.sets.length === 1 ? 'set' : 'sets' }}
+            <!-- Folded the same way as the header's total, or the two numbers on screen would
+                 share the word "sets" while counting different things: a grouped entry is one
+                 tile standing for its main set plus its nested sub-sets. -->
+            {{ sectionSetCount(section) }} {{ sectionSetCount(section) === 1 ? 'set' : 'sets' }}
           </span>
         </div>
         <!-- items-start so a group that expands its sub-sets grows downwards instead of
