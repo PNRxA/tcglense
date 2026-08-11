@@ -24,7 +24,9 @@ use crate::catalog::Game;
 use crate::scryfall::subtypes::PrintAttrs;
 
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
-use crate::entities::{card, card_set, collection_item, deck_card, wishlist_item};
+use crate::entities::{
+    card, card_set, collection_item, deck_card, precon_deck_card, wishlist_item,
+};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -85,6 +87,20 @@ impl HoldingCounts for deck_card::Model {
 
     fn foil_quantity(&self) -> i32 {
         self.foil_quantity
+    }
+}
+
+/// A **precon** card row states one finish per row (that's how a published decklist reads: a
+/// foil commander is its own line), so its single `quantity` lands in whichever of the two
+/// buckets `foil` selects. That's all the shared valuation fold needs, so the precon detail
+/// values a decklist through the exact machinery a collection or a deck is valued with.
+impl HoldingCounts for precon_deck_card::Model {
+    fn quantity(&self) -> i32 {
+        if self.foil { 0 } else { self.quantity }
+    }
+
+    fn foil_quantity(&self) -> i32 {
+        if self.foil { self.quantity } else { 0 }
     }
 }
 

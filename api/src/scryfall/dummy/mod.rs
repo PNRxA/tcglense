@@ -20,6 +20,7 @@
 //! this module orchestrates seeding it into the database.
 
 mod catalog;
+mod precons;
 mod prices;
 mod products;
 
@@ -47,6 +48,7 @@ use crate::entities::{
     sealed_component, sealed_content,
 };
 use catalog::{dummy_cards, dummy_sets};
+use precons::seed_precons;
 use prices::price_walk;
 use products::dummy_products;
 
@@ -811,6 +813,11 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = component_rows,
         "seeded dummy sealed-product components"
     );
+
+    // Preconstructed decks (the precon browser), so the list / facets / detail / copy
+    // routes have data offline. Joins cards *and* products, so it runs after both.
+    let precon_rows = seed_precons(db).await?;
+    tracing::info!(rows = precon_rows, "seeded dummy preconstructed decks");
 
     // Card rulings ("Notes and Rules Information"), so the card-detail rulings section
     // renders offline. Keyed on the reprinted card's oracle id (seeded above).

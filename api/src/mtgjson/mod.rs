@@ -31,6 +31,13 @@
 //! override can reclassify only their curated cards when upstream has the right card under
 //! the wrong certainty.
 //!
+//! The same document also carries every set's **preconstructed decklists** — Commander
+//! decks, Planeswalker / Challenger decks, Jumpstart themes, Secret Lair drops. [`precons`]
+//! resolves those into the `precon_decks` / `precon_deck_cards` tables behind the precon
+//! browser, riding this one fetch and one parse rather than adding a second: they arrive
+//! with the sealed contents, and the deck references the contents walk already follows are
+//! the very same lists.
+//!
 //! Secret Lair Drop (`SLD`) products are the same gap with a twist: a drop's real contents
 //! is the *cards in that drop*, which the app already tracks ([`crate::scryfall::drops`]),
 //! so rather than hand-author them [`sld`] **derives** each null-contents drop product's
@@ -49,6 +56,7 @@ mod error;
 mod fallback;
 pub mod ingest;
 pub mod model;
+pub mod precons;
 mod progress;
 pub(crate) mod sld;
 

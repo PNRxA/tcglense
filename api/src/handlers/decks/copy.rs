@@ -1,4 +1,5 @@
-//! Copy a public deck into the caller's own decks (issue #502).
+//! Copy a public deck into the caller's own decks (issue #502), and the **write seam** every
+//! such copy goes through ([`insert_deck_with_cards`]).
 //!
 //! An authenticated user viewing someone's shared deck can duplicate it into their own
 //! collection of decks. The source is addressed exactly like the public read
@@ -10,6 +11,12 @@
 //! no card resolution to do — the source's `deck_card.card_id` are already internal `cards.id`,
 //! shared with the copy, so they carry across verbatim (a copy survives a catalog re-import
 //! for the same reason a deck card does).
+//!
+//! That last paragraph describes **two** callers now: this one, and the precon copy
+//! ([`crate::handlers::precons::copy`]), whose source rows likewise already carry internal
+//! card ids. Both go through [`insert_deck_with_cards`], so the deck cap, the transaction
+//! boundary, and the chunked insert are stated once — the difference between them is only
+//! *where the sections come from* (an existing deck's, or a mapping of upstream's boards).
 
 use axum::{Json, extract::State};
 use chrono::Utc;
@@ -81,18 +88,6 @@ pub async fn copy_public_deck(
     // to the one identical 404 body, so this write is no more of an existence oracle than the read.
     let (_owner, source) = load_public_deck(&state, &handle, deck_id).await?;
 
-    // Enforce the caller's per-game deck cap before writing anything (same guard as create).
-    let count = Deck::find()
-        .filter(deck::Column::UserId.eq(user.id))
-        .filter(deck::Column::Game.eq(&source.game))
-        .count(&state.db)
-        .await?;
-    if count >= MAX_DECKS_PER_GAME {
-        return Err(AppError::Validation(format!(
-            "you can have at most {MAX_DECKS_PER_GAME} decks per game"
-        )));
-    }
-
     // Read the source's sections (in their display order) and cards up front, outside the
     // transaction — they're another user's already-committed rows.
     let sections = DeckSection::find()
@@ -105,18 +100,112 @@ pub async fn copy_public_deck(
         .filter(deck_card::Column::DeckId.eq(source.id))
         .all(&state.db)
         .await?;
+    // Group the cards under the section they came from, preserving the source's section
+    // order (the query above ordered them). The copy's stored `position` values are
+    // compacted to `0..n` by the seam rather than mirroring the source's integers — the
+    // *order* is what a section's position means, and it is unchanged.
+    //
+    // A card whose section somehow didn't come back is dropped rather than aborting the
+    // whole copy — the same tolerance the per-card section lookup had.
+    let mut by_section: HashMap<i32, Vec<NewDeckCard>> = HashMap::with_capacity(sections.len());
+    for card in &cards {
+        by_section
+            .entry(card.section_id)
+            .or_default()
+            .push(NewDeckCard {
+                card_id: card.card_id,
+                quantity: card.quantity,
+                foil_quantity: card.foil_quantity,
+            });
+    }
+    let new_sections: Vec<NewDeckSection> = sections
+        .into_iter()
+        .map(|section| NewDeckSection {
+            cards: by_section.remove(&section.id).unwrap_or_default(),
+            name: section.name,
+            is_maybeboard: section.is_maybeboard,
+        })
+        .collect();
+
+    let new_deck = insert_deck_with_cards(
+        &state,
+        user.id,
+        NewDeck {
+            game: source.game.clone(),
+            name: copy_name(&source.name),
+            description: source.description.clone(),
+            format: source.format.clone(),
+        },
+        new_sections,
+    )
+    .await?;
+
+    // Return the full detail of the caller's new deck (owner handle = the caller's own).
+    Ok(Json(
+        deck_detail(&state, &new_deck, handle_of(&user)).await?,
+    ))
+}
+
+/// The metadata of a deck about to be written by [`insert_deck_with_cards`]. Everything else
+/// about a new deck is fixed by the seam: it is the caller's, private, and loose.
+pub(crate) struct NewDeck {
+    pub game: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub format: Option<String>,
+}
+
+/// One section of a deck about to be written, in display order, with the cards filed under
+/// it. Card ids are **internal** `cards.id` — both callers already hold them, which is
+/// exactly what distinguishes a copy from an import.
+pub(crate) struct NewDeckSection {
+    pub name: String,
+    pub is_maybeboard: bool,
+    pub cards: Vec<NewDeckCard>,
+}
+
+/// One card of a section about to be written: an internal card id and its two counts.
+pub(crate) struct NewDeckCard {
+    pub card_id: i32,
+    pub quantity: i32,
+    pub foil_quantity: i32,
+}
+
+/// Write a whole deck — row, sections (in the given order), and cards — for `user_id` in one
+/// transaction, returning the new deck row.
+///
+/// The per-game deck cap is enforced **before** anything is written (the same guard `create`
+/// applies), and the cards go in bounded chunks so the bind count stays within SQLite's and
+/// Postgres' limits for a large source deck. An empty section is still created: a copied
+/// deck should look like its source, including the buckets its owner left empty.
+pub(crate) async fn insert_deck_with_cards(
+    state: &AppState,
+    user_id: i32,
+    meta: NewDeck,
+    sections: Vec<NewDeckSection>,
+) -> Result<deck::Model, AppError> {
+    let count = Deck::find()
+        .filter(deck::Column::UserId.eq(user_id))
+        .filter(deck::Column::Game.eq(&meta.game))
+        .count(&state.db)
+        .await?;
+    if count >= MAX_DECKS_PER_GAME {
+        return Err(AppError::Validation(format!(
+            "you can have at most {MAX_DECKS_PER_GAME} decks per game"
+        )));
+    }
 
     let now = Utc::now();
     let txn = state.db.begin().await?;
 
-    // 1. The new deck row, owned by the caller: private, loose, same game/format, `(copy)` name.
+    // 1. The new deck row, owned by the caller: private and loose (no folder).
     let new_deck = deck::ActiveModel {
-        user_id: Set(user.id),
-        game: Set(source.game.clone()),
+        user_id: Set(user_id),
+        game: Set(meta.game),
         folder_id: Set(None),
-        name: Set(copy_name(&source.name)),
-        description: Set(source.description.clone()),
-        format: Set(source.format.clone()),
+        name: Set(meta.name),
+        description: Set(meta.description),
+        format: Set(meta.format),
         is_public: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
@@ -125,13 +214,14 @@ pub async fn copy_public_deck(
     .insert(&txn)
     .await?;
 
-    // 2. Copy the sections one at a time, keeping an old -> new id map to re-file the cards.
-    let mut section_map: HashMap<i32, i32> = HashMap::with_capacity(sections.len());
-    for section in &sections {
+    // 2. The sections, one at a time (each insert hands back the id its cards need), then
+    // 3. that section's cards, in bounded chunks.
+    let mut new_cards: Vec<deck_card::ActiveModel> = Vec::new();
+    for (position, section) in sections.into_iter().enumerate() {
         let inserted = deck_section::ActiveModel {
             deck_id: Set(new_deck.id),
-            name: Set(section.name.clone()),
-            position: Set(section.position),
+            name: Set(section.name),
+            position: Set(position as i32),
             is_maybeboard: Set(section.is_maybeboard),
             created_at: Set(now),
             updated_at: Set(now),
@@ -139,27 +229,22 @@ pub async fn copy_public_deck(
         }
         .insert(&txn)
         .await?;
-        section_map.insert(section.id, inserted.id);
+        new_cards.extend(
+            section
+                .cards
+                .into_iter()
+                .map(|card| deck_card::ActiveModel {
+                    deck_id: Set(new_deck.id),
+                    section_id: Set(inserted.id),
+                    card_id: Set(card.card_id),
+                    quantity: Set(card.quantity),
+                    foil_quantity: Set(card.foil_quantity),
+                    created_at: Set(now),
+                    updated_at: Set(now),
+                    ..Default::default()
+                }),
+        );
     }
-
-    // 3. Copy the cards, remapped onto the new deck + section ids; counts carry across as-is.
-    // A card whose section somehow didn't copy is skipped rather than aborting the whole copy.
-    let new_cards: Vec<deck_card::ActiveModel> = cards
-        .iter()
-        .filter_map(|card| {
-            let section_id = section_map.get(&card.section_id)?;
-            Some(deck_card::ActiveModel {
-                deck_id: Set(new_deck.id),
-                section_id: Set(*section_id),
-                card_id: Set(card.card_id),
-                quantity: Set(card.quantity),
-                foil_quantity: Set(card.foil_quantity),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            })
-        })
-        .collect();
     for chunk in new_cards.chunks(COPY_INSERT_CHUNK) {
         DeckCard::insert_many(chunk.iter().cloned())
             .exec(&txn)
@@ -167,9 +252,5 @@ pub async fn copy_public_deck(
     }
 
     txn.commit().await?;
-
-    // Return the full detail of the caller's new deck (owner handle = the caller's own).
-    Ok(Json(
-        deck_detail(&state, &new_deck, handle_of(&user)).await?,
-    ))
+    Ok(new_deck)
 }

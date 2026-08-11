@@ -102,6 +102,11 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::product_prices,
         crate::handlers::catalog::product_contents,
         crate::handlers::catalog::product_containers,
+        // --- Preconstructed decks ---
+        crate::handlers::precons::list_precons,
+        crate::handlers::precons::precon_facets,
+        crate::handlers::precons::get_precon,
+        crate::handlers::precons::copy_precon_deck,
         // --- Collection ---
         crate::handlers::collection::list_collection,
         crate::handlers::collection::collection_summary,
@@ -263,6 +268,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         (name = "Collection", description = "The signed-in user's owned-card holdings (requires an API key)."),
         (name = "Wish list", description = "The signed-in user's wanted cards + sealed products (requires an API key)."),
         (name = "Decks", description = "The signed-in user's decks, folders, and sections (requires an API key)."),
+        (name = "Preconstructed decks", description = "The published decklists that shipped with a set — Commander/Planeswalker/Challenger decks, Jumpstart themes, Secret Lair drops — and copying one into your own decks."),
         (name = "Public sharing", description = "Read-only, handle-addressed views of a user's public collection + decks (no authentication)."),
         (name = "Tools", description = "Play aids backed by the signed-in user's own rows — today the life counter: tracked games, seats, life history, and per-deck records (requires an API key)."),
         (name = "API keys", description = "Mint, list, and revoke the personal API keys that authenticate the public API."),

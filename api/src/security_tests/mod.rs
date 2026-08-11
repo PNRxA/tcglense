@@ -37,6 +37,7 @@ mod mirror;
 mod openapi;
 mod pagination;
 mod password_reset;
+mod precons;
 mod products;
 mod public_collection;
 mod public_wishlist;

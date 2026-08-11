@@ -15,7 +15,7 @@ pub(super) fn is_generic_section(section: &str) -> bool {
 /// Multi-type permanents use the most deck-building-specific bucket (for example an
 /// Artifact Creature files under Creatures), and modal back faces do not turn a spell
 /// into a land for filing purposes.
-pub(super) fn preset_section(type_line: Option<&str>) -> Option<&'static str> {
+pub(crate) fn preset_section(type_line: Option<&str>) -> Option<&'static str> {
     let front = type_line?.split("//").next().unwrap_or_default();
     let has_type = |wanted: &str| {
         front

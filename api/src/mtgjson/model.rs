@@ -196,15 +196,36 @@ pub struct Sheet {
     pub cards: HashMap<String, serde::de::IgnoredAny>,
 }
 
-/// A precon decklist: its main board + commander cards (each by `uuid`, with a foil flag).
+/// A precon decklist: its three boards (each card by `uuid`, with a count + foil flag) plus
+/// the metadata the precon browser publishes ([`crate::mtgjson::precons`]) — upstream's
+/// category, release date, and the sealed products that ship it.
+///
+/// Sealed-contents resolution reads only `main_board` + `commander` (a deck reference means
+/// "this product physically holds these cards"); the rest is the browser's.
 #[derive(Debug, Deserialize)]
 pub struct Deck {
     #[serde(default)]
     pub name: Option<String>,
+    /// The set the deck ships with — usually the key it's filed under, but stated per deck
+    /// because a few decks are attributed to another set.
+    #[serde(default)]
+    pub code: Option<String>,
+    /// Upstream's category: "Commander Deck", "Secret Lair Drop", "Jumpstart", …
+    #[serde(default, rename = "type")]
+    pub deck_type: Option<String>,
+    /// ISO release date of the deck itself, which can differ from its set's.
+    #[serde(default, rename = "releaseDate")]
+    pub release_date: Option<String>,
     #[serde(default, rename = "mainBoard")]
     pub main_board: Vec<DeckCard>,
+    #[serde(default, rename = "sideBoard")]
+    pub side_board: Vec<DeckCard>,
     #[serde(default)]
     pub commander: Vec<DeckCard>,
+    /// `uuid`s of the sealed products that contain this deck (resolved to a
+    /// `tcgplayerProductId` through the same product index the contents walk uses).
+    #[serde(default, rename = "sealedProductUuids")]
+    pub sealed_product_uuids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,6 +234,10 @@ pub struct DeckCard {
     pub uuid: Option<String>,
     #[serde(default, rename = "isFoil")]
     pub is_foil: bool,
+    /// Copies of the printing on that board. Absent reads as one (membership resolution
+    /// ignores it entirely — a card is in the deck or it isn't).
+    #[serde(default)]
+    pub count: Option<i32>,
 }
 
 // ---------- Pure resolution: contents -> per-card membership rows ----------
@@ -261,6 +286,7 @@ pub struct RawComponent {
 /// refs, which name cards by `uuid`) or a `(set, number) -> scryfallId` map (direct card
 /// refs that carry only set + collector number). A product with no
 /// `tcgplayerProductId`, or a card that resolves to no Scryfall id, is skipped.
+#[cfg(test)]
 pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
     memberships_from(all, &Indexes::build(all))
 }
@@ -276,12 +302,13 @@ pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
 /// link target); a `card` component resolves to a Scryfall id the same way card resolution
 /// does. A product with no `tcgplayerProductId` or no `contents` contributes nothing; an
 /// unresolved link is kept as text (the line item still carries name + quantity).
+#[cfg(test)]
 pub fn build_compositions(all: &AllPrintings) -> Vec<RawComponent> {
     compositions_from(all, &Indexes::build(all))
 }
 
 /// The membership walk over a prebuilt [`Indexes`] (see [`build_memberships`]).
-fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
+pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
     let resolver = Resolver { idx };
     let mut out: HashSet<RawMembership> = HashSet::new();
     for data in all.data.values() {
@@ -299,7 +326,7 @@ fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
 }
 
 /// The composition walk over a prebuilt [`Indexes`] (see [`build_compositions`]).
-fn compositions_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawComponent> {
+pub(super) fn compositions_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawComponent> {
     let mut out: Vec<RawComponent> = Vec::new();
     for data in all.data.values() {
         for product in &data.sealed_product {
@@ -378,10 +405,14 @@ fn push_component(
     });
 }
 
-/// Lookups built once over the parsed document, shared by the card-membership walk and the
-/// composition builder: sets by lowercased code, `uuid` / `(set, number)` -> Scryfall id,
-/// and sealed-product `uuid` -> the product it names.
-struct Indexes<'a> {
+/// Lookups built once over the parsed document, shared by the card-membership walk, the
+/// composition builder, and the precon builder ([`super::precons`]): sets by lowercased
+/// code, `uuid` / `(set, number)` -> Scryfall id, and sealed-product `uuid` -> the product
+/// it names.
+///
+/// Building it walks every card in `AllPrintings` (~600k rows), so [`super::ingest`] builds
+/// **one** and lends it to all three passes rather than each pass building its own.
+pub(super) struct Indexes<'a> {
     sets: HashMap<String, &'a SetData>,
     uuid_to_scryfall: HashMap<&'a str, &'a str>,
     setnum_to_scryfall: HashMap<(String, String), &'a str>,
@@ -389,7 +420,7 @@ struct Indexes<'a> {
 }
 
 impl<'a> Indexes<'a> {
-    fn build(all: &'a AllPrintings) -> Self {
+    pub(super) fn build(all: &'a AllPrintings) -> Self {
         // Index sets by lowercased code (data keys are uppercase; refs are lowercase).
         let sets: HashMap<String, &SetData> = all
             .data
@@ -430,6 +461,20 @@ impl<'a> Indexes<'a> {
             setnum_to_scryfall,
             product_by_uuid,
         }
+    }
+
+    /// Resolve a card `uuid` to its Scryfall id — the bridge every board / booster-sheet
+    /// reference crosses, since those name cards by `uuid` alone.
+    pub(super) fn scryfall_by_uuid(&self, uuid: &str) -> Option<&str> {
+        self.uuid_to_scryfall.get(uuid).copied()
+    }
+
+    /// Resolve a sealed product `uuid` to its TCGplayer product id (the join onto our
+    /// `products` table), when the product it names carries one.
+    pub(super) fn product_tcg_id(&self, uuid: &str) -> Option<&str> {
+        self.product_by_uuid
+            .get(uuid)
+            .and_then(|p| p.identifiers.tcgplayer_product_id.as_deref())
     }
 
     /// Resolve a direct card reference to a Scryfall id (by `uuid`, else `(set, number)`).

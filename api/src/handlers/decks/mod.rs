@@ -54,6 +54,9 @@ mod write;
 pub use analysis::{deck_bracket, deck_goldfish, deck_legality, deck_stats, list_deck_formats};
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use copy::copy_public_deck;
+// The whole-deck write seam, shared with the precon copy (`handlers::precons::copy`) — both
+// duplicate a source whose card ids are already internal, so both write through it.
+pub(crate) use copy::{NewDeck, NewDeckCard, NewDeckSection, insert_deck_with_cards};
 pub use export::export_deck;
 // The deck list's derived facets (colour identity + command zone). `DeckCommanderResponse`
 // is public because it rides `DeckResponse`; the query + the facet bundle stay crate-local.
@@ -88,6 +91,12 @@ pub use write::{
     __path_create_deck, __path_delete_deck, __path_move_deck_to_folder, __path_set_deck_visibility,
     __path_update_deck,
 };
+
+// The WUBRG letter order every colour-identity fold in the app renders in — the deck list's
+// facets, and the precon ingest's stored `color_identity` (`crate::mtgjson::ingest::precons`),
+// which must agree with them or the same deck would read Mardu on one page and Rakdos on
+// another. Re-exported here so the constant has one home, in the module that owns the rules.
+pub(crate) use analysis::rules::COLOUR_ORDER;
 
 // The analysis entry points + loaders, reused by the public-sharing mirrors
 // (`crate::handlers::sharing::decks`) so a shared deck's analysis is the identical

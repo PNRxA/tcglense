@@ -70,6 +70,7 @@ mod m20240101_000067_add_life_event_counters;
 mod m20240101_000068_add_cards_illustration_index;
 mod m20240101_000069_add_deck_cards_section_index;
 mod m20240101_000070_add_user_accent;
+mod m20240101_000071_create_precon_decks_tables;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -150,6 +151,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000068_add_cards_illustration_index::Migration),
             Box::new(m20240101_000069_add_deck_cards_section_index::Migration),
             Box::new(m20240101_000070_add_user_accent::Migration),
+            Box::new(m20240101_000071_create_precon_decks_tables::Migration),
         ]
     }
 }

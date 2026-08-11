@@ -34,6 +34,7 @@ use sea_orm::{
 use super::client::{FetchOutcome, fetch_all_printings};
 use super::fallback;
 use super::model::{self, RawComponent, RawMembership};
+use super::precons::RawPrecon;
 use super::progress::SyncProgress;
 use super::sld;
 use super::{DATASET, GAME, MtgjsonError};
@@ -42,6 +43,7 @@ use crate::entities::prelude::{SealedComponent, SealedContent};
 use crate::entities::{sealed_component, sealed_content};
 
 mod merge;
+pub(crate) mod precons;
 mod resolve;
 
 use merge::*;
@@ -76,13 +78,15 @@ pub(super) struct ComponentRow {
 /// (RFC 9110 `etagc` excludes control chars), so splitting on it is unambiguous.
 const VERSION_SEP: char = '\u{1f}';
 
-/// Version tag for the **derived** booster-pool synthesis ([`merge_contained_booster_pools`]
-/// + [`merge_sibling_booster_pools`]). Folded into the stored version (see
-/// [`compose_version`]) so that changing this derivation forces a one-off rebuild even when
-/// `AllPrintings.json`, the fallback data, and the SLD inputs are all byte-identical — the
-/// only way a pure code change takes effect, since the sync is otherwise ETag-gated. Bump it
-/// whenever the synthesis logic changes.
-const DERIVATION_VERSION: &str = "booster-pool-1";
+/// Version tag for every **derived** output of this sync: the booster-pool synthesis
+/// ([`merge_contained_booster_pools`] + [`merge_sibling_booster_pools`]) and the precon
+/// rebuild ([`precons`]). Folded into the stored version (see [`compose_version`]) so that
+/// changing a derivation forces a one-off rebuild even when `AllPrintings.json`, the
+/// fallback data, and the SLD inputs are all byte-identical — the only way a pure code
+/// change takes effect, since the sync is otherwise ETag-gated. Bump it whenever any of that
+/// logic changes (including a change to how a precon slug is derived, since the slug is the
+/// browser's URL identity).
+const DERIVATION_VERSION: &str = "booster-pool-1+precon-1";
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
@@ -171,28 +175,40 @@ async fn refresh_inner(
     )
     .await?;
 
-    // Resolve contents -> per-card memberships + the structural composition off the async
-    // runtime (CPU-bound over a big document). `all` is dropped when the closure returns,
-    // freeing the parse tree; both passes run in the one blocking task so it's moved once.
+    // Resolve contents -> per-card memberships, the structural composition, and the
+    // published precon decklists off the async runtime (CPU-bound over a big document).
+    // `all` is dropped when the closure returns, freeing the parse tree; all three passes
+    // run in the one blocking task so it's moved once — and they share ONE `Indexes`, whose
+    // build walks every card in the document (~600k rows): three passes each building their
+    // own would triple that walk for a document that only ever produces one answer.
     progress.set_stage("resolving contents");
     let all = *all;
-    let (memberships, components): (Vec<RawMembership>, Vec<RawComponent>) =
-        tokio::task::spawn_blocking(move || {
-            (
-                model::build_memberships(&all),
-                model::build_compositions(&all),
-            )
-        })
-        .await
-        .map_err(|err| MtgjsonError::Join(err.to_string()))?;
+    #[allow(clippy::type_complexity)]
+    let (memberships, components, precons): (
+        Vec<RawMembership>,
+        Vec<RawComponent>,
+        Vec<RawPrecon>,
+    ) = tokio::task::spawn_blocking(move || {
+        let idx = model::Indexes::build(&all);
+        (
+            model::memberships_from(&all, &idx),
+            model::compositions_from(&all, &idx),
+            super::precons::precons_from(&all, &idx),
+        )
+    })
+    .await
+    .map_err(|err| MtgjsonError::Join(err.to_string()))?;
     tracing::info!(
         memberships = memberships.len(),
         components = components.len(),
-        "mtgjson: resolved membership + composition rows"
+        precons = precons.len(),
+        "mtgjson: resolved membership + composition + precon rows"
     );
 
     // Map external ids onto our catalog: products for membership targets, component parents,
-    // and the sub-products components link to; cards for membership targets + linked promos.
+    // the sub-products components link to, and the products a precon ships in; cards for
+    // membership targets, linked promos, and every precon decklist entry. One resolution
+    // pass for all three consumers — the precon ids ride the same chunked lookups.
     let product_ext: Vec<String> = distinct(
         memberships
             .iter()
@@ -202,14 +218,23 @@ async fn refresh_inner(
                 components
                     .iter()
                     .filter_map(|c| c.child_tcgplayer_product_id.as_ref()),
-            ),
+            )
+            .chain(precons.iter().flat_map(|p| p.product_ids.iter())),
     );
     let card_ext: Vec<String> = distinct(
-        memberships.iter().map(|m| &m.scryfall_id).chain(
-            components
-                .iter()
-                .filter_map(|c| c.child_scryfall_id.as_ref()),
-        ),
+        memberships
+            .iter()
+            .map(|m| &m.scryfall_id)
+            .chain(
+                components
+                    .iter()
+                    .filter_map(|c| c.child_scryfall_id.as_ref()),
+            )
+            .chain(
+                precons
+                    .iter()
+                    .flat_map(|p| p.cards.iter().map(|c| &c.scryfall_id)),
+            ),
     );
     progress.set_stage("matching to catalog");
     let products = resolve_products(db, &product_ext).await?;
@@ -343,6 +368,10 @@ async fn refresh_inner(
             .exec_without_returning(&txn)
             .await?;
     }
+    // Rebuild the precon browser's tables in the same transaction, off the same document:
+    // the decklists arrived with the sealed contents, so they're replaced together or not
+    // at all.
+    let precon_stats = precons::rebuild(&txn, &precons, &cards, &products, now).await?;
     txn.commit().await?;
 
     drop(progress);
@@ -358,7 +387,9 @@ async fn refresh_inner(
          {from_sld_bonus} from sld bonus pools, \
          {from_contained} from contained boosters, {from_siblings} from sibling boosters); \
          {component_count} components ({components_from_mtgjson} from mtgjson, \
-         {components_from_fallback} from fallback)"
+         {components_from_fallback} from fallback); \
+         {} precon decks ({} cards)",
+        precon_stats.decks, precon_stats.cards
     );
     ingest_state::put(
         db,
@@ -385,6 +416,8 @@ async fn refresh_inner(
         contained_boosters = from_contained,
         sibling_boosters = from_siblings,
         fallback_components = components_from_fallback,
+        precon_decks = precon_stats.decks,
+        precon_cards = precon_stats.cards,
         "mtgjson sealed contents sync complete"
     );
     Ok(())
