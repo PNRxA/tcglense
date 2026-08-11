@@ -292,6 +292,17 @@ usePageMeta({
         </div>
       </header>
 
+      <!-- The same analyses a deck page shows, over the published list: the server computes
+           them with the same core, so a precon and the deck you copy from it agree. Each
+           renders nothing when it has no answer — legality and the bracket are null for every
+           precon whose type states no format, which is most of them. They sit *above* the
+           card-list controls, as they do on the owner and public deck pages — the panels
+           describe the whole deck, the controls belong to the list they narrow. -->
+      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+      <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
+      <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
+      <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
+
       <!-- Card list controls, the same set the deck pages carry. -->
       <div v-if="entries.length > 0" class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
         <CardSearchBox
@@ -319,15 +330,6 @@ usePageMeta({
       >
         No cards in this deck match your filter.
       </p>
-
-      <!-- The same analyses a deck page shows, over the published list: the server computes
-           them with the same core, so a precon and the deck you copy from it agree. Each
-           renders nothing when it has no answer — legality and the bracket are null for every
-           precon whose type states no format, which is most of them. -->
-      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
-      <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
-      <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
-      <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
 
       <div
         v-if="visibleSections.length > 0"
