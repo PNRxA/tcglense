@@ -43,6 +43,37 @@ async fn seed_products(app: &TestApp) {
     .await;
 }
 
+/// A long `?q` must not be able to kill the process.
+///
+/// Each whitespace-separated word used to add its own `.filter()`, which SeaORM nests into a
+/// left-deep AND tree that sea-query's SQL builder walks with mutual recursion — so ~1000 words
+/// overflowed the tokio worker's stack and **aborted the server**, taking every in-flight
+/// request with it. An anonymous GET on a public catalog route, no body required.
+///
+/// This test is a live tripwire, not just an assertion: a regression aborts the test binary
+/// outright rather than failing, because a stack overflow cannot be caught.
+#[tokio::test]
+async fn a_very_long_search_is_refused_rather_than_crashing_the_server() {
+    let app = test_app().await;
+    seed_products(&app).await;
+
+    let long = vec!["a"; 5_000].join("+");
+    let (status, _, _) = send(&app, get(&format!("/api/games/mtg/products?q={long}"))).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an absurd word count is a validation error, not a crash"
+    );
+
+    // The process is still serving, and ordinary searches are untouched.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products?q=karlov+booster")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["total"].as_i64().unwrap() > 0,
+        "multi-word search still matches: {body:?}"
+    );
+}
+
 #[tokio::test]
 async fn products_list_is_publicly_readable_and_shared_cacheable() {
     let app = test_app().await;

@@ -81,6 +81,29 @@ async fn precon_list_filters_by_set_type_and_name() {
     assert_eq!(body["total"], 0);
 }
 
+/// The precon list shares the sealed list's per-word name rule, so it shares its guard: a long
+/// `?q` is a 422, not a stack overflow that aborts the process. Both the flat and the grouped
+/// read build through the same filter, so both are covered. See
+/// `handlers::shared::search::every_word_matches`.
+#[tokio::test]
+async fn a_very_long_search_is_refused_rather_than_crashing_the_server() {
+    let app = test_app_with_catalog().await;
+
+    let long = vec!["a"; 5_000].join("+");
+    for path in [
+        format!("/api/games/mtg/precons?q={long}"),
+        format!("/api/games/mtg/precons/groups?q={long}"),
+    ] {
+        let (status, _, _) = send(&app, get(&path)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+    }
+
+    // Still serving, and a normal multi-word search is unaffected.
+    let (status, _, body) = send(&app, get("/api/games/mtg/precons?q=commander%20dummy")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1);
+}
+
 /// `include_related` spans the set's whole catalog group, which is what the landing's grouped
 /// "All decks" link rides. Driven from the **child** side (`tdmb`, a sub-set of `dmb` with no
 /// precons of its own) because that's the real shape — a set's Commander sub-set carries the

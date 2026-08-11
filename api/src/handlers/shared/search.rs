@@ -4,7 +4,7 @@
 
 use sea_orm::{
     Condition,
-    sea_query::{Expr, Func, LikeExpr, SimpleExpr},
+    sea_query::{Expr, Func, IntoColumnRef, LikeExpr, SimpleExpr},
 };
 
 use crate::catalog::Game;
@@ -28,6 +28,55 @@ pub(crate) fn search_condition(
         crate::scryfall::GAME => Ok(crate::scryfall::search::parse(search, dialect)?),
         _ => Ok(Condition::all().add(name_like(search))),
     }
+}
+
+/// Most whitespace-separated words a plain name search may carry.
+///
+/// Every word becomes its own `LIKE`, so this bounds both the SQL we build and the work the
+/// database does. Real names are short — the longest sealed product in the catalog is under a
+/// dozen words — so this is far above any genuine query and exists purely as a guard.
+pub(crate) const MAX_NAME_SEARCH_WORDS: usize = 32;
+
+/// The "every whitespace-separated word must appear in the name" filter (issue #273's rule),
+/// shared by the sealed-product and preconstructed-deck listings so the two answer
+/// "commander tarkir" identically.
+///
+/// **Returns one flat [`Condition`] — never a chain of `.filter()` calls — and that is
+/// load-bearing, not style.** SeaORM folds each successive `.filter()` into a *nested* binary
+/// AND, and sea-query's SQL builder walks that tree with mutual recursion
+/// (`prepare_simple_expr` -> `binary_expr` -> `prepare_simple_expr_common`, ~3 stack frames per
+/// level). Both listings previously looped `.filter()` once per word over a caller-supplied
+/// `?q`, so ~1000 words nested ~1000 deep and overflowed the tokio worker's stack — which is a
+/// **process abort**, not a 500: one anonymous GET killed the whole server and every request in
+/// flight with it. A flat `Condition::all()` is a single level regardless of word count, and
+/// the cap keeps the query itself bounded. Anything else that wants per-word matching must come
+/// through here.
+///
+/// Over [`MAX_NAME_SEARCH_WORDS`] words is a `Validation` error (422) rather than a silent
+/// truncation, which would quietly answer a different question than the one asked.
+pub(crate) fn every_word_matches<C>(column: C, search: &str) -> Result<Condition, AppError>
+where
+    C: IntoColumnRef + Clone,
+{
+    let words: Vec<&str> = search.split_whitespace().collect();
+    if words.len() > MAX_NAME_SEARCH_WORDS {
+        return Err(AppError::Validation(format!(
+            "search accepts at most {MAX_NAME_SEARCH_WORDS} words"
+        )));
+    }
+    let mut condition = Condition::all();
+    for word in words {
+        // LIKE metacharacters escaped so they match literally (paired with an explicit
+        // ESCAPE '\'). Both sides folded to lower-case so the match is case-insensitive on
+        // Postgres too; `to_ascii_lowercase` matches SQLite's ASCII-only `LOWER()`, so the
+        // SQLite result set stays byte-identical.
+        let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
+        condition = condition.add(
+            Expr::expr(Func::lower(Expr::col(column.clone())))
+                .like(LikeExpr::new(pattern).escape('\\')),
+        );
+    }
+    Ok(condition)
 }
 
 /// A `LOWER(name) LIKE %term%` filter for the fallback (non-Scryfall) game search,

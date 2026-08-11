@@ -23,7 +23,7 @@ use chrono::Utc;
 use sea_orm::{
     ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
     Select,
-    sea_query::{Expr, Func, LikeExpr, NullOrdering, SimpleExpr},
+    sea_query::{Expr, NullOrdering, SimpleExpr},
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,10 +39,10 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, PriceRange, ProductResponse,
-    SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows, load_card,
-    load_product, product_response, require_game, resolve_page, set_name_map, trim_query,
+    SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows,
+    every_word_matches, load_card, load_product, product_response, require_game, resolve_page,
+    set_name_map, trim_query,
 };
-use crate::scryfall::search::escape_like;
 use crate::state::AppState;
 use crate::tcgcsv::classify::{BoosterFamily, booster_family};
 
@@ -430,20 +430,16 @@ pub async fn list_products(
         // substring, AND-ed together, so "final fantasy bundle" finds "Final Fantasy -
         // Gift Bundle" and "FINAL FANTASY - Chocobo Bundle" (issue #273). This mirrors
         // the Scryfall card search's bare-word handling, giving cards and sealed the
-        // same "all words present" match. LOWER both sides (ASCII fold) so each match is
-        // case-insensitive on Postgres too; `to_ascii_lowercase` matches SQLite's
-        // ASCII-only `LOWER()`, so the SQLite result set stays byte-identical.
-        // `trim_query` dropped a blank query, so there is always at least one word.
-        for word in term.split_whitespace() {
-            let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
-            query = query.filter(
-                Expr::expr(Func::lower(Expr::col((
-                    product::Entity,
-                    product::Column::Name,
-                ))))
-                .like(LikeExpr::new(pattern).escape('\\')),
-            );
-        }
+        // same "all words present" match. `trim_query` dropped a blank query, so there is
+        // always at least one word.
+        //
+        // ONE flat condition, never a `.filter()` per word — see `every_word_matches`: the
+        // per-word loop this replaced nested the ANDs deeply enough that sea-query's
+        // recursive SQL builder overflowed the stack and aborted the process.
+        query = query.filter(every_word_matches(
+            (product::Entity, product::Column::Name),
+            term,
+        )?);
     }
     if let Some(set) = trim_query(params.set.as_deref()) {
         query = query.filter(product::Column::SetCode.eq(set.to_lowercase()));

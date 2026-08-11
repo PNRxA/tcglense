@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use axum::{Json, extract::State};
 use sea_orm::{
     ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
-    sea_query::{Expr, Func, LikeExpr, NullOrdering},
+    sea_query::NullOrdering,
 };
 
 use crate::entities::precon_deck_card::PreconBoard;
@@ -22,10 +22,9 @@ use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
-    MAX_PAGE_SIZE, Page, build_page, load_group_set_codes, product_response, require_game,
-    resolve_page, set_name_map, summarize_holdings, trim_query,
+    MAX_PAGE_SIZE, Page, build_page, every_word_matches, load_group_set_codes, product_response,
+    require_game, resolve_page, set_name_map, summarize_holdings, trim_query,
 };
-use crate::scryfall::search::escape_like;
 use crate::state::AppState;
 
 use super::{
@@ -73,7 +72,7 @@ pub async fn list_precons(
     );
 
     let scope = set_scope(&state, &game, &params).await?;
-    let query = sorted_query(filtered_query(&game, &params, scope.as_deref()), &params);
+    let query = sorted_query(filtered_query(&game, &params, scope.as_deref())?, &params);
     let paginator = query.paginate(&state.db, page_size);
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -315,23 +314,17 @@ fn filtered_query(
     game: &str,
     params: &PreconListParams,
     scope: Option<&[String]>,
-) -> Select<PreconDeck> {
+) -> Result<Select<PreconDeck>, AppError> {
     let mut query = PreconDeck::find().filter(precon_deck::Column::Game.eq(game));
     if let Some(term) = trim_query(params.q.as_deref()) {
         // Every whitespace-separated word as its own order-independent name substring,
         // AND-ed — the sealed product list's rule (issue #273), so a precon and a sealed
-        // product answer "commander tarkir" the same way. LOWER both sides so the match is
-        // case-insensitive on Postgres too.
-        for word in term.split_whitespace() {
-            let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
-            query = query.filter(
-                Expr::expr(Func::lower(Expr::col((
-                    precon_deck::Entity,
-                    precon_deck::Column::Name,
-                ))))
-                .like(LikeExpr::new(pattern).escape('\\')),
-            );
-        }
+        // product answer "commander tarkir" the same way, through the one shared builder
+        // (which is also what keeps a long `?q` from overflowing the SQL builder's stack).
+        query = query.filter(every_word_matches(
+            (precon_deck::Entity, precon_deck::Column::Name),
+            term,
+        )?);
     }
     if let Some(codes) = scope {
         query = query.filter(precon_deck::Column::SetCode.is_in(codes.iter().cloned()));
@@ -339,7 +332,7 @@ fn filtered_query(
     if let Some(deck_type) = trim_query(params.deck_type.as_deref()) {
         query = query.filter(precon_deck::Column::DeckType.eq(deck_type));
     }
-    query
+    Ok(query)
 }
 
 /// The list's order: newest first by default, `sort=name` alphabetical.
@@ -411,7 +404,7 @@ pub async fn list_precon_groups(
     // makes with a set's cards, and what keeps every group complete regardless of where the
     // page boundary falls. Only the groups actually on the page are then shaped into DTOs.
     let scope = set_scope(&state, &game, &params).await?;
-    let rows = sorted_query(filtered_query(&game, &params, scope.as_deref()), &params)
+    let rows = sorted_query(filtered_query(&game, &params, scope.as_deref())?, &params)
         .all(&state.db)
         .await?;
 
