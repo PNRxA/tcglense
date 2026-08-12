@@ -160,6 +160,20 @@ fn has_ability(card: &CardFacts, keyword: &str) -> bool {
     })
 }
 
+/// Whether `name` — already lowercased — is a name this card answers to.
+///
+/// The catalog stores the **printing**'s name, which is not always the card's. A Secret Lair
+/// *reversible* printing puts the same card on both sides, so Okaun's `sld` row is named
+/// "Okaun, Eye of Chaos // Okaun, Eye of Chaos" — a string no rule, no other card's oracle
+/// text and no other printing of that card ever spells. Each `//`-separated half is therefore
+/// a name the card answers to as well, which is what lets Zndrsplt's "Partner with Okaun, Eye
+/// of Chaos" find the very printing that shipped beside it in the same Secret Lair deck. A
+/// single-faced name holds no `//` and so compares exactly as it did before.
+fn answers_to(card: &CardFacts, name: &str) -> bool {
+    let full = card.name.to_lowercase();
+    full == name || full.split("//").any(|half| half.trim() == name)
+}
+
 /// The card named by a "Partner with <name>" ability, lowercased, or `None`.
 fn partner_with_name(card: &CardFacts) -> Option<String> {
     for line in ability_lines(card) {
@@ -406,7 +420,7 @@ fn pair_allowed(left: &CardFacts, right: &CardFacts) -> bool {
         return true;
     }
     let named = |from: &CardFacts, to: &CardFacts| {
-        partner_with_name(from).is_some_and(|name| name == to.name.to_lowercase())
+        partner_with_name(from).is_some_and(|name| answers_to(to, &name))
     };
     if named(left, right) || named(right, left) {
         return true;
@@ -1038,6 +1052,25 @@ mod tests {
     }
 
     #[test]
+    fn a_name_test_reads_a_multi_faced_printing_s_halves() {
+        // The shape that matters: a reversible printing repeats one card's name either side.
+        let sld = card("a", "Okaun, Eye of Chaos // Okaun, Eye of Chaos");
+        assert!(answers_to(&sld, "okaun, eye of chaos"));
+        assert!(answers_to(
+            &sld,
+            "okaun, eye of chaos // okaun, eye of chaos"
+        ));
+        assert!(!answers_to(&sld, "okaun"));
+        // A card with two genuinely different faces answers to either of them.
+        let dfc = card("b", "Delver of Secrets // Insectile Aberration");
+        assert!(answers_to(&dfc, "delver of secrets"));
+        assert!(answers_to(&dfc, "insectile aberration"));
+        // An ordinary printing still only answers to the one name it carries.
+        assert!(answers_to(&card("c", "Sol Ring"), "sol ring"));
+        assert!(!answers_to(&card("c", "Sol Ring"), "sol"));
+    }
+
+    #[test]
     fn copy_limits_read_the_card_not_a_list() {
         assert_eq!(
             card_copy_limit(&card("a", "Forest").type_line("Basic Land — Forest")),
@@ -1619,6 +1652,77 @@ mod tests {
                 .iter()
                 .any(|v| v.rule == DeckRuleId::CommandZone),
             "two Partner commanders pair"
+        );
+    }
+
+    /// Secret Lair's "Heads I Win, Tails You Lose" — a published, legal Commander deck whose
+    /// *both* commanders are reversible printings. The catalog names each of them "X // X"
+    /// while each one's "Partner with" names the other plainly, so comparing the ability's
+    /// name against the printing's whole label reported the pair as unable to lead together.
+    #[test]
+    fn partner_with_pairs_a_reversible_printing() {
+        let sections = [section(1, "Commander", false)];
+        // Oracle text as the catalog stores it for a reversible row: both sides, reminder
+        // text included, joined by the `//` line — the ability still has to read off it.
+        let zndrsplt = entry(
+            "z",
+            "Zndrsplt, Eye of Wisdom // Zndrsplt, Eye of Wisdom",
+            1,
+            1,
+            0,
+        )
+        .type_line("Legendary Creature — Homunculus")
+        .oracle(
+            "Partner with Okaun, Eye of Chaos (When this creature enters, target player may \
+             put Okaun into their hand from their library, then shuffle.)\nWhenever a player \
+             wins a coin flip, draw a card.\n//\nPartner with Okaun, Eye of Chaos (When this \
+             creature enters, target player may put Okaun into their hand from their library, \
+             then shuffle.)\nWhenever a player wins a coin flip, draw a card.",
+        )
+        .colors("U");
+        let okaun = entry("o", "Okaun, Eye of Chaos // Okaun, Eye of Chaos", 1, 1, 0)
+            .type_line("Legendary Creature — Cyclops Berserker")
+            .oracle(
+                "Partner with Zndrsplt, Eye of Wisdom (When this creature enters, target \
+                 player may put Zndrsplt into their hand from their library, then \
+                 shuffle.)\nWhenever a player wins a coin flip, double Okaun's power and \
+                 toughness until end of turn.",
+            )
+            .colors("R");
+
+        let rows = [zndrsplt.clone(), okaun.clone()];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| v.rule == DeckRuleId::CommandZone
+                    || v.rule == DeckRuleId::CommanderEligibility),
+            "a reversible printing of a named partner still pairs, got {:?}",
+            result.violations
+        );
+
+        // The guard still bites: reading the halves widens what a "Partner with" can find,
+        // it doesn't let two cards that name nobody in common share a command zone.
+        let stranger = entry(
+            "t",
+            "Talrand, Sky Summoner // Talrand, Sky Summoner",
+            1,
+            1,
+            0,
+        )
+        .type_line("Legendary Creature — Merfolk Wizard")
+        .colors("U");
+        let rows = [zndrsplt, stranger];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule == DeckRuleId::CommandZone
+                    && v.message.contains("can't be commanders together"))
         );
     }
 
