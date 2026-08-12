@@ -8,6 +8,7 @@ import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
@@ -298,7 +299,16 @@ usePageMeta({
            precon whose type states no format, which is most of them. They sit *above* the
            card-list controls, as they do on the owner and public deck pages — the panels
            describe the whole deck, the controls belong to the list they narrow. -->
-      <DeckLegalityBanner v-if="legality" :legality="legality" class="mb-4" />
+      <!-- The verdict is a second request, so it lands after the deck does; the cue says so
+           while it's on its way, as both deck pages do. It matters more here than it reads:
+           the banner now renders *above* the card-list controls, so it's the difference
+           between a filter box that moves because something announced was arriving and one
+           that moves for no reason the reader was given. It reserves the clean verdict's
+           single line exactly; a breach banner lists its cards and is taller. -->
+      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+        <UpdatingCue label="Checking format legality…" />
+      </p>
+      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
       <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
       <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
       <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
