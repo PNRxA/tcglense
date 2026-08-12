@@ -48,7 +48,15 @@ const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? 
   <div
     class="hover:bg-muted/50 flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors sm:gap-3"
   >
-    <div class="flex w-12 shrink-0 justify-start sm:w-14"><slot name="control" /></div>
+    <!-- The control column is a *minimum* width, never a fixed one. The owner's control
+      renders one chip per finish, so a card with any foil copies carries a second one
+      (total + foil) — the pair is wider than the single-chip width this column used to be
+      fixed at, and the chips overflowed the cell and painted over the card name. The
+      desktop minimum is the pair's own width, so names still line up down the list; the
+      narrow one stays a single chip's, because a phone needs those pixels for the name
+      more than it needs a foil row's name flush with the rest. Either way it's a floor,
+      not a cap: a three-digit count widens the cell instead of spilling out of it. -->
+    <div class="flex min-w-12 shrink-0 justify-start sm:min-w-18"><slot name="control" /></div>
 
     <a
       :href="href"
