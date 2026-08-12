@@ -247,7 +247,17 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   colour identity) and the former composes the latter, so a new check belongs in the rules
   module, not a third one. Its zone split reads the section **name** (`Commander`,
   `Sideboard`, …) because a `deck_card` has no board role; keep those spellings in step with
-  `deck_import::parser`'s. Every deck-wide rule is skipped rather than guessed when the format
+  `deck_import::parser`'s. A rule that matches a **card name** goes through `rules::answers_to`,
+  never `facts.name` directly: the catalog stores the *printing*'s name, and a Secret Lair
+  reversible printing repeats one card either side of a `//` ("Okaun, Eye of Chaos // Okaun, Eye
+  of Chaos") — a spelling no other card's oracle text ever uses, which is how a published,
+  legal precon came to be told its two "Partner with" commanders couldn't lead together.
+  **A commander is not only a creature** — rule 903.3 takes "a creature card, a Vehicle card, or
+  a Spacecraft card with one or more power/toughness boxes", so `can_lead` reads that box off the
+  row (`CardFacts::has_power_toughness_box`) and not the station reminder text that explains it.
+  It is what separates the seven legendary Spacecraft that lead a deck from The Eternity
+  Elevator, which never becomes a creature — a distinction "any legendary Spacecraft" would lose.
+  Every deck-wide rule is skipped rather than guessed when the format
   has no profile or the command zone is empty, and "not finished yet" is a `warning` severity —
   a half-built deck must never be reported as illegal. The rules module's one submodule,
   `rules::rulebreaker`, reads the commanders that **rewrite** those rules for their own deck

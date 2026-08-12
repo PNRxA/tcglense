@@ -88,6 +88,12 @@ pub(crate) struct CardFacts {
     /// Rules text, falling back to the faces joined by newlines when the top level is
     /// null (Scryfall leaves it null on multi-faced cards).
     pub oracle_text: String,
+    /// Whether the row carries a printed **power/toughness box** — rule 903.3's own phrase.
+    /// Every creature has one, and so does a card that merely *becomes* one: a Vehicle, and
+    /// a Spacecraft whose station ability turns it into an artifact creature. A Spacecraft
+    /// that never becomes one carries no box, which is the whole difference between a
+    /// legendary Spacecraft that may lead a deck and one that may not.
+    pub has_power_toughness_box: bool,
     pub color_identity: Vec<String>,
     pub cmc: Option<f64>,
     /// Per-format legality object, or `None` when the row carries no legality data —
@@ -119,12 +125,20 @@ impl From<&card::Model> for CardFacts {
                 .join("\n")
         });
 
+        // Read with the same faces fallback the type line above uses: Scryfall leaves the
+        // top level null on some multi-faced cards and puts the box on the face.
+        let has_power_toughness_box = (m.power.is_some() && m.toughness.is_some())
+            || faces
+                .first()
+                .is_some_and(|f| f.power.is_some() && f.toughness.is_some());
+
         Self {
             id: m.external_id.clone(),
             name: m.name.clone(),
             type_line: m.type_line.clone(),
             front_type_line,
             oracle_text,
+            has_power_toughness_box,
             color_identity: split_csv(m.color_identity.clone()),
             cmc: m.cmc,
             legalities: parse_legalities(m.legalities.as_deref()),
@@ -303,6 +317,7 @@ pub(crate) mod test_fixtures {
             type_line: None,
             front_type_line: String::new(),
             oracle_text: String::new(),
+            has_power_toughness_box: false,
             color_identity: Vec::new(),
             cmc: None,
             legalities: None,
@@ -319,6 +334,13 @@ pub(crate) mod test_fixtures {
 
         pub(crate) fn oracle(mut self, text: &str) -> Self {
             self.oracle_text = text.to_string();
+            self
+        }
+
+        /// Rule 903.3's printed power/toughness box — what a Vehicle carries, and what a
+        /// Spacecraft carries only when it becomes a creature.
+        pub(crate) fn power_toughness_box(mut self) -> Self {
+            self.has_power_toughness_box = true;
             self
         }
 
@@ -369,6 +391,10 @@ pub(crate) mod test_fixtures {
         }
         pub(crate) fn oracle(mut self, text: &str) -> Self {
             self.facts = self.facts.oracle(text);
+            self
+        }
+        pub(crate) fn power_toughness_box(mut self) -> Self {
+            self.facts = self.facts.power_toughness_box();
             self
         }
         pub(crate) fn colors(mut self, csv: &str) -> Self {
@@ -461,5 +487,42 @@ mod tests {
         let facts = CardFacts::from(&model);
         assert_eq!(facts.front_type_line, "creature — bear ");
         assert_eq!(facts.oracle_text, "Vigilance");
+    }
+
+    /// Rule 903.3's power/toughness box decides whether a legendary Spacecraft may lead a
+    /// deck, so it reads off the row with the same faces fallback the type line uses — and a
+    /// card printed without one has to stay without one.
+    #[test]
+    fn the_power_toughness_box_reads_off_the_row_or_its_faces() {
+        let vehicle = card::Model {
+            type_line: Some("Legendary Artifact — Vehicle".to_string()),
+            power: Some("8".to_string()),
+            toughness: Some("8".to_string()),
+            ..card_model(3)
+        };
+        assert!(CardFacts::from(&vehicle).has_power_toughness_box);
+
+        let spacecraft = card::Model {
+            type_line: Some("Legendary Artifact — Spacecraft".to_string()),
+            power: None,
+            toughness: None,
+            ..card_model(4)
+        };
+        assert!(!CardFacts::from(&spacecraft).has_power_toughness_box);
+
+        let two_faced = card::Model {
+            type_line: None,
+            power: None,
+            toughness: None,
+            card_faces: Some(
+                serde_json::json!([
+                    { "type_line": "Legendary Creature — Human", "power": "2", "toughness": "3" },
+                    { "type_line": "Legendary Creature — Werewolf", "power": "4", "toughness": "5" }
+                ])
+                .to_string(),
+            ),
+            ..card_model(5)
+        };
+        assert!(CardFacts::from(&two_faced).has_power_toughness_box);
     }
 }
