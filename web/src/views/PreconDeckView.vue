@@ -18,6 +18,7 @@ import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
@@ -390,20 +391,26 @@ usePageMeta({
                 :card="entry.card"
               >
                 <template #badge>
-                  <span
-                    class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
-                    >×{{ entry.quantity + entry.foil_quantity }}</span
-                  >
-                  <!-- Which of those copies are foil. The count above is every copy the deck
-                    ships (the two finish rows are folded, as the copy endpoint folds them), so
-                    a printing that comes partly foil says how many rather than tagging the
-                    whole tile "Foil". -->
-                  <span
-                    v-if="entry.foil_quantity > 0"
-                    class="bg-background/90 text-foil pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                  >
-                    {{ entry.quantity > 0 ? `${entry.foil_quantity} foil` : 'Foil' }}
-                  </span>
+                  <DeckTileBadges>
+                    <template #control>
+                      <span
+                        class="bg-background/90 text-foreground cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
+                        >×{{ entry.quantity + entry.foil_quantity }}</span
+                      >
+                    </template>
+                    <!-- Which of those copies are foil. The count beside it is every copy
+                      the deck ships (the two finish rows are folded, as the copy endpoint
+                      folds them), so a printing that comes partly foil says how many rather
+                      than tagging the whole tile "Foil". -->
+                    <template #trailing>
+                      <span
+                        v-if="entry.foil_quantity > 0"
+                        class="bg-background/90 text-foil max-w-full truncate rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
+                      >
+                        {{ entry.quantity > 0 ? `${entry.foil_quantity} foil` : 'Foil' }}
+                      </span>
+                    </template>
+                  </DeckTileBadges>
                 </template>
               </CardTile>
             </div>

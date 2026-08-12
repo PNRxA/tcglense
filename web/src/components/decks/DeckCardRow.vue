@@ -48,7 +48,16 @@ const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? 
   <div
     class="hover:bg-muted/50 flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors sm:gap-3"
   >
-    <div class="flex w-12 shrink-0 justify-start sm:w-14"><slot name="control" /></div>
+    <!-- The control column reserves the width of the *pair* of count chips the owner's
+      control renders for a card held in both finishes (total + foil), at every breakpoint.
+      It used to be fixed at a single chip's width, which the pair overflowed — the chips
+      painted over the card name — and sizing it to whichever chips a row happens to carry
+      would make the name column start in a different place on every foil row. Names line
+      up down the list either way, which is the whole point of the compact view.
+      It's a floor, not a cap, so a three-digit count widens the cell rather than spilling
+      out of it; a deck holding 100+ copies of one card shifts that row's name and no
+      other. -->
+    <div class="flex min-w-18 shrink-0 justify-start"><slot name="control" /></div>
 
     <a
       :href="href"
