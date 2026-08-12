@@ -71,9 +71,11 @@ describe('DeckCardRow', () => {
     const badge = wrapper.findComponent(OwnedCountBadge)
     const cell = badge.element.parentElement as HTMLElement
     const classes = [...cell.classList]
-    expect(classes).toContain('min-w-12')
-    expect(classes).toContain('sm:min-w-18')
+    expect(classes).toContain('min-w-18')
     expect(classes.some((c) => /^(sm:)?w-\d/.test(c))).toBe(false)
+    // One width for every breakpoint: a name may not start in a different place on a phone
+    // depending on whether its row happens to carry a foil chip.
+    expect(classes.some((c) => /^(sm|md|lg):min-w-/.test(c))).toBe(false)
 
     // Both chips live in that one cell — the width it reserves is for the pair, not one chip.
     const chips = badge

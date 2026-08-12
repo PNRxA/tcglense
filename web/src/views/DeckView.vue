@@ -54,6 +54,7 @@ import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
 import { useCurrency } from '@/composables/useCurrency'
@@ -62,7 +63,6 @@ import { useDeckLegalityQuery } from '@/composables/useDeckAnalysis'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -526,7 +526,6 @@ function copyDeckList() {
                     :quantity="entry.quantity"
                     :foil-quantity="entry.foil_quantity"
                     :sections="sections"
-                    variant="inline"
                   />
                 </template>
                 <template #badges>
@@ -546,27 +545,24 @@ function copyDeckList() {
                 :card="entry.card"
               >
                 <template #badge>
-                  <DeckCardControl
-                    :game="game"
-                    :deck-id="deck.id"
-                    :section-id="entry.section_id"
-                    :card="entry.card"
-                    :quantity="entry.quantity"
-                    :foil-quantity="entry.foil_quantity"
-                    :sections="sections"
-                  />
-                  <!-- Format-legality breach chip (issue #557): bottom-right, the one
-                    corner the control (bottom-left) and ownership (top-right) never use —
-                    on an 88px mobile tile a top-left "Not Legal" would collide with the
-                    ownership badges. pointer-events-none keeps the tile's stretched link
-                    clickable through it; the banner above carries the full explanation. -->
-                  <span
-                    v-if="legality?.card_statuses[entry.card.id]"
-                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="DECK_ISSUE_TEXT_CLASS[legality.card_statuses[entry.card.id]!]"
-                  >
-                    {{ deckIssueLabel(legality.card_statuses[entry.card.id]!) }}
-                  </span>
+                  <!-- The copy control and the format-legality breach chip (issue #557)
+                    share the tile's bottom strip, which keeps them apart at any tile size;
+                    the banner above carries the full explanation of a breach. Ownership
+                    keeps the top-right corner — on an 88px mobile tile a top-left
+                    "Not Legal" would collide with it. -->
+                  <DeckTileBadges :legality-status="legality?.card_statuses[entry.card.id] ?? null">
+                    <template #control>
+                      <DeckCardControl
+                        :game="game"
+                        :deck-id="deck.id"
+                        :section-id="entry.section_id"
+                        :card="entry.card"
+                        :quantity="entry.quantity"
+                        :foil-quantity="entry.foil_quantity"
+                        :sections="sections"
+                      />
+                    </template>
+                  </DeckTileBadges>
                   <!-- Ownership indicators (top-right): how many of this card you own
                    (collection) and want (wish list), each shown only when non-zero. -->
                   <DeckOwnershipBadges

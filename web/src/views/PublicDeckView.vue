@@ -16,6 +16,7 @@ import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
 import { usePublicDeckLegalityQuery } from '@/composables/useDeckAnalysis'
@@ -26,7 +27,6 @@ import { ApiError, type DeckCardEntry } from '@/lib/api'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
-import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 import { usePageMeta } from '@/lib/seo'
 import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
@@ -269,20 +269,16 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
                 :card="entry.card"
               >
                 <template #badge>
-                  <span
-                    class="bg-background/90 text-foreground absolute bottom-1.5 left-1.5 z-20 cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
-                    >×{{ copies(entry) }}</span
-                  >
-                  <!-- Format-legality breach chip (issue #557): bottom-right (the copy
-                    count owns bottom-left), matching the owner view; pointer-events-none
-                    keeps the tile's stretched link clickable through it. -->
-                  <span
-                    v-if="legality?.card_statuses[entry.card.id]"
-                    class="bg-background/90 pointer-events-none absolute right-1.5 bottom-1.5 z-20 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                    :class="DECK_ISSUE_TEXT_CLASS[legality.card_statuses[entry.card.id]!]"
-                  >
-                    {{ deckIssueLabel(legality.card_statuses[entry.card.id]!) }}
-                  </span>
+                  <!-- The copy count and the format-legality breach chip (issue #557)
+                    share the tile's bottom strip, as they do on the owner view. -->
+                  <DeckTileBadges :legality-status="legality?.card_statuses[entry.card.id] ?? null">
+                    <template #control>
+                      <span
+                        class="bg-background/90 text-foreground cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
+                        >×{{ copies(entry) }}</span
+                      >
+                    </template>
+                  </DeckTileBadges>
                 </template>
               </CardTile>
             </div>
