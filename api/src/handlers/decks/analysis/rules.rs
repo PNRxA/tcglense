@@ -388,6 +388,20 @@ fn can_lead(card: &CardFacts, kind: CommandZoneKind) -> bool {
     if has_type(card, &["legendary", "creature"]) {
         return true;
     }
+    // Rule 903.3 takes "a creature card, a Vehicle card, or a Spacecraft card with one or
+    // more power/toughness boxes" — a card that *becomes* a creature leads a deck as
+    // readily as one that starts as one, which is how Wizards' own Commander decks come to
+    // be led by Shorikai and by Edge of Eternities' two Spacecraft. Every Vehicle has a
+    // box; a Spacecraft only has one when a station ability turns it into an artifact
+    // creature, and the one that never does (The Eternity Elevator) is the one Spacecraft
+    // that cannot lead. The box is read off the printed row rather than the station
+    // reminder text that explains it, for the reason `ability_lines` strips reminders at
+    // all: it is the datum, not the sentence about it.
+    if has_type(card, &["legendary", "vehicle"])
+        || (has_type(card, &["legendary", "spacecraft"]) && card.has_power_toughness_box)
+    {
+        return true;
+    }
     // "can be your commander" covers the designed-for-the-zone planeswalkers and oddities;
     // a Background is only ever a commander (paired with "Choose a Background").
     if ability_lines(card)
@@ -985,9 +999,12 @@ fn command_zone_violations(
     if !ineligible.is_empty() {
         let names = join_names(&unique_in_order(ineligible));
         let allowed = match zone.kind {
-            CommandZoneKind::Brawl => "a legendary creature or planeswalker",
+            CommandZoneKind::Brawl => "a legendary creature, Vehicle, Spacecraft, or planeswalker",
             CommandZoneKind::Pdh => "an uncommon creature",
-            _ => "a legendary creature (or a card that says it can be your commander)",
+            _ => {
+                "a legendary creature, Vehicle, or Spacecraft (or a card that says it can be \
+                 your commander)"
+            }
         };
         violations.push(DeckRuleViolation {
             rule: DeckRuleId::CommanderEligibility,
@@ -1753,9 +1770,60 @@ mod tests {
                 .find(|v| v.rule == DeckRuleId::CommanderEligibility)
                 .map(|v| v.message.as_str()),
             Some(
-                "Sol Ring can't be your commander — a commander must be a legendary creature \
-                 (or a card that says it can be your commander)."
+                "Sol Ring can't be your commander — a commander must be a legendary creature, \
+                 Vehicle, or Spacecraft (or a card that says it can be your commander)."
             )
+        );
+    }
+
+    /// Rule 903.3: "a creature card, a **Vehicle** card, or a **Spacecraft** card with one or
+    /// more power/toughness boxes". Both of Edge of Eternities' Commander precons are led by
+    /// a Spacecraft, and reading only the creature half reported them as unable to lead.
+    #[test]
+    fn a_vehicle_or_a_creature_making_spacecraft_may_lead() {
+        let vehicle = card("v", "Shorikai, Genesis Engine")
+            .type_line("Legendary Artifact — Vehicle")
+            .power_toughness_box();
+        assert!(can_lead(&vehicle, CommandZoneKind::Commander));
+
+        let spacecraft = card("s", "Inspirit, Flagship Vessel")
+            .type_line("Legendary Artifact — Spacecraft")
+            .oracle("Station\n8+ | Flying")
+            .power_toughness_box();
+        assert!(can_lead(&spacecraft, CommandZoneKind::Commander));
+
+        // The one Spacecraft with no box: nothing ever makes it a creature, so it may not
+        // lead — the clause is what keeps this from being "any legendary Spacecraft".
+        let elevator = card("e", "The Eternity Elevator")
+            .type_line("Legendary Artifact — Spacecraft")
+            .oracle("Station\n20+ | {T}: Add X mana of any one color.");
+        assert!(!can_lead(&elevator, CommandZoneKind::Commander));
+
+        // A box is not a licence on its own: the card still has to be legendary, and a
+        // Pauper Commander still needs an actual creature.
+        let common = card("c", "Smuggler's Copter")
+            .type_line("Artifact — Vehicle")
+            .power_toughness_box();
+        assert!(!can_lead(&common, CommandZoneKind::Commander));
+        assert!(!can_lead(&vehicle, CommandZoneKind::Pdh));
+    }
+
+    #[test]
+    fn a_spacecraft_commander_leads_its_own_deck() {
+        let sections = [section(1, "Commander", false), section(2, "Main", false)];
+        let rows = [
+            entry("s", "Hearthhull, the Worldseed", 1, 1, 0)
+                .type_line("Legendary Artifact — Spacecraft")
+                .power_toughness_box()
+                .colors("B,G"),
+            entry("l", "Forest", 2, 99, 0).type_line("Basic Land — Forest"),
+        ];
+        let refs: Vec<&AnalysisEntry> = rows.iter().collect();
+        let result = evaluate_deck_rules("commander", &refs, &sections);
+        assert!(
+            result.violations.is_empty(),
+            "a Spacecraft leads its deck, got {:?}",
+            result.violations
         );
     }
 
