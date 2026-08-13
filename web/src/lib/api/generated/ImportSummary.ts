@@ -36,9 +36,4 @@ foil_copies: number,
 /**
  * Owned cards removed by the reconcile (non-zero only in `Replace` mode).
  */
-removed_cards: number, 
-/**
- * `Smart` only: whether the fetch stopped early having reached already-synced
- * cards (vs. scanning the whole collection). Always `false` for other modes.
- */
-stopped_early: boolean, };
+removed_cards: number, };

@@ -45,13 +45,11 @@ use crate::{
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
             collection_product_summary, collection_set_drops, collection_set_subtypes,
-            collection_sets, collection_summary, collection_value_history,
-            delete_collection_source, export_collection, export_collection_cards,
-            get_collection_entry, get_collection_product_entry, get_collection_source,
+            collection_sets, collection_summary, collection_value_history, export_collection,
+            export_collection_cards, get_collection_entry, get_collection_product_entry,
             get_import_job, import_collection, import_collection_csv, import_collection_text,
             list_collection, list_collection_product_sets, list_collection_products, owned_counts,
-            save_collection_source, set_collection_entry, set_collection_product_entry,
-            sync_collection_source,
+            set_collection_entry, set_collection_product_entry,
         },
         config::public_config,
         currency::currency_rates,
@@ -257,8 +255,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/cards/export",
             get(export_collection_cards),
         )
-        // Import / sync a collection from an external provider (Archidekt or Moxfield):
-        // a one-off import, a saved link (GET/PUT/DELETE), and a re-sync.
+        // Import a collection from an external provider (Archidekt or Moxfield). Always a
+        // one-off: nothing is remembered, so every import states its own source and mode.
         .route("/api/collection/{game}/import", post(import_collection))
         // File upload / pasted text: the raw content is the request body, so these routes
         // override axum's default 2 MB body limit with our own (larger, but still bounded)
@@ -278,13 +276,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/collection/{game}/import/jobs/{job_id}",
             get(get_import_job),
         )
-        .route(
-            "/api/collection/{game}/source",
-            get(get_collection_source)
-                .put(save_collection_source)
-                .delete(delete_collection_source),
-        )
-        .route("/api/collection/{game}/sync", post(sync_collection_source))
         .route(
             "/api/collection/{game}/cards/{id}",
             get(get_collection_entry).put(set_collection_entry),

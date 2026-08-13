@@ -1,7 +1,7 @@
 # HTTP API contracts
 
 The full HTTP JSON API reference for the TCGLense backend (`api/`): auth, the public
-card catalog, sealed products, per-user collection (incl. import/sync/CSV), and the wish
+card catalog, sealed products, per-user collection (incl. import/CSV), and the wish
 list. `CLAUDE.md` is the always-loaded core (a short pointer lives there); **this file is
 the on-demand detail** — read it when you're adding or changing an endpoint, wiring a new
 client call, or need the exact wire shape, status codes, params, or ordering of a route.
@@ -670,7 +670,7 @@ internal `cards.id` before storage (so a holding survives a catalog re-import). 
 missing token is `401`; an unknown game/card is `404`. These endpoints are **per-user
 rate limited** (issue #168, `ratelimit::user_rate_limit`, keyed by the token's user
 id): a generous `general` quota covers reads/edits/batch lookups, and a tighter
-`import` quota covers the expensive import/sync/CSV endpoints; over-limit is `429` +
+`import` quota covers the expensive import/CSV endpoints; over-limit is `429` +
 `Retry-After` (and, being per-user, `no-store`).
 
 A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
@@ -739,7 +739,7 @@ last player standing still isn't reliably the winner.
 `ProductHoldingSet = { code, name: string | null, unique_products, total_products,
 total_value_usd: string | null }` (a held-product-set tile, its aggregates scoped to the one
 set, `name` null for a set with no `card_sets` row; drill into a set with `?set=<code>` on the
-flat products list). Collection import/sync/export remain card-only; value
+flat products list). Collection import/export remain card-only; value
 history and movers include both card and sealed-product holdings. **Public sharing exposes these
 sealed products** through read-only `/api/u/{handle}/{game}/products{,/summary,/sets}` mirrors of
 the three authed reads above — handle-resolved + gated by the same per-game visibility flag as the
@@ -759,14 +759,10 @@ surface.
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
-| `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"` or `"moxfield"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge`/`smart` (see below). Does not save a link |
-| `POST /api/collection/{game}/import/csv?mode=` | raw file body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded collection export, sniffing the shape from the content: **Mythic Tools** (an `Amount` column — checked first, since its export also carries a Scryfall ID; rows take their Scryfall ID when present, else Set Code + Collector Number), **Archidekt** (a Scryfall ID column, plus Finish + Quantity), **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped), or — when no CSV header matches — a **plain-text card list** (`2 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). A file is inherently one-off (no link is saved). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable content / one missing a required column / a body matching no supported format / an empty upload |
+| `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"` or `"moxfield"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge` (see below). Always one-off — nothing about the source is remembered |
+| `POST /api/collection/{game}/import/csv?mode=` | raw file body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded collection export, sniffing the shape from the content: **Mythic Tools** (an `Amount` column — checked first, since its export also carries a Scryfall ID; rows take their Scryfall ID when present, else Set Code + Collector Number), **Archidekt** (a Scryfall ID column, plus Finish + Quantity), **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped), or — when no CSV header matches — a **plain-text card list** (`2 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable content / one missing a required column / a body matching no supported format / an empty upload |
 | `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
-| `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import/sync job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total when known; `total` absent for a smart sync, which has no meaningful total) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
-| `GET /api/collection/{game}/source` | — | `CollectionSource` or `null` — the saved collection link for this game |
-| `PUT /api/collection/{game}/source` | `{ provider, source, smart? }` | `CollectionSource` — save/upsert the link (one per user+game; validates the source resolves; does not sync). `smart` (default `false`) records whether re-syncs use smart (incremental) sync vs. a full mirror |
-| `DELETE /api/collection/{game}/source` | — | `204` — forget the saved link (idempotent) |
-| `POST /api/collection/{game}/sync` | — | **`202`** `ImportJob` — enqueues a re-sync from the saved link (the worker stamps `last_synced_at` on success). Uses **smart** sync when the saved link opted in, otherwise **mirror/replace**. `404` if no link is saved |
+| `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total, absent until the first page reports it) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
 | `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/`format` |
 
@@ -928,16 +924,16 @@ or job, reconciling inline in the request (the handler bounds the body with a ro
 `DefaultBodyLimit`).
 
 `ImportSummary = { provider, mode, total_rows, distinct_cards, matched_cards,
-unmatched_cards, unmatched_sample, regular_copies, foil_copies, removed_cards,
-stopped_early }`. Import jobs live in-memory in `AppState.imports` (lost on restart; the
-client just re-imports). A saved link is `entities/collection_source.rs`
-(`collection_sources`, unique on `(user_id, game)`, `user_id` FK → `users` `ON DELETE
-CASCADE`, stores `provider` + `external_id` + `last_synced_at` + `smart`). All three
-providers are MTG-only. **Moxfield's live URL import is currently disabled**
-(`Provider::network_import_enabled()` returns `false` pending an approved
-`MOXFIELD_USER_AGENT`): the handlers reject a Moxfield URL import, saved-link save, or
-re-sync with a `422` pointing at the upload/paste tabs, and the web import dialog greys
-Moxfield out in the link picker — see `docs/tradeoffs.md`. Archidekt is fetched at `https://archidekt.com/api/collection/{id}/?page={n}`
+unmatched_cards, unmatched_sample, regular_copies, foil_copies, removed_cards }`. Import
+jobs live in-memory in `AppState.imports` (lost on restart; the client just re-imports).
+**Every import is one-off**: nothing about the source is stored, so there is no saved link
+and no re-sync endpoint — an import states its own provider, source, and mode (the
+incremental "smart" sync and the `collection_sources` table it hung off were removed;
+`m..072` drops the table). All three providers are MTG-only. **Moxfield's live URL import
+is currently disabled** (`Provider::network_import_enabled()` returns `false` pending an
+approved `MOXFIELD_USER_AGENT`): the handlers reject a Moxfield URL import with a `422`
+pointing at the upload/paste tabs, and the web import dialog greys Moxfield out in the
+link picker — see `docs/tradeoffs.md`. Archidekt is fetched at `https://archidekt.com/api/collection/{id}/?page={n}`
 (25 rows/page, capped at `MAX_IMPORT_ROWS`); the id is validated all-digits. Moxfield is
 fetched at `https://api2.moxfield.com/v1/collections/search/{id}?pageNumber={n}&pageSize=100`
 (paged on the envelope's `totalPages`, same row cap; `isProxy` rows skipped); the id is
@@ -945,23 +941,6 @@ validated against the base64url charset, and it sends the approved `MOXFIELD_USE
 when configured (Moxfield's bot wall only serves approved clients — a `403` maps to a clear
 "needs an approved User-Agent" error). Either way the URL is built host-side from the
 validated id, so there's no SSRF surface.
-
-The **smart** mode (`ReconcileMode::Smart`, issue #101) is an *incremental* mirror for
-re-syncing a mostly-unchanged collection cheaply under the rate limit. It fetches the
-provider collection **most-recently-updated first** (Archidekt `?orderBy=-updatedAt`;
-Moxfield `sortType=lastUpdated&sortDirection=descending` — an edit-aware order: a card
-whose count changed bubbles to the top even though its row-visible created-at is old) and
-**stops paging once a whole page already matches what we hold** (`fetch_holdings_smart` +
-the pure `smart_absorb_page`, judged per page after the whole page is folded into the
-running aggregate so a card owning a regular + foil finish isn't seen mid-aggregate). It
-then **overwrites each fetched card's observed finishes** but **preserves any finish it
-never fetched** (its rows sit in the unscanned tail) and **never deletes**
-(`reconcile_smart`), so an early stop can't zero a foil we simply didn't page to. The
-trade-off: because it never fetches the whole collection, smart only touches
-recently-changed cards — it will **not** remove cards deleted upstream (a full `Replace`
-does). `stopped_early` reports whether the fetch stopped at the already-synced tail vs.
-scanned everything. Smart is offered in the import dialog as a mode, and on a saved link via
-its stored `smart` flag (the saved re-sync then runs smart instead of mirror/replace).
 
 ### Export
 
@@ -995,7 +974,7 @@ resolution, and holding semantics as the collection (bearer `AuthUser`, private
 { quantity, foil_quantity }`, both-zero deletes the row) over its **own, fully
 independent table**: `entities/wishlist_item.rs` (`wishlist_items`, unique on
 `(user_id, game, card_id)`, `user_id` FK → `users` `ON DELETE CASCADE`). There is
-**no import/sync layer** (scoped out by the issue), and the wire shapes are the
+**no import layer** (scoped out by the issue), and the wire shapes are the
 **same DTOs the collection returns** (`CollectionEntry`/`CollectionSummary`/
 `CollectionSet`/`CollectionDropGroup`/quantities — hoisted into
 `handlers/shared/holdings.rs`), so the `owned_*` field names read as "wanted" here.

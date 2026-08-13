@@ -1,18 +1,13 @@
 import { request } from './client'
-import type {
-  CollectionProvider,
-  CollectionSource,
-  ImportJob,
-  ImportSummary,
-  ReconcileMode,
-} from './generated'
+import type { CollectionProvider, ImportJob, ImportSummary, ReconcileMode } from './generated'
 
-// ---------- Import / sync from an external collection provider ----------
+// ---------- Import from an external collection provider ----------
 //
 // A signed-in user can import their collection from an external service (Archidekt or
 // Moxfield). The backend fetches server-side and reconciles into the local collection,
-// so the client only sends the provider + a URL/id + a mode. The wire types are
-// generated from the API's Rust DTOs into `./generated` and re-exported here.
+// so the client only sends the provider + a URL/id + a mode. Every import is one-off —
+// nothing is remembered between them. The wire types are generated from the API's Rust
+// DTOs into `./generated` and re-exported here.
 //
 // Not every service has a public API to fetch from. Mythic Tools (issue #572) is a phone
 // app, so its collections arrive as an export the user uploads or — far easier from a
@@ -21,7 +16,6 @@ import type {
 
 export type {
   CollectionProvider,
-  CollectionSource,
   ImportJob,
   ImportProgress,
   ImportSummary,
@@ -35,14 +29,9 @@ export const PROVIDER_LABELS: Record<CollectionProvider, string> = {
   mythictools: 'Mythic Tools',
 }
 
-/** The display label for a provider id (saved sources carry the id as a plain string). */
-export function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider as CollectionProvider] ?? provider
-}
-
-// The request bodies stay hand-written: the wire `ImportRequest`/`SaveSourceRequest`
-// accept any `provider` string (validated server-side), while the client deliberately
-// narrows it to the known `CollectionProvider` union.
+// The request body stays hand-written: the wire `ImportRequest` accepts any `provider`
+// string (validated server-side), while the client deliberately narrows it to the known
+// `CollectionProvider` union.
 
 export interface ImportCollectionBody {
   provider: CollectionProvider
@@ -50,26 +39,9 @@ export interface ImportCollectionBody {
   mode: ReconcileMode
 }
 
-export interface SaveSourceBody {
-  provider: CollectionProvider
-  source: string
-  /** Whether saved re-syncs should use smart (incremental) sync. Defaults false server-side. */
-  smart?: boolean
-}
-
 /** `/api/collection/{game}/import` path. */
 export function collectionImportPath(game: string): string {
   return `/api/collection/${encodeURIComponent(game)}/import`
-}
-
-/** `/api/collection/{game}/source` path. */
-export function collectionSourcePath(game: string): string {
-  return `/api/collection/${encodeURIComponent(game)}/source`
-}
-
-/** `/api/collection/{game}/sync` path. */
-export function collectionSyncPath(game: string): string {
-  return `/api/collection/${encodeURIComponent(game)}/sync`
 }
 
 /** `/api/collection/{game}/import/jobs/{jobId}` path. */
@@ -107,47 +79,17 @@ export function importCollection(
   return request<ImportJob>(collectionImportPath(game), { method: 'POST', body, token })
 }
 
-/** Poll a background import/sync job's status. */
+/** Poll a background import job's status. */
 export function getImportJob(token: string, game: string, jobId: number): Promise<ImportJob> {
   return request<ImportJob>(collectionImportJobPath(game, jobId), { token })
-}
-
-/** The saved collection link for a game, or null when none is saved. */
-export function getCollectionSource(token: string, game: string): Promise<CollectionSource | null> {
-  // A `null` body comes back from `request` as `undefined`; normalise it so callers
-  // (and vue-query, which forbids `undefined` query results) always see `null`.
-  return request<CollectionSource | null>(collectionSourcePath(game), { token }).then(
-    (source) => source ?? null,
-  )
-}
-
-/** Save (upsert) the collection link for a game. Validates the source; does not sync. */
-export function saveCollectionSource(
-  token: string,
-  game: string,
-  body: SaveSourceBody,
-): Promise<CollectionSource> {
-  return request<CollectionSource>(collectionSourcePath(game), { method: 'PUT', body, token })
-}
-
-/** Forget the saved collection link for a game. */
-export function deleteCollectionSource(token: string, game: string): Promise<void> {
-  return request<void>(collectionSourcePath(game), { method: 'DELETE', token })
-}
-
-/** Enqueue a re-sync from the saved collection link (mirror/replace). Returns a job to
- * poll (runs in the background, throttled by the provider rate limit). */
-export function syncCollectionSource(token: string, game: string): Promise<ImportJob> {
-  return request<ImportJob>(collectionSyncPath(game), { method: 'POST', token })
 }
 
 /**
  * Import a collection from an uploaded export file — an Archidekt, Moxfield or Mythic
  * Tools CSV, or a plain-text card list; the server detects which from the content. The
- * file is sent as the raw request body (there's no persistent source to re-sync, so this
- * is always one-off) and reconciled server-side; unlike the URL import it needs no
- * upstream fetch, so it resolves **synchronously** to the {@link ImportSummary} (no job
- * to poll).
+ * file is sent as the raw request body and reconciled server-side; unlike the URL import
+ * it needs no upstream fetch, so it resolves **synchronously** to the
+ * {@link ImportSummary} (no job to poll).
  */
 export function importCollectionCsv(
   token: string,

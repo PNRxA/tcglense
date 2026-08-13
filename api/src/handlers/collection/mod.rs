@@ -14,7 +14,7 @@
 //!
 //! The handlers are split across submodules by concern — [`read`] (list / summary /
 //! owned-count reads), [`sets`] (per-set landing + by-drop), [`write`] (the owned-count
-//! upsert), and [`import`] (external import/sync + saved-source CRUD) — with the
+//! upsert), and [`import`] (one-off external import) — with the
 //! import-specific DTOs kept here. The entity-agnostic wire DTOs, params, and helpers
 //! live in [`crate::handlers::shared::holdings`], shared with the wish list (its
 //! same-shaped "want" twin), and are re-exported below so the submodules and their
@@ -44,8 +44,7 @@ mod tests;
 
 pub use export::{export_collection, export_collection_cards};
 pub use import::{
-    delete_collection_source, get_collection_source, get_import_job, import_collection,
-    import_collection_csv, import_collection_text, save_collection_source, sync_collection_source,
+    get_import_job, import_collection, import_collection_csv, import_collection_text,
 };
 pub use price_movements::collection_movers;
 pub use products::{
@@ -69,9 +68,8 @@ pub(crate) use sets::{owned_drop_page, owned_sets, owned_subtype_page};
 // (see the note in `crate::handlers::catalog`).
 pub use export::{__path_export_collection, __path_export_collection_cards};
 pub use import::{
-    __path_delete_collection_source, __path_get_collection_source, __path_get_import_job,
-    __path_import_collection, __path_import_collection_csv, __path_import_collection_text,
-    __path_save_collection_source, __path_sync_collection_source,
+    __path_get_import_job, __path_import_collection, __path_import_collection_csv,
+    __path_import_collection_text,
 };
 pub use price_movements::__path_collection_movers;
 pub use products::{
@@ -104,7 +102,7 @@ pub(crate) use crate::handlers::shared::{
 /// exceed this — the UI tells the user to export only the three needed columns.
 pub const MAX_CSV_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 
-// ---------- Import / sync request + response DTOs ----------
+// ---------- Import request + response DTOs ----------
 
 /// Body of `POST .../import`: which provider, the source URL/id, and how to reconcile.
 /// `provider` is any string on the wire (validated against the known providers by the
@@ -117,42 +115,16 @@ pub struct ImportRequest {
     pub mode: ReconcileMode,
 }
 
-/// Body of `PUT .../source`: the collection link to remember (provider + source URL/id),
-/// plus whether saved re-syncs should use smart (incremental) sync. `smart` defaults to
-/// `false` (full mirror) when omitted.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct SaveSourceRequest {
-    pub provider: String,
-    pub source: String,
-    #[serde(default)]
-    pub smart: bool,
-}
-
-/// A saved external collection link for a game.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionSource"))]
-pub struct CollectionSourceResponse {
-    pub provider: &'static str,
-    pub external_id: String,
-    /// A canonical, user-facing URL for the collection on the provider.
-    pub url: String,
-    /// RFC3339 timestamp of the last successful sync, or null if never synced.
-    pub last_synced_at: Option<String>,
-    /// Whether a saved re-sync uses smart (incremental) sync rather than a full mirror.
-    pub smart: bool,
-}
-
 /// Live fetch progress for a running import: how many provider rows we've fetched so far,
 /// and the collection's total when the provider reported one up front. A determinate
-/// progress bar can be drawn when `total` is present; otherwise (a smart sync, which stops
-/// early) only the running `fetched` count is meaningful.
+/// progress bar can be drawn once `total` is present; until the first page lands only the
+/// running `fetched` count is meaningful.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ImportProgress {
     /// Provider rows fetched so far.
     pub fetched: u32,
-    /// Total rows to fetch, when known; `null` for a smart sync (no meaningful total).
+    /// Total rows to fetch, when the provider has reported one; `null` until then.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub total: Option<u32>,
@@ -167,9 +139,9 @@ impl From<ProgressSnapshot> for ImportProgress {
     }
 }
 
-/// The status of a background import/sync job — returned when one is enqueued and each
-/// time the client polls. Imports run asynchronously (throttled by the provider rate
-/// limit), so the client kicks one off and polls this until `complete`/`error`.
+/// The status of a background import job — returned when one is enqueued and each time
+/// the client polls. Imports run asynchronously (throttled by the provider rate limit),
+/// so the client kicks one off and polls this until `complete`/`error`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ImportJob"))]
 pub struct ImportJobResponse {

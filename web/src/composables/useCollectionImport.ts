@@ -1,19 +1,14 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import {
-  deleteCollectionSource,
-  getCollectionSource,
   getImportJob,
   importCollection,
   importCollectionCsv,
   importCollectionText,
-  saveCollectionSource,
-  syncCollectionSource,
   ApiError,
   MAX_CSV_UPLOAD_BYTES,
   PROVIDER_LABELS,
   type CollectionProvider,
-  type CollectionSource,
   type ImportJob,
   type ImportSummary,
   type ReconcileMode,
@@ -21,26 +16,13 @@ import {
 import { invalidateCollectionData } from '@/composables/useCollection'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
-// Import / sync from an external collection provider (Archidekt or Moxfield).
-// The low-level vue-query hooks for each import/sync endpoint are internal plumbing; the
-// module's public surface is `useCollectionSourceQuery` + `useSyncCollectionSourceMutation`
-// (the saved-link read/re-sync the collection landing uses) plus two higher-level
-// composables layered on the internal hooks: `usePolledImportJob` (the shared
-// job-poll-to-terminal plumbing both the import dialog and the collection landing use) and
-// `useCollectionImport` (the dialog's whole link/CSV/save lifecycle). The read side of the
-// collection stays in `useCollection`; this depends on it only for `invalidateCollectionData`.
-
-/**
- * The user's saved external collection link for a game (or null). Drives the
- * "Re-sync" affordance and prefills the import dialog. Disabled while signed out.
- */
-export function useCollectionSourceQuery(game: Ref<string>) {
-  const options = {
-    queryKey: ['collection-source', game],
-    queryFn: (token: string) => getCollectionSource(token, game.value),
-  }
-  return useAuthedQuery<CollectionSource | null>(options)
-}
+// Import from an external collection provider (Archidekt or Moxfield). Every import is
+// one-off — nothing is remembered between them.
+// The low-level vue-query hooks for each import endpoint are internal plumbing; the
+// module's public surface is two higher-level composables layered on them:
+// `usePolledImportJob` (the shared job-poll-to-terminal plumbing) and `useCollectionImport`
+// (the dialog's whole link/file/paste lifecycle). The read side of the collection stays in
+// `useCollection`; this depends on it only for `invalidateCollectionData`.
 
 /** Variables for a one-off import. */
 interface ImportCollectionVars {
@@ -109,8 +91,8 @@ function useImportCollectionTextMutation() {
 }
 
 /**
- * Poll a background import/sync job until it reaches a terminal status. Enabled only
- * while `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
+ * Poll a background import job until it reaches a terminal status. Enabled only while
+ * `jobId` is set; refetches every 2s while `queued`/`running`, then stops.
  */
 function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
   const options = {
@@ -128,71 +110,12 @@ function useImportJobQuery(game: Ref<string>, jobId: Ref<number | null>) {
   return useAuthedQuery<ImportJob>(options)
 }
 
-/** Variables for saving a collection link. */
-interface SaveSourceVars {
-  game: string
-  provider: CollectionProvider
-  source: string
-  /** Whether saved re-syncs should use smart (incremental) sync. */
-  smart?: boolean
-}
-
 /**
- * Save (upsert) the collection link; invalidates the saved-source query. Exported so the
- * collection landing's re-sync cog can flip the saved link's smart flag without reopening
- * the import dialog (it re-saves the same provider+source with the new `smart`).
- */
-export function useSaveCollectionSourceMutation() {
-  const qc = useQueryClient()
-  const options = {
-    mutationFn: (token: string, vars: SaveSourceVars) =>
-      saveCollectionSource(token, vars.game, {
-        provider: vars.provider,
-        source: vars.source,
-        smart: vars.smart,
-      }),
-    onSettled: (
-      _data: CollectionSource | undefined,
-      _error: ApiError | null,
-      vars: SaveSourceVars,
-    ) => {
-      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
-    },
-  }
-  return useAuthedMutation<CollectionSource, SaveSourceVars>(options)
-}
-
-/** Forget the saved collection link; invalidates the saved-source query. */
-function useDeleteCollectionSourceMutation() {
-  const qc = useQueryClient()
-  const options = {
-    mutationFn: (token: string, vars: { game: string }) => deleteCollectionSource(token, vars.game),
-    onSettled: (_data: void | undefined, _error: ApiError | null, vars: { game: string }) => {
-      qc.invalidateQueries({ queryKey: ['collection-source', vars.game] })
-    },
-  }
-  return useAuthedMutation<void, { game: string }>(options)
-}
-
-/**
- * Enqueue a re-sync from the saved link (mirror/replace). Resolves to a job to poll; the
- * collection + saved-source caches are invalidated once that job completes (the caller
- * does this on completion, via {@link invalidateCollectionData} + the source query).
- */
-export function useSyncCollectionSourceMutation() {
-  const options = {
-    mutationFn: (token: string, vars: { game: string }) => syncCollectionSource(token, vars.game),
-  }
-  return useAuthedMutation<ImportJob, { game: string }>(options)
-}
-
-/**
- * The shared job-poll-to-terminal plumbing for a background import/sync job: owns the
- * polled `jobId`, exposes the live `status`/`processing` flags, and fires the given
- * terminal-status handlers once (from a single guarded watcher). Both the import dialog
- * and the collection landing's re-sync build on it — each supplies its own copy for the
- * `running`/`complete`/`error` transitions (the summary/error shapes differ), so the
- * watcher boilerplate lives in one place.
+ * The shared job-poll-to-terminal plumbing for a background import job: owns the polled
+ * `jobId`, exposes the live `status`/`processing` flags, and fires the given
+ * terminal-status handlers once (from a single guarded watcher). The caller supplies its
+ * own copy for the `running`/`complete`/`error` transitions, so the watcher boilerplate
+ * lives in one place.
  *
  * `start(id)` begins polling a freshly-enqueued job; `reset()` stops (before a new run).
  */
@@ -240,25 +163,21 @@ export function usePolledImportJob(
 const MAX_CSV_MB = Math.round(MAX_CSV_UPLOAD_BYTES / (1024 * 1024))
 
 /**
- * The whole import lifecycle behind the import dialog: the link/CSV/save mutations, the
+ * The whole import lifecycle behind the import dialog: the link/file/paste mutations, the
  * polled background job, and the busy/status/error/result state the dialog renders. The
- * dialog keeps the form refs (URL, mode, save toggles, chosen file) and its own
- * `canSubmit` (which reads both those refs and `busy`); this owns everything downstream of
- * "the user pressed Import".
+ * dialog keeps the form refs (URL, mode, chosen file) and its own `canSubmit` (which reads
+ * both those refs and `busy`); this owns everything downstream of "the user pressed
+ * Import".
  *
- * `runLinkImport` enqueues a provider import (optionally saving the link) and starts
- * polling; `runCsvImport` uploads a file and `runTextImport` sends pasted text (both
- * synchronous, no job). `removeLink` deletes the saved link and returns whether it
- * succeeded (so the dialog can un-check "save"), and `resetStatus` clears the outcome
- * (used by the dialog's open/tab watchers).
+ * `runLinkImport` enqueues a provider import and starts polling; `runCsvImport` uploads a
+ * file and `runTextImport` sends pasted text (both synchronous, no job). `resetStatus`
+ * clears the outcome (used by the dialog's open/tab watchers).
  */
 export function useCollectionImport(game: Ref<string>) {
   const qc = useQueryClient()
   const importMutation = useImportCollectionMutation()
   const importCsvMutation = useImportCollectionCsvMutation()
   const importTextMutation = useImportCollectionTextMutation()
-  const saveMutation = useSaveCollectionSourceMutation()
-  const deleteMutation = useDeleteCollectionSourceMutation()
 
   const enqueuing = ref(false)
   const errorMessage = ref<string | null>(null)
@@ -269,9 +188,6 @@ export function useCollectionImport(game: Ref<string>) {
       result.value = summary
       // The collection contents changed — refresh the grid, header, and card steppers.
       invalidateCollectionData(qc, game.value)
-      // Importing the saved collection stamps its `last_synced_at` server-side, so refresh
-      // the saved link too (updates the landing's "Last synced" line for a link import).
-      qc.invalidateQueries({ queryKey: ['collection-source', game.value] })
     },
     onError: (error) => {
       errorMessage.value = error ?? 'Import failed. Please try again.'
@@ -310,8 +226,6 @@ export function useCollectionImport(game: Ref<string>) {
     provider: CollectionProvider
     source: string
     mode: ReconcileMode
-    save: boolean
-    smart: boolean
   }) {
     enqueuing.value = true
     activeProvider.value = args.provider
@@ -325,23 +239,6 @@ export function useCollectionImport(game: Ref<string>) {
       })
       // Start polling this job; the summary/error arrive via the job handlers above.
       job.start(enqueued.job_id)
-      // Saving the link doesn't touch the provider, so do it now (optional). A save
-      // failure is a non-blocking warning — the import still runs.
-      if (args.save) {
-        try {
-          await saveMutation.mutateAsync({
-            game: game.value,
-            provider: args.provider,
-            source: args.source,
-            smart: args.smart,
-          })
-        } catch (err) {
-          errorMessage.value =
-            err instanceof ApiError
-              ? `Couldn't save the link: ${err.message}`
-              : "Couldn't save the link for re-syncing."
-        }
-      }
     } catch (err) {
       errorMessage.value =
         err instanceof ApiError ? err.message : 'Import failed. Please try again.'
@@ -401,18 +298,6 @@ export function useCollectionImport(game: Ref<string>) {
     }
   }
 
-  async function removeLink(): Promise<boolean> {
-    errorMessage.value = null
-    try {
-      await deleteMutation.mutateAsync({ game: game.value })
-      return true
-    } catch (err) {
-      errorMessage.value =
-        err instanceof ApiError ? err.message : 'Could not remove the saved link.'
-      return false
-    }
-  }
-
   return {
     errorMessage,
     result,
@@ -420,11 +305,9 @@ export function useCollectionImport(game: Ref<string>) {
     processing,
     progress: job.progress,
     statusMessage,
-    deletePending: deleteMutation.isPending,
     resetStatus,
     runLinkImport,
     runCsvImport,
     runTextImport,
-    removeLink,
   }
 }

@@ -10,7 +10,6 @@ pub mod card_set;
 pub mod cli_auth_code;
 pub mod collection_item;
 pub mod collection_product_item;
-pub mod collection_source;
 pub mod collection_visibility;
 pub mod deck;
 pub mod deck_card;

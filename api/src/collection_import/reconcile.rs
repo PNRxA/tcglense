@@ -67,10 +67,7 @@ fn plan_reconcile(
 ) -> ReconcilePlan {
     let mut plan = ReconcilePlan::default();
     match mode {
-        // Smart is reconciled by `reconcile_smart` (preserve unobserved finishes, never
-        // delete), not here — but at the plan level it's the same overwrite-without-delete
-        // as `Overwrite`, so share the arm rather than leave it unreachable.
-        ReconcileMode::Overwrite | ReconcileMode::Smart => {
+        ReconcileMode::Overwrite => {
             for (&card_id, counts) in imported {
                 plan.upserts.push((
                     card_id,
@@ -110,7 +107,8 @@ fn plan_reconcile(
 
 /// Resolve external card ids -> internal `cards.id` for one game, chunked so a very large
 /// collection can't blow past SQLite's per-statement bind-variable limit. Ids with no
-/// catalog match are simply absent from the returned map. Shared by both reconcile paths.
+/// catalog match are simply absent from the returned map. Shared with [`super::deck_import`]'s
+/// sibling pipeline, so both resolve an external id the same way.
 pub(crate) async fn resolve_card_ids(
     db: &DatabaseConnection,
     game: &str,
@@ -198,9 +196,7 @@ pub(crate) async fn resolve_newest_printing_by_name(
 
 /// Current owned counts for (user, game), keyed by internal `cards.id` (regular, foil).
 /// Feeds reconcile planning; the apply step upserts/deletes by key, so it doesn't need the
-/// row ids. Read after the fetch so a concurrent single-card edit isn't reverted. Shared by
-/// both reconcile paths. (Distinct from `load_local_by_external`, which keys by external id
-/// and also loads the Card row.)
+/// row ids. Read after the fetch so a concurrent single-card edit isn't reverted.
 async fn existing_counts_by_card(
     db: &DatabaseConnection,
     user_id: i32,
@@ -232,9 +228,9 @@ pub(super) async fn reconcile_holdings(
     // (issue #209), so aggregation, id resolution, and reconcile all see a straight 1:1
     // external-id→card mapping. Remap the incoming holdings up front (pure, no DB); the
     // existing-star fold is a DB mutation, so it's deferred until *after* the zero-match
-    // guard below so a refused import leaves the collection untouched. Covers the full
-    // network import and the CSV upload (both land here); the smart path does the same
-    // during its fetch.
+    // guard below so a refused import leaves the collection untouched. Every import path —
+    // the network fetch, the CSV upload, and a pasted list — lands here, so this is the one
+    // place the fold has to happen.
     let pairs = consolidate::load_foil_variant_pairs(db, game).await?;
     let holdings = consolidate::apply_foil_remap(holdings, &consolidate::ext_remap(&pairs));
 
@@ -303,114 +299,6 @@ pub(super) async fn reconcile_holdings(
         regular_copies,
         foil_copies,
         removed_cards,
-        // A full fetch/reconcile always scans the whole collection.
-        stopped_early: false,
-    })
-}
-
-/// Reconcile a **smart** sync's fetched prefix: overwrite each fetched card's *observed*
-/// finishes (regular and/or foil) to the fetched counts, but preserve any finish we
-/// didn't fetch (its rows sit in the unscanned tail, so its stored count still stands),
-/// and never delete. This is what makes the early-stop safe: stopping before the whole
-/// collection is seen can't zero a foil we simply didn't page to, nor drop an untouched
-/// card. Resolving unfetched-upstream deletions needs a full [`ReconcileMode::Replace`].
-///
-/// The unobserved-finish preserve reads the collection's **current** counts here (after
-/// the fetch), not the pre-fetch snapshot, so a single-card edit made while the
-/// minutes-long fetch was running isn't reverted (same read-then-apply window as the
-/// full modes).
-pub(super) async fn reconcile_smart(
-    db: &DatabaseConnection,
-    user_id: i32,
-    game: &str,
-    provider: Provider,
-    holdings: Vec<FetchedHolding>,
-    stopped_early: bool,
-) -> Result<ImportSummary, ImportError> {
-    let total_rows = holdings.len();
-
-    // Which finishes we actually saw a row for, per external id — a finish we never saw
-    // must be preserved from the current holding rather than overwritten to zero.
-    let mut observed: HashMap<String, (bool, bool)> = HashMap::new();
-    for h in &holdings {
-        let seen = observed
-            .entry(h.external_card_id.clone())
-            .or_insert((false, false));
-        if h.foil {
-            seen.1 = true;
-        } else {
-            seen.0 = true;
-        }
-    }
-
-    let aggregated = aggregate(&holdings);
-    let distinct_cards = aggregated.len();
-
-    // Resolve external ids -> internal card ids (chunked under SQLite's bind limit).
-    let external_ids: Vec<String> = aggregated.keys().cloned().collect();
-    let matched = resolve_card_ids(db, game, &external_ids).await?;
-
-    // Current counts (read now, after the fetch) so preserving an unobserved finish uses
-    // the live value — a concurrent single-card edit during the fetch isn't reverted.
-    let existing_counts = existing_counts_by_card(db, user_id, game).await?;
-
-    let mut upserts: Vec<(i32, i32, i32)> = Vec::new();
-    let mut unmatched_sample: Vec<String> = Vec::new();
-    let mut unmatched_cards = 0usize;
-    let mut regular_copies = 0i64;
-    let mut foil_copies = 0i64;
-    for (ext_id, counts) in &aggregated {
-        let Some(&card_id) = matched.get(ext_id) else {
-            unmatched_cards += 1;
-            if unmatched_sample.len() < UNMATCHED_SAMPLE_CAP {
-                unmatched_sample.push(ext_id.clone());
-            }
-            continue;
-        };
-        // Preserve any finish we didn't fetch (its rows are in the unscanned tail).
-        let (seen_reg, seen_foil) = observed.get(ext_id).copied().unwrap_or((false, false));
-        let (cur_reg, cur_foil) = existing_counts.get(&card_id).copied().unwrap_or((0, 0));
-        let new_reg = if seen_reg {
-            clamp_count(counts.quantity)
-        } else {
-            cur_reg
-        };
-        let new_foil = if seen_foil {
-            clamp_count(counts.foil_quantity)
-        } else {
-            cur_foil
-        };
-        regular_copies += i64::from(new_reg);
-        foil_copies += i64::from(new_foil);
-        upserts.push((card_id, new_reg, new_foil));
-    }
-    let matched_cards = upserts.len();
-
-    apply_plan(
-        db,
-        user_id,
-        game,
-        ReconcilePlan {
-            upserts,
-            deletes: Vec::new(),
-        },
-    )
-    .await
-    .map_err(ImportError::Db)?;
-
-    Ok(ImportSummary {
-        provider: provider.as_str(),
-        mode: ReconcileMode::Smart,
-        total_rows,
-        distinct_cards,
-        matched_cards,
-        unmatched_cards,
-        unmatched_sample,
-        regular_copies,
-        foil_copies,
-        // Smart never mirrors deletions.
-        removed_cards: 0,
-        stopped_early,
     })
 }
 
@@ -714,95 +602,6 @@ mod tests {
         );
     }
 
-    // ---- Smart sync ----
-
-    #[tokio::test]
-    async fn smart_preserves_unobserved_foil_and_never_deletes() {
-        let db = migrated_memory_db().await;
-        let user_id = insert_user(&db, "importer@test.example").await;
-        let a = insert_card(&db, "ext-a").await; // owned reg+foil; only regular re-fetched
-        let c = insert_card(&db, "ext-c").await; // owned, not fetched -> must remain
-        insert_holding(&db, user_id, a, 2, 3).await;
-        insert_holding(&db, user_id, c, 4, 0).await;
-
-        // The smart fetch only paged a's regular row (its foil sat in the unscanned tail).
-        let holdings = vec![holding("ext-a", false, 5)];
-        let summary = reconcile_smart(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            holdings,
-            true,
-        )
-        .await
-        .expect("reconcile smart");
-
-        assert_eq!(
-            owned_counts(&db, user_id, a).await,
-            Some((5, 3)),
-            "regular overwritten, unobserved foil preserved"
-        );
-        assert_eq!(
-            owned_counts(&db, user_id, c).await,
-            Some((4, 0)),
-            "unfetched card kept (smart never deletes)"
-        );
-        assert_eq!(summary.matched_cards, 1);
-        assert_eq!(summary.removed_cards, 0);
-        assert!(summary.stopped_early);
-    }
-
-    #[tokio::test]
-    async fn smart_inserts_a_newly_fetched_card() {
-        let db = migrated_memory_db().await;
-        let user_id = insert_user(&db, "importer@test.example").await;
-        let b = insert_card(&db, "ext-b").await; // not owned yet
-
-        let holdings = vec![holding("ext-b", true, 2), holding("ext-b", false, 1)];
-        reconcile_smart(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            holdings,
-            false,
-        )
-        .await
-        .expect("reconcile smart");
-
-        assert_eq!(owned_counts(&db, user_id, b).await, Some((1, 2)));
-    }
-
-    #[tokio::test]
-    async fn smart_preserve_reads_live_counts_not_a_stale_snapshot() {
-        // Models a single-card edit landing while the (slow) smart fetch was running: the
-        // regular count is now 2 in the DB. Smart re-fetched only this card's foil finish,
-        // so it must overwrite foil but preserve the *current* regular (2), not revert it.
-        let db = migrated_memory_db().await;
-        let user_id = insert_user(&db, "importer@test.example").await;
-        let a = insert_card(&db, "ext-a").await;
-        insert_holding(&db, user_id, a, 2, 5).await; // the post-edit live state
-
-        let holdings = vec![holding("ext-a", true, 6)]; // foil observed, regular not
-        reconcile_smart(
-            &db,
-            user_id,
-            crate::scryfall::GAME,
-            Provider::Archidekt,
-            holdings,
-            true,
-        )
-        .await
-        .expect("reconcile smart");
-
-        assert_eq!(
-            owned_counts(&db, user_id, a).await,
-            Some((2, 6)),
-            "regular preserved from the live count, foil overwritten"
-        );
-    }
-
     // ---- Foil-variant consolidation (issue #209) ----
 
     /// Insert a card with explicit set/number/finishes/oracle id — the fields the
@@ -974,9 +773,9 @@ mod tests {
         // Once a foil-★ folds onto its base, the base is one dual-finish card, so an
         // Overwrite import that lists the base's nonfoil but not the foil-★ sets the base to
         // the import's *absolute* counts (foil = 0) — the same authoritative-overwrite
-        // behavior Overwrite already applies to any card owned in both finishes. (Merge
-        // adds; Smart preserves the unobserved foil — a user who tracks a foil their import
-        // omits should use those modes.) Pinned so this stays intentional, not accidental.
+        // behavior Overwrite already applies to any card owned in both finishes. (A user who
+        // tracks a foil their import omits should use Merge instead.) Pinned so this stays
+        // intentional, not accidental.
         let db = migrated_memory_db().await;
         let user_id = insert_user(&db, "importer@test.example").await;
         let base = insert_variant(&db, 1, "ext-741", "741", "nonfoil", "ora-chaos").await;

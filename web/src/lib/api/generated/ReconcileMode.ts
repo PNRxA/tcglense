@@ -3,4 +3,4 @@
 /**
  * How an import reconciles with the user's existing collection for the game.
  */
-export type ReconcileMode = "overwrite" | "replace" | "merge" | "smart";
+export type ReconcileMode = "overwrite" | "replace" | "merge";

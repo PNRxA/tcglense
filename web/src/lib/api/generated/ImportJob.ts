@@ -3,9 +3,9 @@ import type { ImportProgress } from "./ImportProgress";
 import type { ImportSummary } from "./ImportSummary";
 
 /**
- * The status of a background import/sync job — returned when one is enqueued and each
- * time the client polls. Imports run asynchronously (throttled by the provider rate
- * limit), so the client kicks one off and polls this until `complete`/`error`.
+ * The status of a background import job — returned when one is enqueued and each time
+ * the client polls. Imports run asynchronously (throttled by the provider rate limit),
+ * so the client kicks one off and polls this until `complete`/`error`.
  */
 export type ImportJob = { job_id: number, 
 /**

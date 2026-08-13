@@ -14,7 +14,6 @@
 //! digits-only collection id, so there is no SSRF surface (the id can carry neither a
 //! host nor a path).
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::{StatusCode, header};
@@ -27,10 +26,6 @@ const API_BASE: &str = "https://archidekt.com/api/collection";
 const ACCEPT_JSON: &str = "application/json";
 /// Archidekt's fixed collection page size.
 const PAGE_SIZE: usize = 25;
-/// Ordering that puts the most-recently-updated rows first, for a smart sync. Archidekt
-/// orders by an internal `updatedAt` (edit-aware — not the row-visible `createdAt`), so a
-/// card whose count changed bubbles to the top even though it was added long ago.
-const ORDER_RECENT: &str = "-updatedAt";
 /// Minimum wait after a `429` before retrying — the provider's rate window (one minute).
 const RATE_LIMIT_BACKOFF_SECS: u64 = 60;
 /// Ceiling on a single backoff, so a huge/hostile `Retry-After` can't stall an import.
@@ -161,15 +156,7 @@ pub async fn fetch(
     let mut page = 1usize;
 
     while page <= max_pages {
-        let body = get_page(
-            http,
-            limiter,
-            collection_id,
-            page,
-            None,
-            &mut rate_limit_retries,
-        )
-        .await?;
+        let body = get_page(http, limiter, collection_id, page, &mut rate_limit_retries).await?;
         check_size(&body, &mut checked_size)?;
         // On the first page, publish the collection's total so the poll endpoint can show a
         // determinate progress bar (the page's `count` is the whole-collection row total).
@@ -206,69 +193,6 @@ pub async fn fetch(
     Ok(holdings)
 }
 
-/// Fetch the recently-updated prefix of an Archidekt collection for a smart sync: page
-/// most-recently-updated first ([`ORDER_RECENT`]) and stop once a whole page already
-/// matches `local` (`external id -> (regular, foil)`). Returns the fetched holdings plus
-/// whether we stopped early (reached the already-synced tail) rather than paging the
-/// whole collection. Same page ceiling / size guard / rate-limit handling as [`fetch`].
-pub async fn fetch_smart(
-    http: &reqwest::Client,
-    limiter: &RateLimiter,
-    collection_id: &str,
-    local: &HashMap<String, (i32, i32)>,
-    remap: &HashMap<String, String>,
-    progress: &ProgressReporter,
-) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
-    let max_pages = MAX_IMPORT_ROWS / PAGE_SIZE + 1;
-
-    let mut holdings: Vec<FetchedHolding> = Vec::new();
-    let mut running: HashMap<String, (i64, i64)> = HashMap::new();
-    let mut checked_size = false;
-    let mut stopped_early = false;
-    // Cumulative across the import (see the note in `fetch`).
-    let mut rate_limit_retries = 0u32;
-    let mut page = 1usize;
-
-    while page <= max_pages {
-        let body = get_page(
-            http,
-            limiter,
-            collection_id,
-            page,
-            Some(ORDER_RECENT),
-            &mut rate_limit_retries,
-        )
-        .await?;
-        check_size(&body, &mut checked_size)?;
-
-        if body.results.is_empty() {
-            break;
-        }
-        // Smart sync stops at the already-synced tail, so a total would be misleading —
-        // publish only the running fetched count (an indeterminate "N cards checked").
-        progress.add_fetched(body.results.len());
-        let last_page = body.next.is_none();
-        let rows = body.results.into_iter().map(|row| {
-            let foil = is_foil_finish(row.foil, row.modifier.as_deref());
-            (row.card.uid, foil, row.quantity)
-        });
-        // Fold the page into the running aggregate; `all_match` is the stop signal.
-        let all_match = super::smart_absorb_page(&mut running, &mut holdings, local, remap, rows);
-
-        if last_page || holdings.len() >= MAX_IMPORT_ROWS {
-            break;
-        }
-        // A whole page already in sync means the rest (updated even longer ago) is too.
-        if all_match {
-            stopped_early = true;
-            break;
-        }
-        page += 1;
-    }
-
-    Ok((holdings, stopped_early))
-}
-
 /// Reject an over-large collection up front, from the first page's `count`. `checked`
 /// tracks whether this guard has already run (only the first page carries the guard).
 fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportError> {
@@ -285,9 +209,8 @@ fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportErr
 }
 
 /// Fetch and parse one collection page, throttled by Archidekt's limiter and transparently
-/// retrying past a `429` (backing off that limiter so every Archidekt import waits).
-/// `order_by` sets Archidekt's `orderBy` when present (e.g. [`ORDER_RECENT`]); `None` uses the
-/// default order. Maps a missing/private collection (`400`/`404`) to `CollectionNotFound`.
+/// retrying past a `429` (backing off that limiter so every Archidekt import waits). Maps a
+/// missing/private collection (`400`/`404`) to `CollectionNotFound`.
 ///
 /// `rate_limit_retries` is the caller's cumulative-across-the-import 429 counter: it's
 /// carried in so [`MAX_RATE_LIMIT_RETRIES`] bounds the *total* backoffs for the whole
@@ -297,17 +220,13 @@ async fn get_page(
     limiter: &RateLimiter,
     collection_id: &str,
     page: usize,
-    order_by: Option<&str>,
     rate_limit_retries: &mut u32,
 ) -> Result<CollectionPage, ImportError> {
     loop {
         // Respect the provider's request cap across all imports before every request.
         limiter.acquire().await;
 
-        let url = match order_by {
-            Some(order) => format!("{API_BASE}/{collection_id}/?orderBy={order}&page={page}"),
-            None => format!("{API_BASE}/{collection_id}/?page={page}"),
-        };
+        let url = format!("{API_BASE}/{collection_id}/?page={page}");
         let response = http
             .get(&url)
             .header(header::ACCEPT, ACCEPT_JSON)

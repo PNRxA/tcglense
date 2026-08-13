@@ -537,16 +537,15 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row E — Import & sync (demo right). -->
+        <!-- Row E — Import (demo right). -->
         <FeatureDemoRow
           :icon="Import"
-          eyebrow="Import & sync"
+          eyebrow="Import"
           heading="Bring your collection with you"
           :body="
             'Import from Archidekt by link and pick how it reconciles — overwrite matched cards, ' +
-            'mirror-replace, add-merge, or a smart incremental sync — then save the link and ' +
-            're-sync on demand. Prefer a file? Upload a CSV export from Archidekt or Moxfield and ' +
-            'it reconciles on the spot.'
+            'mirror-replace, or add-merge. Prefer a file? Upload a CSV export from Archidekt or ' +
+            'Moxfield — or paste your list straight in — and it reconciles on the spot.'
           "
           demo-side="right"
         >
@@ -570,7 +569,10 @@ const rowLinkClass =
               archidekt.com/collection/…
             </div>
             <div class="mt-3 flex flex-wrap gap-1.5">
-              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
+              <!-- Selected chip mirrors the import dialog's default mode. -->
+              <span
+                class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2.5 py-0.5 text-xs font-medium"
+              >
                 Overwrite
               </span>
               <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
@@ -578,11 +580,6 @@ const rowLinkClass =
               </span>
               <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
                 Merge
-              </span>
-              <span
-                class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2.5 py-0.5 text-xs font-medium"
-              >
-                Smart
               </span>
             </div>
             <div class="text-muted-foreground mt-4 flex items-center gap-1.5 text-xs">

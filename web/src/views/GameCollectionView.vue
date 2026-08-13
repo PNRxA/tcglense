@@ -12,7 +12,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionMovers from '@/components/collection/CollectionMovers.vue'
 import CollectionSettingsMenu from '@/components/collection/CollectionSettingsMenu.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
-import CollectionSyncControls from '@/components/collection/CollectionSyncControls.vue'
+import CollectionImportControls from '@/components/collection/CollectionImportControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
@@ -39,7 +39,7 @@ import type { PriceRange } from '@/lib/api'
 // wish-list landing. Either way the per-set owned counts/values overlay the tiles that
 // have any. The shared landing pipeline (scope toggle, filter + grouping, sectioning,
 // ownership map, header stats) lives in `useHoldingsLanding`; this view layers on the
-// collection-only extras (sync controls, camera scan, value-history chart, bulk-value
+// collection-only extras (import/export controls, camera scan, value-history chart, bulk-value
 // stat). The actual card grids live on CollectionBrowseView (`/collection/:game/cards` +
 // `.../sets/:code`).
 const props = defineProps<{ game: string }>()
@@ -196,7 +196,7 @@ function fetchValueHistory(range: PriceRange) {
           </div>
         </div>
 
-        <CollectionSyncControls :game="game" />
+        <CollectionImportControls :game="game" />
       </header>
 
       <!-- Card and sealed-product value over time — the current basket re-priced from

@@ -8,9 +8,7 @@
 //! `finish` string (`"nonFoil"` / `"foil"` / `"etched"`) with a redundant `isFoil`
 //! boolean we use only as a fallback; `isProxy` rows are skipped (a proxy isn't a real
 //! card). The same printing can span several rows (condition / language / binder), so
-//! the caller aggregates by `(scryfall_id, foil)`. For a smart sync,
-//! `sortType=lastUpdated&sortDirection=descending` pages most-recently-edited first —
-//! the equivalent of Archidekt's `orderBy=-updatedAt`.
+//! the caller aggregates by `(scryfall_id, foil)`.
 //!
 //! **Access:** since late 2024 Moxfield fronts the API with bot protection that rejects
 //! unknown clients; they approve a specific `User-Agent` string on request (email
@@ -23,7 +21,6 @@
 //! charset-validated collection id, so there is no SSRF surface (the id can carry
 //! neither a host nor a path).
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::{StatusCode, header};
@@ -38,9 +35,6 @@ const ACCEPT_JSON: &str = "application/json";
 /// request count (the response echoes the effective `pageSize`, but we page on
 /// `totalPages`, so a silently-clamped size still terminates correctly).
 const PAGE_SIZE: usize = 100;
-/// Sort that puts the most-recently-edited rows first, for a smart sync (rows carry a
-/// `lastUpdatedAtUtc`; this sorts by it, so a card whose count changed bubbles up).
-const SORT_RECENT: &str = "sortType=lastUpdated&sortDirection=descending";
 /// Give up (fail the import) after this many `429`s, bounding the total added wait.
 /// (Backoff durations are shared with Archidekt via [`backoff_after`].)
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
@@ -170,7 +164,7 @@ pub async fn fetch(
     let mut page = 1usize;
 
     while page <= max_pages {
-        let body = get_page(ctx, collection_id, page, false, &mut rate_limit_retries).await?;
+        let body = get_page(ctx, collection_id, page, &mut rate_limit_retries).await?;
         check_size(&body, &mut checked_size)?;
         // Publish the collection's total once, from the first page, for a determinate
         // progress bar (`totalResults` is the whole-collection row count).
@@ -198,57 +192,6 @@ pub async fn fetch(
     }
 
     Ok(holdings)
-}
-
-/// Fetch the recently-updated prefix of a Moxfield collection for a smart sync: page
-/// most-recently-edited first ([`SORT_RECENT`]) and stop once a whole page already
-/// matches `local` (`external id -> (regular, foil)`). Returns the fetched holdings plus
-/// whether we stopped early (reached the already-synced tail) rather than paging the
-/// whole collection. Same page ceiling / size guard / rate-limit handling as [`fetch`].
-pub async fn fetch_smart(
-    ctx: &ProviderContext<'_>,
-    collection_id: &str,
-    local: &HashMap<String, (i32, i32)>,
-    remap: &HashMap<String, String>,
-) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
-    let max_pages = MAX_IMPORT_ROWS / PAGE_SIZE + 1;
-
-    let mut holdings: Vec<FetchedHolding> = Vec::new();
-    let mut running: HashMap<String, (i64, i64)> = HashMap::new();
-    let mut checked_size = false;
-    let mut stopped_early = false;
-    let mut rate_limit_retries = 0u32;
-    let mut page = 1usize;
-
-    while page <= max_pages {
-        let body = get_page(ctx, collection_id, page, true, &mut rate_limit_retries).await?;
-        check_size(&body, &mut checked_size)?;
-
-        if body.data.is_empty() {
-            break;
-        }
-        // Smart sync stops early, so publish only the running fetched count (no total).
-        ctx.progress.add_fetched(body.data.len());
-        let last_page = page >= body.total_pages;
-        let rows = body.data.into_iter().filter_map(|row| {
-            let h = row_to_holding(row)?;
-            Some((h.external_card_id, h.foil, h.quantity))
-        });
-        // Fold the page into the running aggregate; `all_match` is the stop signal.
-        let all_match = super::smart_absorb_page(&mut running, &mut holdings, local, remap, rows);
-
-        if last_page || holdings.len() >= MAX_IMPORT_ROWS {
-            break;
-        }
-        // A whole page already in sync means the rest (edited even longer ago) is too.
-        if all_match {
-            stopped_early = true;
-            break;
-        }
-        page += 1;
-    }
-
-    Ok((holdings, stopped_early))
 }
 
 /// Shape a network-level failure (timeout, dropped connection, stalled body). With no
@@ -302,15 +245,13 @@ fn check_size(body: &CollectionPage, checked: &mut bool) -> Result<(), ImportErr
 
 /// Fetch and parse one collection page, throttled by Moxfield's own limiter and
 /// transparently retrying past a `429` (backing off that limiter so every Moxfield import
-/// waits). `order_recent` adds the smart sync's most-recently-edited-first sort. Sends the
-/// configured approved `User-Agent` when present. Maps a missing/private collection
-/// (`400`/`404`) to `CollectionNotFound`, and a `403` (Moxfield's bot wall rejecting our
-/// client) to a clear "needs an approved User-Agent" error.
+/// waits). Sends the configured approved `User-Agent` when present. Maps a missing/private
+/// collection (`400`/`404`) to `CollectionNotFound`, and a `403` (Moxfield's bot wall
+/// rejecting our client) to a clear "needs an approved User-Agent" error.
 async fn get_page(
     ctx: &ProviderContext<'_>,
     collection_id: &str,
     page: usize,
-    order_recent: bool,
     rate_limit_retries: &mut u32,
 ) -> Result<CollectionPage, ImportError> {
     let limiter = ctx.limiters.for_provider(Provider::Moxfield);
@@ -318,11 +259,7 @@ async fn get_page(
         // Respect Moxfield's request cap across all its imports before every request.
         limiter.acquire().await;
 
-        let mut url = format!("{API_BASE}/{collection_id}?pageNumber={page}&pageSize={PAGE_SIZE}");
-        if order_recent {
-            url.push('&');
-            url.push_str(SORT_RECENT);
-        }
+        let url = format!("{API_BASE}/{collection_id}?pageNumber={page}&pageSize={PAGE_SIZE}");
         let mut request = ctx
             .http
             .get(&url)
