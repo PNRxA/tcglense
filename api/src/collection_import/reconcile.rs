@@ -107,7 +107,8 @@ fn plan_reconcile(
 
 /// Resolve external card ids -> internal `cards.id` for one game, chunked so a very large
 /// collection can't blow past SQLite's per-statement bind-variable limit. Ids with no
-/// catalog match are simply absent from the returned map. Shared by both reconcile paths.
+/// catalog match are simply absent from the returned map. Shared with [`super::deck_import`]'s
+/// sibling pipeline, so both resolve an external id the same way.
 pub(crate) async fn resolve_card_ids(
     db: &DatabaseConnection,
     game: &str,
@@ -195,9 +196,7 @@ pub(crate) async fn resolve_newest_printing_by_name(
 
 /// Current owned counts for (user, game), keyed by internal `cards.id` (regular, foil).
 /// Feeds reconcile planning; the apply step upserts/deletes by key, so it doesn't need the
-/// row ids. Read after the fetch so a concurrent single-card edit isn't reverted. Shared by
-/// both reconcile paths. (Distinct from `load_local_by_external`, which keys by external id
-/// and also loads the Card row.)
+/// row ids. Read after the fetch so a concurrent single-card edit isn't reverted.
 async fn existing_counts_by_card(
     db: &DatabaseConnection,
     user_id: i32,
@@ -229,9 +228,9 @@ pub(super) async fn reconcile_holdings(
     // (issue #209), so aggregation, id resolution, and reconcile all see a straight 1:1
     // external-id→card mapping. Remap the incoming holdings up front (pure, no DB); the
     // existing-star fold is a DB mutation, so it's deferred until *after* the zero-match
-    // guard below so a refused import leaves the collection untouched. Covers the full
-    // network import and the CSV upload (both land here); the smart path does the same
-    // during its fetch.
+    // guard below so a refused import leaves the collection untouched. Every import path —
+    // the network fetch, the CSV upload, and a pasted list — lands here, so this is the one
+    // place the fold has to happen.
     let pairs = consolidate::load_foil_variant_pairs(db, game).await?;
     let holdings = consolidate::apply_foil_remap(holdings, &consolidate::ext_remap(&pairs));
 

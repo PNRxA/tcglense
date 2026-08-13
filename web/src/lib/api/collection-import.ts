@@ -29,11 +29,6 @@ export const PROVIDER_LABELS: Record<CollectionProvider, string> = {
   mythictools: 'Mythic Tools',
 }
 
-/** The display label for a provider id (saved sources carry the id as a plain string). */
-export function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider as CollectionProvider] ?? provider
-}
-
 // The request body stays hand-written: the wire `ImportRequest` accepts any `provider`
 // string (validated server-side), while the client deliberately narrows it to the known
 // `CollectionProvider` union.

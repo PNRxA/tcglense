@@ -91,8 +91,8 @@ pub async fn import_collection(
 /// query param.
 ///
 /// Unlike the URL import this needs no upstream fetch, so it reconciles **synchronously**
-/// and returns the [`ImportSummary`] directly (no rate limiter, no background job): a file
-/// has no location to re-sync from, so it's inherently one-off. `404` for an unknown game,
+/// and returns the [`ImportSummary`] directly (no rate limiter, no background job).
+/// `404` for an unknown game,
 /// `422` for a bad mode / unreadable file / one missing a required column / an empty upload.
 #[utoipa::path(
     post,
