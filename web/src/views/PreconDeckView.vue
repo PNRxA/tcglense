@@ -17,6 +17,7 @@ import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
@@ -417,6 +418,9 @@ usePageMeta({
           </section>
         </div>
       </div>
+
+      <!-- The tokens this published list makes — the ones its product's token sheet holds. -->
+      <DeckTokens v-if="entries.length > 0" :game="game" :precon-slug="slug" />
     </template>
   </div>
 </template>

@@ -44,8 +44,8 @@ use crate::extract::{Path, Query};
 use crate::handlers::decks::DeckSectionResponse;
 use crate::handlers::decks::{
     AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
-    GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality,
-    analyse_stats,
+    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
+    analyse_legality, analyse_stats, analyse_tokens,
 };
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
@@ -241,6 +241,32 @@ pub async fn precon_bracket(
     Ok(Json(DataBody {
         data: analyse_bracket(format.as_deref(), &input),
     }))
+}
+
+/// Tokens a preconstructed deck makes
+///
+/// `GET /api/games/{game}/precons/{slug}/tokens` -> the tokens and emblems the published
+/// decklist makes — the ones the product's own token sheet holds, worked out from the same
+/// core a deck page uses, so the precon and the deck you copy from it list the same tokens.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/precons/{slug}/tokens",
+    tag = "Preconstructed decks",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("slug" = String, Path, description = "Precon slug, e.g. `turtle-power-tmc`"),
+    ),
+    responses(
+        (status = 200, description = "The tokens the decklist makes, most-made first.", body = DeckTokens),
+        (status = 404, description = "Unknown game or precon."),
+    ),
+)]
+pub async fn precon_tokens(
+    State(state): State<AppState>,
+    Path((game, slug)): Path<(String, String)>,
+) -> Result<Json<DeckTokens>, AppError> {
+    let (_, input, _) = load(&state, &game, &slug).await?;
+    Ok(Json(analyse_tokens(&state, &game, &input).await?))
 }
 
 /// Preconstructed deck sample hand

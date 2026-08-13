@@ -120,6 +120,7 @@ pub(crate) fn card_model(id: i32) -> card::Model {
         image_art_crop: None,
         image_png: None,
         card_faces: None,
+        token_parts: None,
         price_usd: None,
         price_usd_foil: None,
         price_usd_etched: None,

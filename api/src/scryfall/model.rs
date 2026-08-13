@@ -186,6 +186,10 @@ pub struct ScryfallCard {
     pub image_uris: Option<ImageUris>,
     #[serde(default)]
     pub card_faces: Option<Vec<CardFace>>,
+    /// Cards this one is related to — the tokens and emblems it makes, its meld halves,
+    /// and the card itself. See [`RelatedCard`]; only the token/emblem entries are stored.
+    #[serde(default)]
+    pub all_parts: Option<Vec<RelatedCard>>,
     #[serde(default)]
     pub prices: Option<Prices>,
     /// TCGplayer product id for the regular/foil printing — the join key onto
@@ -319,6 +323,36 @@ pub struct CardFace {
     pub color_indicator: Option<Vec<String>>,
 }
 
+/// One entry of a card's `all_parts`: another *printing* this card is related to, with the
+/// kind of relationship in `component` (`token`, `combo_piece`, `meld_part`, `meld_result`).
+///
+/// Three properties of the upstream data shape everything downstream of this
+/// (see [`crate::handlers::decks::analyse_tokens`]):
+///
+/// * The list carries the **card itself** — as a `combo_piece`, or as a `meld_part` — so
+///   anything reading it has to drop the self entry by id.
+/// * It is **oracle-level**: every printing of a card carries the same relations, so a 1995
+///   Homelands printing knows about the Serf token that was only ever printed decades later.
+///   Which printing a deck holds therefore never changes *which* tokens it makes.
+/// * The referenced **id is set-specific**: Dockside Extortionist's 2X2 printing points at
+///   2X2's Treasure and its C19 printing at C19's. So the same token arrives under many ids,
+///   deduplicated later by the token printing's own `oracle_id` (which *is* shared).
+///
+/// An **emblem** is a `combo_piece`, not a `token` — the component alone can't separate one
+/// from the card itself or from a meld half, which is why [`crate::scryfall::map`] keeps the
+/// type line too.
+#[derive(Debug, Deserialize)]
+pub struct RelatedCard {
+    pub id: String,
+    /// `token` | `combo_piece` | `meld_part` | `meld_result`.
+    #[serde(default)]
+    pub component: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub type_line: Option<String>,
+}
+
 /// Current price snapshot for a card.
 #[derive(Debug, Deserialize)]
 pub struct Prices {
@@ -375,6 +409,21 @@ impl StoredFace {
             image_art_crop: img.and_then(|u| u.art_crop.clone()),
         }
     }
+}
+
+/// One token (or emblem) a printing makes, persisted as JSON in `cards.token_parts` — the
+/// stored, filtered form of a [`RelatedCard`] (see [`crate::scryfall::map::token_parts`]).
+///
+/// `name` and `type_line` are carried rather than looked up so a token whose own printing
+/// isn't in the catalog (a digital-only token, a set mid-import) still has something true to
+/// say about itself; `id` is what resolves it to a real row when there is one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredPart {
+    /// The referenced printing's Scryfall id (`cards.external_id`).
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub type_line: Option<String>,
 }
 
 #[cfg(test)]

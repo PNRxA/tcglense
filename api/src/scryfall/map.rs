@@ -8,7 +8,7 @@ use sea_orm::{
 };
 
 use super::GAME;
-use super::model::{CardFace, ScryfallCard, ScryfallSet, StoredFace};
+use super::model::{CardFace, RelatedCard, ScryfallCard, ScryfallSet, StoredFace, StoredPart};
 use crate::entities::{card, card_set};
 
 pub(super) fn map_set(set: &ScryfallSet, now: DateTimeUtc) -> card_set::ActiveModel {
@@ -149,6 +149,9 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         .legalities
         .as_ref()
         .and_then(|v| serde_json::to_string(v).ok());
+    // The tokens and emblems this printing makes — an empty array when it makes none, and
+    // NULL only for a row written before this column existed (see `token_parts`).
+    let token_parts = token_parts(&card.id, card.all_parts.as_deref());
 
     card::ActiveModel {
         id: NotSet,
@@ -179,6 +182,7 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         image_art_crop: Set(image_art_crop),
         image_png: Set(image_png),
         card_faces: Set(card_faces),
+        token_parts: Set(token_parts),
         price_usd: Set(price_usd),
         price_usd_foil: Set(price_usd_foil),
         price_usd_etched: Set(price_usd_etched),
@@ -220,6 +224,61 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         created_at: Set(now),
         updated_at: Set(now),
     }
+}
+
+/// The tokens and emblems a printing makes, as the JSON stored in `cards.token_parts`.
+///
+/// Filtered out of Scryfall's `all_parts` (see [`RelatedCard`]) rather than stored whole,
+/// because most of that list is not a token: it always carries the card **itself**, and it
+/// carries meld halves and combo pieces, all of which are real cards a deck would hold as
+/// cards. Two rules keep exactly the pieces a player has to bring *besides* their deck:
+///
+/// * `component == "token"` — the provider's own answer, and the only one for tokens.
+/// * an **emblem**, which Scryfall files as a `combo_piece` and distinguishes only by its
+///   printed type line (`"Emblem — Elspeth"`). Reading the type line here is the same move
+///   `CardFacts` makes for the card's own types: it's the provider's printed datum, not a
+///   guess about rules text.
+///
+/// **A card that makes nothing stores `[]`, never NULL.** The two have to be different: NULL
+/// is a row written before this column existed, which is every row until the next bulk
+/// import lands, and answering "this deck makes no tokens" because the catalog hasn't been
+/// re-imported yet would be a wrong answer rather than a missing one. `analyse_tokens`
+/// reports the NULL rows as unchecked and the empty ones as settled.
+pub(super) fn token_parts(card_id: &str, all_parts: Option<&[RelatedCard]>) -> Option<String> {
+    let mut parts: Vec<StoredPart> = Vec::new();
+    for part in all_parts.unwrap_or_default() {
+        // The self entry (`combo_piece`, or `meld_part` on a meld card) is not a token this
+        // card makes, and a token card's own entry would otherwise recommend itself.
+        if part.id == card_id || parts.iter().any(|kept| kept.id == part.id) {
+            continue;
+        }
+        if !is_token_component(part) {
+            continue;
+        }
+        // A nameless entry has nothing to render and nothing to group by; the id alone
+        // resolves only if that printing happens to be in the catalog.
+        let Some(name) = part.name.clone().filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        parts.push(StoredPart {
+            id: part.id.clone(),
+            name,
+            type_line: part.type_line.clone(),
+        });
+    }
+    // Infallible for this shape (a list of string fields), and a hypothetical failure must
+    // not read as "makes none" — so it degrades to the same empty array, never to NULL.
+    Some(serde_json::to_string(&parts).unwrap_or_else(|_| "[]".to_string()))
+}
+
+/// Whether a related card is a token or an emblem — see [`token_parts`].
+fn is_token_component(part: &RelatedCard) -> bool {
+    part.component.as_deref() == Some("token")
+        || part.type_line.as_deref().is_some_and(|line| {
+            line.trim_start()
+                .get(..6)
+                .is_some_and(|head| head.eq_ignore_ascii_case("emblem"))
+        })
 }
 
 fn join_colors(value: &Option<Vec<String>>) -> Option<String> {
@@ -311,6 +370,62 @@ mod tests {
             join_colors(&Some(vec!["W".into(), "U".into()])),
             Some("W,U".to_string())
         );
+    }
+
+    /// The four shapes `all_parts` actually ships, in one card: a token, the card itself
+    /// (which Scryfall files as a `combo_piece`), an emblem (also a `combo_piece`, told
+    /// apart only by its type line), and a meld result (a real card, not something a player
+    /// brings alongside the deck).
+    #[test]
+    fn token_parts_keeps_tokens_and_emblems_only() {
+        let card = r#"{"object":"card","id":"self-1","name":"Elspeth, Sun's Champion","lang":"en","set":"thb","set_name":"Theros","collector_number":"9","games":["paper"],"all_parts":[
+            {"object":"related_card","id":"self-1","component":"combo_piece","name":"Elspeth, Sun's Champion","type_line":"Legendary Planeswalker — Elspeth"},
+            {"object":"related_card","id":"tok-soldier","component":"token","name":"Soldier","type_line":"Token Creature — Soldier"},
+            {"object":"related_card","id":"emb-elspeth","component":"combo_piece","name":"Elspeth, Sun's Champion Emblem","type_line":"Emblem — Elspeth"},
+            {"object":"related_card","id":"meld-1","component":"meld_result","name":"Brisela","type_line":"Legendary Creature — Eldrazi Angel"}
+        ]}"#;
+        let scry: ScryfallCard = serde_json::from_str(card).unwrap();
+        let model = map_card(scry, Utc::now());
+        let stored: Vec<StoredPart> =
+            serde_json::from_str(model.token_parts.as_ref().as_deref().unwrap()).unwrap();
+        assert_eq!(
+            stored.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["tok-soldier", "emb-elspeth"],
+            "the card itself and the meld result are not things a player brings alongside"
+        );
+        assert_eq!(stored[0].name, "Soldier");
+    }
+
+    /// Wurmcoil Engine makes two *different* Wurm tokens that share a name and a type line,
+    /// so both ids have to survive here — the read groups them by the token printing's own
+    /// oracle id, which it can only do if this doesn't collapse them first.
+    #[test]
+    fn token_parts_keeps_same_named_siblings_apart() {
+        let card = r#"{"object":"card","id":"self-2","name":"Wurmcoil Engine","lang":"en","set":"som","set_name":"Scars","collector_number":"1","games":["paper"],"all_parts":[
+            {"object":"related_card","id":"tok-deathtouch","component":"token","name":"Wurm","type_line":"Token Artifact Creature — Wurm"},
+            {"object":"related_card","id":"tok-lifelink","component":"token","name":"Wurm","type_line":"Token Artifact Creature — Wurm"},
+            {"object":"related_card","id":"tok-lifelink","component":"token","name":"Wurm","type_line":"Token Artifact Creature — Wurm"}
+        ]}"#;
+        let scry: ScryfallCard = serde_json::from_str(card).unwrap();
+        let model = map_card(scry, Utc::now());
+        let stored: Vec<StoredPart> =
+            serde_json::from_str(model.token_parts.as_ref().as_deref().unwrap()).unwrap();
+        assert_eq!(
+            stored.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["tok-deathtouch", "tok-lifelink"],
+            "distinct ids stay distinct; a repeated id is stored once"
+        );
+    }
+
+    /// A card with no relations at all stores an empty array, **not** NULL: NULL is reserved
+    /// for a row written before the column existed, and the deck read words those two
+    /// differently ("makes none" vs "not checked yet").
+    #[test]
+    fn token_parts_are_empty_never_null_for_a_card_that_makes_none() {
+        let scry: ScryfallCard = serde_json::from_str(SAMPLE_CARD).unwrap();
+        assert!(scry.all_parts.is_none());
+        let model = map_card(scry, Utc::now());
+        assert_eq!(model.token_parts.as_ref().as_deref(), Some("[]"));
     }
 
     #[test]

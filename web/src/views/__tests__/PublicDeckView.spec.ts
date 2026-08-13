@@ -73,6 +73,8 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     isPending: vueRef(false),
     isFetching: vueRef(false),
     isError: vueRef(false),
+    isLoadingError: vueRef(false),
+    isRefetchError: vueRef(false),
     error: vueRef(null),
   })
   return {
@@ -80,6 +82,7 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     usePublicDeckBracketQuery: () => ({ data: vueRef({ data: null }), ...settled() }),
     usePublicDeckStatsQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined), ...settled() }),
+    usePublicDeckTokensQuery: () => ({ data: vueRef(undefined), ...settled() }),
   }
 })
 

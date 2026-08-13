@@ -544,6 +544,26 @@ catalog) is planned but not implemented.
   and the synchronous response returns only the lightweight deck header; the full card DTOs are
   loaded through the normal deck-detail read after navigation.
 
+- **The token list says what the deck makes, never how many to bring.** "Tokens to bring"
+  (`GET /api/decks/{game}/{deck_id}/tokens`) is folded out of Scryfall's per-card `all_parts`,
+  and upstream draws no distinction between "create a Treasure token" and "create X Treasure
+  tokens" — both are one relation to one token printing. Any number of *tokens* the panel
+  printed would therefore be invented, and would be read as a count a player could pack
+  against. So the response counts the deck's **cards** instead (`source_count`, plus the
+  sources themselves), which is the thing a player reasons from anyway, and a spec pins that
+  the panel never words a token quantity. Reading rules text to recover the multiplicity was
+  considered and rejected for the reason the bracket's signals are conservative: a wrong
+  packing list is worse than a short one, and "create X" is unbounded in the general case.
+- **`cards.token_parts` is nullable, and the NULL is load-bearing.** An empty array means "the
+  catalog checked this printing and it makes nothing"; NULL means "this row hasn't been
+  rewritten since the column arrived". They are different answers, and collapsing them would
+  have every deck confidently report that it makes no tokens for as long as the catalog is
+  stale. The migration deliberately does **not** backfill `[]`: the Scryfall import is
+  version-gated on the bulk file's `updated_at` and that file is republished daily, so an
+  instance deployed onto an existing catalog reports `unchecked_count > 0` for up to a day and
+  then heals itself. The alternative — a full re-import forced by the deploy — would re-download
+  ~500 MB on every instance to answer a question that answers itself by tomorrow.
+
 ## Preconstructed decks (issue #363's catalog sibling)
 
 - **The grouped listings ship every deck in a group, uncapped — deliberately.** A review

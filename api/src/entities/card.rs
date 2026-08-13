@@ -56,6 +56,13 @@ pub struct Model {
     /// JSON array of per-face data (name + image URIs) for multi-faced cards
     /// (transform / modal DFCs) where the top-level `image_uris` is absent.
     pub card_faces: Option<String>,
+    /// JSON array of the tokens and emblems this printing makes
+    /// (`crate::scryfall::model::StoredPart`), filtered out of Scryfall's `all_parts` at
+    /// ingest. `Some("[]")` means "checked, makes none"; **`None` means not checked yet** —
+    /// a row written before the column existed, which is every row until the next bulk
+    /// import lands. The deck token read reports those two differently, so don't collapse
+    /// them.
+    pub token_parts: Option<String>,
     pub price_usd: Option<String>,
     pub price_usd_foil: Option<String>,
     pub price_usd_etched: Option<String>,
