@@ -80,6 +80,7 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     usePublicDeckBracketQuery: () => ({ data: vueRef({ data: null }), ...settled() }),
     usePublicDeckStatsQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined), ...settled() }),
+    usePublicDeckTokensQuery: () => ({ data: vueRef(undefined), ...settled() }),
   }
 })
 

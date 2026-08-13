@@ -15,6 +15,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
@@ -285,6 +286,14 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
           </section>
         </div>
       </div>
+
+      <!-- The same packing list the owner sees, from the same core. -->
+      <DeckTokens
+        v-if="allCards.length > 0"
+        :game="deck.game"
+        :deck-id="deck.id"
+        :handle="handle"
+      />
     </template>
   </div>
 </template>

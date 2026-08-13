@@ -4,6 +4,7 @@ import type {
   DeckBracketEstimate,
   DeckFormat,
   DeckLegality,
+  DeckTokens,
   GoldfishHand,
 } from './generated'
 
@@ -40,6 +41,9 @@ export type {
   DeckRuleSeverity,
   DeckRuleViolation,
   DeckStatItem,
+  DeckToken,
+  DeckTokenSource,
+  DeckTokens,
   GoldfishHand,
 } from './generated'
 
@@ -169,6 +173,18 @@ export function getPublicDeckBracket(
   return request<{ data: DeckBracketEstimate | null }>(`${publicBase(handle, deckId)}/bracket`)
 }
 
+// ----- Tokens -----
+
+/** The tokens and emblems a deck's cards make — what to bring to a game besides the deck. */
+export function getDeckTokens(token: string, game: string, deckId: number): Promise<DeckTokens> {
+  return request<DeckTokens>(`${deckBase(game, deckId)}/tokens`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckTokens(handle: string, deckId: number): Promise<DeckTokens> {
+  return request<DeckTokens>(`${publicBase(handle, deckId)}/tokens`)
+}
+
 // ----- Goldfish -----
 
 /** Deal a sample hand from a deck's library. */
@@ -231,6 +247,11 @@ export function getPreconBracket(
   slug: string,
 ): Promise<{ data: DeckBracketEstimate | null }> {
   return request<{ data: DeckBracketEstimate | null }>(`${preconBase(game, slug)}/bracket`)
+}
+
+/** The tokens a published decklist makes — the ones its product's token sheet holds. */
+export function getPreconTokens(game: string, slug: string): Promise<DeckTokens> {
+  return request<DeckTokens>(`${preconBase(game, slug)}/tokens`)
 }
 
 /** A seeded sample hand from a published decklist. */

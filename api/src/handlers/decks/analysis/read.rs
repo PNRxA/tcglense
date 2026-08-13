@@ -13,9 +13,9 @@ use crate::state::AppState;
 
 use super::super::load_deck;
 use super::{
-    DeckAnalytics, DeckBracketEstimate, DeckLegality, GoldfishHand, GoldfishParams, StatsParams,
-    analyse_bracket, analyse_goldfish, analyse_legality, analyse_stats, load_analysis,
-    load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckTokens, GoldfishHand, GoldfishParams,
+    StatsParams, analyse_bracket, analyse_goldfish, analyse_legality, analyse_stats,
+    analyse_tokens, load_analysis, load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -121,6 +121,39 @@ pub async fn deck_bracket(
     Ok(Json(DataBody {
         data: analyse_bracket(deck.format.as_deref(), &input),
     }))
+}
+
+/// Tokens the deck makes
+///
+/// `GET /api/decks/{game}/{deck_id}/tokens` -> the tokens and emblems the deck's cards make
+/// — what a player has to bring to a game besides the deck — each with a printing of the
+/// token and the cards that make it. Read off the catalog's per-card token relations, never
+/// inferred from rules text, and scoped to the deck proper (a maybeboard card sends you
+/// looking for nothing). `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/tokens",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The tokens the deck makes, most-made first.", body = DeckTokens),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_tokens(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckTokens>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_tokens(&state, &game, &input).await?))
 }
 
 /// Goldfish a sample hand

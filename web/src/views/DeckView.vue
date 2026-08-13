@@ -54,6 +54,7 @@ import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import SetUsernameDialog from '@/components/collection/SetUsernameDialog.vue'
@@ -576,6 +577,11 @@ function copyDeckList() {
           </section>
         </div>
       </div>
+
+      <!-- What this deck needs that isn't in it: the tokens and emblems its cards make.
+        Last on the page because it's the packing list, not the deck — and hidden entirely
+        for an empty deck, which makes nothing. -->
+      <DeckTokens v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
       <!-- Rename deck dialog -->
       <Dialog v-model:open="renameOpen">

@@ -2,7 +2,7 @@
 //! generators that build the same `ScryfallCard`/`ScryfallSet` values the real
 //! importer consumes. Pure data — no DB access, no clock-derived identities.
 
-use super::super::model::{CardFace, Prices, ScryfallCard, ScryfallSet};
+use super::super::model::{CardFace, Prices, RelatedCard, ScryfallCard, ScryfallSet};
 
 /// Colour the generated cards cycle through (Scryfall single-letter code, a display
 /// word for the card name, and the mana symbol).
@@ -419,13 +419,17 @@ fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
 }
 
 /// A token printing (no mana cost, no market price) for the token child set.
+///
+/// It carries an `oracle_id` like a real token does: that shared gameplay identity is what
+/// groups a token's per-set printings into one entry on the deck page's token panel, so a
+/// seeded catalog has to have it for the offline suite to exercise that path at all.
 fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
     let idx = (n - 1) as usize;
     let color = &COLORS[idx % COLORS.len()];
     let noun = NOUNS[idx % NOUNS.len()];
     SeedCard {
         external_id: card_id(set.code, n),
-        oracle_id: None,
+        oracle_id: Some(format!("dummy-oracle-token-{n:04}")),
         name: format!("Dummy {} {} Token", color.name, noun),
         set_code: set.code,
         set_name: set.name,
@@ -490,6 +494,88 @@ fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
     card
 }
 
+/// Token printings in the token child set.
+const DUMMY_TOKENS: i32 = 5;
+
+/// A card the seed gives an *extra* token, so a multi-token maker exists offline.
+const TWO_TOKEN_CARD: i32 = 6;
+/// A card the seed gives an emblem whose own printing is deliberately **not** in the
+/// catalog, so the "referenced printing we don't hold" path — name and type line, no
+/// artwork — is exercised offline too.
+const EMBLEM_CARD: i32 = 9;
+
+/// Relate a deterministic slice of the seeded expansions to the seeded tokens, the way
+/// Scryfall's `all_parts` relates a real card to the tokens it makes.
+///
+/// Every third card makes one token, so a deck of them shares makers across a handful of
+/// tokens (which is what the panel is for); one card makes two, and one names an emblem that
+/// resolves to nothing. Deterministic, like every other generator here — the seed is
+/// compared run to run by `generators_are_deterministic`.
+fn attach_token_parts(cards: &mut [ScryfallCard]) {
+    // The token printings' own names/type lines ride the relation, exactly as upstream: a
+    // reference is readable even when the printing behind it isn't in the catalog.
+    let tokens: Vec<RelatedCard> = cards
+        .iter()
+        .filter(|c| c.set == TOKEN_SET.code)
+        .map(|c| RelatedCard {
+            id: c.id.clone(),
+            component: Some("token".to_string()),
+            name: Some(c.name.clone()),
+            type_line: c.type_line.clone(),
+        })
+        .collect();
+    if tokens.is_empty() {
+        return;
+    }
+
+    for card in cards.iter_mut() {
+        if card.set != BASE_SET.code && card.set != UNIVERSE_SET.code {
+            continue;
+        }
+        let Ok(n) = card.collector_number.parse::<i32>() else {
+            continue;
+        };
+        let mut parts: Vec<RelatedCard> = Vec::new();
+        if n % 3 == 0 {
+            let token = &tokens[((n / 3) as usize) % tokens.len()];
+            parts.push(clone_part(token));
+        }
+        if n == TWO_TOKEN_CARD {
+            parts.push(clone_part(&tokens[tokens.len() - 1]));
+        }
+        if n == EMBLEM_CARD {
+            // An emblem is a `combo_piece` upstream, told apart by its type line alone —
+            // and this one points at a printing the catalog doesn't have.
+            parts.push(RelatedCard {
+                id: "dummy-emblem-0001".to_string(),
+                component: Some("combo_piece".to_string()),
+                name: Some("Dummy Warden Emblem".to_string()),
+                type_line: Some("Emblem — Dummy Warden".to_string()),
+            });
+        }
+        if !parts.is_empty() {
+            // The card itself rides its own `all_parts` upstream; keeping that here proves
+            // the ingest drops it rather than recommending a card as its own token.
+            parts.push(RelatedCard {
+                id: card.id.clone(),
+                component: Some("combo_piece".to_string()),
+                name: Some(card.name.clone()),
+                type_line: card.type_line.clone(),
+            });
+            card.all_parts = Some(parts);
+        }
+    }
+}
+
+fn clone_part(part: &RelatedCard) -> RelatedCard {
+    RelatedCard {
+        id: part.id.clone(),
+        component: part.component.clone(),
+        name: part.name.clone(),
+        type_line: part.type_line.clone(),
+    }
+}
+
 /// The fabricated card list — the single source of truth for what gets seeded.
 pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     let mut cards = Vec::new();
@@ -531,9 +617,13 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     cards.push(reprint_card(&UNIVERSE_SET, 13));
 
     // A token child set hanging off the base set (exercises set grouping).
-    for n in 1..=5 {
+    for n in 1..=DUMMY_TOKENS {
         cards.push(token_card(&TOKEN_SET, n));
     }
+    // Relate a deterministic slice of the two expansions to those tokens, so the deck page's
+    // token panel has something true to show offline (and the e2e suite something to assert
+    // against). See [`attach_token_parts`] for the shapes it covers.
+    attach_token_parts(&mut cards);
 
     // A small Secret Lair Drop set so the pinned "Featured" section on both landings has
     // real cards behind its tile offline (its sealed products are in `dummy_products`).

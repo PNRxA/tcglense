@@ -72,6 +72,7 @@ mod m20240101_000069_add_deck_cards_section_index;
 mod m20240101_000070_add_user_accent;
 mod m20240101_000071_create_precon_decks_tables;
 mod m20240101_000072_drop_collection_sources_table;
+mod m20240101_000073_add_cards_token_parts;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -154,6 +155,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000070_add_user_accent::Migration),
             Box::new(m20240101_000071_create_precon_decks_tables::Migration),
             Box::new(m20240101_000072_drop_collection_sources_table::Migration),
+            Box::new(m20240101_000073_add_cards_token_parts::Migration),
         ]
     }
 }

@@ -6,14 +6,17 @@ import {
   getPreconGoldfish,
   getPreconLegality,
   getPreconStats,
+  getPreconTokens,
   getDeckBracket,
   getDeckGoldfish,
   getDeckLegality,
   getDeckStats,
+  getDeckTokens,
   getPublicDeckBracket,
   getPublicDeckGoldfish,
   getPublicDeckLegality,
   getPublicDeckStats,
+  getPublicDeckTokens,
   type DeckStatsParams,
   type GoldfishParams,
 } from '@/lib/api/deckAnalysis'
@@ -22,6 +25,7 @@ import type {
   DeckAnalytics,
   DeckBracketEstimate,
   DeckLegality,
+  DeckTokens,
   GoldfishHand,
 } from '@/lib/api'
 import { useAuthedQuery } from '@/lib/queries'
@@ -88,6 +92,17 @@ export function useDeckBracketQuery(
   return useAuthedQuery<{ data: DeckBracketEstimate | null }>(options)
 }
 
+/** The tokens a deck makes. */
+export function useDeckTokensQuery(game: Ref<string>, deckId: Ref<number>, enabled?: Ref<boolean>) {
+  const options = {
+    queryKey: ['deck-tokens', game, deckId],
+    queryFn: (token: string) => getDeckTokens(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckTokens>(options)
+}
+
 /** A goldfished hand. */
 export function useDeckGoldfishQuery(
   game: Ref<string>,
@@ -152,6 +167,21 @@ export function usePublicDeckBracketQuery(
   })
 }
 
+/** The tokens a public deck makes. */
+export function usePublicDeckTokensQuery(
+  handle: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckTokens, ApiError>({
+    queryKey: ['public-deck-tokens', handle, deckId],
+    queryFn: () => getPublicDeckTokens(handle.value, deckId.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** A hand goldfished from a public deck — the same seed deals the same cards as it would
  * for the owner. */
 export function usePublicDeckGoldfishQuery(
@@ -179,7 +209,8 @@ export function usePublicDeckGoldfishQuery(
  *
  * The goldfish goes too: its cards come from the library, so a card added or removed makes
  * every previously dealt hand for that deck a hand of a deck that no longer exists. So does
- * the bracket: adding one Game Changer is exactly the edit that moves it.
+ * the bracket: adding one Game Changer is exactly the edit that moves it — and so do the
+ * tokens, since the card just added may be the only one that made one.
  */
 export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: number) {
   const keys =
@@ -188,12 +219,14 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-stats', game],
           ['deck-legality', game],
           ['deck-bracket', game],
+          ['deck-tokens', game],
           ['deck-goldfish', game],
         ]
       : [
           ['deck-stats', game, deckId],
           ['deck-legality', game, deckId],
           ['deck-bracket', game, deckId],
+          ['deck-tokens', game, deckId],
           ['deck-goldfish', game, deckId],
         ]
   for (const queryKey of keys) qc.invalidateQueries({ queryKey })
@@ -248,6 +281,17 @@ export function usePreconBracketQuery(
   return useQuery<{ data: DeckBracketEstimate | null }, ApiError>({
     queryKey: ['precon-bracket', game, slug],
     queryFn: () => getPreconBracket(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** The tokens a published decklist makes. */
+export function usePreconTokensQuery(game: Ref<string>, slug: Ref<string>, enabled?: Ref<boolean>) {
+  return useQuery<DeckTokens, ApiError>({
+    queryKey: ['precon-tokens', game, slug],
+    queryFn: () => getPreconTokens(game.value, slug.value),
     enabled,
     retry: false,
     staleTime: PRICED_CATALOG_STALE_MS,

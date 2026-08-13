@@ -10,6 +10,9 @@
 //! * **Bracket** ([`bracket`]) — where a Commander deck sits on Wizards' 1–5 power ladder,
 //!   read off the cards. Legality asks "may you play this"; the bracket asks "who should
 //!   you play it against", which is why it is a separate read with its own vocabulary.
+//! * **Tokens** ([`tokens`]) — the tokens and emblems the deck's cards make, which is what a
+//!   player has to bring to a game *besides* the deck. The only one of these that consults
+//!   the catalog again rather than folding what the deck already loaded.
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -42,6 +45,7 @@ use crate::entities::prelude::{Card, DeckCard, DeckSection};
 use crate::entities::{card, deck_card, deck_section};
 use crate::error::AppError;
 use crate::handlers::shared::dto::{parse_legalities, split_csv, stored_faces};
+use crate::scryfall::model::StoredPart;
 use crate::state::AppState;
 
 use super::DeckSectionResponse;
@@ -53,11 +57,12 @@ pub(crate) mod legality;
 pub(crate) mod read;
 pub(crate) mod rules;
 pub(crate) mod stats;
+pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
     __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_stats,
-    deck_bracket, deck_goldfish, deck_legality, deck_stats,
+    __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -66,6 +71,7 @@ pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
+pub(crate) use tokens::{DeckTokens, analyse_tokens};
 
 /// Everything the analysis reads off one catalog row, extracted once per deck card so the
 /// pure modules below never touch a `card::Model`, a JSON blob, or a comma-joined column.
@@ -103,6 +109,11 @@ pub(crate) struct CardFacts {
     /// it. `None` is "the row carries no such datum", which the bracket estimate reads as
     /// "not one" rather than guessing.
     pub game_changer: Option<bool>,
+    /// The tokens and emblems this printing makes, as the catalog stored them. `None` is
+    /// **"not checked yet"** — a row imported before `cards.token_parts` existed — and an
+    /// empty list is "makes none"; [`tokens`] is the one reader that tells them apart, and
+    /// it must keep doing so (see [`crate::scryfall::map::token_parts`]).
+    pub token_parts: Option<Vec<StoredPart>>,
 }
 
 impl From<&card::Model> for CardFacts {
@@ -143,6 +154,12 @@ impl From<&card::Model> for CardFacts {
             cmc: m.cmc,
             legalities: parse_legalities(m.legalities.as_deref()),
             game_changer: m.game_changer,
+            // A column that is present but unparseable is treated as absent — "unknown",
+            // never "makes none", the same stance `parse_legalities` takes above.
+            token_parts: m
+                .token_parts
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok()),
         }
     }
 }
@@ -322,6 +339,7 @@ pub(crate) mod test_fixtures {
             cmc: None,
             legalities: None,
             game_changer: None,
+            token_parts: None,
         }
     }
 
@@ -364,6 +382,29 @@ pub(crate) mod test_fixtures {
 
         pub(crate) fn game_changer(mut self, value: bool) -> Self {
             self.game_changer = Some(value);
+            self
+        }
+
+        /// The tokens this printing makes: `(referenced printing id, name, type line)`.
+        /// Setting it at all marks the row **checked** — a card built without this reads as
+        /// "not checked yet", which is a different answer.
+        pub(crate) fn tokens(mut self, parts: &[(&str, &str, &str)]) -> Self {
+            self.token_parts = Some(
+                parts
+                    .iter()
+                    .map(|(id, name, type_line)| StoredPart {
+                        id: (*id).to_string(),
+                        name: (*name).to_string(),
+                        type_line: Some((*type_line).to_string()),
+                    })
+                    .collect(),
+            );
+            self
+        }
+
+        /// A printing the catalog has checked and which makes nothing.
+        pub(crate) fn no_tokens(mut self) -> Self {
+            self.token_parts = Some(Vec::new());
             self
         }
     }
@@ -411,6 +452,14 @@ pub(crate) mod test_fixtures {
         }
         pub(crate) fn game_changer(mut self, value: bool) -> Self {
             self.facts = self.facts.game_changer(value);
+            self
+        }
+        pub(crate) fn tokens(mut self, parts: &[(&str, &str, &str)]) -> Self {
+            self.facts = self.facts.tokens(parts);
+            self
+        }
+        pub(crate) fn no_tokens(mut self) -> Self {
+            self.facts = self.facts.no_tokens();
             self
         }
     }

@@ -237,11 +237,27 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   a third derived field belongs there, not at a call site.
   **Deck analysis is server-side** (issue #596): composition + draw odds
   (`/stats`), the legality verdict (`/legality`), the estimated Commander bracket
-  (`/bracket`), and a seeded sample hand (`/goldfish`) all
-  live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
+  (`/bracket`), the tokens the deck makes (`/tokens`), and a seeded sample hand
+  (`/goldfish`) all live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
   mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a
-  shared deck and its owner's copy can never disagree. All four are **`GET`s taking
+  shared deck and its owner's copy can never disagree. All five are **`GET`s taking
   `AuthUser`** — they write nothing, so a read-only key must be able to call them.
+  **Tokens are a provider fact, not a grammar** (`analysis::tokens`): what a card makes is
+  read off `cards.token_parts` — Scryfall's `all_parts`, filtered at ingest to `token`
+  components plus emblems (which upstream files as `combo_piece`, told apart by the printed
+  type line) — the same stance legality takes on the legality object. Four couplings.
+  The relation is **oracle-level** (every printing carries it), so no union across printings
+  is needed; the referenced **id is set-specific**, so tokens group by the *token printing's*
+  own `oracle_id` and never by name — Wurmcoil Engine's two Wurms share a name and a type
+  line, and merging them would tell a player to bring one. An **unresolvable reference is
+  placed in a second pass**, joining a resolved group only when exactly one shares its name
+  and type, so deck order can't split one token into two and an ambiguous case is never
+  guessed. And **NULL is not `[]`**: `token_parts` is NULL on any row not rewritten since the
+  column arrived, so `map::token_parts` writes `[]` for a card that makes none and the read
+  reports the NULLs as `unchecked_count` rather than answering "this deck makes no tokens".
+  Nothing may state **how many** of a token to bring: "create a Treasure" and "create X
+  Treasures" are the same relation upstream, so the response counts *cards*, and the SPA
+  panel's tests pin that it never words a token quantity.
   **Legality is two modules, not one:** `analysis::legality` judges each card against the
   format's Scryfall data, `analysis::rules` judges the deck (size, copy limit, command zone,
   colour identity) and the former composes the latter, so a new check belongs in the rules
