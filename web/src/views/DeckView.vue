@@ -545,12 +545,20 @@ function copyDeckList() {
                 :card="entry.card"
               >
                 <template #badge>
-                  <!-- The copy control and the format-legality breach chip (issue #557)
-                    share the tile's bottom strip, which keeps them apart at any tile size;
-                    the banner above carries the full explanation of a breach. Ownership
-                    keeps the top-right corner — on an 88px mobile tile a top-left
-                    "Not Legal" would collide with it. -->
+                  <!-- The copy control, the ownership chips and the format-legality breach
+                    chip (issue #557) all share the tile's bottom strip, which keeps them
+                    apart at any tile size; the banner above carries the full explanation of
+                    a breach. -->
                   <DeckTileBadges :legality-status="legality?.card_statuses[entry.card.id] ?? null">
+                    <!-- Ownership indicators, stacked directly above the deck count they
+                      qualify: how many of this card you own (collection) and want (wish
+                      list), each shown only when non-zero. -->
+                    <template #ownership>
+                      <DeckOwnershipBadges
+                        :owned="ownedInCollection(entry.card.id)"
+                        :wanted="wantedInWishlist(entry.card.id)"
+                      />
+                    </template>
                     <template #control>
                       <DeckCardControl
                         :game="game"
@@ -563,13 +571,6 @@ function copyDeckList() {
                       />
                     </template>
                   </DeckTileBadges>
-                  <!-- Ownership indicators (top-right): how many of this card you own
-                   (collection) and want (wish list), each shown only when non-zero. -->
-                  <DeckOwnershipBadges
-                    :owned="ownedInCollection(entry.card.id)"
-                    :wanted="wantedInWishlist(entry.card.id)"
-                    overlay
-                  />
                 </template>
               </CardTile>
             </div>

@@ -48,6 +48,34 @@ describe('DeckTileBadges', () => {
     )
   })
 
+  // Ownership used to be pinned to the tile's top-right corner, diagonally opposite the deck
+  // count it qualifies. Both answer "how many?", so they stack in the one bottom-left column.
+  it('stacks the ownership chips directly above the control, in one column', () => {
+    const wrapper = mount(DeckTileBadges, {
+      slots: { control: CONTROL, ownership: '<span class="owned">2</span>' },
+    })
+
+    const column = wrapper.get('.owned').element.parentElement as HTMLElement
+    expect(column).toBe(wrapper.get('.control').element.parentElement)
+    expect([...column.classList]).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'items-start', 'mr-auto']),
+    )
+    // Ownership first in a column that flows downwards = above the count.
+    expect([...column.children].indexOf(wrapper.get('.owned').element)).toBe(0)
+    // `pointer-events` inherits, so the ownership chip's own tooltip is hoverable inside a
+    // strip that otherwise passes clicks through to the tile's stretched link.
+    expect([...column.classList]).toContain('pointer-events-auto')
+  })
+
+  // An empty `#ownership` slot must render no element: a flex `gap` opens between items
+  // whether or not they have a size, which would shift the count on every unowned card.
+  it('leaves the control alone in the column when there is no ownership content', () => {
+    const wrapper = mount(DeckTileBadges, { slots: { control: CONTROL, ownership: '' } })
+
+    const column = wrapper.get('.control').element.parentElement as HTMLElement
+    expect(column.children).toHaveLength(1)
+  })
+
   it('renders no trailing chip for a legal card, and a caller-supplied one when given', () => {
     const legal = mount(DeckTileBadges, { slots: { control: CONTROL } })
     expect(legal.findAll('span')).toHaveLength(1)

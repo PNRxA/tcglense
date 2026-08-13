@@ -14,9 +14,15 @@ import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 // wider than the tile the trailing chip lifts above the control instead of being clipped or
 // truncated, and the control keeps the corner it has always had.
 //
+// The left corner is a *column* for the same reason: the owner's ownership chips ("you own
+// N / want N") stack directly above the deck count they qualify rather than taking the
+// tile's top-right corner. Both answer "how many?", so reading them together beats a
+// diagonal scan — and the strip is the one edge a tile has already given up, so the art
+// keeps the rest.
+//
 // The strip spans the tile, so it stays `pointer-events-none` for the stretched link
-// underneath — only the control (a real popover trigger on the owner's grid) takes events
-// back.
+// underneath — only that column (a real popover trigger on the owner's grid, and the
+// ownership chips' own tooltips) takes events back.
 defineProps<{ legalityStatus?: DeckIssueStatus | null }>()
 </script>
 
@@ -24,7 +30,14 @@ defineProps<{ legalityStatus?: DeckIssueStatus | null }>()
   <div
     class="pointer-events-none absolute inset-x-1.5 bottom-1.5 z-20 flex flex-wrap-reverse items-end justify-end gap-1"
   >
-    <div class="pointer-events-auto mr-auto"><slot name="control" /></div>
+    <!-- One column, not two stacked wrappers: an empty `#ownership` slot renders no element
+      at all, so the `gap` never opens above a card you don't own and the control keeps the
+      exact corner it has on every other grid. `pointer-events` inherits, so both slots take
+      their clicks back from the strip. -->
+    <div class="pointer-events-auto mr-auto flex flex-col items-start gap-1">
+      <slot name="ownership" />
+      <slot name="control" />
+    </div>
     <slot name="trailing">
       <span
         v-if="legalityStatus"
