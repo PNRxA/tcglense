@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { parseManaText, colorLettersToText, type SymbolToken } from '../mana'
+import { parseManaText, colorLettersToText, displayManaCost, type SymbolToken } from '../mana'
 
 // Pull the symbol classes out of a parse, in order.
 function classes(text: string): string[] {
@@ -100,5 +100,59 @@ describe('colorLettersToText', () => {
 
   it('is empty for a colourless identity', () => {
     expect(colorLettersToText([])).toBe('')
+  })
+})
+
+describe('displayManaCost', () => {
+  it('keeps the printed top-level cost, including a split card’s combined one', () => {
+    expect(displayManaCost({ mana_cost: '{3}{R}', faces: [] })).toBe('{3}{R}')
+    // Fire // Ice: a split card's top level is the combined cost, and it wins over the
+    // faces, which would otherwise report only half of what the card costs.
+    expect(
+      displayManaCost({
+        mana_cost: '{1}{R} // {1}{U}',
+        faces: [{ mana_cost: '{1}{R}' }, { mana_cost: '{1}{U}' }],
+      }),
+    ).toBe('{1}{R} // {1}{U}')
+    // Midgar, City of Mako // Reactor Raid: an adventure *land*, whose top-level cost is the
+    // adventure half's alone and whose first face states none. The top level still wins —
+    // it's what the card is printed with, and it's the only half you can cast.
+    expect(
+      displayManaCost({ mana_cost: '{2}{B}', faces: [{ mana_cost: '' }, { mana_cost: '{2}{B}' }] }),
+    ).toBe('{2}{B}')
+  })
+
+  // The bug this exists for: Scryfall gives a transforming card no top-level cost at all,
+  // so every Saga-that-transforms and every MDFC in a deck showed an empty column.
+  it('falls back to the front face for a card with no top-level cost', () => {
+    // "The Legend of Kyoshi // Avatar Kyoshi" — {4}{G}{G} in front, a transformed creature
+    // with no cost behind it.
+    expect(
+      displayManaCost({ mana_cost: null, faces: [{ mana_cost: '{4}{G}{G}' }, { mana_cost: '' }] }),
+    ).toBe('{4}{G}{G}')
+    // A modal DFC shows the half you cast from hand, like the row's type line does.
+    expect(
+      displayManaCost({
+        mana_cost: null,
+        faces: [{ mana_cost: '{X}{B}{B}{B}' }, { mana_cost: '' }],
+      }),
+    ).toBe('{X}{B}{B}{B}')
+    // A reversible card repeats one card on both sides — the cost is shown once, not twice.
+    expect(
+      displayManaCost({
+        mana_cost: null,
+        faces: [{ mana_cost: '{2}{R}' }, { mana_cost: '{2}{R}' }],
+      }),
+    ).toBe('{2}{R}')
+  })
+
+  it('answers null when nothing costs anything', () => {
+    expect(displayManaCost({ mana_cost: null, faces: [] })).toBeNull()
+    // A land in front of a transformed creature (Westvale Abbey // Ormendahl): an empty
+    // string on either side is not a cost, so nothing renders rather than an empty pip row.
+    expect(
+      displayManaCost({ mana_cost: null, faces: [{ mana_cost: '' }, { mana_cost: null }] }),
+    ).toBeNull()
+    expect(displayManaCost({ mana_cost: '', faces: [] })).toBeNull()
   })
 })

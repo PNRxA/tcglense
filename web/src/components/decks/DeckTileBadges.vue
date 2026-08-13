@@ -14,17 +14,37 @@ import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 // wider than the tile the trailing chip lifts above the control instead of being clipped or
 // truncated, and the control keeps the corner it has always had.
 //
-// The strip spans the tile, so it stays `pointer-events-none` for the stretched link
-// underneath — only the control (a real popover trigger on the owner's grid) takes events
-// back.
+// The left corner is a *column* for the same reason: the owner's ownership chips ("you own
+// N / want N") stack directly above the deck count they qualify rather than taking the
+// tile's top-right corner. Both answer "how many?", so reading them together beats a
+// diagonal scan — and the strip is the one edge a tile has already given up, so the art
+// keeps the rest.
+//
+// Two consequences of that reversed wrap are easy to get backwards, and both bit once the
+// left slot grew from a chip into a column:
+//
+//   * `flex-wrap-reverse` permutes the cross axis, so `items-start` is what means "sit on
+//     the tile's bottom edge" — `items-end` pins the trailing chip to the *top* of the
+//     line, which floated "Over Limit" 24px up to sit level with the ownership chips
+//     instead of level with the count.
+//   * the column's box is as wide as its widest row and as tall as both, so re-enabling
+//     pointer events on it would hand a rectangle of bare artwork to a div at `z-20` —
+//     over the tile's stretched link, which is what makes the whole card clickable. Only
+//     the chips themselves take events back (`[&>*]`), never the slack around them.
 defineProps<{ legalityStatus?: DeckIssueStatus | null }>()
 </script>
 
 <template>
   <div
-    class="pointer-events-none absolute inset-x-1.5 bottom-1.5 z-20 flex flex-wrap-reverse items-end justify-end gap-1"
+    class="pointer-events-none absolute inset-x-1.5 bottom-1.5 z-20 flex flex-wrap-reverse items-start justify-end gap-1"
   >
-    <div class="pointer-events-auto mr-auto"><slot name="control" /></div>
+    <!-- One column, not two stacked wrappers: an empty `#ownership` slot renders no element
+      at all, so the `gap` never opens above a card you don't own and the control keeps the
+      exact corner it has on every other grid. -->
+    <div class="mr-auto flex flex-col items-start gap-1 [&>*]:pointer-events-auto">
+      <slot name="ownership" />
+      <slot name="control" />
+    </div>
     <slot name="trailing">
       <span
         v-if="legalityStatus"
