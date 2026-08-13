@@ -10,9 +10,9 @@
 //! printing belongs on the base card as a foil copy, not as a separate holding. This module
 //! resolves the star↔base pairs and folds a foil-★ holding onto its base as foil in two
 //! places, so no path leaves a holding on a star card:
-//! - [`apply_foil_remap`] / [`consolidate_local`] fold the **incoming** import onto the base
-//!   before the reconcile engine sees it (aggregation, resolution, and reconcile then stay a
-//!   straight 1:1 external-id→card mapping — see [`super::reconcile`]);
+//! - [`apply_foil_remap`] folds the **incoming** import onto the base before the reconcile
+//!   engine sees it (aggregation, resolution, and reconcile then stay a straight 1:1
+//!   external-id→card mapping — see [`super::reconcile`]);
 //! - [`fold_existing_star_holdings`] folds any **already-held** star row onto its base first
 //!   (a legacy pre-#209 import, or a manual add of the `…★` catalog card), so a manual/legacy
 //!   star holding never coexists with the consolidated base and double-counts.
@@ -219,36 +219,6 @@ pub(super) fn apply_foil_remap(
             h
         })
         .collect()
-}
-
-/// Fold a local holdings snapshot (`external_id -> (regular, foil)`) through the remap so it
-/// speaks the same base external ids the fetched holdings will after [`apply_foil_remap`]. A
-/// folded star's regular **and** foil copies become foil on the base. Used only by the smart
-/// fetch's early-stop comparison, so a collection already holding a foil-★ still matches its
-/// re-fetched, remapped page.
-pub(super) fn consolidate_local(
-    local: HashMap<String, (i32, i32)>,
-    remap: &HashMap<String, String>,
-) -> HashMap<String, (i32, i32)> {
-    if remap.is_empty() {
-        return local;
-    }
-    let mut out: HashMap<String, (i32, i32)> = HashMap::with_capacity(local.len());
-    for (ext, (reg, foil)) in local {
-        match remap.get(&ext) {
-            // A star's copies (whichever finish they were stored under) are foils of the base.
-            Some(base) => {
-                let e = out.entry(base.clone()).or_insert((0, 0));
-                e.1 = e.1.saturating_add(reg).saturating_add(foil);
-            }
-            None => {
-                let e = out.entry(ext).or_insert((0, 0));
-                e.0 = e.0.saturating_add(reg);
-                e.1 = e.1.saturating_add(foil);
-            }
-        }
-    }
-    out
 }
 
 /// Fold this user's **existing** holdings on star cards onto their base as foil, then delete
@@ -513,16 +483,6 @@ mod tests {
             "remapped to base + forced foil"
         );
         assert_eq!(out[1], holding("other", false, 1), "untouched");
-    }
-
-    #[test]
-    fn consolidate_local_folds_star_copies_into_base_foil() {
-        let remap = HashMap::from([("star".to_string(), "base".to_string())]);
-        // A base owned as 2 regular, plus a legacy star row of 1 (stored as regular).
-        let local = HashMap::from([("base".to_string(), (2, 0)), ("star".to_string(), (1, 0))]);
-        let out = consolidate_local(local, &remap);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out["base"], (2, 1), "star's copy becomes the base's foil");
     }
 
     #[tokio::test]

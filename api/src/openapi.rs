@@ -147,7 +147,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         // --- Sealed products: contained cards + their display sections ---
         crate::handlers::catalog::product_cards,
         crate::handlers::catalog::product_card_sections,
-        // --- Collection: per-set views, valuation, movers, batch counts, import/sync/export, sharing toggle ---
+        // --- Collection: per-set views, valuation, movers, batch counts, import/export, sharing toggle ---
         crate::handlers::collection::collection_sets,
         crate::handlers::collection::collection_set_drops,
         crate::handlers::collection::collection_set_subtypes,
@@ -161,10 +161,6 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::import_collection_csv,
         crate::handlers::collection::import_collection_text,
         crate::handlers::collection::get_import_job,
-        crate::handlers::collection::get_collection_source,
-        crate::handlers::collection::save_collection_source,
-        crate::handlers::collection::delete_collection_source,
-        crate::handlers::collection::sync_collection_source,
         crate::handlers::sharing::get_collection_visibility,
         crate::handlers::sharing::set_collection_visibility,
         // --- Wish list: per-set views + batch wanted-counts (cards + sealed products) ---

@@ -14,7 +14,6 @@ function summary(overrides: Partial<ImportSummary> = {}): ImportSummary {
     regular_copies: 0,
     foil_copies: 0,
     removed_cards: 0,
-    stopped_early: false,
     ...overrides,
   }
 }
@@ -32,14 +31,6 @@ describe('formatImportSummaryLines', () => {
       summary({ matched_cards: 1, regular_copies: 1, foil_copies: 0 }),
     )
     expect(lead).toBe('Imported 1 card (1 copy).')
-  })
-
-  it('says "Updated" and reports the stop for smart mode', () => {
-    const lines = formatImportSummaryLines(
-      summary({ mode: 'smart', matched_cards: 2, regular_copies: 2, stopped_early: true }),
-    )
-    expect(lines[0]).toBe('Updated 2 cards (2 copies).')
-    expect(lines[1]).toBe('Smart sync stopped once it reached cards already in sync.')
   })
 
   it('appends unmatched and removed lines only when non-zero', () => {

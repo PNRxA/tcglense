@@ -10,7 +10,6 @@ pub use super::card_set::Entity as CardSet;
 pub use super::cli_auth_code::Entity as CliAuthCode;
 pub use super::collection_item::Entity as CollectionItem;
 pub use super::collection_product_item::Entity as CollectionProductItem;
-pub use super::collection_source::Entity as CollectionSource;
 pub use super::collection_visibility::Entity as CollectionVisibility;
 pub use super::deck::Entity as Deck;
 pub use super::deck_card::Entity as DeckCard;

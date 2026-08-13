@@ -43,9 +43,9 @@ pub(super) enum UserRoute {
     /// full-history revaluation scans against the weak prod Postgres — but roomier
     /// than `Import`, since a human flips chart ranges in bursts.
     Analytics,
-    /// The expensive collection/deck import, sync, and file/paste-upload endpoints,
-    /// which do real server-side work (an upstream fetch, a parse of untrusted content,
-    /// or database writes). A much tighter cap.
+    /// The expensive collection/deck import and file/paste-upload endpoints, which do
+    /// real server-side work (an upstream fetch, a parse of untrusted content, or
+    /// database writes). A much tighter cap.
     Import,
 }
 
@@ -59,7 +59,7 @@ impl UserRoute {
         if let Some(rest) = path.strip_prefix("/api/collection/")
             && let Some((_game, tail)) = rest.split_once('/')
         {
-            if matches!(tail, "import" | "import/csv" | "import/text" | "sync") {
+            if matches!(tail, "import" | "import/csv" | "import/text") {
                 return Self::Import;
             }
             // Whole-collection × full-history scans (+ the CSV and card-list export
@@ -396,10 +396,6 @@ mod tests {
         );
         assert_eq!(
             UserRoute::from_path("/api/collection/mtg/import/text"),
-            UserRoute::Import
-        );
-        assert_eq!(
-            UserRoute::from_path("/api/collection/mtg/sync"),
             UserRoute::Import
         );
         assert_eq!(

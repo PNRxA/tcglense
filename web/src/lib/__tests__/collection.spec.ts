@@ -14,8 +14,6 @@ import {
   collectionProductSummaryPath,
   collectionCardExportPath,
   collectionSetDropsPath,
-  collectionSourcePath,
-  collectionSyncPath,
   collectionValueHistoryPath,
   exportCollectionCards,
   exportCollectionCsv,
@@ -372,11 +370,9 @@ describe('getCollectionOwned', () => {
   })
 })
 
-describe('import / sync paths', () => {
-  it('builds the import, source, and sync paths', () => {
+describe('import paths', () => {
+  it('builds the import path', () => {
     expect(collectionImportPath('mtg')).toBe('/api/collection/mtg/import')
-    expect(collectionSourcePath('mtg')).toBe('/api/collection/mtg/source')
-    expect(collectionSyncPath('mtg')).toBe('/api/collection/mtg/sync')
   })
 
   it('builds the import-job status path', () => {
@@ -385,8 +381,6 @@ describe('import / sync paths', () => {
 
   it('encodes the game segment', () => {
     expect(collectionImportPath('a/b')).toContain('a%2Fb')
-    expect(collectionSourcePath('a/b')).toContain('a%2Fb')
-    expect(collectionSyncPath('a/b')).toContain('a%2Fb')
     expect(collectionImportJobPath('a/b', 1)).toContain('a%2Fb')
   })
 

@@ -25,7 +25,6 @@ pub(crate) mod moxfield;
 mod progress;
 pub mod rate_limit;
 pub(crate) mod reconcile;
-mod smart;
 pub(crate) mod text_list;
 mod types;
 
@@ -34,13 +33,12 @@ use std::collections::HashMap;
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 
-use crate::entities::prelude::{Card, CollectionItem};
-use crate::entities::{card, collection_item};
+use crate::entities::card;
+use crate::entities::prelude::Card;
 
 pub use error::ImportError;
 pub use progress::{ProgressReporter, ProgressSnapshot};
-use reconcile::{reconcile_holdings, reconcile_smart};
-use smart::smart_absorb_page;
+use reconcile::reconcile_holdings;
 pub use types::*;
 
 /// Hard cap on how many holding rows we'll pull from a provider in one import, so a
@@ -119,29 +117,6 @@ fn no_live_fetch(provider: Provider) -> ImportError {
     ))
 }
 
-/// The recently-updated prefix of a provider collection for a smart sync: fetch
-/// most-recently-updated first and stop once a whole page already matches `local`
-/// (`external_card_id -> (quantity, foil_quantity)`). Returns the fetched holdings plus
-/// whether we stopped early (reached the already-synced tail) rather than scanning the
-/// whole collection.
-async fn fetch_holdings_smart(
-    provider: Provider,
-    ctx: &ProviderContext<'_>,
-    collection_id: &str,
-    local: &HashMap<String, (i32, i32)>,
-    remap: &HashMap<String, String>,
-) -> Result<(Vec<FetchedHolding>, bool), ImportError> {
-    match provider {
-        Provider::Archidekt => {
-            let limiter = ctx.limiters.for_provider(provider);
-            archidekt::fetch_smart(ctx.http, limiter, collection_id, local, remap, ctx.progress)
-                .await
-        }
-        Provider::Moxfield => moxfield::fetch_smart(ctx, collection_id, local, remap).await,
-        Provider::MythicTools => Err(no_live_fetch(provider)),
-    }
-}
-
 /// Execute an import against an already-parsed provider collection id: fetch (throttled),
 /// aggregate, resolve to local cards, reconcile per `mode`, and apply in one transaction.
 /// Runs in the background worker (see [`jobs`]); the handler does the synchronous
@@ -155,86 +130,11 @@ pub async fn execute_import(
     collection_id: &str,
     mode: ReconcileMode,
 ) -> Result<ImportSummary, ImportError> {
-    if mode == ReconcileMode::Smart {
-        // Fold separately-modelled foil printings (`…★`) onto their base card as foil
-        // copies (issue #209). Resolve the pairs once (drives both the fetch's early-stop
-        // and the reconcile); the non-smart path does the same inside `reconcile_holdings`.
-        let pairs = consolidate::load_foil_variant_pairs(db, game).await?;
-        // Fold any star row the user already holds onto its base first, so a manual/legacy
-        // star holding can't coexist with the base and double-count. Must run before the
-        // `local` snapshot below so it reflects the folded state.
-        consolidate::fold_existing_star_holdings(db, user_id, game, &pairs).await?;
-        let remap = consolidate::ext_remap(&pairs);
-        // Smart needs the current collection up front to drive the early-stop (fetch
-        // until a page already matches what we hold). Note this snapshot is only for the
-        // stop decision — the reconcile re-reads current counts after the (minutes-long)
-        // fetch, so a concurrent edit during the fetch isn't clobbered. Fold it through
-        // the remap so a held foil-★ matches its re-fetched, remapped page.
-        let local = consolidate::consolidate_local(
-            load_local_by_external(db, user_id, game).await?,
-            &remap,
-        );
-        let (holdings, stopped_early) =
-            fetch_holdings_smart(provider, ctx, collection_id, &local, &remap).await?;
-        if holdings.is_empty() {
-            return Err(ImportError::EmptyCollection);
-        }
-        // `holdings` already carry base external ids (the smart fetch remapped each page),
-        // so the reconcile sees a straight 1:1 external-id→card mapping.
-        return reconcile_smart(db, user_id, game, provider, holdings, stopped_early).await;
-    }
-
     let holdings = fetch_holdings(provider, ctx, collection_id).await?;
     if holdings.is_empty() {
         return Err(ImportError::EmptyCollection);
     }
     reconcile_holdings(db, user_id, game, provider, mode, holdings).await
-}
-
-/// The user's current collection for `(user, game)` keyed by the provider's external
-/// card id (`cards.external_id`) — the shape a smart fetch compares fetched holdings
-/// against. Empty when nothing is owned. Card ids are resolved in chunks to stay under
-/// SQLite's per-statement bind-variable limit.
-async fn load_local_by_external(
-    db: &DatabaseConnection,
-    user_id: i32,
-    game: &str,
-) -> Result<HashMap<String, (i32, i32)>, ImportError> {
-    let items = CollectionItem::find()
-        .filter(collection_item::Column::UserId.eq(user_id))
-        .filter(collection_item::Column::Game.eq(game))
-        .all(db)
-        .await
-        .map_err(ImportError::Db)?;
-    if items.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let card_ids: Vec<i32> = items.iter().map(|i| i.card_id).collect();
-    let mut external_by_id: HashMap<i32, String> = HashMap::new();
-    for chunk in card_ids.chunks(IN_CHUNK) {
-        // Only the two id columns; skip the ~66 heavy card columns we never read here.
-        let rows: Vec<(i32, String)> = Card::find()
-            .select_only()
-            .column(card::Column::Id)
-            .column(card::Column::ExternalId)
-            .filter(card::Column::Id.is_in(chunk.iter().copied()))
-            .into_tuple()
-            .all(db)
-            .await
-            .map_err(ImportError::Db)?;
-        for (id, external_id) in rows {
-            external_by_id.insert(id, external_id);
-        }
-    }
-
-    let mut local = HashMap::with_capacity(items.len());
-    for i in items {
-        if let Some(ext) = external_by_id.get(&i.card_id) {
-            local.insert(ext.clone(), (i.quantity, i.foil_quantity));
-        }
-    }
-    Ok(local)
 }
 
 /// Import a collection from an **uploaded or pasted** export, sniffing the format from the

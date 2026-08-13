@@ -20,8 +20,8 @@ pub enum Provider {
 }
 
 impl Provider {
-    /// The provider's stable string id — as it appears in the API and in stored
-    /// `collection_sources` rows.
+    /// The provider's stable string id — as it appears in the API (request bodies and the
+    /// import summary's `provider`).
     pub fn as_str(self) -> &'static str {
         match self {
             Provider::Archidekt => "archidekt",
@@ -63,13 +63,13 @@ impl Provider {
         }
     }
 
-    /// Whether this provider's **live network** import is currently enabled — the one-off
-    /// URL/link import and the saved-link re-sync, both of which fetch from the provider's
-    /// API. Moxfield is **temporarily disabled**: its API only serves clients whose
-    /// `User-Agent` it has explicitly approved, which we don't have yet, so a live fetch is
-    /// throttled / tarpitted into failure (see `moxfield::fetch_failure`). Its **CSV
-    /// upload** needs no network and is unaffected — that stays the supported way to import
-    /// a Moxfield collection for now.
+    /// Whether this provider's **live network** import — the one-off URL/link import,
+    /// which fetches from the provider's API — is currently enabled. Moxfield is
+    /// **temporarily disabled**: its API only serves clients whose `User-Agent` it has
+    /// explicitly approved, which we don't have yet, so a live fetch is throttled /
+    /// tarpitted into failure (see `moxfield::fetch_failure`). Its **CSV upload** needs no
+    /// network and is unaffected — that stays the supported way to import a Moxfield
+    /// collection for now.
     ///
     /// This is the single source of truth for the disable; the import handlers gate on it
     /// (see `handlers::collection::import`) and the web UI hides the disabled provider from
@@ -77,27 +77,12 @@ impl Provider {
     /// `MOXFIELD_USER_AGENT` is configured.
     ///
     /// Mythic Tools is `false` for a different, permanent reason: it's a mobile app with no
-    /// public collection API, so there is nothing to fetch or re-sync — its collections
-    /// arrive as an uploaded/pasted export (see `collection_import::execute_file_import`).
+    /// public collection API, so there is nothing to fetch — its collections arrive as an
+    /// uploaded/pasted export (see `collection_import::execute_file_import`).
     pub fn network_import_enabled(self) -> bool {
         match self {
             Provider::Archidekt => true,
             Provider::Moxfield | Provider::MythicTools => false,
-        }
-    }
-
-    /// A canonical, user-facing URL for a collection id on this provider (for linking
-    /// back from the UI). `id` is a validated provider collection id.
-    ///
-    /// Empty for a provider with no addressable collection: a Mythic Tools import has no
-    /// location, so it can never be saved as a link (saving gates on
-    /// [`network_import_enabled`](Self::network_import_enabled)) and this is only ever
-    /// reached defensively, when shaping a stored row.
-    pub fn collection_url(self, id: &str) -> String {
-        match self {
-            Provider::Archidekt => format!("https://archidekt.com/collection/v2/{id}"),
-            Provider::Moxfield => format!("https://moxfield.com/collection/{id}"),
-            Provider::MythicTools => String::new(),
         }
     }
 }
@@ -125,14 +110,6 @@ pub enum ReconcileMode {
     Replace,
     /// Add the imported counts on top of the existing counts.
     Merge,
-    /// An **incremental** mirror: fetch the provider collection most-recently-updated
-    /// first and stop paging once a whole page already matches what we hold, then
-    /// overwrite the fetched cards' seen finishes. Fast (it doesn't re-page an
-    /// unchanged collection under the provider rate limit) but, because it never fetches
-    /// the whole collection, it only touches recently-changed cards — it does **not**
-    /// remove cards deleted upstream (a full [`Replace`](Self::Replace) does). See
-    /// [`reconcile_smart`].
-    Smart,
 }
 
 /// One card holding pulled from a provider, before aggregation. `external_card_id` is
@@ -166,9 +143,6 @@ pub struct ImportSummary {
     pub foil_copies: i64,
     /// Owned cards removed by the reconcile (non-zero only in `Replace` mode).
     pub removed_cards: usize,
-    /// `Smart` only: whether the fetch stopped early having reached already-synced
-    /// cards (vs. scanning the whole collection). Always `false` for other modes.
-    pub stopped_early: bool,
 }
 
 #[cfg(test)]
@@ -195,18 +169,11 @@ mod tests {
 
     #[test]
     fn only_archidekt_has_a_live_network_import() {
-        // Moxfield's live URL import / re-sync is turned off pending an approved
-        // User-Agent (its CSV upload is unaffected — that path never checks this), and
-        // Mythic Tools has no public API at all — it's upload/paste-only.
+        // Moxfield's live URL import is turned off pending an approved User-Agent (its CSV
+        // upload is unaffected — that path never checks this), and Mythic Tools has no
+        // public API at all — it's upload/paste-only.
         assert!(!Provider::Moxfield.network_import_enabled());
         assert!(!Provider::MythicTools.network_import_enabled());
         assert!(Provider::Archidekt.network_import_enabled());
-    }
-
-    #[test]
-    fn mythic_tools_has_no_collection_url() {
-        // Nothing addressable to link back to, so a stored row degrades to a blank URL
-        // rather than a fabricated one.
-        assert!(Provider::MythicTools.collection_url("anything").is_empty());
     }
 }

@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct ProgressReporter {
     /// Rows fetched from the provider so far (accumulates across pages).
     fetched_rows: AtomicU32,
-    /// Total rows to fetch, or `0` when not (yet) known — a smart sync never sets it
-    /// (it stops early, so a total would be misleading).
+    /// Total rows to fetch, or `0` when not (yet) known — the provider reports it on the
+    /// first page, so it's unset until that page lands.
     total_rows: AtomicU32,
 }
 

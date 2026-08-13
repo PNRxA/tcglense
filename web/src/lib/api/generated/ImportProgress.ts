@@ -3,8 +3,8 @@
 /**
  * Live fetch progress for a running import: how many provider rows we've fetched so far,
  * and the collection's total when the provider reported one up front. A determinate
- * progress bar can be drawn when `total` is present; otherwise (a smart sync, which stops
- * early) only the running `fetched` count is meaningful.
+ * progress bar can be drawn once `total` is present; until the first page lands only the
+ * running `fetched` count is meaningful.
  */
 export type ImportProgress = { 
 /**
@@ -12,6 +12,6 @@ export type ImportProgress = {
  */
 fetched: number, 
 /**
- * Total rows to fetch, when known; `null` for a smart sync (no meaningful total).
+ * Total rows to fetch, when the provider has reported one; `null` until then.
  */
 total?: number, };

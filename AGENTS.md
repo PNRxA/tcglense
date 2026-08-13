@@ -3,7 +3,7 @@
 Guidance for working in this repository. This file is the always-loaded core; the
 detail lives in `docs/` — read the relevant one before working in its area:
 
-- [`docs/api-contracts.md`](./docs/api-contracts.md) — every HTTP endpoint, wire shape, the search syntax, caching/ETag/sitemaps, import/sync mechanics
+- [`docs/api-contracts.md`](./docs/api-contracts.md) — every HTTP endpoint, wire shape, the search syntax, caching/ETag/sitemaps, import mechanics
 - [`docs/architecture.md`](./docs/architecture.md) — the fully annotated file map for `api/src/` and `web/src/`, plus test organization
 - [`docs/design-system.md`](./docs/design-system.md) — the design tokens (`web/src/assets/main.css`: "Nightfoil" neutrals + the switchable accent presets), the status/foil/rarity color vocabulary, chart-palette validation, and the artifacts coupled to any palette change
 - [`docs/operations.md`](./docs/operations.md) — running, commands, CI, releases, Docker, and the full environment-variable reference (authoritative: `api/src/config.rs`, `api/.env.example`)
@@ -183,7 +183,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
   `handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
-  `composables/productHoldingQueries.ts`. Collection import/sync/export
+  `composables/productHoldingQueries.ts`. Collection import/export
   remain card-only; collection value history and movers include both card and sealed-product
   holdings. **Public sharing exposes sealed products too:** the read-only
   `/api/u/{handle}/{game}/products{,/summary,/sets}` reads mirror the authed collection product
@@ -495,8 +495,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   The holdings browse views gate the same way (`!grouped`), and additionally swap target
   per mode: held mode exports the holdings listing, show-ghosts mode *is* the catalog
   listing so it exports the public catalog search.
-- A replace-mode import matching **zero** catalog cards is refused (wipe guard);
-  **smart sync never deletes** upstream-removed cards — only a full replace does.
+- A replace-mode import matching **zero** catalog cards is refused (wipe guard). Every
+  collection import is **one-off** — there is no saved link and no re-sync (the
+  `collection_sources` table and the incremental "smart" sync went with them, `m..072`),
+  so an import always states its own provider, source, and mode.
   Moxfield **URL** import is deliberately disabled
   (`Provider::network_import_enabled()` is the switch; CSV is the supported path) —
   a 422 there is not a regression.

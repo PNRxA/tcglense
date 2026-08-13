@@ -1,227 +1,70 @@
-//! Collection import / sync from an external provider: authentication gating, the
-//! saved-link lifecycle (GET/PUT/DELETE), provider + source validation, and the
-//! `no-store` cache policy. The parts that would reach out to a provider (Archidekt or
-//! Moxfield) over the network are deliberately not exercised here — every assertion
-//! below resolves before any upstream fetch (bad provider / unparseable source /
-//! missing saved link), so the suite stays fully offline like the rest of
-//! `security_tests`. (The CSV upload needs no network, so its tests drive the full
-//! path, including both providers' export shapes.)
+//! Collection import from an external provider: authentication gating, provider + source
+//! validation, and the `no-store` cache policy. The parts that would reach out to a
+//! provider (Archidekt or Moxfield) over the network are deliberately not exercised here —
+//! every assertion below resolves before any upstream fetch (bad provider / unparseable
+//! source), so the suite stays fully offline like the rest of `security_tests`. (The CSV
+//! upload needs no network, so its tests drive the full path, including both providers'
+//! export shapes.)
 
 use super::harness::*;
 
-fn delete_with_bearer(uri: &str, token: &str) -> Request<Body> {
-    Request::builder()
-        .method("DELETE")
-        .uri(uri)
-        .header(AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap()
-}
-
 #[tokio::test]
-async fn import_and_source_routes_require_authentication() {
+async fn link_import_requires_authentication() {
     let app = test_app_with_catalog().await;
 
-    // Every route in the group is per-user, so unauthenticated access is 401 and the
-    // response must never be shared-cached.
-    let unauthed = [
-        get("/api/collection/mtg/source"),
+    // The import writes to the caller's own collection, so an unauthenticated request is
+    // 401 and the response must never be shared-cached. (The upload/paste/job-status
+    // routes get the same treatment in their own tests below.)
+    let (status, headers, _) = send(
+        &app,
         json_post(
             "/api/collection/mtg/import",
             json!({ "provider": "archidekt", "source": "1042487", "mode": "replace" }),
         ),
-        json_post("/api/collection/mtg/sync", json!({})),
-        Request::builder()
-            .method("PUT")
-            .uri("/api/collection/mtg/source")
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({ "provider": "archidekt", "source": "1042487" }).to_string(),
-            ))
-            .unwrap(),
-        Request::builder()
-            .method("DELETE")
-            .uri("/api/collection/mtg/source")
-            .body(Body::empty())
-            .unwrap(),
-    ];
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
 
-    for req in unauthed {
-        let (status, headers, _) = send(&app, req).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(cache_control(&headers), Some("no-store"));
+/// The saved-link and re-sync routes were removed with smart sync: nothing is remembered
+/// between imports, so `/source` and `/sync` must be gone from the router entirely — not
+/// merely unused by the SPA — and answer the router's catch-all 404. Pinned so a partial
+/// revert can't quietly restore a half-wired surface.
+#[tokio::test]
+async fn saved_source_and_sync_routes_are_gone() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "no-resync@example.com", "password123").await;
+
+    let removed = [
+        get_with_bearer("/api/collection/mtg/source", &token),
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/source",
+            &token,
+            json!({ "provider": "archidekt", "source": "1042487" }),
+        ),
+        json_with_bearer("POST", "/api/collection/mtg/sync", &token, json!({})),
+    ];
+    for req in removed {
+        let (status, _, _) = send(&app, req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "route should not exist");
     }
 }
 
 #[tokio::test]
-async fn saved_source_lifecycle() {
-    let app = test_app_with_catalog().await;
-    let (token, _) = register(&app, "syncer@example.com", "password123").await;
-
-    // Nothing saved yet -> null (and no-store).
-    let (status, headers, body) =
-        send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(cache_control(&headers), Some("no-store"));
-    assert!(
-        body.is_null(),
-        "no saved source should serialize as null: {body:?}"
-    );
-
-    // Save a link from a full Archidekt URL -> the numeric id is extracted.
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "archidekt", "source": "https://archidekt.com/collection/v2/1042487" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "save failed: {body:?}");
-    assert_eq!(body["provider"], "archidekt");
-    assert_eq!(body["external_id"], "1042487");
-    assert_eq!(body["url"], "https://archidekt.com/collection/v2/1042487");
-    assert!(
-        body["last_synced_at"].is_null(),
-        "a freshly-saved link has never synced"
-    );
-    assert_eq!(body["smart"], false, "smart sync defaults off when omitted");
-
-    // Read it back.
-    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["external_id"], "1042487");
-    assert_eq!(body["smart"], false);
-
-    // Opting into smart sync persists on the saved link.
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "archidekt", "source": "1042487", "smart": true }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["smart"], true, "smart preference is stored");
-
-    // Re-saving a different id upserts the single row (no duplicate); omitting `smart`
-    // resets it to the default (off).
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "archidekt", "source": "999" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["external_id"], "999");
-    assert_eq!(body["smart"], false, "omitting smart on re-save clears it");
-
-    // (Moxfield's saved-link lifecycle isn't exercised here: its live import is temporarily
-    // disabled, so saving a Moxfield link is refused — see
-    // `moxfield_link_import_and_save_are_temporarily_disabled`. Its URL/id parsing is
-    // covered by `collection_import::moxfield`'s unit tests.)
-
-    // Forget it -> 204, then it reads back as null again (delete is idempotent).
-    let (status, _, _) = send(
-        &app,
-        delete_with_bearer("/api/collection/mtg/source", &token),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _, _) = send(
-        &app,
-        delete_with_bearer("/api/collection/mtg/source", &token),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.is_null());
-}
-
-/// The saved collection link is per-user: one user can neither read, overwrite, nor
-/// delete another's. The link stores an external collection id and drives
-/// server-side fetches on that user's behalf, so a broadened `user_id` filter would
-/// leak the linked identity or let one user hijack/wipe another's sync source.
-#[tokio::test]
-async fn saved_source_is_isolated_per_user() {
-    let app = test_app_with_catalog().await;
-    let (alice, _) = register(&app, "alice-src@example.com", "password123").await;
-    let (bob, _) = register(&app, "bob-src@example.com", "password123").await;
-
-    // Alice saves a link.
-    let (status, _, _) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &alice,
-            json!({ "provider": "archidekt", "source": "111" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    // Bob has no saved link of his own — Alice's is invisible to him.
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
-    assert!(
-        body.is_null(),
-        "another user's saved link must not leak: {body:?}"
-    );
-
-    // Bob saving his own link creates a separate row; it must not overwrite Alice's.
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &bob,
-            json!({ "provider": "archidekt", "source": "222" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["external_id"], "222");
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
-    assert_eq!(
-        body["external_id"], "111",
-        "bob's save must not overwrite alice's link"
-    );
-
-    // Bob deleting his link leaves Alice's intact (delete is scoped to his own row).
-    let (status, _, _) = send(&app, delete_with_bearer("/api/collection/mtg/source", &bob)).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &alice)).await;
-    assert_eq!(
-        body["external_id"], "111",
-        "bob's delete must not remove alice's link"
-    );
-    let (_, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &bob)).await;
-    assert!(body.is_null(), "bob's own link is gone");
-}
-
-#[tokio::test]
-async fn save_and_import_reject_bad_provider_and_source() {
+async fn import_rejects_a_bad_provider_and_an_unparseable_source() {
     let app = test_app_with_catalog().await;
     let (token, _) = register(&app, "picky@example.com", "password123").await;
 
-    // Unknown provider -> 422.
+    // Unknown provider -> 422, resolved before any job is spawned.
     let (status, _, body) = send(
         &app,
         json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
+            "POST",
+            "/api/collection/mtg/import",
             &token,
-            json!({ "provider": "deckbox", "source": "1042487" }),
+            json!({ "provider": "deckbox", "source": "1042487", "mode": "replace" }),
         ),
     )
     .await;
@@ -235,35 +78,6 @@ async fn save_and_import_reject_bad_provider_and_source() {
     let (status, _, _) = send(
         &app,
         json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "archidekt", "source": "not-a-collection" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-
-    // Same guards on the one-off import endpoint.
-    let (status, _, _) = send(
-        &app,
-        json_with_bearer(
-            "POST",
-            "/api/collection/mtg/import",
-            &token,
-            json!({ "provider": "deckbox", "source": "1042487", "mode": "replace" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-
-    // (Moxfield source parsing isn't retested here — its live import is disabled, so a
-    // Moxfield import is refused before the source is even parsed; see
-    // `moxfield_link_import_and_save_are_temporarily_disabled`.)
-
-    let (status, _, _) = send(
-        &app,
-        json_with_bearer(
             "POST",
             "/api/collection/mtg/import",
             &token,
@@ -272,10 +86,14 @@ async fn save_and_import_reject_bad_provider_and_source() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // (Moxfield source parsing isn't retested here — its live import is disabled, so a
+    // Moxfield import is refused before the source is even parsed; see
+    // `moxfield_link_import_is_temporarily_disabled`.)
 }
 
 #[tokio::test]
-async fn moxfield_link_import_and_save_are_temporarily_disabled() {
+async fn moxfield_link_import_is_temporarily_disabled() {
     let app = test_app_with_catalog().await;
     let (token, _) = register(&app, "mox-off@example.com", "password123").await;
 
@@ -303,56 +121,21 @@ async fn moxfield_link_import_and_save_are_temporarily_disabled() {
         body["error"].as_str().is_some_and(|e| e.contains("CSV")),
         "the error points the user at the CSV upload: {body:?}"
     );
-
-    // Saving a Moxfield link is likewise refused — a saved link exists only to be re-synced,
-    // and the re-sync is disabled.
-    let (status, _, body) = send(
-        &app,
-        json_with_bearer(
-            "PUT",
-            "/api/collection/mtg/source",
-            &token,
-            json!({ "provider": "moxfield", "source": "https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q" }),
-        ),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "moxfield save disabled: {body:?}"
-    );
-
-    // Nothing was saved, so there's still no source on file.
-    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/source", &token)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.is_null(),
-        "a disabled provider's link is never saved: {body:?}"
-    );
 }
 
 #[tokio::test]
-async fn sync_without_a_saved_source_is_404() {
-    let app = test_app_with_catalog().await;
-    let (token, _) = register(&app, "eager@example.com", "password123").await;
-
-    let (status, headers, _) = send(
-        &app,
-        json_with_bearer("POST", "/api/collection/mtg/sync", &token, json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(cache_control(&headers), Some("no-store"));
-}
-
-#[tokio::test]
-async fn unknown_game_is_404_for_source_routes() {
+async fn link_import_unknown_game_is_404() {
     let app = test_app_with_catalog().await;
     let (token, _) = register(&app, "wrong-game@example.com", "password123").await;
 
     let (status, _, _) = send(
         &app,
-        get_with_bearer("/api/collection/pokemon/source", &token),
+        json_with_bearer(
+            "POST",
+            "/api/collection/pokemon/import",
+            &token,
+            json!({ "provider": "archidekt", "source": "1042487", "mode": "overwrite" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);

@@ -134,7 +134,7 @@ catalog) is planned but not implemented.
   §Price history) and are `no-store` (no CDN shields them), so one account
   can't sustain full-history revaluation scans against the weak prod Postgres, while a
   human flipping chart ranges in a burst still fits; and a tight `import` bucket (the
-  expensive import/sync/CSV-upload endpoints, ~10/min). Over-limit is `429` +
+  expensive import/CSV-upload endpoints, ~10/min). Over-limit is `429` +
   `Retry-After` + `no-store`. It gates on
   the same `RATE_LIMIT_ENABLED` switch and shares the per-IP limiter's caveats:
   in-memory by default, or Redis-backed via `REDIS_URL` (shared across instances, same
@@ -258,7 +258,7 @@ catalog) is planned but not implemented.
   `pg_advisory_xact_lock` keeps it exactly-once under a pooled writer), not Redis, so it
   holds across instances regardless of the rate-limiter backend.
 
-## Collection import & sync
+## Collection import
 
 - **Collection import (Archidekt / Moxfield):** the full mechanics (async `202` + job
   polling, the single-slot queue, per-provider 20/min rate limiters + `429` back-off,
@@ -266,10 +266,13 @@ catalog) is planned but not implemented.
   `docs/api-contracts.md`. The trade-offs: both providers' APIs are unofficial and
   undocumented (may break on their side); a private/missing collection is a `404`, an
   empty one a `422`, and a mirror/replace that matches **zero** catalog cards is refused
-  (so it can't wipe a collection against a misresolved/unsynced source). A saved re-sync
-  mirrors (replace) — or, when the link opted into **smart** sync, runs the incremental
-  smart path — and stamps `last_synced_at`, but there's **no automatic background
-  sync** — re-sync is user-triggered. Cards not in our catalog are skipped (surfaced in
+  (so it can't wipe a collection against a misresolved/unsynced source). Every import is
+  **one-off and user-triggered**: nothing about the source is stored, so there is no saved
+  link, no re-sync, and no background sync. (Both were removed along with the incremental
+  "smart" sync they existed to make cheap — an incremental re-sync that could never remove
+  a card deleted upstream was a second, subtly-wrong reconcile path to maintain for a
+  saved-link surface almost nobody drove; `m..072` drops `collection_sources`.) Cards not
+  in our catalog are skipped (surfaced in
   the summary's `unmatched_*`). The layer is provider-generic: another service is a new
   `Provider` variant + module. The import **job queue + per-provider rate limiters
   remain per-process** even with `REDIS_URL` set (Redis backs only the auth/user rate
@@ -279,11 +282,11 @@ catalog) is planned but not implemented.
   distributed rate limiter (or a dedicated worker). This is intentionally out of
   scope — imports are rare, single-slot, and the client just re-imports.
 - **Moxfield link import is temporarily disabled:** because we don't yet have an approved
-  User-Agent (below), Moxfield's *live* import — the one-off link import and saved-link
-  re-sync — is turned off for now. `Provider::network_import_enabled()` is the single
-  source of truth (returns `false` for Moxfield); the import handlers reject a Moxfield
-  URL import / saved-link save / re-sync with a `422` pointing the user at the CSV upload,
-  and the web import dialog shows Moxfield in the link picker but greys it out. Moxfield's
+  User-Agent (below), Moxfield's *live* link import is turned off for now.
+  `Provider::network_import_enabled()` is the single source of truth (returns `false` for
+  Moxfield); the import handlers reject a Moxfield URL import with a `422` pointing the
+  user at the CSV upload, and the web import dialog shows Moxfield in the link picker but
+  greys it out. Moxfield's
   **CSV upload** needs no network and is unaffected — it's the supported way to import a
   Moxfield collection meanwhile. Re-enable by flipping that method to `true` (and dropping
   the `disabled` flag on the web picker's Moxfield entry) once the approved UA is in place.
@@ -297,20 +300,8 @@ catalog) is planned but not implemented.
   fetch carries a whole-request 60s deadline so a tarpitted import fails instead of
   monopolising the single import slot for hours. Moxfield pages 100 rows at a time
   (`/v1/collections/search/{id}`, paged on `totalPages`), so URL imports are much faster
-  than Archidekt's 25-row pages; smart sync uses `sortType=lastUpdated`. `isProxy` rows
-  are skipped. Binder URLs (`/binders/…`) are a different endpoint and are rejected —
+  than Archidekt's 25-row pages. `isProxy` rows are skipped. Binder URLs (`/binders/…`) are a different endpoint and are rejected —
   only collection URLs import for now.
-- **Smart (incremental) sync (issue #101):** smart trades completeness for speed — it
-  pages newest-updated-first and stops at the first already-synced page, so it only
-  updates recently-changed cards and **never removes cards deleted upstream** (run a full
-  mirror/replace for that). Two residual edges, both benign and documented in
-  the `collection_import` module: (1) it relies on Archidekt's `?orderBy=-updatedAt` truly
-  reflecting edit time, and on pagination staying stable mid-fetch — a collection edited
-  *during* a sync could shift rows across the page boundary; (2) a card whose *same
-  finish* is split across several provider rows (different condition/language/tags) where
-  the recently-edited row's partial aggregate happens to equal the stale local count can
-  be under-counted, since the older sibling rows sit in the unscanned tail. Both resolve
-  on the next full mirror/replace, which is always authoritative.
 - **Collection CSV upload:** the mechanics and the defence-in-depth bounds (16 MB body
   limit, row cap, UTF-8-only, BOM strip, per-field bounds) are in
   `docs/api-contracts.md`. The trade-offs: the shape sniff must check **Archidekt
@@ -347,7 +338,7 @@ catalog) is planned but not implemented.
   a single **Quantity** and preserves the foil count on edits: a foil sealed variant is a
   separate TCGplayer SKU, not a finish of the same holding. Product lists are deliberately
   **fixed-sort (recency) and unfiltered** (no `q`/`sort`/facets) because personal sealed lists
-  are expected to stay small. Collection import/sync/export and public-sharing remain
+  are expected to stay small. Collection import/export and public-sharing remain
   card-only, so adding sealed products does not silently change provider round trips. The
   collection value-history chart does include sealed holdings as a separate line, and the
   movers panel switches between independent Singles and Sealed rankings; both reuse the same
@@ -372,9 +363,8 @@ catalog) is planned but not implemented.
   the `741★` printing lands as its own owned card *beside* the `741` you already track —
   two rows for one card. Our model tracks regular **and** foil per card, so
   `collection_import::consolidate` folds a foil-★ holding onto its base as a **foil copy**.
-  Two folds run before every reconcile (full network import, CSV upload, and smart
-  re-sync — smart remaps per page so its early-stop still fires): the **incoming** import is
-  remapped onto the base (`apply_foil_remap`/`consolidate_local`), and any star row the user
+  Two folds run before every reconcile (network import, CSV upload, and pasted text): the
+  **incoming** import is remapped onto the base (`apply_foil_remap`), and any star row the user
   **already holds** — a legacy pre-#209 import, or a manual add of the `…★` catalog card
   (which is still a distinct, addable card) — is folded onto its base and deleted first
   (`fold_existing_star_holdings`), so a star holding never coexists with the base and
@@ -402,8 +392,8 @@ catalog) is planned but not implemented.
   base's nonfoil but not the foil-★ sets the base's *absolute* counts (foil → 0) — the same
   authoritative behavior Overwrite already applies to any card owned in both finishes (the
   provider models the foil separately, so a full import that omits the `…★` means "no foil");
-  Merge adds and Smart preserves the unobserved foil, so a user tracking a foil their import
-  omits should use those modes. Legacy duplicate rows that predate the fix are also folded
+  Merge adds instead, so a user tracking a foil their import omits should use that mode.
+  Legacy duplicate rows that predate the fix are also folded
   once by the `m…023_consolidate_foil_star_holdings` **migration** (the same rule in
   cross-backend SQL, wrapped in a transaction so a crash-interrupted boot re-runs cleanly;
   irreversible, so `down` is a no-op) — belt-and-braces for a user who never re-imports; a
@@ -538,7 +528,7 @@ catalog) is planned but not implemented.
   (the default), only generic Mainboard rows are filed into the preset type buckets above. It
   deliberately reuses the lower collection seams — foil classification,
   external-id and Moxfield `(set, collector_number)` resolution, provider throttling/back-off,
-  and `ImportError` mapping — but never calls collection reconcile/consolidate/smart. Empty and
+  and `ImportError` mapping — but never calls collection reconcile/consolidate. Empty and
   zero-match imports create nothing. Archidekt permits multiple categories per card while our
   schema files one row in one section, so its first category is the primary section; this avoids
   multiplying the card count. Moxfield's boards map directly, including signature spells,
