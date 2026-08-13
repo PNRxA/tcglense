@@ -116,6 +116,26 @@ describe('DeckCardRow', () => {
     expect(pips).toEqual(['4 generic mana', 'Green mana', 'Green mana'])
   })
 
+  // The other half of the guard the fix rewrote: a card with no cost on either side must
+  // render no pips at all, not an empty symbol run.
+  it('renders no mana column for a card with no cost on any face', () => {
+    const abbey: Card = {
+      ...card,
+      id: 'westvale',
+      name: 'Westvale Abbey // Ormendahl, Profane Prince',
+      layout: 'transform',
+      mana_cost: null,
+      type_line: 'Land // Legendary Creature — Demon',
+      faces: [
+        { ...FACE, name: 'Westvale Abbey', mana_cost: '' },
+        { ...FACE, name: 'Ormendahl, Profane Prince', mana_cost: '' },
+      ],
+    }
+    const wrapper = mountRow('', { ...entry, card: abbey })
+
+    expect(wrapper.findAll('i.ms')).toHaveLength(0)
+  })
+
   it('keeps the card name in its own column, linking to the card page', () => {
     const link = mountRow().find('a')
     expect(link.attributes('href')).toBe('/cards/mtg/cards/zada')

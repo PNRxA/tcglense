@@ -17,9 +17,16 @@ defineProps<{ owned: number; wanted: number }>()
 
 <template>
   <div v-if="owned > 0 || wanted > 0" class="flex shrink-0 items-center gap-1">
+    <!-- The icon carries the meaning and the number carries the count, so the chip's text
+      alone reads as a bare "2". `title` is a description, not a name — it only stands in
+      when there is no name at all — so each chip names itself the way ManaSymbols' pips do.
+      That matters more here than it used to: on a card tile these now come *before* the
+      deck count in reading order, and three unlabelled numbers in a row is not a tile. -->
     <span
       v-if="owned > 0"
       class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+      role="img"
+      :aria-label="`You own ${owned} of this card`"
       :title="`You own ${owned} of this card`"
     >
       <Library class="size-3" aria-hidden="true" />{{ owned }}
@@ -27,6 +34,8 @@ defineProps<{ owned: number; wanted: number }>()
     <span
       v-if="wanted > 0"
       class="bg-background/90 text-foreground inline-flex cursor-default items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs shadow select-none"
+      role="img"
+      :aria-label="`You have ${wanted} of this card on your wish list`"
       :title="`You have ${wanted} of this card on your wish list`"
     >
       <Heart class="size-3" aria-hidden="true" />{{ wanted }}

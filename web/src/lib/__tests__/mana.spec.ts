@@ -106,14 +106,20 @@ describe('colorLettersToText', () => {
 describe('displayManaCost', () => {
   it('keeps the printed top-level cost, including a split card’s combined one', () => {
     expect(displayManaCost({ mana_cost: '{3}{R}', faces: [] })).toBe('{3}{R}')
-    // Split / adventure / flip carry the combined cost at the top level; it wins over the
+    // Fire // Ice: a split card's top level is the combined cost, and it wins over the
     // faces, which would otherwise report only half of what the card costs.
     expect(
       displayManaCost({
-        mana_cost: '{4}{W} // {1}{W}',
-        faces: [{ mana_cost: '{4}{W}' }, { mana_cost: '{1}{W}' }],
+        mana_cost: '{1}{R} // {1}{U}',
+        faces: [{ mana_cost: '{1}{R}' }, { mana_cost: '{1}{U}' }],
       }),
-    ).toBe('{4}{W} // {1}{W}')
+    ).toBe('{1}{R} // {1}{U}')
+    // Midgar, City of Mako // Reactor Raid: an adventure *land*, whose top-level cost is the
+    // adventure half's alone and whose first face states none. The top level still wins —
+    // it's what the card is printed with, and it's the only half you can cast.
+    expect(
+      displayManaCost({ mana_cost: '{2}{B}', faces: [{ mana_cost: '' }, { mana_cost: '{2}{B}' }] }),
+    ).toBe('{2}{B}')
   })
 
   // The bug this exists for: Scryfall gives a transforming card no top-level cost at all,

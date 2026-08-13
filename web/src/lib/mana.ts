@@ -208,8 +208,11 @@ export interface ManaCostCard {
  * their own — `transform`, `modal_dfc`, `reversible_card` — so a surface reading
  * `card.mana_cost` alone leaves the cell blank for every transforming Saga and MDFC in a
  * deck: "The Legend of Kyoshi // Avatar Kyoshi" has `{4}{G}{G}` on its front face and
- * nothing at the top level. Split / adventure / flip cards *do* carry a combined
- * top-level cost (`{4}{W} // {1}{W}`), so they keep it untouched.
+ * nothing at the top level. Every other layout states a top-level cost and keeps it
+ * untouched, whatever it means there: split and adventure cards carry the *combined*
+ * `{1}{R} // {1}{U}`, a flip card carries its front face's cost alone (`{1}{U}` for Erayo,
+ * Soratami Ascendant — the flipped half never has one), and the handful of adventure
+ * *lands* carry only the adventure half's (`{2}{B}` for Midgar, City of Mako).
  *
  * The fallback is the first face that states a cost — the front face, which is the half
  * you cast from hand and the same half a compact row already shows the type line of. A

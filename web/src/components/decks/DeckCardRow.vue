@@ -44,9 +44,11 @@ const price = computed(() => {
 // for no extra information at this density.
 const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? '')
 
-// …and the front face's cost, for the same reason — via the shared seam, because a
-// transforming card has no top-level `mana_cost` at all and reading that field directly
-// left the column empty for every one of them.
+// The cost goes through the shared seam, because a transforming card has no top-level
+// `mana_cost` at all and reading that field directly left this column empty for every one
+// of them. Note it is *not* truncated to the front half the way the type line above is: a
+// split or adventure card's printed cost is the combined top-level one, and the seam hands
+// it back whole.
 const manaCost = computed(() => displayManaCost(card.value))
 </script>
 
