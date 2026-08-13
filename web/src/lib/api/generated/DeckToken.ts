@@ -25,6 +25,8 @@ type_line: string | null,
 card: Card | null, 
 /**
  * The deck's cards that make it, by name, capped at 20 — `source_count` stays exact.
+ * One entry per **card**: a card held as two printings is one source running the copies
+ * of both (see [`fold_sources_by_name`]).
  */
 sources: Array<DeckTokenSource>, 
 /**

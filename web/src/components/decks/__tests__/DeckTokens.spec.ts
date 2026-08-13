@@ -13,7 +13,8 @@ import type { Card, DeckTokens as DeckTokensPayload } from '@/lib/api'
 const query = vi.hoisted(() => ({
   pending: false,
   fetching: false,
-  error: false,
+  loadingError: false,
+  refetchError: false,
   data: null as DeckTokensPayload | null,
   authedCalls: 0,
   publicCalls: 0,
@@ -26,7 +27,8 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     data: computed(() => (query.pending ? undefined : (query.data ?? undefined))),
     isPending: computed(() => query.pending),
     isFetching: computed(() => query.fetching || query.pending),
-    isError: computed(() => query.error),
+    isLoadingError: computed(() => query.loadingError),
+    isRefetchError: computed(() => query.refetchError),
   })
   return {
     useDeckTokensQuery: () => {
@@ -112,7 +114,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   query.pending = false
   query.fetching = false
-  query.error = false
+  query.loadingError = false
+  query.refetchError = false
   query.data = makePayload()
   query.authedCalls = 0
   query.publicCalls = 0
@@ -192,6 +195,27 @@ describe('DeckTokens', () => {
   it('warns that a non-empty list may be short while cards are unchecked', () => {
     query.data = makePayload({ unchecked_count: 3 })
     expect(mountPanel().text()).toContain('may be short')
+  })
+
+  it('keeps the list on screen when a background refetch fails', () => {
+    // query-core flips `status` to 'error' on ANY failed fetch while keeping `data`, so
+    // gating the destructive branch on bare `isError` would swap a good list for "couldn't
+    // work out" the first time an invalidation-driven refetch hiccups (issue #622).
+    query.refetchError = true
+    const wrapper = mountPanel()
+
+    expect(wrapper.text()).toContain('Goblin')
+    expect(wrapper.text()).not.toContain("Couldn't work out")
+    expect(wrapper.text()).toContain("Couldn't refresh")
+  })
+
+  it('says it couldn’t work them out only when nothing ever loaded', () => {
+    query.loadingError = true
+    query.data = null
+    const text = mountPanel().text()
+
+    expect(text).toContain("Couldn't work out")
+    expect(text).not.toContain("None of this deck's cards make tokens")
   })
 
   it('picks its query by the addressing mode it was mounted with', () => {

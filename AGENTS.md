@@ -257,7 +257,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   reports the NULLs as `unchecked_count` rather than answering "this deck makes no tokens".
   Nothing may state **how many** of a token to bring: "create a Treasure" and "create X
   Treasures" are the same relation upstream, so the response counts *cards*, and the SPA
-  panel's tests pin that it never words a token quantity.
+  panel's tests pin that it never words a token quantity. It counts **cards**, so the sources
+  fold by name (`fold_sources_by_name`) like `rules`'s `NameFold` does — a deck row addresses a
+  printing, and a split playset is one card making one token, not two.
   **Legality is two modules, not one:** `analysis::legality` judges each card against the
   format's Scryfall data, `analysis::rules` judges the deck (size, copy limit, command zone,
   colour identity) and the former composes the latter, so a new check belongs in the rules

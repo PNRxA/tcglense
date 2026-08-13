@@ -5,10 +5,11 @@
  */
 export type DeckTokenSource = { 
 /**
- * External (provider) id of the deck's card.
+ * External (provider) id of the deck's card — the lowest-sorting one it is held under,
+ * when the deck holds the card as more than one printing.
  */
 card_id: string, name: string, 
 /**
- * Copies of it in the deck proper, both finishes together.
+ * Copies of it in the deck proper: both finishes, and every printing of it, together.
  */
 quantity: number, };

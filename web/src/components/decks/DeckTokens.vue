@@ -4,6 +4,7 @@ import { ChevronDown, Sparkles } from '@lucide/vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import CardTile from '@/components/cards/CardTile.vue'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import {
   useDeckTokensQuery,
@@ -103,11 +104,20 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
         <Skeleton v-for="n in 6" :key="n" class="aspect-[61/85] w-full rounded-lg" />
       </div>
 
-      <p v-else-if="tokensQuery.isError.value" class="text-muted-foreground text-sm">
+      <!-- `isLoadingError`, not `isError` (issue #622): query-core flips `status` to 'error'
+        on ANY failed fetch while keeping `data`, so a hiccuped background refetch would
+        otherwise swap a perfectly good list for "couldn't work out" — while the header two
+        rows up still counts the tokens from that same retained data. A failed *refetch* keeps
+        the grid and says so above it instead. -->
+      <p v-else-if="tokensQuery.isLoadingError.value" class="text-muted-foreground text-sm">
         Couldn't work out which tokens this deck makes.
       </p>
 
       <template v-else-if="tokens.length">
+        <StaleNotice
+          v-if="tokensQuery.isRefetchError.value"
+          label="Couldn't refresh — showing the tokens as they last loaded."
+        />
         <ul class="grid gap-3" :class="DECK_CARD_SIZE_GRID_CLASS[cardSize.size]">
           <li v-for="token in tokens" :key="token.key">
             <!-- A token with a printing in the catalog is a card like any other: same tile,

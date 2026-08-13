@@ -68,10 +68,11 @@ const RESOLVE_CHUNK: usize = 900;
 #[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct DeckTokenSource {
-    /// External (provider) id of the deck's card.
+    /// External (provider) id of the deck's card — the lowest-sorting one it is held under,
+    /// when the deck holds the card as more than one printing.
     pub card_id: String,
     pub name: String,
-    /// Copies of it in the deck proper, both finishes together.
+    /// Copies of it in the deck proper: both finishes, and every printing of it, together.
     pub quantity: i64,
 }
 
@@ -92,6 +93,8 @@ pub struct DeckToken {
     /// above still describe it, because they were stored alongside the reference.
     pub card: Option<CardResponse>,
     /// The deck's cards that make it, by name, capped at 20 — `source_count` stays exact.
+    /// One entry per **card**: a card held as two printings is one source running the copies
+    /// of both (see [`fold_sources_by_name`]).
     pub sources: Vec<DeckTokenSource>,
     /// How many distinct cards in the deck make it.
     pub source_count: i64,
@@ -288,6 +291,36 @@ fn group_tokens<'a>(
         .collect()
 }
 
+/// Fold a token's sources from one entry per **printing** to one per **card**.
+///
+/// [`TokenGroup::sources`] is keyed by printing, because that is what a deck row and a token
+/// reference address — but a split playset (two copies of one art, two of another) is one
+/// card making one token, and the wire says `source_count` is "how many distinct cards".
+/// Reporting two would inflate the badge, print the same name as two chips, and rank the
+/// token above one genuinely made by two different cards.
+///
+/// Folding by **name** is the same identity the copy limit uses (`rules`'s `NameFold`): the
+/// catalog stores the printing's name, so two arts of a card share it. The representative
+/// `card_id` is the lowest of the folded printings' ids, so the chip's link is stable rather
+/// than whichever printing hashed first.
+fn fold_sources_by_name(sources: HashMap<&str, (&str, i64)>) -> Vec<DeckTokenSource> {
+    let mut folded: HashMap<String, DeckTokenSource> = HashMap::new();
+    for (card_id, (name, quantity)) in sources {
+        let entry = folded
+            .entry(name.to_lowercase())
+            .or_insert_with(|| DeckTokenSource {
+                card_id: card_id.to_string(),
+                name: name.to_string(),
+                quantity: 0,
+            });
+        entry.quantity = entry.quantity.saturating_add(quantity);
+        if card_id < entry.card_id.as_str() {
+            entry.card_id = card_id.to_string();
+        }
+    }
+    folded.into_values().collect()
+}
+
 /// Shape the grouped tokens into the wire response.
 fn build(demand: TokenDemand<'_>, resolved: &HashMap<String, card::Model>) -> DeckTokens {
     let mut tokens: Vec<DeckToken> = group_tokens(&demand.refs, resolved)
@@ -301,16 +334,8 @@ fn build(demand: TokenDemand<'_>, resolved: &HashMap<String, card::Model>) -> De
                 (None, None) => (String::new(), None),
             };
 
-            let source_count = group.sources.len() as i64;
-            let mut sources: Vec<DeckTokenSource> = group
-                .sources
-                .into_iter()
-                .map(|(card_id, (name, quantity))| DeckTokenSource {
-                    card_id: card_id.to_string(),
-                    name: name.to_string(),
-                    quantity,
-                })
-                .collect();
+            let mut sources = fold_sources_by_name(group.sources);
+            let source_count = sources.len() as i64;
             sources.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.card_id.cmp(&b.card_id)));
             sources.truncate(MAX_LISTED_SOURCES);
 
@@ -567,6 +592,51 @@ mod tests {
         assert_eq!(result.tokens.len(), 1);
         assert_eq!(result.tokens[0].source_count, 1);
         assert_eq!(result.tokens[0].sources[0].quantity, 4);
+    }
+
+    /// A split playset — two copies of one art, two of another — is **one card** making one
+    /// token. Counting the printings would inflate the badge ("2 cards make it"), print the
+    /// same name as two chips, and rank the token above one two different cards make.
+    #[test]
+    fn a_card_held_as_two_printings_is_one_source() {
+        let rows = vec![token_row(
+            1,
+            "tok-goblin",
+            "Goblin",
+            "oracle-goblin",
+            "2024-11-15",
+        )];
+        let input = deck(
+            sections(),
+            vec![
+                entry("krenko-m13", "Krenko, Mob Boss", 1, 2, 0).tokens(&[(
+                    "tok-goblin",
+                    "Goblin",
+                    "Token Creature — Goblin",
+                )]),
+                entry("krenko-jmp", "Krenko, Mob Boss", 1, 1, 1).tokens(&[(
+                    "tok-goblin",
+                    "Goblin",
+                    "Token Creature — Goblin",
+                )]),
+            ],
+        );
+
+        let result = build(collect_demand(&input), &resolve(&rows, &["tok-goblin"]));
+        assert_eq!(result.tokens.len(), 1);
+        assert_eq!(
+            result.tokens[0].source_count, 1,
+            "one card, not two printings"
+        );
+        assert_eq!(result.tokens[0].sources.len(), 1);
+        assert_eq!(
+            result.tokens[0].sources[0].quantity, 4,
+            "the copies of both printings, both finishes"
+        );
+        assert_eq!(
+            result.tokens[0].sources[0].card_id, "krenko-jmp",
+            "the lowest-sorting printing represents the card, so the chip's link is stable"
+        );
     }
 
     /// A token whose printing isn't in the catalog still tells the player what to bring,

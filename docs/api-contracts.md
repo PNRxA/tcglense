@@ -1156,8 +1156,11 @@ across sets (the token printing's `oracle_id`, falling back to a name+type key) 
 a full `Card` payload for the newest referenced printing, or `null` when none of them is in
 the catalog — in which case `name`/`type_line` still describe it, because they were stored
 beside the reference. `sources` is `DeckTokenSource[] = { card_id, name, quantity }`, the
-deck's own cards that make it (by name, capped at 20, `quantity` summed across sections);
-`source_count` stays exact. Three properties are load-bearing and match `cards.token_parts`
+deck's own cards that make it (by name, capped at 20); `source_count` stays exact. A source is
+one **card**, not one printing — a split playset is one entry whose `quantity` sums both arts
+(and both finishes, and every section), because counting printings would claim two cards make
+a token that one does. `card_id` is then the lowest-sorting printing the deck holds it under,
+so the link is stable. Three properties are load-bearing and match `cards.token_parts`
 (Scryfall's `all_parts`, filtered to tokens + emblems at ingest — see `scryfall::map`):
 the relation is **oracle-level**, so which printing a deck holds never changes what it makes;
 the referenced id is **set-specific**, which is why the grouping key is the token's own
