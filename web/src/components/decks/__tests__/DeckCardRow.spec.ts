@@ -6,7 +6,17 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import DeckCardRow from '../DeckCardRow.vue'
 import OwnedCountBadge from '@/components/cards/OwnedCountBadge.vue'
-import type { Card, DeckCardEntry } from '@/lib/api'
+import type { Card, CardFace, DeckCardEntry } from '@/lib/api'
+
+const FACE: CardFace = {
+  name: null,
+  mana_cost: null,
+  type_line: null,
+  oracle_text: null,
+  power: null,
+  toughness: null,
+  loyalty: null,
+}
 
 const card: Card = {
   id: 'zada',
@@ -41,7 +51,7 @@ const entry: DeckCardEntry = { card, section_id: 1, quantity: 1, foil_quantity: 
 
 // The row links to the card page and reads the display currency (a Pinia store that observes
 // the conversion rates through vue-query), so the tree needs all three plugins.
-function mountRow(control = '') {
+function mountRow(control = '', rowEntry: DeckCardEntry = entry) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/cards/:game/cards/:id', component: { template: '<div />' } }],
@@ -50,7 +60,7 @@ function mountRow(control = '') {
   setActivePinia(pinia)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return mount(DeckCardRow, {
-    props: { game: 'mtg', entry },
+    props: { game: 'mtg', entry: rowEntry },
     slots: { control },
     global: {
       plugins: [router, pinia, [VueQueryPlugin, { queryClient }]],
@@ -82,6 +92,28 @@ describe('DeckCardRow', () => {
       .findAll('span')
       .filter((s) => /(total|foil)$/.test(s.attributes('aria-label') ?? ''))
     expect(chips.map((c) => c.attributes('aria-label'))).toEqual(['2 total', '1 foil'])
+  })
+
+  // A transforming card (a Saga that becomes a creature, an MDFC) carries no top-level
+  // mana cost at all — Scryfall puts it on the faces — so reading `card.mana_cost` straight
+  // left the column blank for every one of them in a deck.
+  it('shows the front face’s cost for a card with no top-level mana cost', () => {
+    const kyoshi: Card = {
+      ...card,
+      id: 'kyoshi',
+      name: 'The Legend of Kyoshi // Avatar Kyoshi',
+      layout: 'transform',
+      mana_cost: null,
+      type_line: 'Enchantment — Saga // Legendary Creature — Avatar',
+      faces: [
+        { ...FACE, name: 'The Legend of Kyoshi', mana_cost: '{4}{G}{G}' },
+        { ...FACE, name: 'Avatar Kyoshi', mana_cost: '' },
+      ],
+    }
+    const wrapper = mountRow('', { ...entry, card: kyoshi })
+
+    const pips = wrapper.findAll('i.ms').map((i) => i.attributes('aria-label'))
+    expect(pips).toEqual(['4 generic mana', 'Green mana', 'Green mana'])
   })
 
   it('keeps the card name in its own column, linking to the card page', () => {

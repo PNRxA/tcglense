@@ -6,6 +6,7 @@ import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import type { DeckCardEntry, DeckIssueStatus } from '@/lib/api'
 import { displayUsdPrice } from '@/lib/cardPrice'
 import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
+import { displayManaCost } from '@/lib/mana'
 
 // One card as a compact row — the "list" deck view (issue #570). The image grid is the
 // right shape for building a deck; this is the right shape for *reading* one: a 100-card
@@ -42,6 +43,11 @@ const price = computed(() => {
 // The front face's types only — a modal DFC's back half would double the column's width
 // for no extra information at this density.
 const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? '')
+
+// …and the front face's cost, for the same reason — via the shared seam, because a
+// transforming card has no top-level `mana_cost` at all and reading that field directly
+// left the column empty for every one of them.
+const manaCost = computed(() => displayManaCost(card.value))
 </script>
 
 <template>
@@ -69,11 +75,7 @@ const typeLine = computed(() => card.value.type_line?.split('//')[0]?.trim() ?? 
       >{{ card.name }}</a
     >
 
-    <ManaSymbols
-      v-if="card.mana_cost"
-      :text="card.mana_cost"
-      class="hidden shrink-0 text-xs sm:inline"
-    />
+    <ManaSymbols v-if="manaCost" :text="manaCost" class="hidden shrink-0 text-xs sm:inline" />
 
     <span class="text-muted-foreground hidden w-52 shrink-0 truncate text-xs lg:inline">{{
       typeLine

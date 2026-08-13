@@ -193,3 +193,31 @@ export function stripManaBraces(text: string): string {
 export function colorLettersToText(letters: readonly string[]): string {
   return letters.map((letter) => `{${letter}}`).join('')
 }
+
+/** The slice of a `Card` {@link displayManaCost} reads — structural, so this stays a
+ *  dependency-free text module (and a test needn't fabricate a whole printing). */
+export interface ManaCostCard {
+  mana_cost: string | null
+  faces: readonly { mana_cost: string | null }[]
+}
+
+/**
+ * The mana cost to show for a printing where there's room for exactly one.
+ *
+ * Scryfall stores **no top-level `mana_cost`** for the layouts whose faces each carry
+ * their own — `transform`, `modal_dfc`, `reversible_card` — so a surface reading
+ * `card.mana_cost` alone leaves the cell blank for every transforming Saga and MDFC in a
+ * deck: "The Legend of Kyoshi // Avatar Kyoshi" has `{4}{G}{G}` on its front face and
+ * nothing at the top level. Split / adventure / flip cards *do* carry a combined
+ * top-level cost (`{4}{W} // {1}{W}`), so they keep it untouched.
+ *
+ * The fallback is the first face that states a cost — the front face, which is the half
+ * you cast from hand and the same half a compact row already shows the type line of. A
+ * face with an empty cost (a transformed creature, an MDFC's back land) is skipped
+ * rather than winning, so a card with no cost on either side — Westvale Abbey // Ormendahl,
+ * Profane Prince — still answers `null` and renders nothing at all.
+ */
+export function displayManaCost(card: ManaCostCard): string | null {
+  if (card.mana_cost) return card.mana_cost
+  return card.faces.find((face) => face.mana_cost)?.mana_cost ?? null
+}
