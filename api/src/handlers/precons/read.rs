@@ -22,15 +22,16 @@ use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
-    MAX_PAGE_SIZE, Page, build_page, every_word_matches, load_group_set_codes, product_response,
-    require_game, resolve_page, set_name_map, summarize_holdings, trim_query,
+    MAX_PAGE_SIZE, Page, build_page, every_word_matches, identity_printing_ids, load_card,
+    load_group_set_codes, product_response, require_game, resolve_page, set_name_map,
+    summarize_holdings, trim_query,
 };
 use crate::state::AppState;
 
 use super::{
-    PreconCardEntry, PreconDeckDetail, PreconDeckResponse, PreconFaceCard, PreconFacets,
-    PreconGroup, PreconGrouping, PreconListParams, PreconSetRef, PreconTypeRef, load_precon,
-    precon_response,
+    CardPreconRef, CardPreconsParams, PreconCardEntry, PreconDeckDetail, PreconDeckResponse,
+    PreconFaceCard, PreconFacets, PreconGroup, PreconGrouping, PreconListParams, PreconSetRef,
+    PreconTypeRef, load_precon, precon_response,
 };
 
 /// List preconstructed decks
@@ -640,4 +641,117 @@ async fn face_cards(
             )
         })
         .collect())
+}
+
+/// List preconstructed decks containing a card
+///
+/// `GET /api/games/{game}/cards/{id}/precons` -> the published preconstructed decks that
+/// include this card — **any printing** of it (gameplay identity, as `/prints` resolves
+/// siblings), on any board — newest deck first, name then slug as the tiebreak. Each entry
+/// carries the precon's browse header plus the copy count, whether the inclusion is
+/// foil-only, and whether the card leads the deck from its command zone. Paginated like
+/// the precon browse (a format staple is in hundreds of decks); an empty first page when
+/// the card is in none. `404` for an unknown game or card.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/{id}/precons",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("id" = String, Path, description = "External card id"),
+        ("page" = Option<u64>, Query, description = "1-based page number"),
+        ("page_size" = Option<u64>, Query, description = "Rows per page (default 60, max 200)"),
+    ),
+    responses(
+        (status = 200, description = "A page of the preconstructed decks containing any printing of the card, newest first.", body = Page<CardPreconRef>),
+        (status = 404, description = "Unknown game or card."),
+    ),
+)]
+pub async fn card_precons(
+    State(state): State<AppState>,
+    Path((game, id)): Path<(String, String)>,
+    Query(params): Query<CardPreconsParams>,
+) -> Result<Json<Page<CardPreconRef>>, AppError> {
+    require_game(&game)?;
+    let card = load_card(&state, &game, &id).await?;
+    let (page, page_size) = resolve_page(
+        params.page,
+        params.page_size,
+        DEFAULT_PAGE_SIZE,
+        MAX_PAGE_SIZE,
+    );
+
+    // Every membership row for any printing of the card (hits
+    // idx_precon_deck_cards_card_id). No game filter here — a precon card row carries
+    // none; the printing ids are already scoped to this game's cards.
+    let printing_ids = identity_printing_ids(&state, &card).await?;
+    let rows: Vec<(i32, String, i32, bool)> = PreconDeckCard::find()
+        .select_only()
+        .column(precon_deck_card::Column::PreconDeckId)
+        .column(precon_deck_card::Column::Board)
+        .column(precon_deck_card::Column::Quantity)
+        .column(precon_deck_card::Column::Foil)
+        .filter(precon_deck_card::Column::CardId.is_in(printing_ids))
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    if rows.is_empty() {
+        return Ok(Json(build_page(Vec::new(), page, page_size, 0)));
+    }
+
+    // Fold to one entry per precon: copies summed across boards/printings/finishes, `foil`
+    // ANDed down (foil-only inclusion, the sealed-membership rule), `commander` ORed up.
+    struct Membership {
+        quantity: i64,
+        foil: bool,
+        commander: bool,
+    }
+    let mut memberships: HashMap<i32, Membership> = HashMap::new();
+    for (precon_id, board, quantity, foil) in rows {
+        let entry = memberships.entry(precon_id).or_insert(Membership {
+            quantity: 0,
+            foil: true,
+            commander: false,
+        });
+        entry.quantity += i64::from(quantity);
+        entry.foil = entry.foil && foil;
+        entry.commander = entry.commander || board == PreconBoard::Commander.as_str();
+    }
+
+    // Page over the referenced precon rows themselves (a membership row whose deck row
+    // vanished mid-reimport simply doesn't come back), ordered exactly as the browse's
+    // default sort so the two lists read the same way.
+    let precon_ids: Vec<i32> = memberships.keys().copied().collect();
+    let query = PreconDeck::find()
+        .filter(precon_deck::Column::Game.eq(game.as_str()))
+        .filter(precon_deck::Column::Id.is_in(precon_ids))
+        .order_by_with_nulls(
+            precon_deck::Column::ReleasedAt,
+            sea_orm::Order::Desc,
+            NullOrdering::Last,
+        )
+        .order_by_asc(precon_deck::Column::Name)
+        .order_by_asc(precon_deck::Column::Slug);
+    let paginator = query.paginate(&state.db, page_size);
+    let total = paginator.num_items().await?;
+    let precon_rows = paginator.fetch_page(page - 1).await?;
+
+    let names = set_name_map(&state, &game).await?;
+    let faces = face_cards(&state, &precon_rows).await?;
+    let data: Vec<CardPreconRef> = precon_rows
+        .iter()
+        .filter_map(|row| {
+            memberships.get(&row.id).map(|m| CardPreconRef {
+                precon: precon_response(
+                    row,
+                    names.get(&row.set_code).cloned(),
+                    row.face_card_id.and_then(|id| faces.get(&id).cloned()),
+                ),
+                quantity: m.quantity,
+                foil: m.foil,
+                commander: m.commander,
+            })
+        })
+        .collect();
+    Ok(Json(build_page(data, page, page_size, total)))
 }

@@ -1,5 +1,6 @@
 import { request, requestBlob } from './client'
 import type {
+  CardDeckRef,
   ChangeDeckCardPrintingRequest,
   CollectionQuantities,
   CreateDeckRequest,
@@ -26,6 +27,7 @@ import type {
 // an access `token` (via the auth store's `authFetch`); the public reads take none.
 
 export type {
+  CardDeckRef,
   CreateDeckRequest,
   Deck,
   DeckCardEntry,
@@ -70,6 +72,18 @@ export function getNeededCards(
   mode: NeedMode = 'card',
 ): Promise<{ data: NeededCard[] }> {
   return request<{ data: NeededCard[] }>(`${base(game)}/needed?mode=${mode}`, { token })
+}
+
+/** The caller's decks containing a card — **any printing** of it (gameplay identity) —
+ * most recently updated first, with the copies split between the deck proper and the
+ * maybeboard. The card page's "in your decks" read. */
+export function getDecksContaining(
+  token: string,
+  game: string,
+  id: string,
+): Promise<{ data: CardDeckRef[] }> {
+  const i = encodeURIComponent(id)
+  return request<{ data: CardDeckRef[] }>(`${base(game)}/containing/${i}`, { token })
 }
 
 /** Create a deck (seeded with the default sections) and return its full detail. */

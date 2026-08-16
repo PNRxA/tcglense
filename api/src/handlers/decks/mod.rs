@@ -41,6 +41,7 @@ use sea_orm::prelude::DateTimeUtc;
 
 mod analysis;
 mod cards;
+mod containing;
 mod copy;
 mod export;
 mod facets;
@@ -55,6 +56,7 @@ pub use analysis::{
     deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens, list_deck_formats,
 };
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
+pub use containing::decks_containing_card;
 pub use copy::copy_public_deck;
 // The whole-deck write seam, shared with the precon copy (`handlers::precons::copy`) — both
 // duplicate a source whose card ids are already internal, so both write through it.
@@ -78,6 +80,7 @@ pub use analysis::{
     __path_deck_tokens, __path_list_deck_formats,
 };
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
+pub use containing::__path_decks_containing_card;
 pub use copy::__path_copy_public_deck;
 pub use export::__path_export_deck;
 pub use folders::{
@@ -569,6 +572,23 @@ pub struct NeededCard {
     pub owned: i64,
     /// The caller's decks that want this card, by name.
     pub decks: Vec<NeededCardDeck>,
+}
+
+/// One of the caller's decks that contains a card, for the card page's "in your decks"
+/// panel: the deck's full list header plus how many copies it runs.
+///
+/// Containment is at **gameplay identity** (any printing counts, the stance `/prints` and
+/// the needed-cards list take). The copies are split rather than summed: a deck that only
+/// *considers* the card (`quantity == 0`, `maybeboard_quantity > 0`) is still named, but a
+/// client can say so instead of claiming the deck runs it.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CardDeckRef {
+    pub deck: DeckResponse,
+    /// Copies (regular + foil, any printing) in the deck proper — maybeboards excluded.
+    pub quantity: i64,
+    /// Copies in the deck's maybeboard sections, counted apart from `quantity`.
+    pub maybeboard_quantity: i64,
 }
 
 // ---------- Shared helpers ----------

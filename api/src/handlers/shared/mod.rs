@@ -37,7 +37,9 @@ pub(crate) use holdings::{
     holding_subtype_page, narrow_export_statement, narrow_summary_rows, resolve_holdings_list,
     resolve_set_scope, summarize_holdings, validate_quantity,
 };
-pub(crate) use lookup::{load_card, load_group_set_codes, load_set, require_game};
+pub(crate) use lookup::{
+    identity_printing_ids, load_card, load_group_set_codes, load_set, require_game,
+};
 pub(crate) use pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
     build_page, resolve_page, trim_query,

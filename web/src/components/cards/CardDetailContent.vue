@@ -12,6 +12,8 @@ import CardArtTags from '@/components/cards/CardArtTags.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
+import CardOwnedDecks from '@/components/decks/CardOwnedDecks.vue'
+import CardPreconDecks from '@/components/decks/CardPreconDecks.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -308,6 +310,14 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         <!-- Which sealed products this card is found in / can be pulled from / may be in.
           Renders nothing when the card is in no ingested product. -->
         <CardSealedProducts :game="game" :id="id" />
+
+        <!-- Which of the signed-in user's decks run this card (any printing). Renders
+          nothing signed out or when no deck holds it. -->
+        <CardOwnedDecks :game="game" :id="id" />
+
+        <!-- The preconstructed decks that include this card (any printing). Renders
+          nothing when no precon has it. -->
+        <CardPreconDecks :game="game" :id="id" />
 
         <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
           Keyed off the route id so it mounts before the card loads; renders nothing when
