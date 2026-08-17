@@ -2143,7 +2143,9 @@ async fn containing_names_only_the_callers_decks_across_printings() {
     let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
     add_deck_card(&app, &access, deck_id, section_id, PRINTING_A, 2).await;
 
-    // Either printing finds the deck: containment is gameplay identity, not the printing.
+    // Either printing finds the deck: containment is gameplay identity, not the printing —
+    // and each entry names the exact printing(s) the deck actually holds, so the page can
+    // say when the deck runs a different one than the printing on screen.
     for id in [PRINTING_A, PRINTING_B] {
         let (status, headers, body) = send(
             &app,
@@ -2158,7 +2160,33 @@ async fn containing_names_only_the_callers_decks_across_printings() {
         assert_eq!(data[0]["deck"]["name"], "Relic deck");
         assert_eq!(data[0]["quantity"], 2);
         assert_eq!(data[0]["maybeboard_quantity"], 0);
+        let printings = data[0]["printings"].as_array().expect("printings array");
+        assert_eq!(printings.len(), 1, "one exact printing held: {body:?}");
+        assert_eq!(printings[0]["id"], PRINTING_A);
+        assert_eq!(printings[0]["set_code"], "dmb");
+        assert_eq!(printings[0]["quantity"], 2);
     }
+
+    // Holding the second printing too lists both, most copies first.
+    add_deck_card(&app, &access, deck_id, section_id, PRINTING_B, 1).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/containing/{PRINTING_A}"), &access),
+    )
+    .await;
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data[0]["quantity"], 3);
+    let printings = data[0]["printings"].as_array().expect("printings array");
+    let held: Vec<(&str, i64)> = printings
+        .iter()
+        .map(|p| {
+            (
+                p["id"].as_str().expect("printing id"),
+                p["quantity"].as_i64().expect("printing quantity"),
+            )
+        })
+        .collect();
+    assert_eq!(held, vec![(PRINTING_A, 2), (PRINTING_B, 1)], "{body:?}");
 
     // Another account asking about the same card sees none of the caller's decks.
     let (other, _) = register(&app, "other-container@example.com", PW).await;

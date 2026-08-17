@@ -27,6 +27,7 @@ import type {
 // an access `token` (via the auth store's `authFetch`); the public reads take none.
 
 export type {
+  CardDeckPrintingRef,
   CardDeckRef,
   CreateDeckRequest,
   Deck,
