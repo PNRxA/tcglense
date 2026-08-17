@@ -54,29 +54,31 @@ watch(id, () => {
 
 <template>
   <!-- Hidden entirely until there's at least one ruling, so the common case (a card with
-    no rulings) adds nothing to the page. -->
-  <CollapsibleSection
-    v-if="rulings.length"
-    v-model:expanded="expanded"
-    title="Notes and Rules Information"
-    :count="rulings.length"
-    blurb="Official rulings and clarifications for this card, from Scryfall."
-    heading="h2"
-  >
-    <ul class="space-y-3">
-      <li
-        v-for="(ruling, index) in rulings"
-        :key="index"
-        class="border-b pb-3 last:border-b-0 last:pb-0"
-      >
-        <p class="text-sm leading-relaxed whitespace-pre-line">
-          <ManaSymbols :text="ruling.comment" keywords :game="game" :card-name="cardName" />
-        </p>
-        <p class="text-muted-foreground mt-1 text-xs">
-          {{ sourceLabel(ruling.source) }}
-          <template v-if="ruling.published_at"> · {{ ruling.published_at }}</template>
-        </p>
-      </li>
-    </ul>
-  </CollapsibleSection>
+    no rulings) adds nothing to the page. Headed like the "Sealed products" and "Decks"
+    groups above it, so the block doesn't read as part of whichever group precedes it. -->
+  <section v-if="rulings.length">
+    <h2 class="mb-3 text-base font-semibold tracking-tight">Rulings</h2>
+    <CollapsibleSection
+      v-model:expanded="expanded"
+      title="Notes and Rules Information"
+      :count="rulings.length"
+      blurb="Official rulings and clarifications for this card, from Scryfall."
+    >
+      <ul class="space-y-3">
+        <li
+          v-for="(ruling, index) in rulings"
+          :key="index"
+          class="border-b pb-3 last:border-b-0 last:pb-0"
+        >
+          <p class="text-sm leading-relaxed whitespace-pre-line">
+            <ManaSymbols :text="ruling.comment" keywords :game="game" :card-name="cardName" />
+          </p>
+          <p class="text-muted-foreground mt-1 text-xs">
+            {{ sourceLabel(ruling.source) }}
+            <template v-if="ruling.published_at"> · {{ ruling.published_at }}</template>
+          </p>
+        </li>
+      </ul>
+    </CollapsibleSection>
+  </section>
 </template>
