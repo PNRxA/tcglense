@@ -816,3 +816,87 @@ async fn a_read_only_api_key_cannot_copy_a_precon() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+/// The card page's "preconstructed decks containing this card" read
+/// (`/api/games/{game}/cards/{id}/precons`): public + shared-cacheable like the precon
+/// browse it mirrors, folding a deck's rows to one entry with the copy count, the
+/// foil-only flag ANDed down, and the command-zone flag ORed up.
+#[tokio::test]
+async fn card_precons_lists_the_decks_containing_the_card() {
+    let app = test_app_with_catalog().await;
+
+    // The seeded commander: one foil row on the commander board.
+    let (status, headers, body) =
+        send(&app, get("/api/games/mtg/cards/dummy-dmu-0001/precons")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        Some(crate::handlers::cache::PUBLIC_CATALOG_CACHE),
+        "card->precon membership is public catalog data"
+    );
+    assert_eq!(body["total"], 1, "{body:?}");
+    let entry = &body["data"][0];
+    assert_eq!(entry["precon"]["slug"], COMMANDER_SLUG);
+    assert_eq!(entry["precon"]["set_name"], "Dummy Universe");
+    assert_eq!(entry["quantity"], 1);
+    assert_eq!(entry["foil"], true, "a foil-only inclusion");
+    assert_eq!(entry["commander"], true, "it sits on the commander board");
+
+    // The commander deck's basic land: 20 regular + 1 foil of one printing are two stored
+    // rows by design — the wire folds them to one entry, and one non-foil row is enough
+    // to make the inclusion not foil-only.
+    let (_, _, body) = send(&app, get("/api/games/mtg/cards/dummy-dmb-0001/precons")).await;
+    assert_eq!(body["total"], 1, "{body:?}");
+    let entry = &body["data"][0];
+    assert_eq!(entry["quantity"], 21);
+    assert_eq!(entry["foil"], false);
+    assert_eq!(entry["commander"], false);
+}
+
+/// A card in several precons lists them all, browse-ordered (newest first, then name), the
+/// page maths hold, sideboard copies count, and the empty/unknown answers are right.
+#[tokio::test]
+async fn card_precons_spans_decks_and_paginates() {
+    let app = test_app_with_catalog().await;
+
+    // dmb #2 is in the starter deck and the Ember Jumpstart theme (2 copies each).
+    let (_, _, body) = send(&app, get("/api/games/mtg/cards/dummy-dmb-0002/precons")).await;
+    assert_eq!(body["total"], 2, "{body:?}");
+    let names: Vec<&str> = body["data"]
+        .as_array()
+        .expect("data array")
+        .iter()
+        .map(|e| e["precon"]["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(
+        names,
+        vec!["Dummy Base Set Jumpstart: Ember", "Dummy Base Set Starter"],
+        "same release date, so name breaks the tie"
+    );
+
+    // Pagination is the browse's: a one-row page still reports the full total.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/cards/dummy-dmb-0002/precons?page_size=1&page=2"),
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["data"].as_array().expect("data array").len(), 1);
+    assert_eq!(body["data"][0]["precon"]["name"], "Dummy Base Set Starter");
+
+    // Sideboard copies are containment too — the card ships in the box.
+    let (_, _, body) = send(&app, get("/api/games/mtg/cards/dummy-dmb-0010/precons")).await;
+    assert_eq!(body["total"], 1, "{body:?}");
+    assert_eq!(body["data"][0]["precon"]["slug"], STARTER_SLUG);
+    assert_eq!(body["data"][0]["quantity"], 3);
+
+    // A card in no precon answers an empty page; unknown card/game are 404s.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards/dummy-dmb-0080/precons")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0, "{body:?}");
+    assert!(body["data"].as_array().expect("data array").is_empty());
+    let (status, _, _) = send(&app, get("/api/games/mtg/cards/no-such-card/precons")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = send(&app, get("/api/games/zzz/cards/dummy-dmb-0002/precons")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

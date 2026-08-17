@@ -1,9 +1,18 @@
 import type { Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { copyPrecon, getPrecon, getPreconFacets, listPreconGroups, listPrecons } from '@/lib/api'
+import {
+  copyPrecon,
+  getCardPrecons,
+  getPrecon,
+  getPreconFacets,
+  listPreconGroups,
+  listPrecons,
+} from '@/lib/api'
 import type {
   ApiError,
+  CardPreconRef,
   DeckDetail,
+  Page,
   PreconDeckDetail,
   PreconFacets,
   PreconGrouping,
@@ -146,6 +155,17 @@ export function usePreconQuery(game: Ref<string>, slug: Ref<string>) {
 interface CopyPreconVars {
   game: string
   slug: string
+}
+
+/** The precons containing a card — any printing of it — for the card page's
+ * "Preconstructed decks" section. Public read, so a plain `useQuery`; refs go in the key
+ * so card-to-card navigation refetches. */
+export function useCardPreconsQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery<Page<CardPreconRef>, ApiError>({
+    queryKey: ['card-precons', game, id],
+    queryFn: ({ signal }) => getCardPrecons(game.value, id.value, signal),
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
 }
 
 /** Copy a precon into the caller's own decks. The new deck is a normal deck, so this

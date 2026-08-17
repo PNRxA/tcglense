@@ -11,6 +11,7 @@ import {
   deleteSection,
   getDeck,
   getDecks,
+  getDecksContaining,
   getFolders,
   getNeededCards,
   getPublicDeck,
@@ -28,6 +29,7 @@ import {
 } from '@/lib/api/decks'
 import type {
   ApiError,
+  CardDeckRef,
   CollectionQuantities,
   CreateDeckRequest,
   Deck,
@@ -84,6 +86,17 @@ export function useNeededCardsQuery(
   return useAuthedQuery<{ data: NeededCard[] }>(options)
 }
 
+/** The caller's decks containing a card — any printing of it — for the card page's
+ * "in your decks" panel. `id` is a ref inside the key, so card-to-card navigation
+ * refetches; deck writes invalidate the family via `invalidateDeck`. */
+export function useDecksContainingQuery(game: Ref<string>, id: Ref<string>) {
+  const options = {
+    queryKey: ['deck-containing', game, id],
+    queryFn: (token: string) => getDecksContaining(token, game.value, id.value),
+  }
+  return useAuthedQuery<{ data: CardDeckRef[] }>(options)
+}
+
 /** The full detail of one deck. `deckId` is a ref inside the key, so navigating between
  * decks refetches. */
 export function useDeckQuery(game: Ref<string>, deckId: Ref<number>, enabled?: Ref<boolean>) {
@@ -134,6 +147,8 @@ export function invalidateDeck(qc: QueryClient, game: string, deckId?: number) {
   qc.invalidateQueries({ queryKey: ['decks', game] })
   // A deck's card list feeds the "cards needed" shopping list, so refresh it too.
   qc.invalidateQueries({ queryKey: ['deck-needed', game] })
+  // …and the card pages' "in your decks" panels, which read the same containment.
+  qc.invalidateQueries({ queryKey: ['deck-containing', game] })
   // …and the server-side analysis (issue #596), whose keys are their own family and would
   // otherwise leave the page showing last edit's curve, verdict, and sample hand.
   invalidateDeckAnalysis(qc, game, deckId)

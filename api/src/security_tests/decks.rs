@@ -2125,3 +2125,137 @@ async fn an_imported_maybeboard_board_lands_as_a_flagged_section() {
     assert_eq!(detail["summary"]["total_cards"], 2);
     assert_eq!(detail["maybeboard_summary"]["total_cards"], 3);
 }
+
+/// The card page's "in your decks" lookup (`/api/decks/{game}/containing/{id}`): scoped to
+/// the caller's own decks, matching **any printing** of the card (gameplay identity, the
+/// `/prints` rule), no-store like every per-user read.
+#[tokio::test]
+async fn containing_names_only_the_callers_decks_across_printings() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "container@example.com", PW).await;
+
+    // The seeded reprint pair: two printings sharing one oracle id (dmb #80 / dmu #13).
+    const PRINTING_A: &str = "dummy-dmb-0080";
+    const PRINTING_B: &str = "dummy-dmu-0013";
+
+    let deck = create_deck(&app, &access, "Relic deck").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    add_deck_card(&app, &access, deck_id, section_id, PRINTING_A, 2).await;
+
+    // Either printing finds the deck: containment is gameplay identity, not the printing —
+    // and each entry names the exact printing(s) the deck actually holds, so the page can
+    // say when the deck runs a different one than the printing on screen.
+    for id in [PRINTING_A, PRINTING_B] {
+        let (status, headers, body) = send(
+            &app,
+            get_with_bearer(&format!("/api/decks/mtg/containing/{id}"), &access),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "querying {id}: {body:?}");
+        assert_eq!(cache_control(&headers), Some("no-store"));
+        let data = body["data"].as_array().expect("data array");
+        assert_eq!(data.len(), 1, "querying {id}: {body:?}");
+        assert_eq!(data[0]["deck"]["id"].as_i64(), Some(deck_id));
+        assert_eq!(data[0]["deck"]["name"], "Relic deck");
+        assert_eq!(data[0]["quantity"], 2);
+        assert_eq!(data[0]["maybeboard_quantity"], 0);
+        let printings = data[0]["printings"].as_array().expect("printings array");
+        assert_eq!(printings.len(), 1, "one exact printing held: {body:?}");
+        assert_eq!(printings[0]["id"], PRINTING_A);
+        assert_eq!(printings[0]["set_code"], "dmb");
+        assert_eq!(printings[0]["quantity"], 2);
+    }
+
+    // Holding the second printing too lists both, most copies first.
+    add_deck_card(&app, &access, deck_id, section_id, PRINTING_B, 1).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/containing/{PRINTING_A}"), &access),
+    )
+    .await;
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data[0]["quantity"], 3);
+    let printings = data[0]["printings"].as_array().expect("printings array");
+    let held: Vec<(&str, i64)> = printings
+        .iter()
+        .map(|p| {
+            (
+                p["id"].as_str().expect("printing id"),
+                p["quantity"].as_i64().expect("printing quantity"),
+            )
+        })
+        .collect();
+    assert_eq!(held, vec![(PRINTING_A, 2), (PRINTING_B, 1)], "{body:?}");
+
+    // Another account asking about the same card sees none of the caller's decks.
+    let (other, _) = register(&app, "other-container@example.com", PW).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/containing/{PRINTING_A}"), &other),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().expect("data array").len(), 0);
+
+    // A card no deck holds answers empty; an unknown card is a 404; anonymous is a 401.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/containing/dummy-sld-0001", &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"].as_array().expect("data array").len(), 0);
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/containing/no-such-card", &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = send(&app, get("/api/decks/mtg/containing/dummy-dmb-0080")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Maybeboard copies are reported apart (issue #570's split, answered rather than hidden):
+/// a deck only *considering* the card is still named, with `quantity` 0 — and the lookup
+/// is a read, so a read-only key can call it.
+#[tokio::test]
+async fn containing_reports_maybeboard_copies_apart() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "maybe-container@example.com", PW).await;
+    let card = "dummy-dmb-0080";
+
+    let deck = create_deck(&app, &access, "Considering pile").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let maybeboard_id = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("maybeboard id");
+    add_deck_card(&app, &access, deck_id, maybeboard_id, card, 3).await;
+
+    let ro = create_key(&app, &access, "read").await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/containing/{card}"), &ro),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "read-only key must read: {body:?}");
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data.len(), 1, "{body:?}");
+    assert_eq!(data[0]["quantity"], 0);
+    assert_eq!(data[0]["maybeboard_quantity"], 3);
+
+    // Running one copy for real moves it into the deck proper without losing the split.
+    let section_id = section_named(&deck, "Artifacts")["id"]
+        .as_i64()
+        .expect("artifacts section id");
+    add_deck_card(&app, &access, deck_id, section_id, card, 1).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/containing/{card}"), &access),
+    )
+    .await;
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data.len(), 1, "still one deck, two sections: {body:?}");
+    assert_eq!(data[0]["quantity"], 1);
+    assert_eq!(data[0]["maybeboard_quantity"], 3);
+}

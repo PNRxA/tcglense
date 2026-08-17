@@ -41,7 +41,7 @@ mod read;
 
 pub use analysis::{precon_bracket, precon_goldfish, precon_legality, precon_stats, precon_tokens};
 pub use copy::copy_precon_deck;
-pub use read::{get_precon, list_precon_groups, list_precons, precon_facets};
+pub use read::{card_precons, get_precon, list_precon_groups, list_precons, precon_facets};
 
 pub use analysis::{
     __path_precon_bracket, __path_precon_goldfish, __path_precon_legality, __path_precon_stats,
@@ -49,7 +49,8 @@ pub use analysis::{
 };
 pub use copy::__path_copy_precon_deck;
 pub use read::{
-    __path_get_precon, __path_list_precon_groups, __path_list_precons, __path_precon_facets,
+    __path_card_precons, __path_get_precon, __path_list_precon_groups, __path_list_precons,
+    __path_precon_facets,
 };
 
 // ---------- Response DTOs ----------
@@ -141,6 +142,25 @@ pub struct PreconDeckDetail {
     pub cards: Vec<PreconCardEntry>,
     /// The sealed product this deck ships in, for the "buy it" link + its price.
     pub product: Option<ProductResponse>,
+}
+
+/// One preconstructed deck containing a card, for the card page's "appears in" list: the
+/// deck's browse header plus how the card sits in it.
+///
+/// Containment is at **gameplay identity** (any printing of the card counts, the stance
+/// `/prints` and the needed-cards list take), so `quantity` sums every matching row —
+/// across boards, printings and finishes. `foil` follows the sealed-membership rule:
+/// `true` only when *every* copy is foil, a foil-only inclusion.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardPreconRef"))]
+pub struct CardPreconRef {
+    pub precon: PreconDeckResponse,
+    /// Total copies of the card in the deck — any board, any printing, any finish.
+    pub quantity: i64,
+    /// `true` when every copy is foil (a foil-only inclusion).
+    pub foil: bool,
+    /// `true` when a copy sits in the deck's command zone — the card *leads* this deck.
+    pub commander: bool,
 }
 
 /// How a grouped listing buckets its decks.
@@ -243,6 +263,14 @@ pub(crate) struct PreconListParams {
     /// Grouped listings only: what to bucket by (`set`, the default, or `type`).
     #[serde(default)]
     pub group: PreconGrouping,
+}
+
+/// Query for `GET /api/games/{game}/cards/{id}/precons` — pagination only; the card in the
+/// path is the filter.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct CardPreconsParams {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
 }
 
 // ---------- Shared helpers ----------

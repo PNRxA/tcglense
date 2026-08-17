@@ -44,6 +44,32 @@ pub(crate) async fn load_card(
         .ok_or_else(|| AppError::NotFound(format!("card '{id}' not found")))
 }
 
+/// Every internal card id sharing `card`'s gameplay identity (Scryfall `oracle_id`)
+/// within its game, the card itself included — the id set a "which containers hold this
+/// card" lookup filters membership rows by, so owning any printing counts (the same
+/// stance `/prints` and the needed-cards list take). A card with no `oracle_id` has no
+/// key to find siblings by (e.g. reversible cards, whose oracle id lives per-face), so
+/// it matches only itself, exactly as `/prints` answers it has no other printings.
+pub(crate) async fn identity_printing_ids(
+    state: &AppState,
+    card: &card::Model,
+) -> Result<Vec<i32>, AppError> {
+    match card.oracle_id.as_deref().filter(|s| !s.is_empty()) {
+        None => Ok(vec![card.id]),
+        Some(oracle_id) => {
+            use sea_orm::QuerySelect;
+            Ok(Card::find()
+                .select_only()
+                .column(card::Column::Id)
+                .filter(card::Column::Game.eq(card.game.as_str()))
+                .filter(card::Column::OracleId.eq(oracle_id))
+                .into_tuple()
+                .all(&state.db)
+                .await?)
+        }
+    }
+}
+
 /// Resolve every set code in `code`'s group: its top-level root plus all
 /// descendants. Mirrors the frontend `groupSets` resolution (walk `parent_set_code`
 /// up to a root, guarding missing parents and — defensively — cycles) so the

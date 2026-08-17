@@ -1,5 +1,6 @@
 import { request } from './client'
 import type {
+  CardPreconRef,
   DeckDetail,
   Page,
   PreconDeck,
@@ -21,8 +22,9 @@ import type {
 // A precon is addressed by its **slug** (`turtle-power-tmc`), never an id: the tables are
 // rebuilt wholesale on every sync, so ids are re-minted while a slug is stable.
 
-export type { PreconCardEntry, PreconDeck, PreconDeckDetail, PreconFacets } from './generated'
-export type { PreconFaceCard, PreconGroup, PreconSetRef, PreconTypeRef } from './generated'
+export type { CardPreconRef, PreconCardEntry, PreconDeck, PreconDeckDetail } from './generated'
+export type { PreconFaceCard, PreconFacets, PreconGroup, PreconSetRef } from './generated'
+export type { PreconTypeRef } from './generated'
 
 /** A page of precon decks plus pagination cursors. */
 export type PreconPage = Page<PreconDeck>
@@ -98,6 +100,19 @@ export function getPreconFacets(
   data: PreconFacets
 }> {
   return request<{ data: PreconFacets }>(`${base(game)}/facets`, { signal })
+}
+
+/** The precons containing a card — **any printing** of it, on any board — newest deck
+ * first, the card page's "appears in" read. One page (the browse's default size, 60) is
+ * plenty for the panel; `total` still reports the full count for the heading. */
+export function getCardPrecons(
+  game: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Page<CardPreconRef>> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<Page<CardPreconRef>>(`/api/games/${g}/cards/${i}/precons`, { signal })
 }
 
 /** One precon in full: header, value summary, every card in board order, sealed product. */

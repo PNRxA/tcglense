@@ -41,6 +41,7 @@ use sea_orm::prelude::DateTimeUtc;
 
 mod analysis;
 mod cards;
+mod containing;
 mod copy;
 mod export;
 mod facets;
@@ -55,6 +56,7 @@ pub use analysis::{
     deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens, list_deck_formats,
 };
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
+pub use containing::decks_containing_card;
 pub use copy::copy_public_deck;
 // The whole-deck write seam, shared with the precon copy (`handlers::precons::copy`) — both
 // duplicate a source whose card ids are already internal, so both write through it.
@@ -78,6 +80,7 @@ pub use analysis::{
     __path_deck_tokens, __path_list_deck_formats,
 };
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
+pub use containing::__path_decks_containing_card;
 pub use copy::__path_copy_public_deck;
 pub use export::__path_export_deck;
 pub use folders::{
@@ -569,6 +572,45 @@ pub struct NeededCard {
     pub owned: i64,
     /// The caller's decks that want this card, by name.
     pub decks: Vec<NeededCardDeck>,
+}
+
+/// One exact printing a deck holds of the card asked about: just enough to say *which*
+/// printing (set + collector number, plus the external id so a client can compare it to
+/// the printing on screen), with its copy count. Bounded — a deck holds a handful of
+/// printings of one gameplay card at most.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CardDeckPrintingRef {
+    /// The provider **external** card id (a Scryfall UUID for MTG) — comparable to the
+    /// card id the page is showing, and enough to build its URL.
+    pub id: String,
+    pub set_code: String,
+    pub collector_number: String,
+    /// Copies of this exact printing in the deck (regular + foil, maybeboard included).
+    pub quantity: i64,
+}
+
+/// One of the caller's decks that contains a card, for the card page's "in your decks"
+/// panel: the deck's full list header plus how many copies it runs.
+///
+/// Containment is at **gameplay identity** (any printing counts, the stance `/prints` and
+/// the needed-cards list take). The copies are split rather than summed: a deck that only
+/// *considers* the card (`quantity == 0`, `maybeboard_quantity > 0`) is still named, but a
+/// client can say so instead of claiming the deck runs it. `printings` breaks the same
+/// copies down by exact printing, so the page can also say when the deck runs a
+/// *different* printing than the one on screen.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CardDeckRef {
+    pub deck: DeckResponse,
+    /// Copies (regular + foil, any printing) in the deck proper — maybeboards excluded.
+    pub quantity: i64,
+    /// Copies in the deck's maybeboard sections, counted apart from `quantity`.
+    pub maybeboard_quantity: i64,
+    /// The exact printings behind those copies, most copies first. A printing whose
+    /// catalog row vanished mid-reimport is simply absent, so the parts may sum short of
+    /// the whole — the totals above stay authoritative.
+    pub printings: Vec<CardDeckPrintingRef>,
 }
 
 // ---------- Shared helpers ----------

@@ -144,6 +144,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::list_keywords,
         crate::handlers::catalog::ingest_status,
         crate::handlers::catalog::card_sealed,
+        crate::handlers::precons::card_precons,
         crate::handlers::catalog::scan_cards,
         // --- Sealed products: contained cards + their display sections ---
         crate::handlers::catalog::product_cards,
@@ -177,6 +178,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         // --- Decks (issues #363/#389): decks, import/export, folders, sections, cards ---
         crate::handlers::decks::list_decks,
         crate::handlers::decks::needed_cards,
+        crate::handlers::decks::decks_containing_card,
         crate::handlers::decks::create_deck,
         crate::handlers::decks::import_deck,
         crate::handlers::decks::get_deck,
