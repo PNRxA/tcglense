@@ -65,12 +65,18 @@ function printingsNote(entry: CardDeckRef): string {
 }
 
 /** The chips that say how the card sits in a precon; the tile itself says what the deck
- * is. Quantity only when it adds something over "it's in there" (a pile of basics). */
-function preconChips(entry: CardPreconRef): string[] {
-  const out: string[] = []
-  if (entry.commander) out.push('Commander')
-  if (entry.foil) out.push('Foil')
-  if (entry.quantity > 1) out.push(`×${entry.quantity}`)
+ * is. Quantity only when it adds something over "it's in there" (a pile of basics).
+ * Each chip pairs its compact label with a spelled-out reading for screen readers —
+ * a detached "×21" says nothing about what it counts. */
+function preconChips(entry: CardPreconRef): { label: string; sr: string }[] {
+  const out: { label: string; sr: string }[] = []
+  if (entry.commander) {
+    out.push({ label: 'Commander', sr: 'This card leads the deck from its command zone.' })
+  }
+  if (entry.foil) out.push({ label: 'Foil', sr: 'Included as foil only.' })
+  if (entry.quantity > 1) {
+    out.push({ label: `×${entry.quantity}`, sr: `${entry.quantity} copies in this deck.` })
+  }
   return out
 }
 
@@ -108,11 +114,14 @@ watch(id, () => {
                   {{ entry.deck.card_count }} card{{ entry.deck.card_count === 1 ? '' : 's' }}
                   <span v-if="entry.deck.format"> · {{ entry.deck.format }}</span>
                 </p>
+                <!-- Inside the min-w-0 column (its designed home, as in DeckTile) so the
+                  commander line can actually truncate — as an unshrinkable flex sibling a
+                  partner pair would push the row wider than a phone. -->
+                <DeckIdentity :deck="entry.deck" />
                 <p v-if="printingsNote(entry)" class="text-muted-foreground text-xs">
                   {{ printingsNote(entry) }}
                 </p>
               </div>
-              <DeckIdentity :deck="entry.deck" class="shrink-0" />
               <span
                 class="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium select-none"
                 :class="
@@ -134,19 +143,21 @@ watch(id, () => {
         blurb="Published decklists that include this card (any printing)."
       >
         <div class="grid gap-3 sm:grid-cols-2">
-          <div v-for="entry in precons" :key="entry.precon.slug" class="relative">
+          <!-- Chips sit under the tile, not overlaid on it: PreconTile reserves no
+            top-right gutter, so an absolute stack landed on long deck names. -->
+          <div v-for="entry in precons" :key="entry.precon.slug" class="flex flex-col gap-1.5">
             <PreconTile :precon="entry.precon" :game="game" />
-            <div
-              v-if="preconChips(entry).length"
-              class="pointer-events-none absolute top-2 right-2 flex flex-wrap justify-end gap-1"
-            >
+            <div v-if="preconChips(entry).length" class="flex flex-wrap justify-end gap-1">
               <span
                 v-for="chip in preconChips(entry)"
-                :key="chip"
+                :key="chip.label"
                 class="rounded-md px-1.5 py-0.5 text-xs font-medium select-none"
-                :class="chip === 'Foil' ? 'bg-foil/15 text-foil' : 'bg-muted text-muted-foreground'"
+                :class="
+                  chip.label === 'Foil' ? 'bg-foil/15 text-foil' : 'bg-muted text-muted-foreground'
+                "
               >
-                {{ chip }}
+                <span aria-hidden="true">{{ chip.label }}</span>
+                <span class="sr-only">{{ chip.sr }}</span>
               </span>
             </div>
           </div>

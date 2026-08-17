@@ -89,11 +89,21 @@ pub async fn decks_containing_card(
     }
 
     // Which sections are maybeboards, resolved as a set (not the usual anti-join
-    // sub-select) because each row must be *classified*, not filtered out.
+    // sub-select) because each row must be *classified*, not filtered out. Scoped to the
+    // decks that actually matched — `rows` names them — not every deck the caller owns:
+    // a deck card's section always belongs to its own deck, so nothing outside the
+    // matched decks can ever be consulted, and a 1000-deck user asking about a card two
+    // decks hold shouldn't pay a section scan over all 1000.
+    let matched_deck_ids: Vec<i32> = rows
+        .iter()
+        .map(|(deck_id, ..)| *deck_id)
+        .collect::<HashSet<i32>>()
+        .into_iter()
+        .collect();
     let maybeboard_sections: HashSet<i32> = DeckSection::find()
         .select_only()
         .column(deck_section::Column::Id)
-        .filter(deck_section::Column::DeckId.is_in(deck_ids))
+        .filter(deck_section::Column::DeckId.is_in(matched_deck_ids))
         .filter(deck_section::Column::IsMaybeboard.eq(true))
         .into_tuple::<i32>()
         .all(&state.db)
