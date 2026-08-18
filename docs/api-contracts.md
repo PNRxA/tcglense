@@ -1028,7 +1028,9 @@ The wish list additionally holds **sealed products** (issue #364) —
 `(user_id, game, product_id)`, `user_id` FK → `users` `ON DELETE CASCADE`). This is
 independent from the collection's matching product surface introduced by issue #435.
 `{id}` is the external (TCGplayer) product id, resolved to the internal `products.id` on
-write so a row survives catalog re-syncs (the daily TCGCSV sweep is upsert-only); both
+write so a row survives catalog re-syncs (the daily TCGCSV sweep upserts sealed products
+in place; its one delete — a product the feed reclassifies as a single card — orphans the
+FK-less holding row, which every read then skips); both
 counts zero deletes the row. The wire keeps the shared two-count
 `{ quantity, foil_quantity }` shape (foil sealed variants are separate TCGplayer SKUs),
 but the UI exposes a single **Quantity** and preserves an existing foil count. Both

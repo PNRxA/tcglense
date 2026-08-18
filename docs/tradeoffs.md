@@ -739,7 +739,16 @@ catalog) is planned but not implemented.
   - **Daily sealed-product sweep** (`tcgcsv::ingest` + `tcgcsv::price_history`): fetch
     every group (`/tcgplayer/1/groups`), then per group its products + prices, keep only
     the **sealed** products, classify each into a coarse `product_type`, and upsert them
-    with current market prices; a companion daily `snapshot_prices` captures one
+    with current market prices. The same pass **deletes** stored products the feed has
+    since reclassified as single cards: preview-season card listings often arrive with no
+    `extendedData` at all — indistinguishable from sealed under the `Rarity`/`Number`
+    rule — get swept in, and would otherwise sit on the sealed set pages forever once
+    TCGCSV backfills their card attributes (The Hobbit shipped dozens). Deletion keys on
+    the feed's *positive* card signal, never on absence from a response, so a short fetch
+    can't wipe good rows; price history cascades away, and holding/alert links are
+    FK-less + orphan-tolerant. The sweep's own derivation tag
+    (`SWEEP_DERIVATION_VERSION`) folds into the version gate so a deploy that changes
+    sweep logic forces one full re-sweep; a companion daily `snapshot_prices` captures one
     `product_price_history` row per `(game, product, day)` from the already-committed
     `products` rows (so the series stays continuous even on a tick where the version-gated
     sweep is skipped — the same rationale as the Scryfall card snapshot). The whole sweep

@@ -8,7 +8,10 @@ use sea_orm::entity::prelude::*;
 ///
 /// Only *sealed* products are stored — a TCGplayer product with a `Rarity` or
 /// `Number` entry in its `extendedData` is a single card and is filtered out during
-/// ingest (see [`crate::tcgcsv::classify`]).
+/// ingest (see [`crate::tcgcsv::classify`]). A stored row the feed later reclassifies
+/// as a card (preview-season listings often ship with no `extendedData`) is **deleted**
+/// by the daily sweep; holding/alert rows pointing at it are FK-less and their reads
+/// orphan-tolerant.
 ///
 /// `Eq` is derivable — every column is an integer, bool, or string (prices are kept
 /// as the decimal strings the provider sends, never `f64`).
