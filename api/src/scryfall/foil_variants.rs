@@ -24,13 +24,15 @@
 //! **Two rules, not one — this is the module's whole subtlety.** The pairing above (foil-only
 //! star ↔ nonfoil base, same set + oracle id + collector number sans the star) is what
 //! [`enrich_foil_variant_prices`], `collection_import::consolidate` and the `m..023` migration
-//! share, and it matches **1,626 pairs catalog-wide**. That is the right rule for copying a
+//! share, and it matches **1,627 pairs catalog-wide**. That is the right rule for copying a
 //! price, where a wrong pair costs nothing. It is the wrong rule for *hiding a row*, where a
-//! wrong pair costs a printing: two thirds of those pairs are 7ed/8ed/9ed/10e-era cards whose
+//! wrong pair costs a printing: two thirds of those pairs are 7ed/8ed/9ed/dkm cards whose
 //! foil is **black-bordered** where the nonfoil is white, or Fate Reforged cards whose foil
-//! carries a watermark — genuinely different cards, and ones `border:` / `wm:` / `art:` query
-//! directly. So the fold applies a strictly narrower test on top: [`same_printed_card`], which
-//! folds only ~550 pairs and spares every star a visitor could tell apart from its base.
+//! carries a watermark, or a 10th-Edition premium foil printing **flavour text** its nonfoil
+//! base does not — genuinely different cards, and ones `border:` / `wm:` / `art:` / `ft:`
+//! query directly. So the fold applies a strictly narrower test on top: [`same_printed_card`],
+//! which folds 500 of those 1,627 and spares every star a visitor could tell apart from its
+//! base.
 //!
 //! The star row itself is **kept** either way: its Scryfall id is a live wire id (card detail,
 //! collection/wishlist/deck/alert rows, provider imports all resolve it), so this is a
@@ -150,16 +152,17 @@ const FOIL_TREATMENT_PROMO_TYPES: [&str; 6] = [
 /// The pairing rule the price enrichment and `collection_import::consolidate` share asks only
 /// about finishes and numbering, which is right for *copying a price* — a wrong pair there
 /// costs nothing — and wrong for *hiding a row*, where a wrong pair costs a printing. Of the
-/// 1,626 pairs that rule matches catalog-wide, only ~550 are the same card twice:
+/// 1,627 pairs that rule matches catalog-wide, only 500 are the same card twice:
 ///
-/// | sets                   | pairs | what differs                    | folded |
-/// |------------------------|-------|---------------------------------|--------|
-/// | `7ed` `8ed` `9ed` `dkm`| 1 052 | `border_color` (white → black)  | no     |
-/// | `frf`, some `unh`      |    14 | `watermark` / `illustration_id` | no     |
-/// | 3 of `sld`             |     3 | `border_color` + `full_art`     | no     |
-/// | `10e`                  |   125 | nothing                         | yes    |
-/// | `40k` `t40k`           |   304 | `promo_types` + `surgefoil`     | yes    |
-/// | `sld` (the rest)       |   107 | `promo_types` + `rainbowfoil`   | yes    |
+/// | sets                    | pairs | what differs                                                | folds |
+/// |-------------------------|-------|-------------------------------------------------------------|-------|
+/// | `7ed` `8ed` `9ed` `dkm` | 1 052 | `border_color` (white → black); 349 also `watermark`, 1 also `illustration_id` | 0 |
+/// | `frf`, some `unh`       |    16 | `watermark` / `illustration_id` / `flavor_text`             |     0 |
+/// | 3 of `sld`              |     3 | `border_color` + `full_art`                                 |     0 |
+/// | `10e`                   |   125 | 88 nothing; 37 `flavor_text`                                |    88 |
+/// | `40k` `t40k`            |   304 | `promo_types` + `surgefoil`; 17 also `flavor_text`           |   287 |
+/// | `sld` (the rest)        |   107 | `promo_types` + `rainbowfoil`/`galaxyfoil`; 1 `flavor_text`  |   106 |
+/// | `ons` `shm` `thb`       |     3 | 1 `illustration_id`                                         |     2 |
 ///
 /// A 9th-Edition foil is black-bordered where its nonfoil is white: a different card, and one
 /// the app's own `border:` / `wm:` / `art:` leaves query directly. Every column named here —
@@ -171,7 +174,10 @@ const FOIL_TREATMENT_PROMO_TYPES: [&str; 6] = [
 /// a 10th-Edition premium foil prints **flavour text** where its nonfoil base prints reminder
 /// text, so the base's column is NULL while the star's carries real text. Folding such a star
 /// would hide the only row `ft:` / `has:flavor` can match — the same loss `border:` would take on
-/// a 9ed pair.
+/// a 9ed pair. It is also the *only* thing 56 of these pairs differ by — 36 where just the star
+/// carries the line (all `10e`), one where just the base does (Dockside Chef, `sld` 1629), and
+/// 19 worded differently on the two rows (17 in `40k`, re-set lines like "Defence"/"Defense") —
+/// so adding it to the comparison is what moved the fold from 556 pairs to 500.
 fn same_printed_card(base: &FoldCandidate, star: &FoldCandidate) -> bool {
     base.border_color == star.border_color
         && base.watermark == star.watermark
@@ -260,7 +266,8 @@ fn select_fold_columns(query: Select<card::Entity>) -> Selector<SelectModel<Fold
 /// `NOT (…)` and converts to a *hashed* SubPlan: the hash build sequentially scans the wide
 /// `cards` heap, once per statement, on every catalog page **and** its `COUNT(*)` — which
 /// `list_cards` pays twice per page. Measured on Postgres 16 over a 108k-row catalog shaped
-/// like the real one (40k nonfoil-only, 1,851 stars, ~550 folded), warm cache:
+/// like the real one (40k nonfoil-only, 1,851 stars, ~550 folded — a shade above the 500 the
+/// live rule now folds, and the plans are the same shape either way), warm cache:
 ///
 /// | statement                    | correlated `EXISTS` | `folded_onto_id IS NULL` |
 /// |------------------------------|---------------------|--------------------------|
@@ -377,7 +384,7 @@ pub(crate) async fn refresh_foil_variant_folds(
 
 /// Every currently-folded row in `game` that this pass did **not** re-confirm, chunked for the
 /// clearing `IN`. Read first rather than issuing a blanket `folded_onto_id IS NOT NULL AND id
-/// NOT IN (…)` update, so the bind list is bounded by the folded set (~550) instead of by
+/// NOT IN (…)` update, so the bind list is bounded by the folded set (~500) instead of by
 /// whatever the caller's catalog happens to hold.
 async fn stale_clear_chunks(
     db: &DatabaseConnection,
@@ -456,7 +463,7 @@ impl FromIterator<(String, i32)> for FoldedSetCounts {
 
 /// Every set's folded-row count for `game`, for a read that publishes many sets at once.
 ///
-/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..076`'s partial
+/// One grouped scan over the ~500 non-NULL `folded_onto_id` rows through `m..076`'s partial
 /// index — the set list is CDN-cached, so this runs about as often as the sub-type scan beside
 /// it. It does not chase the pre-existing ±1 paper-vs-provider skew a tile already tolerates; it
 /// only removes the gap this fold opens.
@@ -512,7 +519,7 @@ async fn folded_counts(
 ///
 /// `extra` narrows the folded star the semi-join looks for (the treatment leaves pass their
 /// `promo_types` membership test); `None` asks only that a folded star exists. The probe is an
-/// equality on `folded_onto_id`, indexed by `m..076` and non-`NULL` on only ~550 rows, so this
+/// equality on `folded_onto_id`, indexed by `m..076` and non-`NULL` on only ~500 rows, so this
 /// is a small hash semi-join rather than the per-row correlated subplan it replaced.
 pub(crate) fn has_folded_foil_variant(dialect: Dialect, promo_type: Option<&str>) -> SimpleExpr {
     // The spelled-out `IS NOT NULL` is **lock-step with `m..076`**, not redundancy: that index
@@ -520,7 +527,7 @@ pub(crate) fn has_folded_foil_variant(dialect: Dialect, promo_type: Option<&str>
     // index only where the query's quals imply its predicate. Postgres can derive that much
     // from the equality alone (it is strict in `folded_onto_id`); SQLite's check is syntactic —
     // the index's `WHERE` terms must appear among the query's — so keeping the clause is what
-    // holds both backends on the ~550 index entries instead of every row's `folded_onto_id`.
+    // holds both backends on the ~500 index entries instead of every row's `folded_onto_id`.
     const BASE: &str = "EXISTS (SELECT 1 FROM cards AS fv \
                         WHERE fv.folded_onto_id IS NOT NULL AND fv.folded_onto_id = cards.id";
     match promo_type {

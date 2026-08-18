@@ -43,7 +43,7 @@ use sea_orm_migration::prelude::*;
 /// ~106k rows, because **both** backends index `NULL`s (omitting them is Oracle's
 /// behaviour, not Postgres' or SQLite's) — 105k dead entries, and a cheap-looking access
 /// path the planner can cost for a column nothing wants a `NULL` from. Partial, it holds
-/// the ~550 folded rows: a few pages, and the same "tiny → robust regardless of
+/// the ~500 folded rows: a few pages, and the same "tiny → robust regardless of
 /// visibility-map state" reasoning as `m..034`/`m..044` on the never-`VACUUM`ed `cards`.
 ///
 /// Like `m..034`/`m..044`, sea-query's `IndexCreateStatement` has no partial-`WHERE`
@@ -93,7 +93,7 @@ impl MigrationTrait for Migration {
             // `folded_onto_id IS NULL` at 0.5% selective when it is really ~99.5% — i.e. it
             // believes the one predicate every catalog grid carries is a near-perfect
             // filter. And autoanalyze may not fire for a long while: the fold pass touches
-            // only ~550 of ~106k rows, far under the 10% analyze threshold, and a
+            // only ~500 of ~106k rows, far under the 10% analyze threshold, and a
             // version-gated sync writes nothing at all on an unchanged tick. One `ANALYZE`
             // makes the estimate right from boot. It is legal inside the batch transaction
             // (unlike `VACUUM`) and only reads the table.

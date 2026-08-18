@@ -256,8 +256,8 @@ pub struct NameSuggestParams {
 /// this is one indexed `IS NULL` test rather than a per-row re-derivation of the pairing rule.
 /// It is **narrower than the pairing rule the price enrichment uses**: a star that differs from
 /// its base in anything a visitor can see or search on — border colour, watermark, art, frame,
-/// a non-foil promo type — keeps its own tile, as do an orphan `…★` promo, an etched star, and
-/// a star whose base is itself foilable.
+/// flavour text, a non-foil promo type — keeps its own tile, as do an orphan `…★` promo, an
+/// etched star, and a star whose base is itself foilable.
 ///
 /// Every card grid must build from here rather than a bare `Card::find()`, or that surface
 /// starts showing the duplicate again: the all-cards search, a set's cards, the by-drop and
@@ -277,9 +277,12 @@ pub struct NameSuggestParams {
 ///   its chunking is a keyset walk over `cards.id`, so filtering would renumber every chunk).
 ///
 /// Two more halves live elsewhere: a drop whose snapshot entry names only the star still claims
-/// its base ([`crate::scryfall::drops::DropTable::drop_for`]), and a set tile's `card_count` is
-/// reduced by what the fold hid ([`sets::list_sets`]), so neither the grouping nor the header
-/// disagrees with the grid.
+/// its base ([`crate::scryfall::drops::DropTable::drop_for`]), and every published set
+/// `card_count` is reduced by what the fold hid — the set list ([`sets::list_sets`]), one set's
+/// own read ([`sets::get_set`]) and the collection/wish-list tiles
+/// ([`crate::handlers::shared::build_collection_sets`]), all through
+/// [`crate::scryfall::FoldedSetCounts`] — so neither the grouping nor any header disagrees with
+/// the grid.
 fn catalog_cards(game: &str) -> Select<card::Entity> {
     Card::find()
         .filter(card::Column::Game.eq(game))

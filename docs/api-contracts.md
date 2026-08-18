@@ -278,6 +278,20 @@ Scryfall object parsed as-is (issue #557): keys are Scryfall format slugs
 legality data. It rides **every** `Card` payload (lists included) so the deck views can
 evaluate format breaches client-side from the deck detail they already hold.
 
+**Folded foil-★ variants.** Some printings are two catalog objects sharing one gameplay
+identity — a nonfoil `1587` and a foil `1587★` — with the star's foil price copied onto the
+base, so the base alone carries both prices. Every card **listing** therefore hides such a
+star: `/cards`, a set's `/cards`, `/drops`, `/subtypes`, `/cards/{id}/prints` and both `.txt`
+exports return the base only. It is a display fold, not a deletion — `GET
+/api/games/{game}/cards/{id}` still resolves the star (with its prices, image, rulings and art
+tags), and it still appears in a product's `/sealed` contents, in `/card-names`, in the scan
+index and in the sitemap. A star that differs from its base in anything printed (border,
+watermark, artwork, frame, flavour text, a non-foil promo type) is a printing of its own and
+keeps its place in the grid. `card_count` follows the grid it names: on `GET
+/api/games/{game}/sets`, `GET /api/games/{game}/sets/{code}` and the collection/wish-list
+`CollectionSet` tiles it is the provider's set-object count **minus** the rows folded in that
+set, floored at zero.
+
 **Visual scanner (authed).** `POST /api/games/{game}/scan` — identify a photographed
 card from its perceptual hash. Body `{ fingerprint: number[], top_k?: number }` where
 `fingerprint` is exactly **32 bytes** (the client-computed 256-bit pHash of the cropped
@@ -342,6 +356,9 @@ is expanded **at ingest** (a parent tag like `art:animal` also matches artworks
 tagged with any descendant), and an unknown tag simply matches nothing — all
 mirroring Scryfall. The dataset syncs on the regular catalog tick (version-gated,
 swapped atomically, after the card sync; on by default like rulings, no flag).
+`is:foil` and the foil-treatment leaves (`is:rainbowfoil`, `is:surgefoil`, …) also match a
+**base** card whose foil-★ variant is folded onto it (see *Folded foil-★ variants* above): the
+finish and the treatment token live on the folded star, so the base answers for both.
 Global **result-shaping** directives
 `order:` (name/set/rarity/released/cmc/color/power/toughness/usd/eur/tix/edhrec/
 artist/number), `direction:` (asc/desc) and `unique:` (cards/art/prints) are honoured

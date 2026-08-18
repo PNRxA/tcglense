@@ -529,27 +529,34 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   printings are two Scryfall objects sharing a gameplay identity — nonfoil `sld` `1587` and
   foil `1587★` — and `scryfall::enrich_foil_variant_prices` already copies the star's foil
   price onto the base, so listing both is one card shown twice. But that pairing rule (shared
-  with `collection_import::consolidate` and `m…023`) matches **1,626 pairs catalog-wide**, and
-  two thirds are 7ed/8ed/9ed/10e-era cards whose foil is **black-bordered** where the nonfoil
+  with `collection_import::consolidate` and `m…023`) matches **1,627 pairs catalog-wide**, and
+  two thirds are 7ed/8ed/9ed/dkm cards whose foil is **black-bordered** where the nonfoil
   is white: right for copying a price, wrong for hiding a row. So the display fold applies a
   strictly narrower test — `foil_variants::same_printed_card`: border, watermark, frame, frame
-  effects, full-art, illustration and security stamp all equal, and `promo_types` equal except
-  for foil-*treatment* tokens the star adds (`rainbowfoil`, `surgefoil`, …). ~550 pairs fold;
+  effects, full-art, illustration, security stamp and **flavour text** all equal (a 10e premium
+  foil prints flavour where its base prints reminder text — a printed difference `ft:` and
+  `has:flavor` query directly), and `promo_types` equal except for foil-*treatment* tokens the
+  star adds (`rainbowfoil`, `surgefoil`, …). ~500 pairs fold;
   every star a visitor could tell apart from its base keeps its tile, as do an orphan `…★`
   promo, an etched star, and a star whose base is itself foilable. **Never re-derive this in a
   query.** `refresh_foil_variant_folds` decides it once per sync tick into
   `cards.folded_onto_id`, and `handlers::catalog::catalog_cards` — the base query **every**
   card grid must build from — filters `IS NULL`; the correlated `EXISTS` this replaced became a
   *hashed* SubPlan on Postgres that seq-scanned the whole `cards` heap on every catalog page
-  and its `COUNT(*)`. Four couplings. It is a **presentation** fold, so the star row stays and
+  and its `COUNT(*)`. Five couplings. It is a **presentation** fold, so the star row stays and
   its Scryfall id keeps resolving by id (detail pages, holdings/deck/alert rows, provider
   imports) — which is why card-by-id lookups, sealed-product contents, the name autocomplete,
   the scan fingerprint index and the sitemap are exempt. The base's `finishes` must stay
   `nonfoil`-exactly (it's the load-bearing half of the pairing rule in all four homes), so
   `is:foil` **and every foil-treatment `is:` leaf** OR in `has_folded_foil_variant` rather than
   the base advertising anything. `DropTable::drop_for` re-tries a miss with a trailing `★` so a
-  drop that lists only the star still claims the base. And a new `cards` column that isn't
-  provider data must be denied in **both** halves of `ingest::flush_cards` — the
+  drop that lists only the star still claims the base. Every published set `card_count` —
+  Scryfall's own set-object count, stored verbatim — has the folded rows subtracted through the
+  one `FoldedSetCounts` seam, in all three of its readers (`sets::list_sets`, `sets::get_set`,
+  and the collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
+  because a `card_sets` row lagging the cards it counts must publish a stale number, never a
+  negative. And a new `cards` column that isn't provider data must be denied in **both** halves
+  of `ingest::flush_cards` — the
   `update_columns` list *and* `upsert_changed_guard` — or every sync wipes it and mass-bumps
   `updated_at`, the cursor the price-alert narrowing reads.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard). Every
