@@ -94,15 +94,16 @@ pub(super) async fn merge_fallback(
             };
             if product.supplement && product.override_memberships {
                 let before = rows.len();
-                rows.retain(|&(row_product, row_card, row_membership, _)| {
-                    row_product != product_id
-                        || row_card != card_id
-                        || row_membership == membership.as_str()
-                        || row_membership == sealed_content::Membership::Booster.as_str()
+                rows.retain(|(row_product, row_card, row_membership, _, _)| {
+                    *row_product != product_id
+                        || *row_card != card_id
+                        || *row_membership == membership.as_str()
+                        || *row_membership == sealed_content::Membership::Booster.as_str()
                 });
                 overridden += before - rows.len();
             }
-            if rows.insert((product_id, card_id, membership.as_str(), card.foil)) {
+            // Curated rows are authored per product, not per box component: no attribution.
+            if rows.insert((product_id, card_id, membership.as_str(), card.foil, None)) {
                 added += 1;
             }
         }
@@ -267,7 +268,7 @@ pub(super) async fn merge_sld_derived(
             let Some(&card_id) = cards.get(*cn) else {
                 continue;
             };
-            if rows.insert((*product_id, card_id, membership, *foil)) {
+            if rows.insert((*product_id, card_id, membership, *foil, None)) {
                 added += 1;
             }
         }
@@ -329,7 +330,7 @@ pub(super) async fn merge_sld_bonus_cards(
         let Some(&card_id) = cards.get(*cn) else {
             continue;
         };
-        if rows.insert((*product_id, card_id, variable, *foil)) {
+        if rows.insert((*product_id, card_id, variable, *foil, None)) {
             added += 1;
         }
     }
@@ -389,9 +390,12 @@ async fn load_sld_products(
 fn booster_pool_by_product(rows: &HashSet<Row>) -> HashMap<i32, Vec<(i32, bool)>> {
     let booster = sealed_content::Membership::Booster.as_str();
     let mut pools: HashMap<i32, Vec<(i32, bool)>> = HashMap::new();
-    for &(product_id, card_id, membership, foil) in rows {
-        if membership == booster {
-            pools.entry(product_id).or_default().push((card_id, foil));
+    for (product_id, card_id, membership, foil, _) in rows {
+        if *membership == booster {
+            pools
+                .entry(*product_id)
+                .or_default()
+                .push((*card_id, *foil));
         }
     }
     pools
@@ -432,7 +436,11 @@ pub(super) fn merge_contained_booster_pools(
             continue; // the child isn't a resolved booster / has no pool to inherit
         };
         for &(card_id, foil) in child_pool {
-            if rows.insert((component.product_id, card_id, booster, foil)) {
+            // Attribute the inherited pool to the component it came through (the child is
+            // a *listed* product by construction — child_product_id is how it was found —
+            // so the handler will fold these into the plain sections, flagged inherited).
+            let via = Some(component.name.clone());
+            if rows.insert((component.product_id, card_id, booster, foil, via)) {
                 added += 1;
             }
         }
@@ -503,8 +511,10 @@ pub(super) async fn merge_sibling_booster_pools(
             if pools.contains_key(&member) {
                 continue;
             }
+            // A variant's inherited pool is its *own* in spirit (it has no box contents
+            // to attribute to), so no component — mirroring the canonical's direct pool.
             for &(card_id, foil) in canonical_pool {
-                if rows.insert((member, card_id, booster, foil)) {
+                if rows.insert((member, card_id, booster, foil, None)) {
                     added += 1;
                 }
             }

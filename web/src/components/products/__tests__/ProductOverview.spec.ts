@@ -39,7 +39,13 @@ vi.mock('@/composables/useProducts', () => ({
 }))
 
 const section = (key: string, total = 1, boosterFamily: string | null = null): ProductCardSection =>
-  ({ key, total, booster_family: boosterFamily }) as ProductCardSection
+  ({
+    key,
+    total,
+    booster_family: boosterFamily,
+    component: null,
+    inherited: false,
+  }) as ProductCardSection
 
 const comp = (name: string, quantity: number) =>
   ({ kind: 'sealed', name, quantity, product: null, card: null }) as ProductComponent
@@ -158,6 +164,31 @@ describe('ProductOverview', () => {
   it('keeps the jump affordance in the tooltip even when a chip adds a hint', () => {
     const { chips } = mountStrip({ sections: [section('booster', 600)] })
     expect(chips[0]!.title).toMatch(/^Jump to 600 cards in the pull pool — /)
+  })
+
+  it('leaves an inherited pool out of the chips — the sections below hide it too', () => {
+    // A bundle whose whole pool arrived through its linked boosters: the chip strip must
+    // agree with ProductCards (both read visibleProductSections), or a chip would jump to
+    // a section that isn't there.
+    const { chips } = mountStrip({
+      sections: [
+        section('contains', 2),
+        { ...section('exclusive', 80, 'collector_pack'), inherited: true },
+        { ...section('booster', 520), inherited: true },
+      ],
+    })
+    expect(chips.map((c) => c.text)).toEqual(['2 guaranteed cards'])
+  })
+
+  it('counts an unlisted component’s cards into the certainty chips', () => {
+    const { chips } = mountStrip({
+      sections: [
+        section('contains', 1),
+        { ...section('contains', 5), component: 'Land Pack' },
+        { ...section('variable', 1), component: 'Land Pack' },
+      ],
+    })
+    expect(chips.map((c) => c.text)).toEqual(['6 guaranteed cards', '1 card it might include'])
   })
 
   it('renders an icon for every chip kind', () => {

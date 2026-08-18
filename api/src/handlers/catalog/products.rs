@@ -178,6 +178,16 @@ pub(crate) struct ProductCardEntry {
 /// `booster` → `variable`, the [`CardSection`] display order); this manifest lets the SPA
 /// render one **independently paginated** block per section (issue #224) — knowing which
 /// sections exist and how big each is — without fetching every card first.
+///
+/// Sections come in two sources. **Plain** sections (`component` = `None`) hold the
+/// product's own cards plus those inherited through *listed* sub-products (box components
+/// that resolve to their own catalog product); when every card of a plain section is
+/// inherited that way it's flagged `inherited`, so a client can defer to the sub-product's
+/// own page instead of duplicating its pool. **Component** sections (`component` =
+/// `Some(name)`) hold the cards packed in one *unlisted* sub-product — a bundle's land
+/// pack, a starter kit's half-deck — named after the matching "what's in the box" line
+/// item; they slot between the plain `contains` section and the pool sections, in box
+/// order, one entry per certainty the component actually has.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "ProductCardSection"))]
 pub(crate) struct ProductCardSection {
@@ -191,6 +201,14 @@ pub(crate) struct ProductCardSection {
     /// the SPA can title the section after the *contained* booster even when the viewed
     /// product is a bundle whose own type carries no family. `None` for every other section.
     pub booster_family: Option<String>,
+    /// The unlisted box component this section's cards are packed in (the matching
+    /// composition line item's display name — also the `?component=` value that pages it),
+    /// or `None` for a plain section.
+    pub component: Option<String>,
+    /// `true` when **every** card of a plain section arrived through a listed sub-product
+    /// (so the same cards are browsable on that sub-product's own page and a client may
+    /// collapse or hide the duplicate here). Always `false` for component sections.
+    pub inherited: bool,
 }
 
 // ---------- Query params ----------
@@ -281,9 +299,15 @@ pub struct ProductCardsParams {
     pub page_size: Option<u64>,
     /// Restrict the page to one display section (`contains` / `exclusive` / `booster` /
     /// `variable`). Absent = the whole ordered list across every section (the original,
-    /// back-compatible behaviour). An unknown value is a 422.
+    /// back-compatible behaviour). With `component`, the certainty within that component's
+    /// cards. An unknown value is a 422.
     #[serde(default)]
     pub section: Option<String>,
+    /// Restrict the page to the cards packed in one **unlisted** box component (a
+    /// `component` value from the sections manifest). A name that matches no component
+    /// yields an empty page (component names are data, not vocabulary — no 422).
+    #[serde(default)]
+    pub component: Option<String>,
     /// Optional card search (the same Scryfall-style grammar the card catalog accepts —
     /// name substrings plus `c:r`, `t:goblin`, `r:mythic`, …) restricting this page to the
     /// product's cards that match, on top of any `section` filter. `total`/`has_more` then
@@ -925,9 +949,13 @@ const PRODUCT_CARDS_IN_CHUNK: usize = 900;
 /// The optional `?section=` param restricts the page to one display section (`contains` /
 /// `exclusive` / `booster` / `variable`) so the SPA can paginate each section on its own
 /// (issue #224); omit it for the whole ordered list. `total`/`has_more` then describe the
-/// selected section (or the whole list). Empty page when the product has no ingested
-/// contents (or the section is empty); `404` for an unknown game/product, `422` for an
-/// unknown section.
+/// selected section (or the whole list). A plain `?section=` page covers the product's own
+/// cards plus those inherited through **listed** sub-products; the optional `?component=`
+/// param (a `component` value from the sections manifest) instead pages the cards packed
+/// in one **unlisted** box component, optionally narrowed by `?section=` to one certainty
+/// — a name matching no component is an empty page, not an error. Empty page when the
+/// product has no ingested contents (or the section is empty); `404` for an unknown
+/// game/product, `422` for an unknown section.
 ///
 /// The optional `?sort=`/`?dir=` params re-order the cards **within** each display section
 /// by the shared card-list vocabulary (`name`/`rarity`/`cmc`/`price`/…), so a product's cards
@@ -944,6 +972,7 @@ const PRODUCT_CARDS_IN_CHUNK: usize = 900;
         ("page" = Option<u64>, Query, description = "1-based page number"),
         ("page_size" = Option<u64>, Query, description = "Rows per page (clamped)"),
         ("section" = Option<String>, Query, description = "Restrict to one display section (`contains`/`exclusive`/`booster`/`variable`)"),
+        ("component" = Option<String>, Query, description = "Restrict to the cards packed in one unlisted box component (a `component` value from the sections manifest)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style card search narrowing this product's cards"),
         ("sort" = Option<String>, Query, description = "Card-list sort key (`name`/`rarity`/`cmc`/`price`/…); re-orders within each section"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
@@ -973,30 +1002,81 @@ pub async fn product_cards(
         None => None,
     };
     let sort = params.sort_spec()?;
+    let component = trim_query(params.component.as_deref());
 
     // The product's cards, deduped + fully ordered, plus the membership/exclusivity lookups.
     let index = build_product_card_index(&state, &game, &product).await?;
 
-    // The base ordering the sections draw from: the product's natural membership / exclusive /
-    // set-number order (the default), or — when a `sort` is requested — every one of this
-    // product's cards in the chosen card-list order. Either way the section split below is
-    // unchanged; a sort only re-orders the cards *within* each section.
-    let base_order: Vec<i32> = match sort {
-        None => index.ordered.clone(),
-        Some((field, dir)) => sorted_product_card_ids(&state, &game, &product, field, dir).await?,
+    // The base ordering a `sort` imposes: every one of this product's cards in the chosen
+    // card-list order. The section/component split below is unchanged; a sort only
+    // re-orders the cards *within* each block.
+    let sorted: Option<Vec<i32>> = match sort {
+        None => None,
+        Some((field, dir)) => {
+            Some(sorted_product_card_ids(&state, &game, &product, field, dir).await?)
+        }
     };
 
-    // The ids this request pages over. With `?section=`, just that section's cards (in
-    // `base_order`, so a sort carries through). Without it, the whole list — re-grouped by
-    // section (display order) when a sort is active so the section grouping survives the sort;
-    // the default `base_order` is already section-grouped, so it passes through untouched.
-    let selected: Vec<i32> = match (section, sort) {
-        (Some(section), _) => base_order
-            .into_iter()
-            .filter(|&cid| index.section_of(cid) == Some(section))
-            .collect(),
-        (None, None) => base_order,
-        (None, Some(_)) => group_by_section(&index, &base_order),
+    // The ids this request pages over, and the membership fold that dresses them — the
+    // component's own fold for a `?component=` page, the plain fold for a plain
+    // `?section=` page, and the flat whole-product fold otherwise. With `?section=`, just
+    // that section's cards (in sorted order when a sort is active). Without it, the whole
+    // block — re-grouped by section (display order) when a sort has flattened the ids, so
+    // the section grouping survives the sort; the default order is already
+    // section-grouped, so it passes through untouched.
+    let (selected, dress): (Vec<i32>, &HashMap<i32, (u8, String, bool)>) = match component {
+        Some(name) => match index.component(name) {
+            // Component names are data, not vocabulary: an unknown one is an empty page.
+            None => (Vec::new(), &index.best),
+            Some(group) => {
+                let member_section = |cid: i32| {
+                    group
+                        .cards
+                        .get(&cid)
+                        .map(|(_, membership, _)| CardSection::classify(membership, false))
+                };
+                let selected = match (section, &sorted) {
+                    (Some(section), None) => group
+                        .ordered
+                        .iter()
+                        .copied()
+                        .filter(|&cid| member_section(cid) == Some(section))
+                        .collect(),
+                    (Some(section), Some(sorted)) => sorted
+                        .iter()
+                        .copied()
+                        .filter(|&cid| member_section(cid) == Some(section))
+                        .collect(),
+                    (None, None) => group.ordered.clone(),
+                    (None, Some(sorted)) => group_ids_by(sorted, member_section),
+                };
+                (selected, &group.cards)
+            }
+        },
+        None => match (section, &sorted) {
+            (Some(section), None) => (
+                index
+                    .plain_ordered
+                    .iter()
+                    .copied()
+                    .filter(|&cid| index.plain_section_of(cid) == Some(section))
+                    .collect(),
+                &index.plain,
+            ),
+            (Some(section), Some(sorted)) => (
+                sorted
+                    .iter()
+                    .copied()
+                    .filter(|&cid| index.plain_section_of(cid) == Some(section))
+                    .collect(),
+                &index.plain,
+            ),
+            (None, None) => (index.ordered.clone(), &index.best),
+            (None, Some(sorted)) => (
+                group_ids_by(sorted, |cid| index.flat_section_of(cid)),
+                &index.best,
+            ),
+        },
     };
     // Narrow to the cards matching the optional `q` search (issue #222), still in order;
     // a malformed query 422s here before the page is loaded.
@@ -1021,16 +1101,19 @@ pub async fn product_cards(
         .map(|m| (m.id, m))
         .collect();
 
+    // The exclusive flag only means something on the plain views (a component section
+    // never splits its pool), so a component page always reports `false`.
+    let mark_exclusive = component.is_none();
     let data: Vec<ProductCardEntry> = page_ids
         .into_iter()
         .filter_map(|cid| {
             let model = models.remove(&cid)?;
-            let (_, membership, foil) = index.best.get(&cid)?;
+            let (_, membership, foil) = dress.get(&cid)?;
             Some(ProductCardEntry {
                 card: model.into(),
                 membership: membership.clone(),
                 foil: *foil,
-                exclusive: index.exclusive.contains(&cid),
+                exclusive: mark_exclusive && index.exclusive.contains(&cid),
             })
         })
         .collect();
@@ -1041,14 +1124,19 @@ pub async fn product_cards(
 /// List product card sections
 ///
 /// `GET /api/games/{game}/products/{id}/cards/sections` -> the non-empty display sections of
-/// this product's cards, in display order (`contains` → `exclusive` → `booster` →
-/// `variable`), each with its card count. The reverse-companion of `product_cards`: the SPA
-/// reads this first to know which sections exist and how big each is, then renders one
-/// independently-paginated block per section, pulling each with `?section=` (issue #224).
-/// An optional `?q=` filters the manifest to the sections (and counts) whose cards match
-/// that search, so it agrees with the filtered `product_cards` pages (issue #222).
-/// `{ "data": [] }` when the product has no ingested contents (or nothing matches `q`);
-/// `404` for an unknown game/product, `422` for a malformed `q`.
+/// this product's cards, each with its card count. The reverse-companion of
+/// `product_cards`: the SPA reads this first to know which sections exist and how big each
+/// is, then renders one independently-paginated block per section, pulling each with
+/// `?section=` (+ `?component=` for a component section) (issue #224). Display order:
+/// the plain `contains` section, then one section per certainty of each **unlisted** box
+/// component (`component` = its name, in box order), then the plain `exclusive` →
+/// `booster` → `variable` sections. A plain section whose every card arrived through a
+/// **listed** sub-product is flagged `inherited`, so a client can defer to that
+/// sub-product's own page instead of duplicating its pool. An optional `?q=` filters the
+/// manifest to the sections (and counts) whose cards match that search, so it agrees with
+/// the filtered `product_cards` pages (issue #222). `{ "data": [] }` when the product has
+/// no ingested contents (or nothing matches `q`); `404` for an unknown game/product,
+/// `422` for a malformed `q`.
 #[utoipa::path(
     get,
     path = "/api/games/{game}/products/{id}/cards/sections",
@@ -1072,34 +1160,94 @@ pub async fn product_card_sections(
     let game_meta = require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
     let index = build_product_card_index(&state, &game, &product).await?;
-    // Restrict the counted ids to those matching the optional `q` search, still in display
-    // order (issue #222) — so a section with no matches drops out of the manifest.
-    let ordered =
-        filter_ordered_by_search(&state, game_meta, params.q.as_deref(), &index.ordered).await?;
+    // Restrict the counted ids to those matching the optional `q` search (issue #222) — so
+    // a section with no matches drops out of the manifest. One compile + one membership
+    // pass over the flat id list covers every view (a component card always has a flat row).
+    let matched =
+        search_matched_ids(&state, game_meta, params.q.as_deref(), &index.ordered).await?;
+    let keep = |cid: i32| matched.as_ref().is_none_or(|set| set.contains(&cid));
 
-    // Count per section by walking the already-ordered ids: first appearance fixes the
-    // section's slot, so the manifest comes out in the same display order the list uses. A
-    // Vec (≤ 4 sections) keeps that order — a HashMap wouldn't — and the linear find is trivial.
-    let mut sections: Vec<ProductCardSection> = Vec::new();
-    for &cid in &ordered {
-        let Some(section) = index.section_of(cid) else {
+    // `inherited` is a **provenance** property of a section, so it's decided over the
+    // UNFILTERED plain view: a `?q=` narrows a section's `total` but must never flip its
+    // provenance — the flag drives `visibleProductSections`' wholesale hiding client-side,
+    // and letting a search flip it made a mixed (direct + inherited) booster section vanish
+    // from the manifest for exactly the searches that matched only its inherited cards,
+    // while `product_cards` still served them. Same stance as `booster_family`, which is
+    // also read off the unfiltered index.
+    let mut section_has_direct: HashMap<&'static str, bool> = HashMap::new();
+    for &cid in &index.plain_ordered {
+        let Some(section) = index.plain_section_of(cid) else {
+            continue;
+        };
+        let has_direct = section_has_direct.entry(section.key()).or_insert(false);
+        *has_direct = *has_direct || index.direct.contains(&cid);
+    }
+
+    // Count the plain sections by walking the plain view in display order. A Vec (≤ 4
+    // sections) keeps that order — a HashMap wouldn't — and the linear find is trivial.
+    let mut plain: Vec<ProductCardSection> = Vec::new();
+    for &cid in &index.plain_ordered {
+        if !keep(cid) {
+            continue;
+        }
+        let Some(section) = index.plain_section_of(cid) else {
             continue;
         };
         let key = section.key();
-        match sections.iter_mut().find(|s| s.key == key) {
+        match plain.iter_mut().find(|s| s.key == key) {
             Some(existing) => existing.total += 1,
-            None => sections.push(ProductCardSection {
+            None => plain.push(ProductCardSection {
                 key: key.to_string(),
                 total: 1,
-                // Only the exclusive section names its booster family (for the heading);
-                // every other section leaves it `None`.
+                // Only the exclusive section names its booster family (for the
+                // heading); every other section leaves it `None`.
                 booster_family: match section {
                     CardSection::Exclusive => index.exclusive_family.clone(),
                     _ => None,
                 },
+                component: None,
+                inherited: !section_has_direct.get(key).copied().unwrap_or(false),
             }),
         }
     }
+
+    // One entry per (unlisted component, certainty), in box order then certainty order —
+    // each component's `ordered` list is already rank-grouped, so first appearance fixes
+    // the slot, as with the plain walk above.
+    let mut component_sections: Vec<ProductCardSection> = Vec::new();
+    for group in &index.components {
+        let start = component_sections.len();
+        for &cid in &group.ordered {
+            if !keep(cid) {
+                continue;
+            }
+            let Some((_, membership, _)) = group.cards.get(&cid) else {
+                continue;
+            };
+            let key = CardSection::classify(membership, false).key();
+            match component_sections[start..]
+                .iter_mut()
+                .find(|s| s.key == key)
+            {
+                Some(existing) => existing.total += 1,
+                None => component_sections.push(ProductCardSection {
+                    key: key.to_string(),
+                    total: 1,
+                    booster_family: None,
+                    component: Some(group.name.clone()),
+                    inherited: false,
+                }),
+            }
+        }
+    }
+
+    // Display order: the guaranteed cards lead, then what each unlisted component packs
+    // (the box's own order), then the pool + randomized sections.
+    let (contains, rest): (Vec<ProductCardSection>, Vec<ProductCardSection>) =
+        plain.into_iter().partition(|s| s.key == "contains");
+    let mut sections = contains;
+    sections.extend(component_sections);
+    sections.extend(rest);
 
     Ok(Json(DataBody { data: sections }))
 }
@@ -1110,10 +1258,22 @@ pub async fn product_card_sections(
 /// bucket them. Built once by [`build_product_card_index`] and shared by the paged
 /// `product_cards` read and the `product_card_sections` count so both agree on each card's
 /// membership, exclusivity, section, and position.
+///
+/// Since the ingest attributes inherited rows to the box component they came through, the
+/// index keeps **three** views over the membership rows:
+/// - the **flat** view (`best` / `ordered`): every distinct card at its strongest
+///   membership, whatever its source — the back-compatible whole-product list;
+/// - the **plain** view (`plain` / `plain_ordered` / `direct`): the product's own cards
+///   plus those inherited through *listed* sub-products — what the plain display sections
+///   are counted and paged over;
+/// - the **per-component** view (`components`): the cards packed in each *unlisted*
+///   sub-product, complete per component (a card two packs share appears in both).
 struct ProductCardIndex {
-    /// `card_id -> (membership_rank, membership, foil)` at the card's strongest membership.
+    /// `card_id -> (membership_rank, membership, foil)` at the card's strongest membership,
+    /// over every row (any source).
     best: HashMap<i32, (u8, String, bool)>,
-    /// The subset of booster cards exclusive to this product's booster family.
+    /// The subset of the plain view's booster cards exclusive to this product's booster
+    /// family.
     exclusive: HashSet<i32>,
     /// A representative `product_type` slug for the booster family the [`exclusive`] cards
     /// belong to (e.g. `collector_pack`) — the viewed booster's own family, or, for a bundle,
@@ -1125,39 +1285,80 @@ struct ProductCardIndex {
     /// Every distinct card id, in final display order (membership, then family-exclusive
     /// booster cards ahead of the shared pool, then set code + collector number).
     ordered: Vec<i32>,
+    /// `card_id -> (membership_rank, membership, foil)` over the plain rows only (direct +
+    /// inherited-through-listed-children).
+    plain: HashMap<i32, (u8, String, bool)>,
+    /// The plain cards in the same display order as [`ordered`](ProductCardIndex::ordered).
+    plain_ordered: Vec<i32>,
+    /// Plain cards whose chosen membership is carried by at least one **direct**
+    /// (unattributed) row — the cards that make a plain section *not* `inherited`.
+    direct: HashSet<i32>,
+    /// The cards packed in each unlisted box component, in composition (position) order.
+    components: Vec<ComponentCards>,
+}
+
+/// The cards one **unlisted** box component packs, folded per card at the strongest
+/// membership among that component's own rows.
+struct ComponentCards {
+    /// The component's display name (the matching `sealed_components.name`, also the
+    /// `?component=` page key).
+    name: String,
+    /// `card_id -> (membership_rank, membership, foil)` within this component.
+    cards: HashMap<i32, (u8, String, bool)>,
+    /// The component's cards in display order (membership rank, then set + number).
+    ordered: Vec<i32>,
 }
 
 impl ProductCardIndex {
-    /// The display section a card falls in (its membership, with the booster pool split into
-    /// family-exclusive vs shared), or `None` if the id isn't in the index.
-    fn section_of(&self, card_id: i32) -> Option<CardSection> {
+    /// The display section a card falls in on the **flat** whole-product view (its
+    /// strongest membership anywhere, with the booster pool split into family-exclusive vs
+    /// shared), or `None` if the id isn't in the index.
+    fn flat_section_of(&self, card_id: i32) -> Option<CardSection> {
         let (_, membership, _) = self.best.get(&card_id)?;
         Some(CardSection::classify(
             membership,
             self.exclusive.contains(&card_id),
         ))
     }
+
+    /// The plain display section a card falls in (over the plain view only), or `None`
+    /// when the card is only packed in unlisted components.
+    fn plain_section_of(&self, card_id: i32) -> Option<CardSection> {
+        let (_, membership, _) = self.plain.get(&card_id)?;
+        Some(CardSection::classify(
+            membership,
+            self.exclusive.contains(&card_id),
+        ))
+    }
+
+    /// The named component's cards, if the product has an unlisted component of that name.
+    fn component(&self, name: &str) -> Option<&ComponentCards> {
+        self.components.iter().find(|c| c.name == name)
+    }
 }
 
-/// Dedupe, order, and index a product's cards: fetch its membership rows, collapse each card
-/// to its strongest membership, flag the family-exclusive booster cards, and sort the whole
-/// list into display order. The heavy per-page `card::Model` load stays out here — only the
-/// id ordering + the membership/exclusivity lookups — so both the paged read and the section
-/// count can share it cheaply. An empty (all-zero) index when the product has no contents.
+/// Dedupe, order, and index a product's cards: fetch its membership rows, split them by
+/// source (direct / via a listed child / packed in an unlisted component), collapse each
+/// view's cards to their strongest membership, flag the family-exclusive booster cards,
+/// and sort every list into display order. The heavy per-page `card::Model` load stays out
+/// here — only the id orderings + the membership/exclusivity lookups — so both the paged
+/// read and the section count can share it cheaply. An empty (all-zero) index when the
+/// product has no contents.
 async fn build_product_card_index(
     state: &AppState,
     game: &str,
     product: &product::Model,
 ) -> Result<ProductCardIndex, AppError> {
     // Every membership row for this product (hits the (game, product_id) prefix of
-    // idx_sealed_contents_unique), selecting only the three fields the dedup folds —
+    // idx_sealed_contents_unique), selecting only the four fields the folds below need —
     // a giant product's contents run to thousands of rows, so the timestamps + game
     // column of the full model aren't worth deserializing.
-    let rows: Vec<(i32, String, bool)> = SealedContent::find()
+    let rows: Vec<(i32, String, bool, Option<String>)> = SealedContent::find()
         .select_only()
         .column(sealed_content::Column::CardId)
         .column(sealed_content::Column::Membership)
         .column(sealed_content::Column::Foil)
+        .column(sealed_content::Column::Component)
         .filter(sealed_content::Column::Game.eq(game))
         .filter(sealed_content::Column::ProductId.eq(product.id))
         .into_tuple()
@@ -1169,28 +1370,111 @@ async fn build_product_card_index(
             exclusive: HashSet::new(),
             exclusive_family: None,
             ordered: Vec::new(),
+            plain: HashMap::new(),
+            plain_ordered: Vec::new(),
+            direct: HashSet::new(),
+            components: Vec::new(),
         });
     }
 
-    // Collapse to one entry per card at its strongest (lowest-rank) membership, foil
-    // ANDed among that membership's rows (foil-only when every contributing row is foil).
-    let best = best_memberships(&rows);
+    // Which component names are **listed** (resolve to their own catalog product): their
+    // inherited rows stay in the plain view — the reader can browse the child's page — while
+    // the rest group into named per-component sections. Only `sealed` line items link
+    // children, and the membership attribution stores the same `name` the composition row
+    // does, so the name is the join key. Names of unlisted `sealed` components fix the
+    // section order (box order); an attributed name matching no composition row (upstream
+    // drift, a vanished child) still gets a section, appended after the known ones, so its
+    // cards never silently vanish from the split view.
+    let component_rows: Vec<(String, Option<i32>)> = SealedComponent::find()
+        .select_only()
+        .column(sealed_component::Column::Name)
+        .column(sealed_component::Column::ChildProductId)
+        .filter(sealed_component::Column::Game.eq(game))
+        .filter(sealed_component::Column::ProductId.eq(product.id))
+        .filter(sealed_component::Column::Kind.eq(ComponentKind::Sealed.as_str()))
+        .order_by_asc(sealed_component::Column::Position)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    let listed: HashSet<&str> = component_rows
+        .iter()
+        .filter(|(_, child)| child.is_some())
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let mut component_order: Vec<String> = Vec::new();
+    for (name, child) in &component_rows {
+        if child.is_none() && !listed.contains(name.as_str()) && !component_order.contains(name) {
+            component_order.push(name.clone());
+        }
+    }
+
+    // Split the rows into the plain view (direct + via listed children) and one bucket per
+    // unlisted component. A row is `(card_id, membership, foil)` in every view.
+    let mut plain_rows: Vec<(i32, String, bool)> = Vec::new();
+    let mut direct_rows: Vec<(i32, String, bool)> = Vec::new();
+    let mut component_buckets: HashMap<String, Vec<(i32, String, bool)>> = HashMap::new();
+    for (card_id, membership, foil, component) in &rows {
+        match component {
+            None => {
+                plain_rows.push((*card_id, membership.clone(), *foil));
+                direct_rows.push((*card_id, membership.clone(), *foil));
+            }
+            Some(name) if listed.contains(name.as_str()) => {
+                plain_rows.push((*card_id, membership.clone(), *foil));
+            }
+            Some(name) => {
+                if !component_order.contains(name) {
+                    component_order.push(name.clone());
+                }
+                component_buckets.entry(name.clone()).or_default().push((
+                    *card_id,
+                    membership.clone(),
+                    *foil,
+                ));
+            }
+        }
+    }
+
+    // Collapse each view to one entry per card at its strongest (lowest-rank) membership,
+    // foil ANDed among that membership's rows (foil-only when every contributing row is
+    // foil). The flat view spans every row, whatever its source.
+    let all_rows: Vec<(i32, String, bool)> = rows
+        .iter()
+        .map(|(card_id, membership, foil, _)| (*card_id, membership.clone(), *foil))
+        .collect();
+    let best = best_memberships(&all_rows);
+    let plain = best_memberships(&plain_rows);
+
+    // A plain card is `direct` when its chosen membership is carried by at least one
+    // unattributed row — the signal that a plain section isn't purely inherited.
+    let direct: HashSet<i32> = direct_rows
+        .iter()
+        .filter(|(card_id, membership, _)| {
+            plain
+                .get(card_id)
+                .is_some_and(|(_, chosen, _)| chosen == membership)
+        })
+        .map(|(card_id, ..)| *card_id)
+        .collect();
 
     // Which of this product's booster cards are exclusive to its booster family (a
     // collector-booster-only printing, say), plus a slug naming that family for the section
     // heading — one small cross-product lookup, empty for a non-booster product that wraps no
-    // premium booster, or a set with nothing to compare against.
+    // premium booster, or a set with nothing to compare against. Judged over the plain view:
+    // the exclusive/booster display split only applies there (component sections keep their
+    // own certainty split).
     let (exclusive, exclusive_family) =
-        booster_exclusive_card_ids(state, game, product, &best).await?;
+        booster_exclusive_card_ids(state, game, product, &plain).await?;
 
-    // Load the sort keys for every distinct card so the full list can be ordered before
-    // it's paged; chunked under the bind limit. A card whose row vanished mid-reimport
-    // simply drops out (it's excluded from the ordered list and so from every `total`).
+    // Load the sort keys for every distinct card so each list can be ordered before it's
+    // paged; chunked under the bind limit. A card whose row vanished mid-reimport simply
+    // drops out (it's excluded from the ordered lists and so from every `total`). Every
+    // component card also carries a flat row, so `best`'s keys cover all views.
     let card_ids: Vec<i32> = best.keys().copied().collect();
-    let mut ordered: Vec<(u8, u8, String, Option<i32>, String, i32)> =
-        Vec::with_capacity(card_ids.len());
+    let mut keys: HashMap<i32, (String, Option<i32>, String)> =
+        HashMap::with_capacity(card_ids.len());
     for chunk in card_ids.chunks(PRODUCT_CARDS_IN_CHUNK) {
-        let keys: Vec<(i32, String, Option<i32>, String)> = Card::find()
+        let chunk_keys: Vec<(i32, String, Option<i32>, String)> = Card::find()
             .select_only()
             .column(card::Column::Id)
             .column(card::Column::SetCode)
@@ -1201,33 +1485,68 @@ async fn build_product_card_index(
             .into_tuple()
             .all(&state.db)
             .await?;
-        for (cid, set_code, cn_int, cn) in keys {
-            let rank = best.get(&cid).map_or(u8::MAX, |entry| entry.0);
-            // Within the booster rank, exclusive cards (0) sort ahead of the shared pool
-            // (1) so they lead. Non-booster cards are never exclusive, so they all take 1.
-            let exclusive_rank = u8::from(!exclusive.contains(&cid));
-            ordered.push((rank, exclusive_rank, set_code, cn_int, cn, cid));
+        for (cid, set_code, cn_int, cn) in chunk_keys {
+            keys.insert(cid, (set_code, cn_int, cn));
         }
     }
 
     // Membership first (guaranteed cards lead), then family-exclusive booster cards ahead
     // of the shared pool, then set code, then numeric-run-first collector number (NULLs
     // last), with `id` as a stable tiebreak so paging is deterministic — the same order
-    // the catalog's set listing uses within a set.
-    ordered.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.cmp(&b.2))
-            .then_with(|| cn_int_key(a.3).cmp(&cn_int_key(b.3)))
-            .then_with(|| a.4.cmp(&b.4))
-            .then_with(|| a.5.cmp(&b.5))
-    });
+    // the catalog's set listing uses within a set. One ordering, applied per view, so the
+    // flat list, the plain list, and every component list agree on relative card order.
+    let order_view = |view: &HashMap<i32, (u8, String, bool)>| -> Vec<i32> {
+        let mut entries: Vec<(u8, u8, &str, Option<i32>, &str, i32)> = view
+            .iter()
+            .filter_map(|(&cid, &(rank, ..))| {
+                let (set_code, cn_int, cn) = keys.get(&cid)?;
+                let exclusive_rank = u8::from(!exclusive.contains(&cid));
+                Some((
+                    rank,
+                    exclusive_rank,
+                    set_code.as_str(),
+                    *cn_int,
+                    cn.as_str(),
+                    cid,
+                ))
+            })
+            .collect();
+        entries.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(b.2))
+                .then_with(|| cn_int_key(a.3).cmp(&cn_int_key(b.3)))
+                .then_with(|| a.4.cmp(b.4))
+                .then_with(|| a.5.cmp(&b.5))
+        });
+        entries.into_iter().map(|entry| entry.5).collect()
+    };
+
+    let ordered = order_view(&best);
+    let plain_ordered = order_view(&plain);
+    let components: Vec<ComponentCards> = component_order
+        .into_iter()
+        .filter_map(|name| {
+            let bucket = component_buckets.remove(&name)?;
+            let cards = best_memberships(&bucket);
+            let ordered = order_view(&cards);
+            Some(ComponentCards {
+                name,
+                cards,
+                ordered,
+            })
+        })
+        .collect();
 
     Ok(ProductCardIndex {
         best,
         exclusive,
         exclusive_family,
-        ordered: ordered.into_iter().map(|entry| entry.5).collect(),
+        ordered,
+        plain,
+        plain_ordered,
+        direct,
+        components,
     })
 }
 
@@ -1270,13 +1589,15 @@ async fn sorted_product_card_ids(
     Ok(ids)
 }
 
-/// Re-group a list of a product's card ids by display section (`contains` → `exclusive` →
-/// `booster` → `variable`), preserving the incoming order *within* each section. Keeps the
-/// section grouping intact for the whole-product (`?section=` omitted) response when a `sort`
-/// has flattened the ids into a single card-order run: the sections still lead in display
-/// order, each holding its cards in the sorted order. A no-op on the already-section-grouped
-/// default order, so the unsorted whole-product response is byte-identical to before.
-fn group_by_section(index: &ProductCardIndex, order: &[i32]) -> Vec<i32> {
+/// Re-group a list of card ids by display section (`contains` → `exclusive` → `booster` →
+/// `variable`), preserving the incoming order *within* each section — and dropping ids the
+/// classifier doesn't claim (`None`), which is how a component page narrows a sorted
+/// whole-product run to its own members. Keeps the section grouping intact for the
+/// (`?section=` omitted) response when a `sort` has flattened the ids into a single
+/// card-order run: the sections still lead in display order, each holding its cards in the
+/// sorted order. A no-op on an already-section-grouped default order, so the unsorted
+/// whole-product response is byte-identical to before.
+fn group_ids_by(order: &[i32], section_of: impl Fn(i32) -> Option<CardSection>) -> Vec<i32> {
     const SECTIONS: [CardSection; 4] = [
         CardSection::Contains,
         CardSection::Exclusive,
@@ -1289,7 +1610,7 @@ fn group_by_section(index: &ProductCardIndex, order: &[i32]) -> Vec<i32> {
             order
                 .iter()
                 .copied()
-                .filter(|&cid| index.section_of(cid) == Some(section)),
+                .filter(|&cid| section_of(cid) == Some(section)),
         );
     }
     grouped
@@ -1310,19 +1631,37 @@ async fn filter_ordered_by_search(
     q: Option<&str>,
     ordered: &[i32],
 ) -> Result<Vec<i32>, AppError> {
+    match search_matched_ids(state, game, q, ordered).await? {
+        // Keep the product's display order; drop everything the search didn't match.
+        Some(matched) => Ok(ordered
+            .iter()
+            .copied()
+            .filter(|cid| matched.contains(cid))
+            .collect()),
+        None => Ok(ordered.to_vec()),
+    }
+}
+
+/// The subset of `candidates` matching an optional `q` search, as a membership set —
+/// `None` for a blank/absent query (nothing to filter). The set form lets the sections
+/// manifest test every view (plain + per-component) against **one** compiled search over
+/// the flat id list instead of re-running the per-chunk lookups per section.
+async fn search_matched_ids(
+    state: &AppState,
+    game: &Game,
+    q: Option<&str>,
+    candidates: &[i32],
+) -> Result<Option<HashSet<i32>>, AppError> {
     let Some(search) = trim_query(q) else {
-        return Ok(ordered.to_vec());
+        return Ok(None);
     };
     // Compile up front so a malformed query 422s before the per-chunk lookups run.
     let (condition, _shape) = super::parse_search(game, search, state.dialect())?;
-    if ordered.is_empty() {
-        return Ok(Vec::new());
-    }
 
     // Which of this product's cards satisfy the search: the compiled condition intersected
-    // with each chunk of the ordered ids (the game filter matches the paged read's).
-    let mut matched: HashSet<i32> = HashSet::with_capacity(ordered.len());
-    for chunk in ordered.chunks(PRODUCT_CARDS_IN_CHUNK) {
+    // with each chunk of the candidate ids (the game filter matches the paged read's).
+    let mut matched: HashSet<i32> = HashSet::with_capacity(candidates.len());
+    for chunk in candidates.chunks(PRODUCT_CARDS_IN_CHUNK) {
         let ids: Vec<i32> = Card::find()
             .select_only()
             .column(card::Column::Id)
@@ -1334,13 +1673,7 @@ async fn filter_ordered_by_search(
             .await?;
         matched.extend(ids);
     }
-
-    // Keep the product's display order; drop everything the search didn't match.
-    Ok(ordered
-        .iter()
-        .copied()
-        .filter(|cid| matched.contains(cid))
-        .collect())
+    Ok(Some(matched))
 }
 
 /// Collapse a product's raw membership rows `(card_id, membership, foil)` to one entry

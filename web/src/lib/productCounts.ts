@@ -11,6 +11,22 @@
 
 import type { ProductCardSection, ProductComponent } from '@/lib/api'
 
+/**
+ * The sections the product page actually renders. A plain `booster`/`exclusive` section
+ * flagged `inherited` is dropped: every one of its cards arrived through a **listed**
+ * sub-product (the "What's in the box" list links it), so its pull pool belongs on that
+ * product's own page — showing it here doubled the same pool up and read as extra cards
+ * (the user clicks through instead). Everything else stays: a component section is never
+ * inherited, and an inherited `contains`/`variable` section still states a guarantee this
+ * page would otherwise lose. Shared by ProductCards (the section blocks) and
+ * ProductOverview (the chips), so the two can never disagree about what's hidden.
+ */
+export function visibleProductSections(manifest: ProductCardSection[]): ProductCardSection[] {
+  return manifest.filter(
+    (section) => !(section.inherited && (section.key === 'booster' || section.key === 'exclusive')),
+  )
+}
+
 /** Distinct-card counts per certainty. `pool` and `variable` are disjoint; `exclusive` is a
  * **subset** of `pool`, never added to it. */
 export type ProductCardCounts = {
@@ -32,7 +48,13 @@ export type ProductCardCounts = {
  * Fold a (possibly search-filtered) sections manifest into per-certainty counts. An
  * unrecognised section key falls into `variable`, the weakest claim — mirroring the server's
  * `CardSection::classify`, so a section key the SPA hasn't caught up with can never be
- * reported as guaranteed.
+ * reported as guaranteed. A **component** section (an unlisted sub-product's cards) folds
+ * into the same certainty bucket its key names — what a land pack guarantees, the box
+ * guarantees. Callers pass the *visible* manifest ({@link visibleProductSections}), so a
+ * hidden inherited pool never counts. A card two sub-packs share is counted once per
+ * section (each section's own total is exact); the summed bucket can therefore run a hair
+ * high across packs — acceptable, where the alternative (deduping) would misstate a pack's
+ * own contents.
  */
 export function productCardCounts(manifest: ProductCardSection[]): ProductCardCounts {
   let guaranteed = 0

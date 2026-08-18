@@ -4,12 +4,12 @@ use sea_orm::entity::prelude::*;
 /// found in — or can be pulled from — sourced from [MTGJSON](https://mtgjson.com)
 /// (see [`crate::mtgjson`]).
 ///
-/// One row per `(game, product, card, membership, foil)`. `product_id` references
-/// `products.id` and `card_id` references `cards.id` — internal integer ids, not the
-/// providers' external ids, so a row survives a catalog / product re-import (mirroring
-/// how [`super::collection_item`] links to `cards.id`). `game` is denormalised so the
-/// by-card lookup filters without joining. The whole table is rebuilt on each sync, so
-/// stale membership never lingers.
+/// One row per `(game, product, card, membership, foil, component)`. `product_id`
+/// references `products.id` and `card_id` references `cards.id` — internal integer ids,
+/// not the providers' external ids, so a row survives a catalog / product re-import
+/// (mirroring how [`super::collection_item`] links to `cards.id`). `game` is denormalised
+/// so the by-card lookup filters without joining. The whole table is rebuilt on each sync,
+/// so stale membership never lingers.
 ///
 /// `Eq` is derivable — every column is an integer, string, bool, or timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -29,6 +29,15 @@ pub struct Model {
     pub membership: String,
     /// Whether this is the foil printing in the product.
     pub foil: bool,
+    /// The display name of the **box component** this membership was inherited through —
+    /// the top-level `sealed` reference the ingest recursed into (matching the `name` the
+    /// corresponding [`super::sealed_component`] row stores) — or `None` for the product's
+    /// own direct contents (and for every non-recursed source: curated fallback rows, SLD
+    /// derivations, sibling-pool synthesis). Lets the handler split a product's card list
+    /// by source: an **unlisted** component (no catalog product of its own) gets a named
+    /// display section, while a section fed only by **listed** components is flagged
+    /// `inherited` so the SPA can defer to the sub-product's own page.
+    pub component: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

@@ -563,13 +563,27 @@ async fn product_containers_endpoint_lists_direct_parents_with_quantities() {
     }
 }
 
-/// Insert one `sealed_contents` membership row for `(product, card)`.
+/// Insert one `sealed_contents` membership row for `(product, card)` — the product's own
+/// (direct, unattributed) contents.
 async fn insert_sealed(
     db: &sea_orm::DatabaseConnection,
     product_id: i32,
     card_id: i32,
     membership: &str,
     foil: bool,
+) {
+    insert_sealed_via(db, product_id, card_id, membership, foil, None).await;
+}
+
+/// Insert one `sealed_contents` membership row attributed to the named box component the
+/// card was inherited through (`None` = the product's own contents).
+async fn insert_sealed_via(
+    db: &sea_orm::DatabaseConnection,
+    product_id: i32,
+    card_id: i32,
+    membership: &str,
+    foil: bool,
+    component: Option<&str>,
 ) {
     let now = Utc::now();
     sealed_content::ActiveModel {
@@ -579,6 +593,7 @@ async fn insert_sealed(
         card_id: Set(card_id),
         membership: Set(membership.to_string()),
         foil: Set(foil),
+        component: Set(component.map(str::to_string)),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -1590,4 +1605,401 @@ async fn product_cards_sort_reorders_within_sections_not_across_them() {
     .await;
     assert_eq!(body["total"], 3, "only the 3 cards named '…excl…'");
     assert_eq!(ids(&body), vec!["sf-excl-3", "sf-excl-2", "sf-excl-1"]);
+}
+
+/// Seed a bundle exercising the source split: one direct guaranteed card, a booster pool
+/// inherited through a **listed** play booster (linked component), and a land pack that is
+/// **not** individually sold (unlinked component) packing two guaranteed cards + one maybe.
+/// Returns `(bundle_external_path_id, card ids…)` for the assertions.
+async fn seed_component_split_bundle(
+    db: &sea_orm::DatabaseConnection,
+) -> (i32, i32, i32, i32, i32, i32) {
+    let promo = insert_card(db, "sf-promo").await;
+    let pull = insert_card(db, "sf-pull").await;
+    let land_a = insert_card(db, "sf-land-a").await;
+    let land_b = insert_card(db, "sf-land-b").await;
+    let land_maybe = insert_card(db, "sf-land-maybe").await;
+    let play = insert_product(
+        db,
+        "200",
+        "Play Booster Pack",
+        "fin",
+        "play_pack",
+        Some("4.99"),
+    )
+    .await;
+    let bundle = insert_product(db, "300", "Gift Bundle", "fin", "bundle", Some("49.99")).await;
+
+    // The pack's own pool, and the bundle's inherited copy of it (attributed to the
+    // listed component), plus the bundle's own guaranteed promo.
+    insert_sealed(db, play, pull, "booster", false).await;
+    insert_sealed_via(
+        db,
+        bundle,
+        pull,
+        "booster",
+        false,
+        Some("Play Booster Pack"),
+    )
+    .await;
+    insert_sealed(db, bundle, promo, "contains", false).await;
+    // The unlisted land pack's cards: two guaranteed, one randomized.
+    insert_sealed_via(db, bundle, land_a, "contains", false, Some("Land Pack")).await;
+    insert_sealed_via(db, bundle, land_b, "contains", false, Some("Land Pack")).await;
+    insert_sealed_via(db, bundle, land_maybe, "variable", false, Some("Land Pack")).await;
+
+    // The box list: the linked play booster, then the unlinked land pack.
+    insert_component(
+        db,
+        bundle,
+        0,
+        "sealed",
+        "Play Booster Pack",
+        9,
+        Some(play),
+        None,
+    )
+    .await;
+    insert_component(db, bundle, 1, "sealed", "Land Pack", 1, None, None).await;
+
+    (bundle, promo, pull, land_a, land_b, land_maybe)
+}
+
+#[tokio::test]
+async fn product_card_sections_split_unlisted_components_and_flag_inherited() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    seed_component_split_bundle(db).await;
+
+    // The manifest splits by source: the plain guaranteed section (direct → not
+    // inherited), the land pack's own sections in certainty order (never inherited),
+    // then the plain booster pool — every card of which arrived through the listed play
+    // booster, so it's flagged inherited for the SPA to defer to the pack's page.
+    let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards/sections")).await;
+    assert_eq!(status, StatusCode::OK);
+    let sections: Vec<(String, u64, Option<String>, bool)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["key"].as_str().unwrap().to_string(),
+                s["total"].as_u64().unwrap(),
+                s["component"].as_str().map(str::to_string),
+                s["inherited"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sections,
+        vec![
+            ("contains".to_string(), 1, None, false),
+            (
+                "contains".to_string(),
+                2,
+                Some("Land Pack".to_string()),
+                false
+            ),
+            (
+                "variable".to_string(),
+                1,
+                Some("Land Pack".to_string()),
+                false
+            ),
+            ("booster".to_string(), 1, None, true),
+        ],
+        "plain contains leads, the unlisted component's sections follow in box order, and \
+         the listed-child booster pool is flagged inherited"
+    );
+
+    // The pack's own page is untouched: its pool is direct, so nothing is inherited.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/200/cards/sections")).await;
+    let pack_sections = body["data"].as_array().unwrap();
+    assert_eq!(pack_sections.len(), 1);
+    assert_eq!(pack_sections[0]["key"], "booster");
+    assert_eq!(pack_sections[0]["inherited"], false);
+}
+
+#[tokio::test]
+async fn product_cards_component_param_pages_an_unlisted_component() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    seed_component_split_bundle(db).await;
+
+    // The whole component, certainty-grouped: the two guaranteed lands lead, the maybe
+    // trails; entries are dressed with the component's own membership, never exclusive.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards?component=Land%20Pack"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 3);
+    let data = body["data"].as_array().unwrap();
+    let memberships: Vec<&str> = data
+        .iter()
+        .map(|e| e["membership"].as_str().unwrap())
+        .collect();
+    assert_eq!(memberships, vec!["contains", "contains", "variable"]);
+    assert!(data.iter().all(|e| e["exclusive"] == false));
+
+    // Narrowed to one certainty within the component.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards?component=Land%20Pack&section=contains"),
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+
+    // A plain section page excludes the component's cards (they have their own block) —
+    // the plain contains section is just the direct promo.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards?section=contains"),
+    )
+    .await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["card"]["id"], "sf-promo");
+
+    // The whole-product list (no section/component) still spans every card once —
+    // back-compatible with pre-split consumers.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
+    assert_eq!(body["total"], 5);
+
+    // A name matching no component is an empty page, not an error (names are data).
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards?component=No%20Such%20Pack"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn product_card_sections_search_filters_component_sections_too() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    seed_component_split_bundle(db).await;
+
+    // A search matching one land narrows the land pack's contains section to it and drops
+    // the sections with no matches (issue #222's contract, extended to component sections).
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards/sections?q=land-a"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["key"], "contains");
+    assert_eq!(sections[0]["component"], "Land Pack");
+    assert_eq!(sections[0]["total"], 1);
+
+    // The same search on the component's paged cards agrees.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards?component=Land%20Pack&q=land-a"),
+    )
+    .await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["card"]["id"], "sf-land-a");
+}
+
+#[tokio::test]
+async fn product_cards_shared_card_appears_in_every_component_packing_it() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // Two unlisted half-decks share a card: each component's section must list it (a
+    // pack's contents may not silently lose a card to its sibling), while the flat
+    // whole-product list still counts it once.
+    let shared = insert_card(db, "sf-shared").await;
+    let only_a = insert_card(db, "sf-only-a").await;
+    let kit = insert_product(db, "500", "Starter Kit", "fin", "starter", Some("19.99")).await;
+    insert_sealed_via(db, kit, shared, "contains", false, Some("Deck A")).await;
+    insert_sealed_via(db, kit, only_a, "contains", false, Some("Deck A")).await;
+    insert_sealed_via(db, kit, shared, "contains", false, Some("Deck B")).await;
+    insert_component(db, kit, 0, "sealed", "Deck A", 1, None, None).await;
+    insert_component(db, kit, 1, "sealed", "Deck B", 1, None, None).await;
+
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/500/cards/sections")).await;
+    let sections: Vec<(Option<String>, u64)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["component"].as_str().map(str::to_string),
+                s["total"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sections,
+        vec![
+            (Some("Deck A".to_string()), 2),
+            (Some("Deck B".to_string()), 1),
+        ],
+    );
+
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/500/cards")).await;
+    assert_eq!(
+        body["total"], 2,
+        "the flat list still dedupes the shared card"
+    );
+
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/500/cards?component=Deck%20B"),
+    )
+    .await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["card"]["id"], "sf-shared");
+}
+
+#[tokio::test]
+async fn product_card_sections_booster_with_any_direct_row_is_not_inherited() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // A box whose pool is inherited from its linked pack, plus one direct booster row of
+    // its own: the section must NOT read inherited (hiding it would lose the direct card).
+    let inherited = insert_card(db, "sf-inherited").await;
+    let own = insert_card(db, "sf-own").await;
+    let pack = insert_product(db, "200", "Play Booster Pack", "fin", "play_pack", None).await;
+    let boxp = insert_product(
+        db,
+        "100",
+        "Play Booster Box",
+        "fin",
+        "play_display",
+        Some("129.99"),
+    )
+    .await;
+    insert_sealed(db, pack, inherited, "booster", false).await;
+    insert_sealed_via(
+        db,
+        boxp,
+        inherited,
+        "booster",
+        false,
+        Some("Play Booster Pack"),
+    )
+    .await;
+    insert_sealed(db, boxp, own, "booster", false).await;
+    insert_component(
+        db,
+        boxp,
+        0,
+        "sealed",
+        "Play Booster Pack",
+        36,
+        Some(pack),
+        None,
+    )
+    .await;
+
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards/sections")).await;
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["key"], "booster");
+    assert_eq!(sections[0]["total"], 2);
+    assert_eq!(
+        sections[0]["inherited"], false,
+        "one direct row keeps the section visible"
+    );
+}
+
+#[tokio::test]
+async fn product_card_sections_inherited_is_provenance_not_a_search_result() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // The mixed section from the test above: an inherited pool card + one direct row.
+    let inherited = insert_card(db, "sf-inherited").await;
+    let own = insert_card(db, "sf-own").await;
+    let pack = insert_product(db, "200", "Play Booster Pack", "fin", "play_pack", None).await;
+    let boxp = insert_product(db, "100", "Play Booster Box", "fin", "play_display", None).await;
+    insert_sealed(db, pack, inherited, "booster", false).await;
+    insert_sealed_via(
+        db,
+        boxp,
+        inherited,
+        "booster",
+        false,
+        Some("Play Booster Pack"),
+    )
+    .await;
+    insert_sealed(db, boxp, own, "booster", false).await;
+    insert_component(
+        db,
+        boxp,
+        0,
+        "sealed",
+        "Play Booster Pack",
+        36,
+        Some(pack),
+        None,
+    )
+    .await;
+
+    // A search matching only the *inherited* card must not flip the section's provenance:
+    // `total` is search-scoped, `inherited` is not — flipping it made the SPA hide the very
+    // section that holds the match, while the paged read still served it.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards/sections?q=inherited"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["key"], "booster");
+    assert_eq!(sections[0]["total"], 1, "the count IS search-scoped");
+    assert_eq!(
+        sections[0]["inherited"], false,
+        "provenance comes from the unfiltered view — the direct row keeps it visible"
+    );
+
+    // And the manifest agrees with the paged read under the same q.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards?section=booster&q=inherited"),
+    )
+    .await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["card"]["id"], "sf-inherited");
+
+    // The counterpart: a section that IS fully inherited stays flagged under a search too
+    // — provenance is stable in both directions.
+    let case = insert_product(db, "300", "Booster Box Case", "fin", "case", None).await;
+    insert_sealed_via(
+        db,
+        case,
+        inherited,
+        "booster",
+        false,
+        Some("Play Booster Box"),
+    )
+    .await;
+    insert_component(
+        db,
+        case,
+        0,
+        "sealed",
+        "Play Booster Box",
+        6,
+        Some(boxp),
+        None,
+    )
+    .await;
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards/sections?q=inherited"),
+    )
+    .await;
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["inherited"], true);
 }

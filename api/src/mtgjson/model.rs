@@ -336,6 +336,12 @@ pub struct RawMembership {
     pub scryfall_id: String,
     pub membership: &'static str,
     pub foil: bool,
+    /// The **top-level** `sealed` component this membership was inherited through — the
+    /// same display name the composition row for that component carries, so the handler
+    /// can match the two — or `None` for the product's own direct contents. Deeper hops
+    /// keep the top-level attribution: what the reader sees in "what's in the box" is the
+    /// outermost component, so that's what a card is filed under.
+    pub component: Option<String>,
 }
 
 /// Guards a runaway `sealed` recursion (a box of boxes of …). Real chains are 2–3 deep.
@@ -403,7 +409,7 @@ pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMemb
             };
             if let Some(contents) = &product.contents {
                 let mut visited: HashSet<String> = HashSet::new();
-                resolver.walk_inner(tcg_id, contents, None, &mut visited, 0, &mut out);
+                resolver.walk_inner(tcg_id, contents, None, None, &mut visited, 0, &mut out);
             }
         }
     }
@@ -593,6 +599,7 @@ impl Resolver<'_> {
         scryfall: &str,
         membership: Membership,
         foil: bool,
+        component: Option<&str>,
         out: &mut HashSet<RawMembership>,
     ) {
         out.insert(RawMembership {
@@ -600,6 +607,7 @@ impl Resolver<'_> {
             scryfall_id: scryfall.to_string(),
             membership: membership.as_str(),
             foil,
+            component: component.map(str::to_string),
         });
     }
 
@@ -648,13 +656,17 @@ impl Resolver<'_> {
     }
 
     /// Walk a product's contents, emitting membership rows. `membership_override` (set
-    /// inside a `variable` config) forces every emitted row to `variable`. `visited`
-    /// holds the sealed-product uuids already expanded on this branch (cycle guard).
+    /// inside a `variable` config) forces every emitted row to `variable`. `component` is
+    /// the top-level `sealed` component this branch was entered through (attribution for
+    /// every row it yields; `None` at the product's own level). `visited` holds the
+    /// sealed-product uuids already expanded on this branch (cycle guard).
+    #[allow(clippy::too_many_arguments)]
     fn walk_inner(
         &self,
         tcg_id: &str,
         contents: &Contents,
         membership_override: Option<Membership>,
+        component: Option<&str>,
         visited: &mut HashSet<String>,
         depth: usize,
         out: &mut HashSet<RawMembership>,
@@ -663,7 +675,7 @@ impl Resolver<'_> {
         for cr in &contents.card {
             if let Some(scryfall) = self.idx.card_ref(cr) {
                 let membership = membership_override.unwrap_or(Membership::Contains);
-                self.push(tcg_id, scryfall, membership, cr.foil, out);
+                self.push(tcg_id, scryfall, membership, cr.foil, component, out);
             }
         }
         // Precon decks: every deck card is definitely in.
@@ -671,7 +683,7 @@ impl Resolver<'_> {
             for (uuid, is_foil) in self.deck_cards(dr) {
                 if let Some(&scryfall) = self.idx.uuid_to_scryfall.get(uuid) {
                     let membership = membership_override.unwrap_or(Membership::Contains);
-                    self.push(tcg_id, scryfall, membership, is_foil, out);
+                    self.push(tcg_id, scryfall, membership, is_foil, component, out);
                 }
             }
         }
@@ -680,7 +692,7 @@ impl Resolver<'_> {
             for (uuid, foil) in self.pack_cards(pr) {
                 if let Some(&scryfall) = self.idx.uuid_to_scryfall.get(uuid) {
                     let membership = membership_override.unwrap_or(Membership::Booster);
-                    self.push(tcg_id, scryfall, membership, foil, out);
+                    self.push(tcg_id, scryfall, membership, foil, component, out);
                 }
             }
         }
@@ -701,13 +713,17 @@ impl Resolver<'_> {
                     tcg_id,
                     &view,
                     Some(Membership::Variable),
+                    component,
                     visited,
                     depth,
                     out,
                 );
             }
         }
-        // Nested sealed products: recurse, attributing leaves to the outer product.
+        // Nested sealed products: recurse, attributing leaves to the outer product — and,
+        // for display grouping, to the **top-level** component they came through: the first
+        // hop names the attribution (the box row the reader sees), deeper hops keep it. A
+        // nameless reference attributes nothing rather than minting an unnameable section.
         if depth < MAX_SEALED_DEPTH {
             for sr in &contents.sealed {
                 let Some(uuid) = sr.uuid.as_deref() else {
@@ -719,10 +735,12 @@ impl Resolver<'_> {
                 if let Some(sub) = self.idx.product_by_uuid.get(uuid)
                     && let Some(sub_contents) = &sub.contents
                 {
+                    let hop = sr.name.as_deref().filter(|name| !name.is_empty());
                     self.walk_inner(
                         tcg_id,
                         sub_contents,
                         membership_override,
+                        component.or(hop),
                         visited,
                         depth + 1,
                         out,
@@ -843,6 +861,56 @@ mod tests {
         // The box (1002) contains the pack, so its cards can be pulled from the box too.
         assert!(has(&rows, "1002", "sf-alpha", "booster", false));
         assert!(has(&rows, "1002", "sf-rare", "booster", true));
+    }
+
+    /// Rows inherited through a `sealed` reference are attributed to that component (by
+    /// its display name — the same string the composition row carries), while a product's
+    /// own rows carry none; the attribution survives deeper nesting as the **top-level**
+    /// hop's name, matching the box line item the reader actually sees.
+    #[test]
+    fn sealed_recursion_attributes_rows_to_the_top_level_component() {
+        let rows = build_memberships(&fixture());
+        // The box's inherited pool names the pack line item it came through…
+        assert!(rows.iter().any(|r| r.tcgplayer_product_id == "1002"
+            && r.scryfall_id == "sf-alpha"
+            && r.component.as_deref() == Some("Draft Booster Pack")));
+        // …while the pack's own pool is unattributed.
+        assert!(rows.iter().any(|r| r.tcgplayer_product_id == "1001"
+            && r.scryfall_id == "sf-alpha"
+            && r.component.is_none()));
+
+        // Two levels down: a case wrapping the box attributes the pack's cards to the
+        // *box* line item (its own top-level hop), not the pack.
+        let json = serde_json::json!({
+            "data": { "SET": {
+                "cards": [
+                    { "uuid": "u-a", "number": "1", "setCode": "SET",
+                      "identifiers": { "scryfallId": "sf-a" } }
+                ],
+                "booster": {
+                    "draft": { "sheets": {
+                        "common": { "foil": false, "cards": { "u-a": 1 } }
+                    } }
+                },
+                "sealedProduct": [
+                    { "uuid": "p-pack", "identifiers": { "tcgplayerProductId": "1" },
+                      "contents": { "pack": [ { "code": "draft", "set": "set" } ] } },
+                    { "uuid": "p-box", "identifiers": { "tcgplayerProductId": "2" },
+                      "contents": { "sealed": [
+                          { "uuid": "p-pack", "count": 36, "name": "Draft Booster Pack" }
+                      ] } },
+                    { "uuid": "p-case", "identifiers": { "tcgplayerProductId": "3" },
+                      "contents": { "sealed": [
+                          { "uuid": "p-box", "count": 6, "name": "Draft Booster Box" }
+                      ] } }
+                ]
+            } }
+        });
+        let all: AllPrintings = serde_json::from_value(json).expect("fixture parses");
+        let rows = build_memberships(&all);
+        assert!(rows.iter().any(|r| r.tcgplayer_product_id == "3"
+            && r.scryfall_id == "sf-a"
+            && r.component.as_deref() == Some("Draft Booster Box")));
     }
 
     #[test]
