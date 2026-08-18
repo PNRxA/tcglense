@@ -99,6 +99,7 @@ function mountCards(
       key: c.props('sectionKey') as string,
       component: c.props('component') as string | undefined,
       title: c.props('title') as string,
+      blurb: c.props('blurb') as string,
       count: c.props('count') as number,
       search: c.props('search') as string,
       sort: c.props('sort') as string,
@@ -132,10 +133,11 @@ describe('ProductCards sections', () => {
     ])
   })
 
-  it('titles the exclusives block by the backend-provided contained booster family', () => {
-    // A bundle's own product_type carries no family, but the backend names the collector
-    // booster it wraps — so the section reads "Exclusive to Collector Booster" (issue #290).
-    // The shared pool below it spans every family, so it stays generic on a bundle.
+  it('titles the exclusives block by the backend-provided booster family', () => {
+    // The server only emits an exclusive section on a booster product and names the family
+    // by its single-pack slug — but a client must stay robust to a manifest it no longer
+    // expects (an older server put one on a bundle, issue #290): the handed-down family
+    // still wins over the product's own (absent) one.
     const { sections } = mountCards(
       [section('exclusive', 1, 'collector_pack'), section('booster')],
       'bundle',
@@ -247,6 +249,20 @@ describe('ProductCards sections', () => {
     )
     expect(sections.map((s) => s.key)).toEqual(['booster'])
     expect(sections[0]!.title).toBe('Shared Collector Booster pool')
+  })
+
+  it('words the shared pool as this booster’s own remainder, never as the other boosters’ list', () => {
+    // The remainder can span special printings the set's main boosters never carry (a box
+    // topper's pool is another "booster family", so its cards aren't exclusive) — a blurb
+    // built on "cards the other boosters can open" therefore read as "this is the
+    // play-booster list", which it isn't. The block is defined by what THESE boosters open.
+    const { sections } = mountCards(
+      [section('exclusive', 80, 'collector_pack'), section('booster', 520)],
+      'collector_pack',
+    )
+    expect(sections[1]!.blurb).toBe(
+      'The rest of everything these boosters can open — only the cards above are exclusive to them.',
+    )
   })
 
   it('falls back to scrolling the cards area when the clicked component has no visible block', () => {

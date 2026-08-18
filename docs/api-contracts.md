@@ -628,11 +628,13 @@ with the membership bucket (`"contains"` / `"booster"` / `"variable"`) and a `fo
 (the `.../products/{id}/cards` endpoint above): the shared `Card` shape plus the membership
 bucket, the foil-only flag, and `exclusive` (a `booster` card the product's booster line yields
 but no *other* booster family in the set can — a collector booster's special printings). The
-family judged is the product's **own** for a standalone booster, or, for a **bundle / gift box**,
-the premium booster it *contains* (Collector, else a generic special booster like Final
-Fantasy's Chocobo booster — issue #290): so a gift bundle's collector-only cards split out ahead
-of the shared play pool. `false` for any non-`booster` card, a bundle wrapping only
-play/set/draft boosters, or a set with no other booster family to compare against. A card that
+family judged is the product's **own**, so only a booster product (pack / display / box forms)
+ever flags exclusivity — the split used to borrow a **bundle / gift box**'s *contained* premium
+booster's family (issue #290), which surfaced an "Exclusive to Collector Boosters" section on
+the bundle itself whenever its pool rows were direct; a bundle's pool now always renders whole,
+and the exclusive call-out lives only on the wrapped boosters' own pages (issue #646
+follow-up). `false` for any non-`booster` card, any non-booster product, or a set with no
+other booster family to compare against. A card that
 is both contained in and pullable from the same product reports its **strongest** membership
 (lowest rank), so it shows once, in the "found in" group. The by-card-id lookups are chunked
 (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival" bundles reference
@@ -642,9 +644,10 @@ thousands of cards — can't blow SQLite's per-statement bind limit.
 `.../cards/sections` endpoint) is the display-section manifest: `key` is `contains` /
 `exclusive` / `booster` / `variable` (the value the `?section` filter takes), `total` its card
 count. `booster_family` is set **only on the plain `exclusive` section** — a representative
-`product_type` slug (e.g. `collector_pack`) naming the family those cards are exclusive to, so
-the SPA titles the block after the *contained* booster even for a bundle whose own type carries
-no family; `null` on every other section. `component` names the **unlisted** box component the
+`product_type` slug naming the family those cards are exclusive to by its single-pack form
+(e.g. `collector_pack`, so a collector *display*'s section is titled "Collector Booster", not
+the box); `null` on every other section, and only booster products ever get the section at
+all. `component` names the **unlisted** box component the
 section's cards are packed in (a sub-product with no catalog listing of its own — a bundle's
 land pack, a starter kit's half-deck; the same string as the matching `ProductComponent.name`,
 and the `?component` page key), `null` for a plain section. `inherited` is `true` when every

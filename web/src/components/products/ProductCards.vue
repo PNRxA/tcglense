@@ -111,14 +111,14 @@ function sectionMeta(
       }
     case 'exclusive': {
       // The exclusive section is named after its booster family. The backend hands down the
-      // *contained* booster's family (a bundle wraps a collector / special booster its own
-      // product_type can't express); fall back to this product's own family, then a generic
-      // label.
+      // family's single-pack representative slug (a collector *display*'s section reads
+      // "Collector Booster", not the box form) — and only ever emits the section on a
+      // booster product, never a bundle; fall back to this product's own family, then a
+      // generic label, for a manifest from an older server.
       const family =
         (section.booster_family ? boosterFamilyLabel(section.booster_family) : null) ??
         familyLabel.value
       return {
-        // Never "this booster" — the viewed product may be a bundle, which is not one.
         title: family ? `Exclusive to ${family}` : "Exclusive to this product's boosters",
         blurb: "Cards you can only pull from this product — not the set's other boosters.",
       }
@@ -127,11 +127,15 @@ function sectionMeta(
       // The pool is named after *this* product's family — never the exclusive section's
       // `booster_family`, which names only one. When the exclusives were split out above, this
       // block holds the pool's shared remainder, so it says "shared" and drops the claim to
-      // wholeness: the family's pool is this block plus that one.
+      // wholeness: the family's pool is this block plus that one. The blurb defines the block
+      // by *this* booster's own pool — not by what other boosters hold, which read as "this is
+      // the play-booster list" when the remainder also spans special printings the main
+      // boosters never carry (a box topper's pool, say — shared, but not a play-booster card).
       if (hasExclusive) {
         return {
           title: familyLabel.value ? `Shared ${familyLabel.value} pool` : 'Shared booster pool',
-          blurb: "The rest of the pool — cards the set's other boosters can open too.",
+          blurb:
+            'The rest of everything these boosters can open — only the cards above are exclusive to them.',
         }
       }
       return {

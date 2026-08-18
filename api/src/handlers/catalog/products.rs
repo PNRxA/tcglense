@@ -44,7 +44,7 @@ use crate::handlers::shared::{
     set_name_map, trim_query,
 };
 use crate::state::AppState;
-use crate::tcgcsv::classify::{BoosterFamily, booster_family};
+use crate::tcgcsv::classify::booster_family;
 
 use super::image::is_allowed_image_url;
 use super::{IMAGE_CACHE_CONTROL, image_error_response};
@@ -198,8 +198,9 @@ pub(crate) struct ProductCardSection {
     pub total: u64,
     /// For the `exclusive` section only: a representative `product_type` slug for the booster
     /// family these cards are exclusive to (e.g. `collector_pack` -> "Collector Booster"), so
-    /// the SPA can title the section after the *contained* booster even when the viewed
-    /// product is a bundle whose own type carries no family. `None` for every other section.
+    /// the SPA titles a collector *display*'s section after the family's single-pack form
+    /// rather than the box. Only booster products get an exclusive section — a bundle never
+    /// does (its wrapped boosters' pages carry the call-out). `None` for every other section.
     pub booster_family: Option<String>,
     /// The unlisted box component this section's cards are packed in (the matching
     /// composition line item's display name — also the `?component=` value that pages it),
@@ -1276,9 +1277,9 @@ struct ProductCardIndex {
     /// family.
     exclusive: HashSet<i32>,
     /// A representative `product_type` slug for the booster family the [`exclusive`] cards
-    /// belong to (e.g. `collector_pack`) — the viewed booster's own family, or, for a bundle,
-    /// the *contained* premium booster's family. `None` when nothing is exclusive. Surfaced on
-    /// the `exclusive` section so the SPA titles it after the right family.
+    /// belong to (e.g. `collector_pack`) — the viewed booster's own family; a non-booster
+    /// product never splits, so this is `None` there and whenever nothing is exclusive.
+    /// Surfaced on the `exclusive` section so the SPA titles it after the right family.
     ///
     /// [`exclusive`]: ProductCardIndex::exclusive
     exclusive_family: Option<String>,
@@ -1717,17 +1718,17 @@ fn best_memberships(rows: &[(i32, String, bool)]) -> HashMap<i32, (u8, String, b
 /// but from no booster product of a *different* family in the same set — e.g. a
 /// collector-booster-only borderless printing the play / draft / set sheets don't carry.
 ///
-/// The family judged is:
-/// - the product's **own** family, for a standalone booster ([`booster_family`] is `Some`);
-/// - the **contained premium** family, for a non-booster product that wraps boosters (a
-///   bundle / gift box): Collector if it tucks in a collector booster, else a generic
-///   special booster (Final Fantasy's Chocobo booster, say). See [`contained_booster_family`].
+/// The family judged is the product's **own**, and only a booster product has one — an
+/// "Exclusive to Collector Boosters" section belongs on the collector boosters' own pages
+/// (pack, display, box), never on a bundle / gift box that merely wraps one. The split used
+/// to borrow the *contained* premium booster's family for bundles (issue #290), which put
+/// the exclusive call-out on every bundle whose inherited pool carried a direct row —
+/// exactly the duplication the inherited-section hiding exists to prevent (issue #646).
 ///
 /// Returns `(∅, None)` — nothing exclusive, no heading — when the product has no booster
-/// cards, when it's a non-booster wrapping only play/set/draft boosters (no premium tier to
-/// call out), when the set has no other-family booster to compare against (a collector-only
-/// release where "exclusive" would be vacuously true of every card), or when the split turns
-/// up empty. Two small indexed lookups (plus, for a bundle, its component children's types).
+/// cards, when it isn't a booster (a bundle, a deck), when the set has no other-family
+/// booster to compare against (a collector-only release where "exclusive" would be vacuously
+/// true of every card), or when the split turns up empty. Two small indexed lookups.
 async fn booster_exclusive_card_ids(
     state: &AppState,
     game: &str,
@@ -1747,14 +1748,11 @@ async fn booster_exclusive_card_ids(
         return Ok((HashSet::new(), None));
     }
 
-    // The family whose exclusives we split out: the product's own (a standalone booster) or,
-    // for a bundle / gift box, the premium booster it contains.
-    let family = match booster_family(&product.product_type) {
-        Some(family) => family,
-        None => match contained_booster_family(state, game, product).await? {
-            Some(family) => family,
-            None => return Ok((HashSet::new(), None)),
-        },
+    // The family whose exclusives we split out: the product's own. A non-booster (a bundle,
+    // a deck) gets no split — its pool renders whole, and the exclusive call-out stays on
+    // the boosters' own pages.
+    let Some(family) = booster_family(&product.product_type) else {
+        return Ok((HashSet::new(), None));
     };
 
     // The set's booster products of a *different* family — the comparison pool. (Same-set
@@ -1809,66 +1807,6 @@ async fn booster_exclusive_card_ids(
         return Ok((HashSet::new(), None));
     }
     Ok((exclusive, Some(family.representative_type().to_string())))
-}
-
-/// The **premium** booster family a non-booster product (a bundle / gift box) wraps — the
-/// family whose special printings its exclusive section calls out. Reads the product's
-/// `sealed_components` children (the boosters it contains, already linked to catalog
-/// products), maps each to a [`BoosterFamily`], and picks Collector if present, else a
-/// generic special booster (e.g. Final Fantasy's Chocobo booster, a `pack`), else `None`.
-///
-/// `None` (so no exclusive split) when the product contains no linked booster, or wraps only
-/// play/set/draft boosters — those share the set's main pool, so there's no premium tier to
-/// separate and flagging their commons would mislabel the whole shared pool.
-async fn contained_booster_family(
-    state: &AppState,
-    game: &str,
-    product: &product::Model,
-) -> Result<Option<BoosterFamily>, AppError> {
-    // The catalog products this one contains as sealed components — a bundle's boosters. Only
-    // `sealed` line items carry a child-product link (decks / promos / extras don't).
-    let child_ids: Vec<i32> = SealedComponent::find()
-        .select_only()
-        .column(sealed_component::Column::ChildProductId)
-        .filter(sealed_component::Column::Game.eq(game))
-        .filter(sealed_component::Column::ProductId.eq(product.id))
-        .filter(sealed_component::Column::Kind.eq(sealed_component::ComponentKind::Sealed.as_str()))
-        .filter(sealed_component::Column::ChildProductId.is_not_null())
-        .into_tuple::<Option<i32>>()
-        .all(&state.db)
-        .await?
-        .into_iter()
-        .flatten()
-        .collect();
-    if child_ids.is_empty() {
-        return Ok(None);
-    }
-
-    let child_types: Vec<String> = Product::find()
-        .select_only()
-        .column(product::Column::ProductType)
-        .filter(product::Column::Game.eq(game))
-        .filter(product::Column::Id.is_in(child_ids))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-    Ok(premium_booster_family(&child_types))
-}
-
-/// Pick the premium booster family out of a bundle's contained-booster `product_type`s:
-/// Collector if any child is a collector booster, else Generic if any is a generic special
-/// booster, else `None` (only play/set/draft — no premium tier). A pure decision so it's
-/// unit-tested without a DB.
-fn premium_booster_family(child_types: &[String]) -> Option<BoosterFamily> {
-    let mut has_generic = false;
-    for child_type in child_types {
-        match booster_family(child_type) {
-            Some(BoosterFamily::Collector) => return Some(BoosterFamily::Collector),
-            Some(BoosterFamily::Generic) => has_generic = true,
-            _ => {}
-        }
-    }
-    has_generic.then_some(BoosterFamily::Generic)
 }
 
 /// Collator key for a card's numeric collector number that parks `NULL` (a non-numeric
@@ -2021,35 +1959,5 @@ mod tests {
     fn cn_int_key_parks_nulls_last() {
         assert!(cn_int_key(Some(5)) < cn_int_key(None));
         assert!(cn_int_key(Some(2)) < cn_int_key(Some(10)));
-    }
-
-    #[test]
-    fn premium_booster_family_prefers_collector_then_generic() {
-        let types = |slugs: &[&str]| slugs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        // A gift bundle wrapping play + collector -> Collector (the premium tier).
-        assert_eq!(
-            premium_booster_family(&types(&["play_pack", "collector_pack"])),
-            Some(BoosterFamily::Collector)
-        );
-        // A Chocobo-style bundle: play + a generic special booster -> Generic.
-        assert_eq!(
-            premium_booster_family(&types(&["play_pack", "pack"])),
-            Some(BoosterFamily::Generic)
-        );
-        // Collector wins even when a generic booster is also present.
-        assert_eq!(
-            premium_booster_family(&types(&["pack", "collector_display"])),
-            Some(BoosterFamily::Collector)
-        );
-        // Only play/set/draft (or non-boosters) -> no premium tier to split out.
-        assert_eq!(
-            premium_booster_family(&types(&["play_pack", "set_pack"])),
-            None
-        );
-        assert_eq!(
-            premium_booster_family(&types(&["commander_deck", "bundle"])),
-            None
-        );
-        assert_eq!(premium_booster_family(&[]), None);
     }
 }

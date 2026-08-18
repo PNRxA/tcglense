@@ -30,8 +30,9 @@ total: number,
 /**
  * For the `exclusive` section only: a representative `product_type` slug for the booster
  * family these cards are exclusive to (e.g. `collector_pack` -> "Collector Booster"), so
- * the SPA can title the section after the *contained* booster even when the viewed
- * product is a bundle whose own type carries no family. `None` for every other section.
+ * the SPA titles a collector *display*'s section after the family's single-pack form
+ * rather than the box. Only booster products get an exclusive section — a bundle never
+ * does (its wrapped boosters' pages carry the call-out). `None` for every other section.
  */
 booster_family: string | null, 
 /**
