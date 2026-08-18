@@ -117,6 +117,15 @@ pub struct Model {
     pub penny_rank: Option<i32>,
     /// Whether this printing is digital-only. Paper ingestion stores `false`.
     pub digital: bool,
+    /// The base card this row has been folded onto for *display*, when it is a foil-★
+    /// variant Scryfall models as a separate object (`sld` `1587★` → `1587`). `None` for
+    /// every ordinary printing — including a `…★` row the fold rule deliberately spares.
+    ///
+    /// Derived, not provider data: `scryfall::foil_variants::refresh_foil_variant_folds`
+    /// recomputes it each sync tick, and the card upsert deliberately neither writes nor
+    /// compares it (see `scryfall::ingest::flush_cards`). Orphan-tolerant and FK-less —
+    /// a stale pointer costs a redundant row in a listing, never a failed write.
+    pub folded_onto_id: Option<i32>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

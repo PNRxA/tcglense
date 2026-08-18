@@ -707,10 +707,16 @@ struct SetAgg {
 /// (falling back to the card's own `set_name` when the set row is missing), and order
 /// newest set first (undated last), tie-broken by code for deterministic output. Pure so
 /// it can be unit-tested without a DB. Holdings whose card row is gone are skipped.
+///
+/// `folded` is the catalog-listing fold's per-set row count
+/// ([`crate::scryfall::FoldedSetCounts`]): the tile's `card_count` is the *completion
+/// denominator*, so it must be the number of cards the set's grid actually shows, adjusted
+/// through the same seam the catalog's own set reads use.
 pub(crate) fn build_collection_sets<R: SummaryRow>(
     game: &str,
     rows: Vec<R>,
     sets: Vec<card_set::Model>,
+    folded: &crate::scryfall::FoldedSetCounts,
     bulk_threshold_cents: i128,
 ) -> Vec<CollectionSet> {
     let mut agg: HashMap<String, SetAgg> = HashMap::new();
@@ -761,7 +767,7 @@ pub(crate) fn build_collection_sets<R: SummaryRow>(
                 name: m.map_or(fallback_name, |m| m.name.clone()),
                 set_type: m.and_then(|m| m.set_type.clone()),
                 released_at: m.and_then(|m| m.released_at.clone()),
-                card_count: m.map_or(0, |m| m.card_count),
+                card_count: m.map_or(0, |m| folded.adjust(&code, m.card_count)),
                 icon_svg_uri: m.and_then(|m| m.icon_svg_uri.clone()),
                 parent_set_code: m.and_then(|m| m.parent_set_code.clone()),
                 has_drops: crate::scryfall::drops::has_drops(game, &code),

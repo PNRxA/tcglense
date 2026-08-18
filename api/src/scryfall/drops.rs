@@ -89,9 +89,19 @@ pub struct DropTable {
 impl DropTable {
     /// The drop a card belongs to, by collector number, or `None` when the
     /// snapshot doesn't list that number (a newer-than-snapshot printing).
+    ///
+    /// Falls back to the number's **foil-★ variant** (`1587` → `1587★`) when the bare
+    /// number isn't listed. A drop that splits a printing in two lists both numbers today
+    /// (117 of the 120 `…★` entries in the seeded snapshot do; the other three are
+    /// standalone foil-only promos with no base card at all), but the snapshot is a
+    /// runtime overlay swapped by a daily scrape — and since the catalog listings now fold
+    /// a foil-★ variant onto its base (`crate::scryfall::not_folded_foil_variant`), a drop
+    /// that named only the star would otherwise have its card silently reappear in the
+    /// trailing "Other" bucket instead. One extra hash probe, and only on a miss.
     pub fn drop_for(&self, collector_number: &str) -> Option<&Drop> {
         self.by_collector
             .get(collector_number)
+            .or_else(|| self.by_collector.get(&format!("{collector_number}★")))
             .map(|&i| &self.drops[i])
     }
 
@@ -451,6 +461,29 @@ mod tests {
         );
         // A collector number the snapshot doesn't list -> no drop (folds to "Other").
         assert!(drop_for("mtg", "sld", "this-cn-does-not-exist").is_none());
+    }
+
+    /// A base whose drop entry names only the foil-★ variant still resolves to that drop —
+    /// the drop-table half of the catalog listing's foil-variant fold, so folding the star
+    /// away can never drop its card into "Other".
+    #[test]
+    fn a_base_number_falls_back_to_its_foil_star_entry() {
+        let snapshot = r#"{"sets":[{"game":"mtg","set":"sld","drops":[
+            {"slug":"star-only","title":"Star Only","collector_numbers":["1587★"]}]}]}"#;
+        let tables = Tables::from_json(snapshot).expect("valid snapshot");
+        let table = tables.get("mtg", "sld").expect("sld present");
+        assert_eq!(
+            table.drop_for("1587★").map(|d| d.title.as_str()),
+            Some("Star Only"),
+            "the listed star still resolves"
+        );
+        assert_eq!(
+            table.drop_for("1587").map(|d| d.title.as_str()),
+            Some("Star Only"),
+            "and so does the base it is folded onto"
+        );
+        // The fallback only re-tries with a star appended; unrelated numbers still miss.
+        assert!(table.drop_for("158").is_none());
     }
 
     #[test]

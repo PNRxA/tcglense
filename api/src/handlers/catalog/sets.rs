@@ -28,7 +28,7 @@ use crate::handlers::shared::{
 use crate::state::AppState;
 
 use super::image::is_allowed_image_url;
-use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
+use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique, catalog_cards};
 
 /// A set/expansion within a game.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -145,11 +145,16 @@ pub async fn list_sets(
     // One aggregate scan marks which sets have a special-treatment card, so each tile knows
     // whether to offer the by-sub-type view (the set list is CDN-cached, so this runs ~hourly).
     let with_subtypes = crate::scryfall::subtypes::sets_with_subtypes(&state.db, &game).await?;
+    // The tile's "N cards" must describe the grid it links to, not the provider's raw set-object
+    // count: a folded foil-★ variant is a row a visitor can never page to. Same seam the
+    // single-set read and the collection/wish-list tiles adjust through.
+    let folded = crate::scryfall::folded_counts_by_set(&state.db, &game).await?;
     let data: Vec<SetResponse> = sets
         .into_iter()
         .map(|m| {
             let mut set = SetResponse::from(m);
             set.has_subtypes = with_subtypes.contains(&set.code);
+            set.card_count = folded.adjust(&set.code, set.card_count);
             set
         })
         .collect();
@@ -180,8 +185,12 @@ pub async fn get_set(
     let set = load_set(&state, &game, &code).await?;
     let has_subtypes =
         crate::scryfall::subtypes::set_has_subtypes(&state.db, &game, &set.code).await?;
+    // The same fold adjustment the set list applies, scoped to this one set — otherwise a set's
+    // own page and its tile in the list would publish two different `card_count`s.
+    let folded = crate::scryfall::folded_counts_in_set(&state.db, &game, &set.code).await?;
     let mut response = SetResponse::from(set);
     response.has_subtypes = has_subtypes;
+    response.card_count = folded.adjust(&response.code, response.card_count);
     Ok(Json(response))
 }
 
@@ -287,7 +296,7 @@ pub(super) async fn set_cards_query(
     let include_related = params.include_related.unwrap_or(false);
     let dialect = state.dialect();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game));
+    let mut query = catalog_cards(game);
     query = if include_related {
         // Resolve the group membership from the flat set list (one cheap query) via the
         // shared seam the collection include-related view also uses, so both span the
@@ -353,10 +362,9 @@ pub async fn list_set_drops(
 
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
-    // regardless of where the page boundary falls.
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    // regardless of where the page boundary falls. Folded foil-★ variants are out
+    // (`catalog_cards`), so a drop's `card_count` counts printings, not Scryfall objects.
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)
@@ -534,9 +542,7 @@ pub async fn list_set_subtypes(
     // One set's cards are bounded, so we pull the whole (optionally searched) set and group
     // + paginate by sub-type in memory — keeping every sub-type complete regardless of where
     // the page boundary falls (matching the by-drop handler).
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)

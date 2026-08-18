@@ -44,9 +44,11 @@ use super::{FetchedHolding, IN_CHUNK, ImportError};
 
 /// The Scryfall "foil variant" collector-number suffix (U+2605 BLACK STAR).
 ///
-/// `pub(super)` so the sibling name resolver ([`super::reconcile::resolve_newest_printing_by_name`])
-/// excludes the same objects this module folds — keeping "what is a foil-★ variant" one fact.
-pub(super) const FOIL_STAR: char = '★';
+/// Re-exported from `crate::scryfall::foil_variants`, which owns the pairing rule, and
+/// `pub(super)` so the sibling name resolver
+/// ([`super::reconcile::resolve_newest_printing_by_name`]) excludes the same objects this
+/// module folds — keeping "what is a foil-★ variant" one fact across all three folds.
+pub(super) use crate::scryfall::FOIL_STAR;
 
 /// A resolved foil-★ ↔ nonfoil-base pairing (both the external and internal ids, so the same
 /// resolution feeds both the external-id remap of incoming holdings and the internal-id fold

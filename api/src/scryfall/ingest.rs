@@ -394,7 +394,13 @@ pub(super) async fn flush_cards(
         .on_conflict(
             OnConflict::columns([card::Column::Game, card::Column::ExternalId])
                 // Update every provider-owned column — all but the
-                // identity/conflict keys and created_at.
+                // identity/conflict keys, created_at, and `folded_onto_id`.
+                //
+                // `folded_onto_id` is **ours**, not the provider's: it is derived by
+                // `super::foil_variants::refresh_foil_variant_folds` from the pair of rows,
+                // and the incoming `ActiveModel` never sets it. Because this list is built
+                // from `Column::iter()` minus a deny-list, omitting it here would set it
+                // from `excluded.folded_onto_id` — i.e. wipe every fold on every sync.
                 .update_columns(card::Column::iter().filter(|c| {
                     !matches!(
                         c,
@@ -402,6 +408,7 @@ pub(super) async fn flush_cards(
                             | card::Column::Game
                             | card::Column::ExternalId
                             | card::Column::CreatedAt
+                            | card::Column::FoldedOntoId
                     )
                 }))
                 // Skip the write entirely when the row is unchanged: on the daily
@@ -412,6 +419,13 @@ pub(super) async fn flush_cards(
                 // changed and defeat the guard — so `cards.updated_at` now means "last
                 // time a datum actually changed", not "last sync touch" (read nowhere
                 // today; sitemap lastmod uses ingest_state/released_at).
+                //
+                // `folded_onto_id` is excluded for a second, sharper reason than the SET
+                // list above: it is non-NULL on every folded row while `excluded`'s is
+                // always NULL, so comparing it would make each of those rows look changed
+                // on *every* tick — defeating the guard and, because `updated_at` stays in
+                // the SET list, mass-bumping the very cursor the price-alert evaluator's
+                // change-narrowing reads.
                 .action_and_where(upsert_changed_guard::<card::Column>("cards", |c| {
                     matches!(
                         c,
@@ -420,6 +434,7 @@ pub(super) async fn flush_cards(
                             | card::Column::ExternalId
                             | card::Column::CreatedAt
                             | card::Column::UpdatedAt
+                            | card::Column::FoldedOntoId
                     )
                 }))
                 .to_owned(),
@@ -488,6 +503,95 @@ pub(super) async fn put_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One provider card line, as the streaming import parses and maps it.
+    fn provider_row(
+        id: &str,
+        collector_number: &str,
+        usd_foil: &str,
+        now: DateTimeUtc,
+    ) -> card::ActiveModel {
+        let line = format!(
+            r#"{{"object":"card","id":"{id}","oracle_id":"ora-shelter","name":"Shelter","lang":"en","set":"sld","set_name":"Secret Lair Drop","collector_number":"{collector_number}","games":["paper"],"prices":{{"usd_foil":"{usd_foil}"}}}}"#
+        );
+        let scry: ScryfallCard = serde_json::from_str(&line).expect("parse card line");
+        map::map_card(scry, now)
+    }
+
+    async fn stored(db: &sea_orm::DatabaseConnection, external_id: &str) -> card::Model {
+        Card::find()
+            .filter(card::Column::ExternalId.eq(external_id))
+            .one(db)
+            .await
+            .expect("query card")
+            .expect("card exists")
+    }
+
+    /// `cards.folded_onto_id` is **ours**, not the provider's: the fold pass derives it and the
+    /// incoming `ActiveModel` never carries one. The upsert therefore denies the column twice —
+    /// in `update_columns` (or every sync would set it from `excluded`, i.e. wipe every fold) and
+    /// in the changed-guard (or every folded row would compare as changed on every tick, mass-
+    /// bumping `updated_at`, the cursor the price-alert evaluator's narrowing reads).
+    ///
+    /// Both halves are invisible until they break, so this drives the real ingest path: flush a
+    /// row, fold it, then re-flush the identical provider row and one with a real datum changed.
+    #[tokio::test]
+    async fn a_re_sync_keeps_the_derived_fold_pointer_and_only_stamps_a_real_change() {
+        use sea_orm::sea_query::Expr;
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let t0: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        let t1: DateTimeUtc = "2024-06-01T00:00:00Z".parse().unwrap();
+        let t2: DateTimeUtc = "2024-09-01T00:00:00Z".parse().unwrap();
+
+        flush_cards(
+            &db,
+            vec![
+                provider_row("base-1", "1587", "12.33", t0),
+                provider_row("star-1", "1587★", "12.33", t0),
+            ],
+        )
+        .await
+        .expect("first import");
+
+        // What `refresh_foil_variant_folds` writes: the star points at its nonfoil base.
+        let base_id = stored(&db, "base-1").await.id;
+        Card::update_many()
+            .col_expr(card::Column::FoldedOntoId, Expr::value(base_id))
+            .filter(card::Column::ExternalId.eq("star-1"))
+            .exec(&db)
+            .await
+            .expect("record the fold");
+
+        // A tick where nothing upstream changed: the fold survives, and the guard skips the
+        // write entirely so `updated_at` still means "a datum last changed".
+        flush_cards(
+            &db,
+            vec![
+                provider_row("base-1", "1587", "12.33", t1),
+                provider_row("star-1", "1587★", "12.33", t1),
+            ],
+        )
+        .await
+        .expect("unchanged re-import");
+        let star = stored(&db, "star-1").await;
+        assert_eq!(star.folded_onto_id, Some(base_id), "the fold is not wiped");
+        assert_eq!(star.updated_at, t0, "an unchanged row is not re-stamped");
+
+        // A tick where the star's foil price moved: the row is rewritten and stamped, and the
+        // fold pointer is carried through the rewrite rather than reset to the incoming NULL.
+        flush_cards(&db, vec![provider_row("star-1", "1587★", "31.00", t2)])
+            .await
+            .expect("changed re-import");
+        let star = stored(&db, "star-1").await;
+        assert_eq!(star.price_usd_foil.as_deref(), Some("31.00"));
+        assert_eq!(
+            star.folded_onto_id,
+            Some(base_id),
+            "a real change must not take the fold with it"
+        );
+        assert_eq!(star.updated_at, t2, "a real change is stamped");
+    }
 
     #[test]
     fn truncate_respects_char_boundaries() {

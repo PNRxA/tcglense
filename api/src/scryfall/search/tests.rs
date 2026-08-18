@@ -623,6 +623,28 @@ fn finish_and_flag_is_subjects_compile() {
     // foil must not match nonfoil (comma-delimited membership).
     assert!(sql("is:foil").contains("finishes"));
     assert!(sql("is:foil").contains("'%,foil,%'"));
+    // …and it also reaches the nonfoil base whose foil lives on a folded `…★` variant
+    // (`scryfall::foil_variants`), on both backends — the fold hides that star from every
+    // listing, so without this arm `is:foil` would lose those printings entirely.
+    for s in [sql("is:foil"), pg_sql("is:foil")] {
+        assert!(s.contains("EXISTS"), "{s}");
+        // A semi-join on the persisted, indexed pointer (`m..076`) — never a correlated
+        // re-derivation of the pairing rule, which is what made this leaf a full `cards`
+        // scan on Postgres.
+        assert!(s.contains("fv.folded_onto_id = cards.id"), "{s}");
+        assert!(
+            !s.contains("substr("),
+            "the rule must not be re-derived per row: {s}"
+        );
+    }
+    // The foil-*treatment* leaves get the same arm, reaching the folded star's own
+    // `promo_types` — otherwise the fold would empty `is:rainbowfoil` the way it would
+    // have emptied `is:foil`.
+    for s in [sql("is:rainbowfoil"), pg_sql("is:rainbowfoil")] {
+        assert!(s.contains("fv.folded_onto_id = cards.id"), "{s}");
+        assert!(s.contains("LOWER(COALESCE(fv.promo_types, ''))"), "{s}");
+        assert!(s.contains("'%,rainbowfoil,%'"), "{s}");
+    }
     assert!(sql("is:reprint").contains("reprint IS TRUE"));
     assert!(sql("-is:reprint").contains("NOT"));
     assert!(sql("is:promo").contains("promo IS TRUE"));
@@ -826,6 +848,69 @@ async fn column_backed_filters_run_over_sqlite() {
     assert_eq!(names(&db, "a:rebecca").await, vec!["Flyer"]);
     // Negation stays exact/total (nonfoil-only card is the only non-foil).
     assert_eq!(names(&db, "-is:foil").await, vec!["Grounder"]);
+}
+
+/// `is:foil` against real rows once a foil-★ variant is in play: the base whose foil
+/// Scryfall models as a separate `…★` object answers it (that star is folded out of every
+/// listing, so nothing else would), and `-is:foil` correspondingly does not return it. The
+/// conservative rule still applies — an orphan star answers on its own `finishes`, and a
+/// nonfoil card with no star sibling is not promoted.
+#[tokio::test]
+async fn is_foil_matches_a_base_whose_foil_is_a_folded_star_variant() {
+    use crate::entities::card;
+    use crate::entities::prelude::Card;
+    use sea_orm::{
+        ActiveModelTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
+    };
+
+    let db = crate::test_support::migrated_memory_db().await;
+    for (id, name, cn, finishes, oracle) in [
+        (1, "Shelter", "1587", "nonfoil", "ora-shelter"),
+        (2, "Shelter", "1587★", "foil", "ora-shelter"),
+        (3, "Mana Vault", "796★", "foil", "ora-vault"),
+        (4, "Plains", "100", "nonfoil", "ora-plains"),
+    ] {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            name: name.into(),
+            set_code: "sld".into(),
+            collector_number: cn.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&db)
+        .await
+        .expect("insert card");
+    }
+    crate::scryfall::refresh_foil_variant_folds(&db, "mtg")
+        .await
+        .expect("fold pass");
+
+    async fn numbers(db: &DatabaseConnection, q: &str) -> Vec<String> {
+        let mut v: Vec<String> = Card::find()
+            .filter(parse(q, Dialect::Sqlite).expect("parses"))
+            .all(db)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.collector_number)
+            .collect();
+        v.sort();
+        v
+    }
+
+    assert_eq!(
+        numbers(&db, "is:foil").await,
+        vec!["1587", "1587★", "796★"],
+        "the folded base joins the two rows that say `foil` themselves"
+    );
+    assert_eq!(
+        numbers(&db, "-is:foil").await,
+        vec!["100"],
+        "and drops back out under negation"
+    );
 }
 
 /// Confirms the sqlx `regexp` feature registers a REGEXP function on SeaORM's

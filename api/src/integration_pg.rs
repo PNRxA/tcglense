@@ -697,6 +697,142 @@ async fn foil_star_consolidation_folds_on_pg() {
 
 #[tokio::test]
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn foil_star_listing_fold_on_pg() {
+    // The catalog-listing fold on live Postgres. The pass itself is Rust over a bounded set,
+    // so what needs a real backend is (a) `m..076`'s column + index applying, (b) the
+    // multibyte `★` surviving the `LIKE`/strip on the star scan, and (c) the two row
+    // predicates — `folded_onto_id IS NULL` and the `EXISTS` semi-join with its comma
+    // membership test — rendering and behaving as they do on SQLite.
+    use crate::entities::card;
+    use crate::entities::prelude::Card;
+    use sea_orm::IntoActiveModel;
+
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    // (a): the index is there *and* still partial. The predicate is not decoration — it is
+    // what keeps the ~106k `NULL`s (the listings' own side, which must never ride an index)
+    // out of it, and `has_folded_foil_variant` spells `IS NOT NULL` into its semi-join to
+    // stay implied by it. sea-query cannot express a partial `WHERE`, so `m..076` builds this
+    // one from a raw string; only a live Postgres can confirm the string took.
+    let indexdef: String = conn
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_cards_folded_onto_id'",
+        ))
+        .await
+        .expect("query pg_indexes")
+        .expect("the fold index exists")
+        .try_get("", "indexdef")
+        .expect("indexdef column");
+    assert!(
+        indexdef.contains("(folded_onto_id)")
+            && indexdef.contains("WHERE (folded_onto_id IS NOT NULL)"),
+        "the fold index must stay partial on the non-NULL side: {indexdef}"
+    );
+
+    let insert = |id: i32,
+                  set_code: &'static str,
+                  number: &'static str,
+                  finishes: &'static str,
+                  oracle: &'static str,
+                  border: &'static str,
+                  promo: Option<&'static str>| async move {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: set_code.into(),
+            collector_number: number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            border_color: Some(border.into()),
+            promo_types: promo.map(str::to_string),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(conn)
+        .await
+        .expect("insert card");
+    };
+    // The same card in two finishes (folds), a 9ed-shaped pair whose foil is black-bordered
+    // where its nonfoil is white (must not fold), and an orphan star.
+    insert(
+        1,
+        "sld",
+        "1587",
+        "nonfoil",
+        "ora-shelter",
+        "borderless",
+        None,
+    )
+    .await;
+    insert(
+        2,
+        "sld",
+        "1587★",
+        "foil",
+        "ora-shelter",
+        "borderless",
+        Some("rainbowfoil"),
+    )
+    .await;
+    insert(3, "9ed", "188", "nonfoil", "ora-chariot", "white", None).await;
+    insert(4, "9ed", "188★", "foil", "ora-chariot", "black", None).await;
+    insert(5, "sld", "796★", "foil", "ora-vault", "black", None).await;
+
+    let folds = crate::scryfall::refresh_foil_variant_folds(conn, crate::scryfall::GAME)
+        .await
+        .expect("fold pass");
+    assert_eq!(folds, (1, 0), "only the same-printed-card pair folds");
+
+    let listed = |cond| async move {
+        let mut got: Vec<String> = Card::find()
+            .filter(cond)
+            .all(conn)
+            .await
+            .expect("filter cards")
+            .into_iter()
+            .map(|c| c.external_id)
+            .collect();
+        got.sort();
+        got
+    };
+
+    assert_eq!(
+        listed(crate::scryfall::not_folded_foil_variant()).await,
+        ["ext-1", "ext-3", "ext-4", "ext-5"],
+        "the 9ed foil and the orphan star keep their own tile"
+    );
+    assert_eq!(
+        listed(
+            sea_orm::Condition::all().add(crate::scryfall::has_folded_foil_variant(
+                crate::db::Dialect::Postgres,
+                None
+            ))
+        )
+        .await,
+        ["ext-1"],
+        "only the base that lost a star answers is:foil on the fold's strength"
+    );
+    assert_eq!(
+        listed(
+            sea_orm::Condition::all().add(crate::scryfall::has_folded_foil_variant(
+                crate::db::Dialect::Postgres,
+                Some("rainbowfoil")
+            ))
+        )
+        .await,
+        ["ext-1"],
+        "and the treatment leaf sees the folded star's own promo_types"
+    );
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn price_snapshot_upsert_on_pg() {
     let Some(base) = test_pg_url() else {
         return;

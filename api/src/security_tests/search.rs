@@ -567,3 +567,265 @@ async fn art_tag_lookup_lists_and_ranks_tags() {
     let (status, _, _) = send(&app, get("/api/games/nope/art-tags")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// The catalog-listing foil-variant fold, end to end on the page that reported it
+/// (`/cards/mtg/sets/sld?drop=miku`).
+///
+/// Scryfall models six of "Hatsune Miku: Sakura Superstar"'s printings as a nonfoil card
+/// plus a separate foil object one star along (`1587` / `1587★`), and the drop snapshot
+/// lists both numbers — so the grid showed each card twice, the second tile carrying the
+/// same foil price the enrichment had already copied onto the first. The fold keeps one
+/// tile per printing while leaving every star that *isn't* a folded duplicate alone, and
+/// the star's own Scryfall id keeps resolving on the detail route.
+#[tokio::test]
+async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let state = test_state().await;
+    // Real stored `card_count`s, since the tile's count is Scryfall's set-object count less
+    // whatever this fold hides: `sld` stores its 3 objects (one of which folds), `9ed` its 2
+    // (neither folds), and `10e`'s row lags the cards it counts at 0 — the stale-sync case the
+    // subtraction has to clamp rather than publish as `-1`.
+    for (id, code, card_count) in [(1, "sld", 3), (2, "9ed", 2), (3, "10e", 0)] {
+        crate::entities::card_set::Model {
+            id,
+            card_count,
+            ..crate::test_support::card_set_model(code)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert set");
+    }
+
+    // 1587/1587★ ("Shelter") are both in the Sakura Superstar drop's snapshot entry and differ
+    // only by the rainbow-foil treatment; 796★ ("Mana Vault", Fallout: Vault Boy) is a real
+    // orphan — `sld` has no 796 at all. 9ed 188/188★ is the population the fold must NOT
+    // touch: the foil is black-bordered where the nonfoil is white, so they are two printings
+    // a visitor can tell apart and `border:black` queries directly. 10e 3/3★ is a plain
+    // attribute-identical fold in a set whose stored count lags it.
+    type Row = (
+        i32,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+    );
+    let rows: [Row; 7] = [
+        (
+            1,
+            "sld",
+            "1587",
+            "nonfoil",
+            "ora-shelter",
+            "borderless",
+            None,
+            Some("6.26"),
+            Some("12.33"),
+        ),
+        (
+            2,
+            "sld",
+            "1587★",
+            "foil",
+            "ora-shelter",
+            "borderless",
+            Some("rainbowfoil"),
+            None,
+            Some("12.33"),
+        ),
+        (
+            3,
+            "sld",
+            "796★",
+            "foil",
+            "ora-vault",
+            "black",
+            None,
+            None,
+            Some("40.00"),
+        ),
+        (
+            4,
+            "9ed",
+            "188",
+            "nonfoil",
+            "ora-chariot",
+            "white",
+            None,
+            Some("0.30"),
+            None,
+        ),
+        (
+            5,
+            "9ed",
+            "188★",
+            "foil",
+            "ora-chariot",
+            "black",
+            None,
+            None,
+            Some("9.00"),
+        ),
+        (
+            6,
+            "10e",
+            "3",
+            "nonfoil",
+            "ora-angel",
+            "black",
+            None,
+            Some("0.10"),
+            None,
+        ),
+        (
+            7,
+            "10e",
+            "3★",
+            "foil",
+            "ora-angel",
+            "black",
+            None,
+            None,
+            Some("1.00"),
+        ),
+    ];
+    for (id, set, cn, finishes, oracle, border, promo, usd, usd_foil) in rows {
+        crate::entities::card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: set.into(),
+            set_name: match set {
+                "sld" => "Secret Lair Drop".into(),
+                "10e" => "Tenth Edition".into(),
+                _ => "Ninth Edition".into(),
+            },
+            collector_number: cn.into(),
+            collector_number_int: cn.trim_end_matches('★').parse().ok(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            border_color: Some(border.into()),
+            promo_types: promo.map(str::to_string),
+            price_usd: usd.map(str::to_string),
+            price_usd_foil: usd_foil.map(str::to_string),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&state.db)
+        .await
+        .expect("insert card");
+    }
+    // The fold is decided once by the sync-tick pass and persisted, so the fixture runs it the
+    // way a real instance does before serving a listing.
+    crate::scryfall::refresh_foil_variant_folds(&state.db, "mtg")
+        .await
+        .expect("fold pass");
+    let app = crate::build_router(state);
+
+    let numbers = |body: &serde_json::Value, path: &str| -> Vec<String> {
+        let mut got: Vec<String> = body[path]
+            .as_array()
+            .expect("cards")
+            .iter()
+            .map(|c| c["collector_number"].as_str().expect("number").to_string())
+            .collect();
+        got.sort();
+        got
+    };
+
+    // The set grid lists the base once; the orphan star is untouched.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld/cards?page_size=50")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["1587", "796★"], "{body:?}");
+    assert_eq!(body["total"].as_u64(), Some(2), "{body:?}");
+
+    // So does the by-drop view the report came from — including its `card_count`, which
+    // used to count the star as a second card in the drop.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/sld/drops?page_size=50&drop=sakura"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+    assert_eq!(groups.len(), 1, "one matching drop: {body:?}");
+    assert_eq!(groups[0]["card_count"].as_u64(), Some(1), "{body:?}");
+    assert_eq!(numbers(&groups[0], "cards"), ["1587"], "{body:?}");
+
+    // The 9th-Edition pair is left alone: both printings still list, and the black-bordered
+    // foil still answers the search that is the whole reason to keep it.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/9ed/cards?page_size=50")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["188", "188★"], "{body:?}");
+    let (status, _, body) =
+        send(&app, get("/api/games/mtg/cards?q=set%3A9ed+border%3Ablack")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["188★"], "{body:?}");
+
+    // `is:foil` still finds the base: its foil is real, it just lives on the folded star.
+    // The orphan star and the unfolded 9ed foil answer it on their own `finishes`.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards?q=is%3Afoil")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        numbers(&body, "data"),
+        ["1587", "188★", "3", "796★"],
+        "{body:?}"
+    );
+
+    // So does `is:rainbowfoil` — that token only ever lived on the star we folded away.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards?q=is%3Arainbowfoil")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(numbers(&body, "data"), ["1587"], "{body:?}");
+
+    // The set tile's card count follows the grid it links to rather than Scryfall's object
+    // count, so a folded row can't make the header overstate what a visitor can page through.
+    let (status, _, list) = send(&app, get("/api/games/mtg/sets")).await;
+    assert_eq!(status, StatusCode::OK, "{list:?}");
+    let counts: std::collections::HashMap<&str, i64> = list["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .map(|s| {
+            (
+                s["code"].as_str().expect("code"),
+                s["card_count"].as_i64().expect("card_count"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        counts.get("sld"),
+        Some(&2),
+        "3 stored objects, one of them folded away: {list:?}"
+    );
+    assert_eq!(
+        counts.get("9ed"),
+        Some(&2),
+        "nothing folded in 9ed, so its stored count stands: {list:?}"
+    );
+    // A `card_sets` row that lags the cards it counts (0 stored, 1 folded) clamps at zero —
+    // a partial sync must never publish a negative "N cards".
+    assert_eq!(
+        counts.get("10e"),
+        Some(&0),
+        "the subtraction is floored: {list:?}"
+    );
+
+    // And one set's own page answers the same number as its tile in the list — they are two
+    // reads of one datum, so they adjust through the same seam.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body["card_count"].as_i64(),
+        counts.get("sld").copied(),
+        "the set read and the set list must agree: {body:?}"
+    );
+
+    // Folding is presentation-only: the star's Scryfall id still resolves, so existing
+    // links, holdings and provider imports that name it keep working.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards/ext-2")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["collector_number"].as_str(), Some("1587★"), "{body:?}");
+}

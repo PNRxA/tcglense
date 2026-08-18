@@ -2,10 +2,9 @@
 //! detail, and a card's other printings.
 
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Select};
+use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter, Select};
 
 use crate::entities::card;
-use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
@@ -15,7 +14,8 @@ use crate::handlers::shared::{
 use crate::state::AppState;
 
 use super::{
-    ListParams, NameSuggestParams, apply_search, apply_unique, name_suggestions_query, prints_query,
+    ListParams, NameSuggestParams, apply_search, apply_unique, catalog_cards,
+    name_suggestions_query, prints_query,
 };
 
 /// Default / max number of name suggestions the autocomplete endpoint returns.
@@ -73,7 +73,7 @@ pub(super) fn all_cards_query(
     params: &ListParams,
     dialect: crate::db::Dialect,
 ) -> Result<Select<card::Entity>, AppError> {
-    let query = Card::find().filter(card::Column::Game.eq(game));
+    let query = catalog_cards(game);
     let (mut query, shape) = apply_search(query, game_meta, params, dialect)?;
     // Optional exact-name scope (the quick-add "printings of this name" step): an
     // equality bind, so a name full of punctuation/quotes matches literally and

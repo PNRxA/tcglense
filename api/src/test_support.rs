@@ -159,6 +159,7 @@ pub(crate) fn card_model(id: i32) -> card::Model {
         edhrec_rank: None,
         penny_rank: None,
         digital: false,
+        folded_onto_id: None,
         created_at: ts,
         updated_at: ts,
     }
