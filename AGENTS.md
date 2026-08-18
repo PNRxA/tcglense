@@ -205,7 +205,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   it **mirrors** `CardSection::classify`'s key set, display order, and unknown-key→`variable`
   fallback, like `lib/legality.ts` mirrors the format table — a fifth key or a reordering lands on
   both sides. A label that names a pool must be true of the block it heads: the `booster` section
-  is the pool's *shared remainder* whenever `exclusive` was split out above it.
+  is the pool's *shared remainder* whenever `exclusive` was split out above it — and its blurb
+  describes what *these* boosters open, never "what the other boosters have" (the remainder spans
+  special printings the main boosters don't carry, so that reading was wrong). The exclusive
+  split itself is judged **only for a product whose own `product_type` is a booster family**: a
+  bundle never gets an `exclusive` section, however premium the booster it wraps — its pool rows
+  can be direct (nameless `sealed` refs attribute nothing), which made the old contained-family
+  split surface "Exclusive to Collector Boosters" on bundle pages the inherited-hiding can't
+  touch (issue #646 follow-up).
   **Sections split by source, and the split starts at ingest:** the MTGJSON walk stamps every
   membership row inherited through a nested `sealed` reference with the top-level component's
   name (`sealed_contents.component`, same string as the `sealed_components` row, `NULL` for a

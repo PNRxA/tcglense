@@ -155,9 +155,9 @@ impl BoosterFamily {
 
     /// A representative `product_type` slug for this family — the single-pack form. Lets a
     /// caller name the family with the same `product_type` -> label map the SPA already
-    /// uses (`web/src/lib/productType.ts`), so a bundle's exclusive section can be titled
-    /// after the *contained* booster's family (e.g. `collector_pack` -> "Collector Booster")
-    /// without the SPA knowing which booster the bundle wraps.
+    /// uses (`web/src/lib/productType.ts`), so the exclusive section states its family on
+    /// the wire (e.g. `collector_pack` -> "Collector Booster") in one canonical slug,
+    /// whichever of the family's forms (pack, display) the viewed product is.
     pub fn representative_type(self) -> &'static str {
         match self {
             BoosterFamily::Collector => "collector_pack",

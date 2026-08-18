@@ -959,14 +959,17 @@ async fn product_cards_no_exclusives_without_a_comparison_family() {
 }
 
 #[tokio::test]
-async fn product_cards_flags_bundle_contained_collector_exclusives() {
+async fn product_cards_never_flag_bundle_exclusives() {
     let app = test_app().await;
     let db = &app.state.db;
 
     // A gift bundle whose booster pool (from the play + collector boosters it wraps) spans a
     // shared play card and a collector-only card, plus one guaranteed card. Its `sealed`
-    // components link the play + collector boosters — so the split is judged against the set's
-    // play booster and titled after the *contained* collector booster (issue #290).
+    // components link the play + collector boosters. The split used to be judged for the
+    // *contained* collector booster (issue #290), which surfaced an "Exclusive to Collector
+    // Boosters" section on the bundle itself whenever its pool rows were direct — the very
+    // duplication the inherited-section hiding exists to prevent. A bundle now never splits:
+    // the exclusive call-out lives only on the boosters' own pages (issue #646 follow-up).
     let shared = insert_card(db, "sf-shared").await;
     let collector_only = insert_card(db, "sf-collector").await;
     let guaranteed = insert_card(db, "sf-guar").await;
@@ -990,14 +993,15 @@ async fn product_cards_flags_bundle_contained_collector_exclusives() {
     .await;
     let bundle = insert_product(db, "300", "Gift Bundle", "fin", "bundle", Some("49.99")).await;
 
-    // The bundle's inherited booster pool + its guaranteed card.
+    // The bundle's own (direct, unattributed) copy of the combined pool + its guaranteed
+    // card — the very shape that used to make the exclusive section visible on the bundle.
     insert_sealed(db, bundle, shared, "booster", false).await;
     insert_sealed(db, bundle, collector_only, "booster", false).await;
     insert_sealed(db, bundle, guaranteed, "contains", false).await;
     // The set's standalone play booster carries the shared card (the comparison pool); the
     // collector-only card is on no other family's booster.
     insert_sealed(db, play, shared, "booster", false).await;
-    // The bundle wraps both boosters (only the collector child drives the "premium" family).
+    // The bundle wraps both boosters.
     insert_component(db, bundle, 0, "sealed", "Play Booster", 9, Some(play), None).await;
     insert_component(
         db,
@@ -1011,26 +1015,23 @@ async fn product_cards_flags_bundle_contained_collector_exclusives() {
     )
     .await;
 
-    // /cards: the collector-only card is flagged exclusive and leads the booster pool.
+    // /cards: no card on the bundle is flagged exclusive — not even the collector-only one.
     let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
     assert_eq!(status, StatusCode::OK);
     let data = body["data"].as_array().unwrap();
-    // contains (guaranteed) leads, then the exclusive booster card, then the shared one.
+    // contains (guaranteed) leads, then the booster pool in plain card order (no
+    // exclusive-first grouping to apply).
     assert_eq!(data[0]["card"]["id"], "sf-guar");
     assert_eq!(data[0]["membership"], "contains");
-    assert_eq!(data[1]["card"]["id"], "sf-collector");
-    assert_eq!(data[1]["membership"], "booster");
-    assert_eq!(
-        data[1]["exclusive"], true,
-        "a collector-only card the bundle wraps is exclusive"
-    );
-    assert_eq!(data[2]["card"]["id"], "sf-shared");
-    assert_eq!(
-        data[2]["exclusive"], false,
-        "the shared play card is not exclusive"
-    );
+    for entry in &data[1..] {
+        assert_eq!(entry["membership"], "booster");
+        assert_eq!(
+            entry["exclusive"], false,
+            "a bundle never flags exclusivity: {entry:?}"
+        );
+    }
 
-    // /cards/sections: the exclusive section exists and is titled after the collector family.
+    // /cards/sections: one whole booster pool, no exclusive section.
     let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards/sections")).await;
     assert_eq!(status, StatusCode::OK);
     let sections: Vec<(&str, u64, Option<&str>)> = body["data"]
@@ -1047,24 +1048,20 @@ async fn product_cards_flags_bundle_contained_collector_exclusives() {
         .collect();
     assert_eq!(
         sections,
-        vec![
-            ("contains", 1, None),
-            ("exclusive", 1, Some("collector_pack")),
-            ("booster", 1, None),
-        ],
-        "the bundle splits into contains / collector-exclusive / shared-booster, the exclusive \
-         section naming the contained collector family"
+        vec![("contains", 1, None), ("booster", 2, None)],
+        "a bundle's pool renders whole — the exclusive split belongs to the boosters' own pages"
     );
 }
 
 #[tokio::test]
-async fn product_card_sections_bundle_premium_family_variants() {
+async fn product_card_sections_split_boosters_not_bundles() {
     let app = test_app().await;
     let db = &app.state.db;
 
     // A Chocobo-style bundle: it wraps a play booster + a *generic* special booster (Final
-    // Fantasy's Chocobo booster is a `pack`). The special-only card reads exclusive, titled
-    // after the generic booster family.
+    // Fantasy's Chocobo booster is a `pack`) and carries the combined pool itself. The
+    // special booster's own page splits its exclusive out; the bundle's page does not,
+    // however premium the booster it wraps.
     let shared = insert_card(db, "sf-shared").await;
     let special_only = insert_card(db, "sf-special").await;
     let play = insert_product(
@@ -1090,6 +1087,8 @@ async fn product_card_sections_bundle_premium_family_variants() {
 
     insert_sealed(db, chocobo_bundle, shared, "booster", false).await;
     insert_sealed(db, chocobo_bundle, special_only, "booster", false).await;
+    insert_sealed(db, chocobo, shared, "booster", false).await;
+    insert_sealed(db, chocobo, special_only, "booster", false).await;
     insert_sealed(db, play, shared, "booster", false).await;
     insert_component(
         db,
@@ -1114,21 +1113,37 @@ async fn product_card_sections_bundle_premium_family_variants() {
     )
     .await;
 
-    let (_, _, body) = send(&app, get("/api/games/mtg/products/310/cards/sections")).await;
+    // The special booster's own page: the special-only card splits out, titled after the
+    // generic booster family.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/210/cards/sections")).await;
     let exclusive = body["data"]
         .as_array()
         .unwrap()
         .iter()
         .find(|s| s["key"] == "exclusive")
-        .expect("a generic-booster bundle still splits out its exclusives");
+        .expect("a generic special booster splits out its exclusives on its own page");
     assert_eq!(exclusive["total"], 1);
     assert_eq!(
         exclusive["booster_family"], "pack",
         "titled after the generic booster family"
     );
 
-    // A plain bundle wrapping only a play booster has no premium tier — no exclusive section,
-    // and every booster card is just "Can be pulled from boosters".
+    // The bundle's page: the same pool, rendered whole — no exclusive section, no family.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/310/cards/sections")).await;
+    let keys: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["booster"],
+        "a bundle never splits, however premium the booster it wraps"
+    );
+
+    // A plain bundle wrapping only a play booster: likewise no exclusive section, and every
+    // booster card is just "Can be pulled from boosters".
     let plain = insert_product(
         db,
         "320",

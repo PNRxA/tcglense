@@ -880,7 +880,7 @@ catalog) is planned but not implemented.
   resolve against) and is **version-gated on the file's HTTP `ETag`** (`Meta.json` bumps
   daily from price rebuilds, so it's useless as a gate).
 
-  **Derived booster pull-pools + bundle exclusivity (issue #290).** A sealed product's
+  **Derived booster pull-pools (issue #290).** A sealed product's
   shared-pool / family-exclusive split needs a product to carry
   `booster`-membership rows for the boosters it *offers*. MTGJSON's native `sealed` recursion
   gives most bundles their pool (a gift box that lists its play + collector boosters expands
@@ -896,10 +896,13 @@ catalog) is planned but not implemented.
   variant carrying its own curated pool (a "Sample" pack) is non-empty so it's left alone.
   Because this is **pure code** (no data file), its version is a bumped constant
   (`DERIVATION_VERSION`) folded into the gate, so changing the logic forces one rebuild.
-  The **exclusive split** for a bundle is judged at read time (`booster_exclusive_card_ids`):
-  a non-booster product's premium family comes from its contained boosters — Collector if it
-  wraps a collector booster, else a generic special booster (the Chocobo case) — and the split
-  reuses the same "cards no other family in the set can pull" comparison as a standalone booster.
+  The **exclusive split** is judged at read time (`booster_exclusive_card_ids`) and only for
+  a product whose *own* `product_type` is a booster family. It used to borrow a bundle's
+  contained premium booster's family (Collector, else the generic Chocobo case), but that
+  surfaced an "Exclusive to Collector Boosters" section on any bundle whose synthesized or
+  upstream pool rows were direct (unattributed) — the very duplication the inherited-section
+  hiding exists to prevent — so a bundle's pool now renders whole and the call-out lives only
+  on the wrapped boosters' own pages (issue #646 follow-up).
 
   Trade-offs: (1) `AllPrintings`
   is one ~600 MB document; we fetch the ~160 MB gzip and parse only trimmed structs, but
