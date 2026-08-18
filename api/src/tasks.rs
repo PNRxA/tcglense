@@ -169,7 +169,7 @@ fn spawn_maintenance(
 ///
 /// The price enrichment matters there because the `m..023` migration may have folded legacy
 /// foil-★ holdings onto their nonfoil base, whose foil price would then stay empty and value
-/// those copies at $0 (issue #209). The listing fold matters because `m..070` ships
+/// those copies at $0 (issue #209). The listing fold matters because `m..076` ships
 /// `cards.folded_onto_id` empty: until this runs, every catalog grid still shows a folded
 /// star beside its base. Both are no-ops on a fresh/dummy catalog with no such pairs.
 fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsCache>) {

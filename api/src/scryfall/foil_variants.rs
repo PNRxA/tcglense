@@ -456,10 +456,10 @@ impl FromIterator<(String, i32)> for FoldedSetCounts {
 
 /// Every set's folded-row count for `game`, for a read that publishes many sets at once.
 ///
-/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..070`'s index — the
-/// set list is CDN-cached, so this runs about as often as the sub-type scan beside it. It does
-/// not chase the pre-existing ±1 paper-vs-provider skew a tile already tolerates; it only removes
-/// the gap this fold opens.
+/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..076`'s partial
+/// index — the set list is CDN-cached, so this runs about as often as the sub-type scan beside
+/// it. It does not chase the pre-existing ±1 paper-vs-provider skew a tile already tolerates; it
+/// only removes the gap this fold opens.
 pub(crate) async fn folded_counts_by_set(
     db: &DatabaseConnection,
     game: &str,
@@ -512,13 +512,15 @@ async fn folded_counts(
 ///
 /// `extra` narrows the folded star the semi-join looks for (the treatment leaves pass their
 /// `promo_types` membership test); `None` asks only that a folded star exists. The probe is an
-/// equality on `folded_onto_id`, indexed by `m..070` and non-`NULL` on only ~550 rows, so this
+/// equality on `folded_onto_id`, indexed by `m..076` and non-`NULL` on only ~550 rows, so this
 /// is a small hash semi-join rather than the per-row correlated subplan it replaced.
 pub(crate) fn has_folded_foil_variant(dialect: Dialect, promo_type: Option<&str>) -> SimpleExpr {
-    // `IS NOT NULL` is implied by the equality, but spelling it lets Postgres restrict the
-    // subplan's build to `m..070`'s ~550 non-NULL index entries instead of reading every row's
-    // `folded_onto_id` — the same "give the planner the qual it can index" care the listing
-    // predicate no longer needs, now that it is a bare column test.
+    // The spelled-out `IS NOT NULL` is **lock-step with `m..076`**, not redundancy: that index
+    // is *partial* on exactly `folded_onto_id IS NOT NULL`, and a planner reaches for a partial
+    // index only where the query's quals imply its predicate. Postgres can derive that much
+    // from the equality alone (it is strict in `folded_onto_id`); SQLite's check is syntactic —
+    // the index's `WHERE` terms must appear among the query's — so keeping the clause is what
+    // holds both backends on the ~550 index entries instead of every row's `folded_onto_id`.
     const BASE: &str = "EXISTS (SELECT 1 FROM cards AS fv \
                         WHERE fv.folded_onto_id IS NOT NULL AND fv.folded_onto_id = cards.id";
     match promo_type {

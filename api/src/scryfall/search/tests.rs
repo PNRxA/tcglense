@@ -628,7 +628,7 @@ fn finish_and_flag_is_subjects_compile() {
     // listing, so without this arm `is:foil` would lose those printings entirely.
     for s in [sql("is:foil"), pg_sql("is:foil")] {
         assert!(s.contains("EXISTS"), "{s}");
-        // A semi-join on the persisted, indexed pointer (`m..070`) — never a correlated
+        // A semi-join on the persisted, indexed pointer (`m..076`) — never a correlated
         // re-derivation of the pairing rule, which is what made this leaf a full `cards`
         // scan on Postgres.
         assert!(s.contains("fv.folded_onto_id = cards.id"), "{s}");

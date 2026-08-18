@@ -417,7 +417,7 @@ catalog) is planned but not implemented.
   (`rainbowfoil`/`galaxyfoil`) — and spares the rest. Five consequences worth knowing:
   - **It is decided once, not per query.** `refresh_foil_variant_folds` runs beside the price
     enrichment each sync tick (and once at boot on the no-sync path) and records the answer on
-    `cards.folded_onto_id` (`m…070`); `handlers::catalog::catalog_cards` — the one base query
+    `cards.folded_onto_id` (`m…076`); `handlers::catalog::catalog_cards` — the one base query
     every grid builds from — filters `IS NULL`. The first cut derived the rule per row with a
     correlated `EXISTS`; Postgres De Morgans that out of the `NOT (…)` and converts it to a
     *hashed* SubPlan whose build sequentially scans the wide `cards` heap, once per statement,
@@ -426,7 +426,7 @@ catalog) is planned but not implemented.
     48.2 ms / 7 050 buffers → **0.14 ms / 70**, and the pagination count 1 454 ms / 8 220 →
     **36.7 ms / 3 249**. An attribute comparison is also simply unwritable as portable SQL, so
     the pass is plain Rust over a bounded set. The `is:foil` arm keeps an `EXISTS`, but its
-    subplan is an index-only scan of `m…070`'s ~550 non-NULL entries (0.16 ms, built once), not
+    subplan is an index-only scan of `m…076`'s ~550 non-NULL entries (0.16 ms, built once), not
     a heap scan.
   - **It is a presentation fold, never a delete.** The star row stays in `cards`, so its
     Scryfall id keeps resolving everywhere a card is looked up **by id** — the detail page and

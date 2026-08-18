@@ -2,7 +2,7 @@ use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 /// `cards.folded_onto_id` — which base card a foil-★ variant has been folded onto for
-/// display, plus the index the catalog listings filter on.
+/// display, plus the partial index its non-`NULL` side is probed through.
 ///
 /// Scryfall models some printings' foil as a *separate* card object one star along
 /// (`sld` `1587` / `1587★`), and `scryfall::enrich_foil_variant_prices` (#209) copies the
@@ -32,6 +32,24 @@ use sea_orm_migration::prelude::*;
 /// within a tick of deploy. Leaving it `NULL` until then is the safe direction: a `NULL`
 /// folds nothing, so the listings simply behave as they did before this migration rather
 /// than hiding a row the pass hasn't validated yet.
+///
+/// **The index is `PARTIAL`, on `folded_onto_id IS NOT NULL`.** Every consumer probes the
+/// non-`NULL` side: `has_folded_foil_variant`'s semi-join (`fv.folded_onto_id IS NOT NULL
+/// AND fv.folded_onto_id = cards.id` — the `IS NOT NULL` is spelled out there precisely so
+/// the query predicate provably implies this one), `foil_variants::stale_clear_chunks`, and
+/// `folded_counts`. The listings' own `folded_onto_id IS NULL` matches ~99.5% of rows and
+/// must **never** ride an index; a partial index on the opposite predicate cannot serve it,
+/// which is half the point. The other half is size: a plain b-tree here would carry all
+/// ~106k rows, because **both** backends index `NULL`s (omitting them is Oracle's
+/// behaviour, not Postgres' or SQLite's) — 105k dead entries, and a cheap-looking access
+/// path the planner can cost for a column nothing wants a `NULL` from. Partial, it holds
+/// the ~550 folded rows: a few pages, and the same "tiny → robust regardless of
+/// visibility-map state" reasoning as `m..034`/`m..044` on the never-`VACUUM`ed `cards`.
+///
+/// Like `m..034`/`m..044`, sea-query's `IndexCreateStatement` has no partial-`WHERE`
+/// builder, so the create goes through raw `execute_unprepared` — and no `db::Dialect` gate
+/// is needed: partial indexes (SQLite ≥ 3.8.0) and `IS NOT NULL` render identically, so the
+/// statement is byte-identical on both backends.
 const INDEX: &str = "idx_cards_folded_onto_id";
 
 #[derive(DeriveMigrationName)]
@@ -40,7 +58,12 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        if manager.get_database_backend() == DatabaseBackend::Postgres {
+        // Postgres runs the whole pending batch in one transaction, so `SET LOCAL` holds
+        // for the rest of this migration — the index build *and* the `ANALYZE` below. A
+        // server/role-default `statement_timeout` killing either would roll the batch back
+        // and fail startup. Same guard as `m..068`/`m..066`/`m..050`/`m..031`.
+        let postgres = manager.get_database_backend() == DatabaseBackend::Postgres;
+        if postgres {
             manager
                 .get_connection()
                 .execute_unprepared("SET LOCAL statement_timeout = 0")
@@ -56,28 +79,43 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // The listings filter `folded_onto_id IS NULL`, which is ~98% of rows and needs no
-        // index. This one serves the *other* direction — `is:foil` and the foil-treatment
-        // `is:` leaves ask "does a folded star hang off this base", a semi-join whose probed
-        // side is exactly this column. Tiny: only the ~550 folded rows are non-NULL, and
-        // Postgres omits NULLs from a partial index, so it stays a few pages either way.
         manager
-            .create_index(
-                Index::create()
-                    .if_not_exists()
-                    .name(INDEX)
-                    .table(Cards::Table)
-                    .col(Cards::FoldedOntoId)
-                    .to_owned(),
-            )
+            .get_connection()
+            .execute_unprepared(&format!(
+                "CREATE INDEX IF NOT EXISTS \"{INDEX}\" ON \"cards\" (\"folded_onto_id\") \
+                 WHERE \"folded_onto_id\" IS NOT NULL"
+            ))
             .await?;
+
+        if postgres {
+            // A freshly added column has **no** `pg_statistic` row, so until autoanalyze
+            // fires Postgres falls back to `DEFAULT_UNK_SEL`: it estimates the listings'
+            // `folded_onto_id IS NULL` at 0.5% selective when it is really ~99.5% — i.e. it
+            // believes the one predicate every catalog grid carries is a near-perfect
+            // filter. And autoanalyze may not fire for a long while: the fold pass touches
+            // only ~550 of ~106k rows, far under the 10% analyze threshold, and a
+            // version-gated sync writes nothing at all on an unchanged tick. One `ANALYZE`
+            // makes the estimate right from boot. It is legal inside the batch transaction
+            // (unlike `VACUUM`) and only reads the table.
+            manager
+                .get_connection()
+                .execute_unprepared("ANALYZE \"cards\"")
+                .await?;
+            // Deliberately not mirrored on SQLite: it consults statistics only where a
+            // `sqlite_stat1` row exists, and nothing in this schema ever runs `ANALYZE`
+            // (`m..068` leans on exactly that — every index gets the same estimate there),
+            // so seeding stats for `cards` alone would change one table's planning
+            // asymmetrically. On the empty database this migration usually meets it would
+            // record nothing useful anyway.
+        }
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_index(Index::drop().name(INDEX).table(Cards::Table).to_owned())
+            .get_connection()
+            .execute_unprepared(&format!("DROP INDEX IF EXISTS \"{INDEX}\""))
             .await?;
         manager
             .alter_table(

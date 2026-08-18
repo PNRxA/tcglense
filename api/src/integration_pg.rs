@@ -699,7 +699,7 @@ async fn foil_star_consolidation_folds_on_pg() {
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn foil_star_listing_fold_on_pg() {
     // The catalog-listing fold on live Postgres. The pass itself is Rust over a bounded set,
-    // so what needs a real backend is (a) `m..070`'s column + index applying, (b) the
+    // so what needs a real backend is (a) `m..076`'s column + index applying, (b) the
     // multibyte `★` surviving the `LIKE`/strip on the star scan, and (c) the two row
     // predicates — `folded_onto_id IS NULL` and the `EXISTS` semi-join with its comma
     // membership test — rendering and behaving as they do on SQLite.
@@ -712,6 +712,27 @@ async fn foil_star_listing_fold_on_pg() {
     };
     let db = PgTestDb::create(&base).await;
     let conn = db.conn();
+
+    // (a): the index is there *and* still partial. The predicate is not decoration — it is
+    // what keeps the ~106k `NULL`s (the listings' own side, which must never ride an index)
+    // out of it, and `has_folded_foil_variant` spells `IS NOT NULL` into its semi-join to
+    // stay implied by it. sea-query cannot express a partial `WHERE`, so `m..076` builds this
+    // one from a raw string; only a live Postgres can confirm the string took.
+    let indexdef: String = conn
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_cards_folded_onto_id'",
+        ))
+        .await
+        .expect("query pg_indexes")
+        .expect("the fold index exists")
+        .try_get("", "indexdef")
+        .expect("indexdef column");
+    assert!(
+        indexdef.contains("(folded_onto_id)")
+            && indexdef.contains("WHERE (folded_onto_id IS NOT NULL)"),
+        "the fold index must stay partial on the non-NULL side: {indexdef}"
+    );
 
     let insert = |id: i32,
                   set_code: &'static str,
