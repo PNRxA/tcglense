@@ -397,12 +397,65 @@ catalog) is planned but not implemented.
   once by the `m…023_consolidate_foil_star_holdings` **migration** (the same rule in
   cross-backend SQL, wrapped in a transaction so a crash-interrupted boot re-runs cleanly;
   irreversible, so `down` is a no-op) — belt-and-braces for a user who never re-imports; a
-  re-import folds them anyway via `fold_existing_star_holdings`. The star (`…★`) card stays
-  a browsable catalog entry — only the *holding* is consolidated, so a set's owned-card
-  badges show the count on the base card, not the star.
+  re-import folds them anyway via `fold_existing_star_holdings`.
+- **Foil-variant consolidation, catalog side:** the same fold now also applies to the public
+  card **listings**, for the same reason it applies to holdings — once the enrichment above has
+  copied the star's foil price onto the base, such a star is a second, near-identical tile for
+  one card. "Secret Lair x Hatsune Miku: Sakura Superstar" listed six cards twice, the
+  duplicate showing the same foil price as the original, which is what surfaced this.
+  **But the pairing rule above is not the right rule for hiding a row.** It matches 1,626 pairs
+  catalog-wide and only 110 are Secret Lair: 1,052 are 7ed/8ed/9ed/dkm cards whose foil is
+  *black-bordered* where the nonfoil is white, 14 more differ by watermark or artwork, and 3 of
+  the Secret Lair pairs differ by border and full-art. Those are printings a visitor can tell
+  apart, and ones the app's own `border:`, `wm:` and `art:` leaves query directly — hiding them
+  would have emptied `set:8ed border:black` and made 8th-Edition foils unreachable from any SPA
+  path. A wrong pair costs nothing when you are copying a price and costs a printing when you
+  are hiding a row, so the display fold adds `foil_variants::same_printed_card` on top: border
+  colour, watermark, frame, frame effects, full-art, illustration and security stamp all equal,
+  and `promo_types` equal except for foil-**treatment** tokens the star adds. That folds ~550
+  pairs — 10e (attribute-identical), 40k/t40k (`surgefoil`) and the Secret Lairs
+  (`rainbowfoil`/`galaxyfoil`) — and spares the rest. Five consequences worth knowing:
+  - **It is decided once, not per query.** `refresh_foil_variant_folds` runs beside the price
+    enrichment each sync tick (and once at boot on the no-sync path) and records the answer on
+    `cards.folded_onto_id` (`m…070`); `handlers::catalog::catalog_cards` — the one base query
+    every grid builds from — filters `IS NULL`. The first cut derived the rule per row with a
+    correlated `EXISTS`; Postgres De Morgans that out of the `NOT (…)` and converts it to a
+    *hashed* SubPlan whose build sequentially scans the wide `cards` heap, once per statement,
+    on the page **and** its `COUNT(*)` — which `list_cards` pays twice per page. Measured on
+    Postgres 16 over a 108k-row catalog shaped like the real one: a listing page went
+    48.2 ms / 7 050 buffers → **0.14 ms / 70**, and the pagination count 1 454 ms / 8 220 →
+    **36.7 ms / 3 249**. An attribute comparison is also simply unwritable as portable SQL, so
+    the pass is plain Rust over a bounded set. The `is:foil` arm keeps an `EXISTS`, but its
+    subplan is an index-only scan of `m…070`'s ~550 non-NULL entries (0.16 ms, built once), not
+    a heap scan.
+  - **It is a presentation fold, never a delete.** The star row stays in `cards`, so its
+    Scryfall id keeps resolving everywhere a card is looked up **by id** — the detail page and
+    its prices/rulings/art-tags/sealed reads, existing collection/wishlist/deck/alert rows, and
+    provider imports that name the `…★` printing. Sealed-product contents, the name
+    autocomplete, the scanner's fingerprint index and the sitemap are exempt for the same
+    reason (each wants the star specifically, or names it in its own right).
+  - **`finishes` on the base is deliberately not widened** to `nonfoil,foil`: `nonfoil`-exactly
+    is the load-bearing half of the pairing rule in all of its homes, so widening it would stop
+    the enrichment and the holdings fold for the very cards it fixed. `is:foil` instead ORs in
+    `has_folded_foil_variant`, an indexed semi-join on `folded_onto_id`. The **foil-treatment**
+    leaves (`is:rainbowfoil`, `is:surgefoil`, …) get the same arm one level down, reaching the
+    folded star's own `promo_types` — those tokens live only on the star, so without it the
+    fold would have emptied `set:sld is:rainbowfoil` exactly as it would have emptied
+    `set:sld is:foil`.
+  - **The two counts that name the grid follow it.** A drop's `card_count` is computed over
+    folded rows, and a set tile's `card_count` — Scryfall's own set-object number, stored
+    verbatim — has the folded rows subtracted, so neither header overstates what a visitor can
+    page through (`SetTile.vue` also uses it as the collection-completion denominator).
+  - **A drop that names only the star still claims its base.** 117 of the seeded snapshot's 120
+    `…★` numbers list both, and the other three are genuine orphans with no base card at all —
+    but the snapshot is a runtime overlay, so `DropTable::drop_for` re-tries a miss with a
+    trailing star rather than letting a folded card fall into "Other".
 
-## Decks (issue #363)
-
+  One more coupling lives in the ingest upsert: `folded_onto_id` is *ours*, not the provider's,
+  and `flush_cards` builds both its `update_columns` list and its `upsert_changed_guard` from
+  `Column::iter()` minus a deny-list — so it is denied in **both**, or every sync would wipe
+  the folds and, because the guard would see each folded row as changed, mass-bump `updated_at`
+  and drag them into every narrowed price-alert scan.
 - **A new *container* surface, not a third holdings twin.** The collection and wish list are
   twin singletons (one implicit list per `(user, game)`) that share one engine
   (`handlers/shared/holdings.rs`, `makeHoldingApi`, `makeHoldingQueries`). A deck is a

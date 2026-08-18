@@ -860,3 +860,96 @@ fn build_collection_sets_honors_a_custom_bulk_threshold() {
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("4.00")); // 0.50×2 + 3.00
     assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("4.00")); // all of it is bulk now
 }
+
+/// `is:foil` runs over the **joined** holdings query, not just the catalog's `Card::find()`.
+///
+/// Its foil-★ arm (`scryfall::has_folded_foil_variant`) is a correlated sub-select that has to
+/// name the outer row as `cards.…` so the inner alias doesn't shadow it — which is only valid
+/// because SeaORM renders `find_also_related(Card)` as an unaliased `LEFT JOIN "cards"`. If
+/// that ever changes, this is the test that catches it, rather than a 500 in production on a
+/// one-click search chip.
+#[tokio::test]
+async fn holdings_search_resolves_the_foil_star_arm_under_the_card_join() {
+    use crate::scryfall::search::parse;
+    use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+        session_version: Set(0),
+        username: Set(None),
+        discriminator: Set(None),
+        currency: Set("USD".into()),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    // A nonfoil base whose foil is the separately-modelled `1587★`, plus a plain nonfoil card.
+    for (id, name, cn, finishes, oracle) in [
+        (1, "Shelter", "1587", "nonfoil", "ora-shelter"),
+        (2, "Shelter", "1587★", "foil", "ora-shelter"),
+        (3, "Plains", "100", "nonfoil", "ora-plains"),
+    ] {
+        card::Model {
+            name: name.into(),
+            set_code: "sld".into(),
+            collector_number: cn.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle.into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(&db)
+        .await
+        .expect("insert card");
+    }
+    // The user holds the base (a folded foil copy) and the plain card.
+    for (id, card_id) in [(1, 1), (2, 3)] {
+        collection_item::ActiveModel {
+            id: Set(id),
+            user_id: Set(1),
+            game: Set("mtg".into()),
+            card_id: Set(card_id),
+            quantity: Set(0),
+            foil_quantity: Set(1),
+            created_at: Set(at("2024-01-01T00:00:00Z")),
+            updated_at: Set(at("2024-01-01T00:00:00Z")),
+        }
+        .insert(&db)
+        .await
+        .expect("insert holding");
+    }
+    crate::scryfall::refresh_foil_variant_folds(&db, "mtg")
+        .await
+        .expect("fold pass");
+
+    let rows = collection_query(
+        1,
+        "mtg",
+        None,
+        Some(parse("is:foil", Dialect::Sqlite).expect("parses")),
+        CollectionSort::Recent,
+        SortDir::Desc,
+        Dialect::Sqlite,
+    )
+    .all(&db)
+    .await
+    .expect("the correlated foil-★ arm must resolve under the join");
+    let numbers: Vec<String> = rows
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.collector_number))
+        .collect();
+    assert_eq!(
+        numbers,
+        ["1587"],
+        "the folded base is the only foil holding"
+    );
+}

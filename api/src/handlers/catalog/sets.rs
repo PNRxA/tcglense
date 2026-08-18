@@ -28,7 +28,7 @@ use crate::handlers::shared::{
 use crate::state::AppState;
 
 use super::image::is_allowed_image_url;
-use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique};
+use super::{IMAGE_CACHE_CONTROL, ListParams, apply_search, apply_unique, catalog_cards};
 
 /// A set/expansion within a game.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -145,15 +145,49 @@ pub async fn list_sets(
     // One aggregate scan marks which sets have a special-treatment card, so each tile knows
     // whether to offer the by-sub-type view (the set list is CDN-cached, so this runs ~hourly).
     let with_subtypes = crate::scryfall::subtypes::sets_with_subtypes(&state.db, &game).await?;
+    let folded = folded_counts_by_set(&state, &game).await?;
     let data: Vec<SetResponse> = sets
         .into_iter()
         .map(|m| {
             let mut set = SetResponse::from(m);
             set.has_subtypes = with_subtypes.contains(&set.code);
+            set.card_count -= folded.get(&set.code).copied().unwrap_or(0);
             set
         })
         .collect();
     Ok(Json(DataBody { data }))
+}
+
+/// How many foil-★ variants are folded out of each set's grid, keyed by set code.
+///
+/// `card_count` is Scryfall's own set-object count, stored verbatim at ingest and never
+/// derived from `cards` — so on a set where the fold hides rows, the tile's "N cards" line
+/// and the collection-completion denominator it feeds (`SetTile.vue`) would overstate the
+/// grid the tile links to. Subtracting the folded rows keeps the header honest about what a
+/// visitor can actually page through.
+///
+/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..070`'s index —
+/// the set list is CDN-cached, so this runs about as often as the sub-type scan beside it.
+/// It does not chase the pre-existing ±1 paper-vs-Scryfall skew the tile already tolerates;
+/// it only removes the gap this fold opens.
+async fn folded_counts_by_set(
+    state: &AppState,
+    game: &str,
+) -> Result<HashMap<String, i32>, AppError> {
+    let rows: Vec<(String, i64)> = Card::find()
+        .select_only()
+        .column(card::Column::SetCode)
+        .column_as(card::Column::Id.count(), "folded")
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::FoldedOntoId.is_not_null())
+        .group_by(card::Column::SetCode)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(code, n)| (code, i32::try_from(n).unwrap_or(i32::MAX)))
+        .collect())
 }
 
 /// Get set
@@ -287,7 +321,7 @@ pub(super) async fn set_cards_query(
     let include_related = params.include_related.unwrap_or(false);
     let dialect = state.dialect();
 
-    let mut query = Card::find().filter(card::Column::Game.eq(game));
+    let mut query = catalog_cards(game);
     query = if include_related {
         // Resolve the group membership from the flat set list (one cheap query) via the
         // shared seam the collection include-related view also uses, so both span the
@@ -353,10 +387,9 @@ pub async fn list_set_drops(
 
     // One set's cards are bounded, so we pull the whole (optionally searched) set
     // and group + paginate by drop in memory — that keeps every drop complete
-    // regardless of where the page boundary falls.
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    // regardless of where the page boundary falls. Folded foil-★ variants are out
+    // (`catalog_cards`), so a drop's `card_count` counts printings, not Scryfall objects.
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)
@@ -534,9 +567,7 @@ pub async fn list_set_subtypes(
     // One set's cards are bounded, so we pull the whole (optionally searched) set and group
     // + paginate by sub-type in memory — keeping every sub-type complete regardless of where
     // the page boundary falls (matching the by-drop handler).
-    let query = Card::find()
-        .filter(card::Column::Game.eq(game.as_str()))
-        .filter(card::Column::SetCode.eq(set.code.as_str()));
+    let query = catalog_cards(game.as_str()).filter(card::Column::SetCode.eq(set.code.as_str()));
     let (query, _shape) = apply_search(query, game_meta, &params, dialect)?;
     let rows = apply_card_sort(query, SortField::Number, SortDir::Asc, false, dialect)
         .all(&state.db)

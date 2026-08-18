@@ -163,12 +163,15 @@ fn spawn_maintenance(
     });
 }
 
-/// Enrich the foil-variant base prices once, off the startup path. Normally
-/// [`catalog::refresh_all`] does this every sync tick, but when the periodic sync is
-/// disabled (`SYNC_ON_STARTUP=false`) it never runs — yet the `m..023` migration may have
-/// folded legacy foil-★ holdings onto their nonfoil base, whose foil price would then stay
-/// empty and value those copies at $0 (issue #209). This closes that gap against the
-/// already-synced catalog. A no-op on a fresh/dummy catalog with no such pairs.
+/// Run the two foil-variant passes once, off the startup path. Normally
+/// [`catalog::refresh_all`] does both every sync tick, but when the periodic sync is
+/// disabled (`SYNC_ON_STARTUP=false`) they never run.
+///
+/// The price enrichment matters there because the `m..023` migration may have folded legacy
+/// foil-★ holdings onto their nonfoil base, whose foil price would then stay empty and value
+/// those copies at $0 (issue #209). The listing fold matters because `m..070` ships
+/// `cards.folded_onto_id` empty: until this runs, every catalog grid still shows a folded
+/// star beside its base. Both are no-ops on a fresh/dummy catalog with no such pairs.
 fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsCache>) {
     tokio::spawn(async move {
         match crate::scryfall::enrich_foil_variant_prices(&db).await {
@@ -181,7 +184,29 @@ fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsC
             Ok(_) => {}
             Err(err) => tracing::error!(error = %err, "foil-variant price enrichment failed"),
         }
+        refresh_foil_variant_folds(&db).await;
     });
+}
+
+/// Recompute `cards.folded_onto_id` for every game, logging what moved. Shared by the boot
+/// one-shot above and the sync tick, so the fold can't be wired into one and not the other.
+pub(crate) async fn refresh_foil_variant_folds(db: &DatabaseConnection) {
+    for game in crate::catalog::GAMES {
+        match crate::scryfall::refresh_foil_variant_folds(db, game.id).await {
+            Ok((0, 0)) => {}
+            Ok((folded, cleared)) => tracing::info!(
+                game = game.id,
+                folded,
+                cleared,
+                "refreshed foil-variant display folds"
+            ),
+            Err(err) => tracing::error!(
+                game = game.id,
+                error = %err,
+                "foil-variant fold refresh failed"
+            ),
+        }
+    }
 }
 
 /// Advance every game's analytics price epoch — called after any background pass

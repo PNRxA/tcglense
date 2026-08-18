@@ -33,9 +33,18 @@ pub mod sld_tasks;
 pub mod subtypes;
 
 pub use dummy::seed;
+/// The Scryfall foil-variant collector-number suffix, so the listing fold and the holdings
+/// fold can't drift on what a foil-★ variant is.
+pub(crate) use foil_variants::FOIL_STAR;
 /// Copy each foil-★ variant's foil price onto its nonfoil base card (issue #209), so a
 /// consolidated foil holding values correctly; run every sync tick before the snapshot.
 pub(crate) use foil_variants::enrich_foil_variant_prices;
+/// Recompute which foil-★ variants are folded onto their nonfoil base for display
+/// (`cards.folded_onto_id`); run beside the price enrichment on every sync tick.
+pub(crate) use foil_variants::refresh_foil_variant_folds;
+/// The catalog-listing fold as row predicates: hide a folded foil-★ variant, and recognise
+/// the base that lost one as foil- (and foil-treatment-) available. See [`foil_variants`].
+pub(crate) use foil_variants::{has_folded_foil_variant, not_folded_foil_variant};
 pub use ingest::refresh;
 /// Daily price-history capture, re-exported at the provider level so callers use
 /// `scryfall::snapshot_prices` / `scryfall::format_date` without reaching into the

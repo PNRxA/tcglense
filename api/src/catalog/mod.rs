@@ -114,6 +114,11 @@ pub async fn refresh_all(
                         "foil-variant price enrichment failed"
                     ),
                 }
+                // Recompute which foil-★ variants are folded onto their nonfoil base for
+                // display (`cards.folded_onto_id`). Runs right after the enrichment above —
+                // same pairs, same tick — so a newly-imported star is hidden from the grids
+                // in the same pass that gives its base the foil price.
+                crate::tasks::refresh_foil_variant_folds(db).await;
                 // Card rulings ("Notes and Rules Information", issue #522): official
                 // clarifications keyed by oracle_id. Runs after the card sync so it can
                 // scope rulings to stored cards' gameplay ids; version-gated independently,
