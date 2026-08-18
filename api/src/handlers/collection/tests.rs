@@ -887,6 +887,7 @@ async fn holdings_search_resolves_the_foil_star_arm_under_the_card_join() {
         username: Set(None),
         discriminator: Set(None),
         currency: Set("USD".into()),
+        accent: Set("pink".into()),
     }
     .insert(&db)
     .await
