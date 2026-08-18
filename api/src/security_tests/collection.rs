@@ -1359,3 +1359,60 @@ async fn movers_supports_year_two_year_three_year_and_all_time() {
         assert!(body[window]["losers"].as_array().unwrap().is_empty());
     }
 }
+
+/// A set tile's `card_count` is the collection's completion denominator, so it has to count the
+/// cards the set's grid actually shows: a foil-★ variant folded onto its nonfoil base is a row
+/// nobody can page to, let alone own. The tile reads it through the same seam the catalog's own
+/// set list and set page adjust with — and so, via the shared builder, do the wish list and the
+/// public mirror.
+#[tokio::test]
+async fn collection_set_tile_card_count_drops_the_folded_foil_star() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel};
+
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // `sld` stores two Scryfall objects for one printing — nonfoil `1587` and foil `1587★`,
+    // identical in every printed attribute — so its grid shows one card, not two.
+    crate::entities::card_set::Model {
+        card_count: 2,
+        ..crate::test_support::card_set_model("sld")
+    }
+    .into_active_model()
+    .insert(db)
+    .await
+    .expect("insert sld set");
+    for (id, collector_number, finishes) in [(1, "1587", "nonfoil"), (2, "1587★", "foil")] {
+        card::Model {
+            set_code: "sld".into(),
+            set_name: "Secret Lair Drop".into(),
+            collector_number: collector_number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some("ora-shelter".into()),
+            border_color: Some("borderless".into()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(db)
+        .await
+        .expect("insert card");
+    }
+    // The sync-tick pass decides the fold once and persists it, as a real instance does.
+    crate::scryfall::refresh_foil_variant_folds(db, "mtg")
+        .await
+        .expect("fold pass");
+
+    let (token, _) = register(&app, "folded-set-tile@example.com", "password123").await;
+    own_card(&app, &token, "ext-1", 1).await;
+
+    let (status, _, body) = send(&app, get_with_bearer("/api/collection/mtg/sets", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let tile = &body["data"][0];
+    assert_eq!(tile["code"], "sld", "{body:?}");
+    assert_eq!(tile["owned_cards"], 1, "{body:?}");
+    assert_eq!(
+        tile["card_count"].as_i64(),
+        Some(1),
+        "two stored objects, one folded away: {body:?}"
+    );
+}

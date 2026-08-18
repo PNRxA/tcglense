@@ -41,8 +41,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use sea_orm::sea_query::{Expr, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QuerySelect, Select, Statement,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
+    FromQueryResult, QueryFilter, QuerySelect, Select, SelectModel, Selector, Statement,
 };
 
 use super::ingest::IngestError;
@@ -162,9 +162,16 @@ const FOIL_TREATMENT_PROMO_TYPES: [&str; 6] = [
 /// | `sld` (the rest)       |   107 | `promo_types` + `rainbowfoil`   | yes    |
 ///
 /// A 9th-Edition foil is black-bordered where its nonfoil is white: a different card, and one
-/// the app's own `border:` / `wm:` / `art:` leaves query directly. Every column named here is
-/// therefore one a user can *see* or *search on*, and folding may not silently drop a value
-/// only the star carries.
+/// the app's own `border:` / `wm:` / `art:` leaves query directly. Every column named here —
+/// border colour, watermark, frame, frame effects, full-art, illustration, security stamp,
+/// flavour text and (modulo the star's foil treatments) `promo_types` — is therefore one a user
+/// can *see* or *search on*, and folding may not silently drop a value only the star carries.
+///
+/// `flavor_text` is the least obvious of them and the reason the list is not just "how it looks":
+/// a 10th-Edition premium foil prints **flavour text** where its nonfoil base prints reminder
+/// text, so the base's column is NULL while the star's carries real text. Folding such a star
+/// would hide the only row `ft:` / `has:flavor` can match — the same loss `border:` would take on
+/// a 9ed pair.
 fn same_printed_card(base: &FoldCandidate, star: &FoldCandidate) -> bool {
     base.border_color == star.border_color
         && base.watermark == star.watermark
@@ -173,6 +180,7 @@ fn same_printed_card(base: &FoldCandidate, star: &FoldCandidate) -> bool {
         && base.full_art == star.full_art
         && base.illustration_id == star.illustration_id
         && base.security_stamp == star.security_stamp
+        && base.flavor_text == star.flavor_text
         && promo_types_match(base.promo_types.as_deref(), star.promo_types.as_deref())
 }
 
@@ -196,7 +204,12 @@ fn promo_types_match(base: Option<&str>, star: Option<&str>) -> bool {
 }
 
 /// The columns [`same_printed_card`] compares, plus the identity a pair is resolved by.
-#[derive(Debug)]
+///
+/// Thirteen columns of a ~70-column row: the pass must never drag the wide heap. A
+/// `FromQueryResult` model rather than a tuple projection — SeaORM's `into_tuple` implements
+/// nothing past twelve columns, and a model keeps the projection and the comparison naming the
+/// same fields.
+#[derive(Debug, FromQueryResult)]
 struct FoldCandidate {
     id: i32,
     set_code: String,
@@ -210,45 +223,12 @@ struct FoldCandidate {
     illustration_id: Option<String>,
     security_stamp: Option<String>,
     promo_types: Option<String>,
+    flavor_text: Option<String>,
 }
 
 /// The column projection both halves of the pass select, in the order [`FoldCandidate`] reads
-/// them. Twelve columns of a ~70-column row: the pass must never drag the wide heap.
-type FoldRow = (
-    i32,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<bool>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
-
-impl From<FoldRow> for FoldCandidate {
-    fn from(r: FoldRow) -> Self {
-        FoldCandidate {
-            id: r.0,
-            set_code: r.1,
-            collector_number: r.2,
-            oracle_id: r.3,
-            border_color: r.4,
-            watermark: r.5,
-            frame: r.6,
-            frame_effects: r.7,
-            full_art: r.8,
-            illustration_id: r.9,
-            security_stamp: r.10,
-            promo_types: r.11,
-        }
-    }
-}
-
-fn select_fold_columns(query: Select<card::Entity>) -> Select<card::Entity> {
+/// them.
+fn select_fold_columns(query: Select<card::Entity>) -> Selector<SelectModel<FoldCandidate>> {
     query
         .select_only()
         .column(card::Column::Id)
@@ -263,6 +243,8 @@ fn select_fold_columns(query: Select<card::Entity>) -> Select<card::Entity> {
         .column(card::Column::IllustrationId)
         .column(card::Column::SecurityStamp)
         .column(card::Column::PromoTypes)
+        .column(card::Column::FlavorText)
+        .into_model::<FoldCandidate>()
 }
 
 /// Recompute `cards.folded_onto_id` for `game`: point each foil-★ variant that is the *same
@@ -301,13 +283,9 @@ pub(crate) async fn refresh_foil_variant_folds(
             .filter(card::Column::Finishes.eq("foil"))
             .filter(card::Column::CollectorNumber.like(format!("%{FOIL_STAR}"))),
     )
-    .into_tuple::<FoldRow>()
     .all(db)
     .await
-    .map_err(IngestError::Db)?
-    .into_iter()
-    .map(FoldCandidate::from)
-    .collect();
+    .map_err(IngestError::Db)?;
 
     // 2. Their candidate bases, resolved by `(set_code, collector_number)` — a point seek per
     //    pair through `m..024`, chunked so the bind list stays under SQLite's per-statement cap.
@@ -332,18 +310,16 @@ pub(crate) async fn refresh_foil_variant_folds(
                     .add(card::Column::CollectorNumber.eq(number.as_str())),
             );
         }
-        let rows: Vec<FoldRow> = select_fold_columns(
+        let rows: Vec<FoldCandidate> = select_fold_columns(
             Card::find()
                 .filter(card::Column::Game.eq(game))
                 .filter(card::Column::Finishes.eq("nonfoil"))
                 .filter(any),
         )
-        .into_tuple()
         .all(db)
         .await
         .map_err(IngestError::Db)?;
-        for row in rows {
-            let base = FoldCandidate::from(row);
+        for base in rows {
             bases.insert((base.set_code.clone(), base.collector_number.clone()), base);
         }
     }
@@ -445,6 +421,82 @@ fn strip_foil_star(collector_number: &str) -> &str {
 /// `ORDER BY … LIMIT` plan.
 pub(crate) fn not_folded_foil_variant() -> Condition {
     Condition::all().add(card::Column::FoldedOntoId.is_null())
+}
+
+/// How many foil-★ variants are folded out of each set's grid, keyed by set code — and the one
+/// place a stored `card_count` is reconciled with them.
+///
+/// `card_sets.card_count` is the provider's own set-object count, stored verbatim at ingest and
+/// never derived from `cards`, so on a set where the fold hides rows every surface that publishes
+/// it would overstate the grid it links to: the catalog set list, one set's metadata, and the
+/// collection/wish-list (and public-mirror) set tiles, whose completion denominator is dressed
+/// from the same `card_sets` row. All of them adjust through [`FoldedSetCounts::adjust`], so two
+/// reads of the same set can't disagree about how many cards it holds.
+#[derive(Debug, Default)]
+pub(crate) struct FoldedSetCounts(HashMap<String, i32>);
+
+impl FoldedSetCounts {
+    /// `stored` less the rows the fold hides in `set_code`, floored at zero.
+    ///
+    /// The floor is not theoretical: `card_count` and `cards` are written by different passes, so
+    /// a partial or stale set sync can leave a set counted below the rows it actually holds — and
+    /// a tile reading "-1 cards" is worse than one reading a stale number.
+    pub(crate) fn adjust(&self, set_code: &str, stored: i32) -> i32 {
+        stored
+            .saturating_sub(self.0.get(set_code).copied().unwrap_or(0))
+            .max(0)
+    }
+}
+
+impl FromIterator<(String, i32)> for FoldedSetCounts {
+    fn from_iter<T: IntoIterator<Item = (String, i32)>>(iter: T) -> Self {
+        FoldedSetCounts(iter.into_iter().collect())
+    }
+}
+
+/// Every set's folded-row count for `game`, for a read that publishes many sets at once.
+///
+/// One grouped scan over the ~550 non-NULL `folded_onto_id` rows through `m..070`'s index — the
+/// set list is CDN-cached, so this runs about as often as the sub-type scan beside it. It does
+/// not chase the pre-existing ±1 paper-vs-provider skew a tile already tolerates; it only removes
+/// the gap this fold opens.
+pub(crate) async fn folded_counts_by_set(
+    db: &DatabaseConnection,
+    game: &str,
+) -> Result<FoldedSetCounts, DbErr> {
+    folded_counts(db, game, None).await
+}
+
+/// One set's folded-row count, for a read that publishes a single set. Same shape as
+/// [`folded_counts_by_set`] so both apply through the same [`FoldedSetCounts::adjust`].
+pub(crate) async fn folded_counts_in_set(
+    db: &DatabaseConnection,
+    game: &str,
+    set_code: &str,
+) -> Result<FoldedSetCounts, DbErr> {
+    folded_counts(db, game, Some(set_code)).await
+}
+
+async fn folded_counts(
+    db: &DatabaseConnection,
+    game: &str,
+    set_code: Option<&str>,
+) -> Result<FoldedSetCounts, DbErr> {
+    let mut query = Card::find()
+        .select_only()
+        .column(card::Column::SetCode)
+        .column_as(card::Column::Id.count(), "folded")
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::FoldedOntoId.is_not_null())
+        .group_by(card::Column::SetCode);
+    if let Some(code) = set_code {
+        query = query.filter(card::Column::SetCode.eq(code));
+    }
+    let rows: Vec<(String, i64)> = query.into_tuple().all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(code, n)| (code, i32::try_from(n).unwrap_or(i32::MAX)))
+        .collect())
 }
 
 /// This row is a base with a foil-★ variant folded onto it — so it *is* obtainable in foil,
@@ -654,6 +706,39 @@ mod tests {
         );
     }
 
+    /// A card with the printed attributes the fold rule compares. Any further attribute a
+    /// test cares about (a flavour text, say) rides struct-update syntax on top, the way
+    /// [`card_model`] intends.
+    #[allow(clippy::too_many_arguments)]
+    fn printed(
+        id: i32,
+        set_code: &str,
+        collector_number: &str,
+        finishes: &str,
+        oracle_id: &str,
+        border: &str,
+        promo_types: Option<&str>,
+    ) -> card::Model {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            set_code: set_code.into(),
+            collector_number: collector_number.into(),
+            finishes: Some(finishes.into()),
+            oracle_id: Some(oracle_id.into()),
+            border_color: Some(border.into()),
+            promo_types: promo_types.map(str::to_string),
+            ..card_model(id)
+        }
+    }
+
+    async fn insert_model(db: &DatabaseConnection, model: card::Model) {
+        model
+            .into_active_model()
+            .insert(db)
+            .await
+            .expect("insert card");
+    }
+
     /// Insert a card with the printed attributes the fold rule compares.
     #[allow(clippy::too_many_arguments)]
     async fn insert_printed(
@@ -666,20 +751,19 @@ mod tests {
         border: &str,
         promo_types: Option<&str>,
     ) {
-        card::Model {
-            external_id: format!("ext-{id}"),
-            set_code: set_code.into(),
-            collector_number: collector_number.into(),
-            finishes: Some(finishes.into()),
-            oracle_id: Some(oracle_id.into()),
-            border_color: Some(border.into()),
-            promo_types: promo_types.map(str::to_string),
-            ..card_model(id)
-        }
-        .into_active_model()
-        .insert(db)
-        .await
-        .expect("insert card");
+        insert_model(
+            db,
+            printed(
+                id,
+                set_code,
+                collector_number,
+                finishes,
+                oracle_id,
+                border,
+                promo_types,
+            ),
+        )
+        .await;
     }
 
     /// External ids of the rows a catalog listing would show.
@@ -891,6 +975,101 @@ mod tests {
             foil_available(&db, Some("textured")).await,
             Vec::<String>::new(),
             "a treatment we never fold on is still answered by the star's own row"
+        );
+    }
+
+    /// A 10th-Edition premium foil prints **flavour text** where its nonfoil base prints
+    /// reminder text: attribute-identical in every other column the rule compares, and matched
+    /// by the broad pairing rule the price enrichment shares. Folding it would hide the only row
+    /// `ft:` / `has:flavor` can match — the same loss `border:` would take on a 9ed pair — so a
+    /// flavour text only the star carries blocks the fold, while an equal one doesn't.
+    #[tokio::test]
+    async fn a_10e_premium_foils_flavor_text_blocks_the_fold() {
+        let db = migrated_memory_db().await;
+        // The 10e-premium case: the base's `flavor_text` is NULL, the star's is real text.
+        insert_printed(&db, 1, "10e", "1", "nonfoil", "ora-angel", "black", None).await;
+        insert_model(
+            &db,
+            card::Model {
+                flavor_text: Some("Wings of light, sword of judgment.".into()),
+                ..printed(2, "10e", "1★", "foil", "ora-angel", "black", None)
+            },
+        )
+        .await;
+        // One number along, both rows print the *same* flavour text: still one card twice.
+        for (id, number, finishes) in [(3, "2", "nonfoil"), (4, "2★", "foil")] {
+            insert_model(
+                &db,
+                card::Model {
+                    flavor_text: Some("The forest remembers.".into()),
+                    ..printed(id, "10e", number, finishes, "ora-elf", "black", None)
+                },
+            )
+            .await;
+        }
+
+        assert_eq!(
+            refresh_foil_variant_folds(&db, "mtg").await.expect("fold"),
+            (1, 0),
+            "only the equal-flavour pair folds"
+        );
+        assert_eq!(
+            listed(&db).await,
+            ["ext-1", "ext-2", "ext-3"],
+            "the star carrying flavour text its base lacks keeps its own tile"
+        );
+    }
+
+    /// The counts every surface publishing a set's `card_count` adjusts by: per set, scoped to
+    /// one set on the same shape, and floored at zero so a stale `card_sets` row can never
+    /// publish a negative "N cards".
+    #[tokio::test]
+    async fn folded_counts_are_per_set_and_never_publish_a_negative() {
+        let db = migrated_memory_db().await;
+        // sld folds one star; 9ed's black-bordered foil is a printing of its own.
+        insert_printed(
+            &db,
+            1,
+            "sld",
+            "1587",
+            "nonfoil",
+            "ora-shelter",
+            "black",
+            None,
+        )
+        .await;
+        insert_printed(&db, 2, "sld", "1587★", "foil", "ora-shelter", "black", None).await;
+        insert_printed(
+            &db,
+            3,
+            "9ed",
+            "188",
+            "nonfoil",
+            "ora-chariot",
+            "white",
+            None,
+        )
+        .await;
+        insert_printed(&db, 4, "9ed", "188★", "foil", "ora-chariot", "black", None).await;
+        refresh_foil_variant_folds(&db, "mtg").await.expect("fold");
+
+        let all = folded_counts_by_set(&db, "mtg").await.expect("counts");
+        assert_eq!(all.adjust("sld", 3), 2, "the folded star leaves the grid");
+        assert_eq!(all.adjust("9ed", 2), 2, "nothing folded in 9ed");
+        assert_eq!(all.adjust("zzz", 7), 7, "a set with no folds is untouched");
+        // A `card_sets` row that lags the cards it counts must not publish a negative.
+        assert_eq!(all.adjust("sld", 0), 0);
+
+        // The single-set read answers the same numbers, so a set's own page and its tile in
+        // the list can't disagree.
+        let one = folded_counts_in_set(&db, "mtg", "sld")
+            .await
+            .expect("scoped counts");
+        assert_eq!(one.adjust("sld", 3), 2);
+        assert_eq!(
+            one.adjust("9ed", 2),
+            2,
+            "scoping to sld carries no other set's folds"
         );
     }
 

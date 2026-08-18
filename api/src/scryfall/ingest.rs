@@ -504,6 +504,95 @@ pub(super) async fn put_state(
 mod tests {
     use super::*;
 
+    /// One provider card line, as the streaming import parses and maps it.
+    fn provider_row(
+        id: &str,
+        collector_number: &str,
+        usd_foil: &str,
+        now: DateTimeUtc,
+    ) -> card::ActiveModel {
+        let line = format!(
+            r#"{{"object":"card","id":"{id}","oracle_id":"ora-shelter","name":"Shelter","lang":"en","set":"sld","set_name":"Secret Lair Drop","collector_number":"{collector_number}","games":["paper"],"prices":{{"usd_foil":"{usd_foil}"}}}}"#
+        );
+        let scry: ScryfallCard = serde_json::from_str(&line).expect("parse card line");
+        map::map_card(scry, now)
+    }
+
+    async fn stored(db: &sea_orm::DatabaseConnection, external_id: &str) -> card::Model {
+        Card::find()
+            .filter(card::Column::ExternalId.eq(external_id))
+            .one(db)
+            .await
+            .expect("query card")
+            .expect("card exists")
+    }
+
+    /// `cards.folded_onto_id` is **ours**, not the provider's: the fold pass derives it and the
+    /// incoming `ActiveModel` never carries one. The upsert therefore denies the column twice —
+    /// in `update_columns` (or every sync would set it from `excluded`, i.e. wipe every fold) and
+    /// in the changed-guard (or every folded row would compare as changed on every tick, mass-
+    /// bumping `updated_at`, the cursor the price-alert evaluator's narrowing reads).
+    ///
+    /// Both halves are invisible until they break, so this drives the real ingest path: flush a
+    /// row, fold it, then re-flush the identical provider row and one with a real datum changed.
+    #[tokio::test]
+    async fn a_re_sync_keeps_the_derived_fold_pointer_and_only_stamps_a_real_change() {
+        use sea_orm::sea_query::Expr;
+
+        let db = crate::test_support::migrated_memory_db().await;
+        let t0: DateTimeUtc = "2024-01-01T00:00:00Z".parse().unwrap();
+        let t1: DateTimeUtc = "2024-06-01T00:00:00Z".parse().unwrap();
+        let t2: DateTimeUtc = "2024-09-01T00:00:00Z".parse().unwrap();
+
+        flush_cards(
+            &db,
+            vec![
+                provider_row("base-1", "1587", "12.33", t0),
+                provider_row("star-1", "1587★", "12.33", t0),
+            ],
+        )
+        .await
+        .expect("first import");
+
+        // What `refresh_foil_variant_folds` writes: the star points at its nonfoil base.
+        let base_id = stored(&db, "base-1").await.id;
+        Card::update_many()
+            .col_expr(card::Column::FoldedOntoId, Expr::value(base_id))
+            .filter(card::Column::ExternalId.eq("star-1"))
+            .exec(&db)
+            .await
+            .expect("record the fold");
+
+        // A tick where nothing upstream changed: the fold survives, and the guard skips the
+        // write entirely so `updated_at` still means "a datum last changed".
+        flush_cards(
+            &db,
+            vec![
+                provider_row("base-1", "1587", "12.33", t1),
+                provider_row("star-1", "1587★", "12.33", t1),
+            ],
+        )
+        .await
+        .expect("unchanged re-import");
+        let star = stored(&db, "star-1").await;
+        assert_eq!(star.folded_onto_id, Some(base_id), "the fold is not wiped");
+        assert_eq!(star.updated_at, t0, "an unchanged row is not re-stamped");
+
+        // A tick where the star's foil price moved: the row is rewritten and stamped, and the
+        // fold pointer is carried through the rewrite rather than reset to the incoming NULL.
+        flush_cards(&db, vec![provider_row("star-1", "1587★", "31.00", t2)])
+            .await
+            .expect("changed re-import");
+        let star = stored(&db, "star-1").await;
+        assert_eq!(star.price_usd_foil.as_deref(), Some("31.00"));
+        assert_eq!(
+            star.folded_onto_id,
+            Some(base_id),
+            "a real change must not take the fold with it"
+        );
+        assert_eq!(star.updated_at, t2, "a real change is stamped");
+    }
+
     #[test]
     fn truncate_respects_char_boundaries() {
         assert_eq!(truncate("hello", 10), "hello");

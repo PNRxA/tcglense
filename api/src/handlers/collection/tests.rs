@@ -751,14 +751,19 @@ fn build_collection_sets_aggregates_dresses_and_orders() {
     ];
     // Only "aaa" has metadata; "bbb" must fall back to the card's set_name.
     let sets = vec![set_meta("aaa", "Alpha", "2000-01-01")];
+    // One of "aaa"'s 100 stored cards is a foil-★ variant folded out of the catalog grid, so
+    // the tile's completion denominator is 99 — the same adjustment the catalog's set reads
+    // publish.
+    let folded: crate::scryfall::FoldedSetCounts = [("aaa".to_string(), 1)].into_iter().collect();
 
-    let out = build_collection_sets("mtg", rows, sets, BULK_THRESHOLD_CENTS);
+    let out = build_collection_sets("mtg", rows, sets, &folded, BULK_THRESHOLD_CENTS);
     assert_eq!(out.len(), 2);
 
     // "bbb" (dated? no metadata -> released_at None) sorts after the dated "aaa".
     assert_eq!(out[0].code, "aaa");
     assert_eq!(out[0].name, "Alpha"); // dressed from card_sets, not the card
     assert_eq!(out[0].released_at.as_deref(), Some("2000-01-01"));
+    assert_eq!(out[0].card_count, 99); // 100 stored, less the one folded row
     assert_eq!(out[0].owned_cards, 2);
     assert_eq!(out[0].owned_copies, 4); // (2+1) + (1+0)
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("9.00")); // priced holdings summed
@@ -816,7 +821,13 @@ fn build_collection_sets_splits_bulk_per_finish() {
         ),
     ];
 
-    let out = build_collection_sets("mtg", rows, vec![], BULK_THRESHOLD_CENTS);
+    let out = build_collection_sets(
+        "mtg",
+        rows,
+        vec![],
+        &crate::scryfall::FoldedSetCounts::default(),
+        BULK_THRESHOLD_CENTS,
+    );
     assert_eq!(out.len(), 1);
     // Total = 1.00 + 3.00 + 2.00 + 1.00 = 7.00.
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("7.00"));
@@ -855,7 +866,13 @@ fn build_collection_sets_honors_a_custom_bulk_threshold() {
     ];
 
     // A $5 cutoff (500 cents): both cards are now bulk. Total is unchanged.
-    let out = build_collection_sets("mtg", rows, vec![], 500);
+    let out = build_collection_sets(
+        "mtg",
+        rows,
+        vec![],
+        &crate::scryfall::FoldedSetCounts::default(),
+        500,
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].owned_value_usd.as_deref(), Some("4.00")); // 0.50×2 + 3.00
     assert_eq!(out[0].owned_bulk_value_usd.as_deref(), Some("4.00")); // all of it is bulk now

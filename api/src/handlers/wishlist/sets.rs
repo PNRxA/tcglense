@@ -70,9 +70,12 @@ pub(crate) async fn wanted_sets(
         .filter(card_set::Column::Game.eq(game))
         .all(&state.db)
         .await?;
+    // The same folded-row adjustment the collection tiles (and the catalog's own set reads)
+    // apply, so a set's "N cards" denominator reads the same on every surface.
+    let folded = crate::scryfall::folded_counts_by_set(&state.db, game).await?;
 
     Ok(CollectionSetsResponse {
-        data: build_collection_sets(game, rows, sets, bulk_threshold_cents),
+        data: build_collection_sets(game, rows, sets, &folded, bulk_threshold_cents),
     })
 }
 

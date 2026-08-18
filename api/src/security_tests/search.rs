@@ -582,27 +582,28 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
     use sea_orm::{ActiveModelTrait, IntoActiveModel};
 
     let state = test_state().await;
-    crate::test_support::card_set_model("sld")
+    // Real stored `card_count`s, since the tile's count is Scryfall's set-object count less
+    // whatever this fold hides: `sld` stores its 3 objects (one of which folds), `9ed` its 2
+    // (neither folds), and `10e`'s row lags the cards it counts at 0 — the stale-sync case the
+    // subtraction has to clamp rather than publish as `-1`.
+    for (id, code, card_count) in [(1, "sld", 3), (2, "9ed", 2), (3, "10e", 0)] {
+        crate::entities::card_set::Model {
+            id,
+            card_count,
+            ..crate::test_support::card_set_model(code)
+        }
         .into_active_model()
         .insert(&state.db)
         .await
-        .expect("insert sld set");
-
-    crate::entities::card_set::Model {
-        // The `sld` row above took the helper's default id.
-        id: 2,
-        ..crate::test_support::card_set_model("9ed")
+        .expect("insert set");
     }
-    .into_active_model()
-    .insert(&state.db)
-    .await
-    .expect("insert 9ed set");
 
     // 1587/1587★ ("Shelter") are both in the Sakura Superstar drop's snapshot entry and differ
     // only by the rainbow-foil treatment; 796★ ("Mana Vault", Fallout: Vault Boy) is a real
     // orphan — `sld` has no 796 at all. 9ed 188/188★ is the population the fold must NOT
     // touch: the foil is black-bordered where the nonfoil is white, so they are two printings
-    // a visitor can tell apart and `border:black` queries directly.
+    // a visitor can tell apart and `border:black` queries directly. 10e 3/3★ is a plain
+    // attribute-identical fold in a set whose stored count lags it.
     type Row = (
         i32,
         &'static str,
@@ -614,7 +615,7 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
         Option<&'static str>,
         Option<&'static str>,
     );
-    let rows: [Row; 5] = [
+    let rows: [Row; 7] = [
         (
             1,
             "sld",
@@ -670,15 +671,37 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
             None,
             Some("9.00"),
         ),
+        (
+            6,
+            "10e",
+            "3",
+            "nonfoil",
+            "ora-angel",
+            "black",
+            None,
+            Some("0.10"),
+            None,
+        ),
+        (
+            7,
+            "10e",
+            "3★",
+            "foil",
+            "ora-angel",
+            "black",
+            None,
+            None,
+            Some("1.00"),
+        ),
     ];
     for (id, set, cn, finishes, oracle, border, promo, usd, usd_foil) in rows {
         crate::entities::card::Model {
             external_id: format!("ext-{id}"),
             set_code: set.into(),
-            set_name: if set == "sld" {
-                "Secret Lair Drop".into()
-            } else {
-                "Ninth Edition".into()
+            set_name: match set {
+                "sld" => "Secret Lair Drop".into(),
+                "10e" => "Tenth Edition".into(),
+                _ => "Ninth Edition".into(),
             },
             collector_number: cn.into(),
             collector_number_int: cn.trim_end_matches('★').parse().ok(),
@@ -746,7 +769,11 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
     // The orphan star and the unfolded 9ed foil answer it on their own `finishes`.
     let (status, _, body) = send(&app, get("/api/games/mtg/cards?q=is%3Afoil")).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
-    assert_eq!(numbers(&body, "data"), ["1587", "188★", "796★"], "{body:?}");
+    assert_eq!(
+        numbers(&body, "data"),
+        ["1587", "188★", "3", "796★"],
+        "{body:?}"
+    );
 
     // So does `is:rainbowfoil` — that token only ever lived on the star we folded away.
     let (status, _, body) = send(&app, get("/api/games/mtg/cards?q=is%3Arainbowfoil")).await;
@@ -755,9 +782,9 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
 
     // The set tile's card count follows the grid it links to rather than Scryfall's object
     // count, so a folded row can't make the header overstate what a visitor can page through.
-    let (status, _, body) = send(&app, get("/api/games/mtg/sets")).await;
-    assert_eq!(status, StatusCode::OK, "{body:?}");
-    let counts: std::collections::HashMap<&str, i64> = body["data"]
+    let (status, _, list) = send(&app, get("/api/games/mtg/sets")).await;
+    assert_eq!(status, StatusCode::OK, "{list:?}");
+    let counts: std::collections::HashMap<&str, i64> = list["data"]
         .as_array()
         .expect("sets")
         .iter()
@@ -769,9 +796,31 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
         })
         .collect();
     assert_eq!(
+        counts.get("sld"),
+        Some(&2),
+        "3 stored objects, one of them folded away: {list:?}"
+    );
+    assert_eq!(
         counts.get("9ed"),
+        Some(&2),
+        "nothing folded in 9ed, so its stored count stands: {list:?}"
+    );
+    // A `card_sets` row that lags the cards it counts (0 stored, 1 folded) clamps at zero —
+    // a partial sync must never publish a negative "N cards".
+    assert_eq!(
+        counts.get("10e"),
         Some(&0),
-        "nothing folded in 9ed: {body:?}"
+        "the subtraction is floored: {list:?}"
+    );
+
+    // And one set's own page answers the same number as its tile in the list — they are two
+    // reads of one datum, so they adjust through the same seam.
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets/sld")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body["card_count"].as_i64(),
+        counts.get("sld").copied(),
+        "the set read and the set list must agree: {body:?}"
     );
 
     // Folding is presentation-only: the star's Scryfall id still resolves, so existing

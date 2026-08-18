@@ -72,9 +72,13 @@ pub(crate) async fn owned_sets(
         .filter(card_set::Column::Game.eq(game))
         .all(&state.db)
         .await?;
+    // Each tile's `card_count` is the completion denominator, so it takes the same
+    // folded-row adjustment the catalog's set reads apply — a card folded out of the grid
+    // is one the owner can never own a tile's worth of.
+    let folded = crate::scryfall::folded_counts_by_set(&state.db, game).await?;
 
     Ok(CollectionSetsResponse {
-        data: build_collection_sets(game, rows, sets, bulk_threshold_cents),
+        data: build_collection_sets(game, rows, sets, &folded, bulk_threshold_cents),
     })
 }
 
