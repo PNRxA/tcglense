@@ -7,7 +7,12 @@ import {
   useProductContentsQuery,
 } from '@/composables/useProducts'
 import { boosterFamilyLabel } from '@/lib/productType'
-import { boxItemCount, productCardChips, productCardCounts } from '@/lib/productCounts'
+import {
+  boxItemCount,
+  productCardChips,
+  productCardCounts,
+  visibleProductSections,
+} from '@/lib/productCounts'
 
 // The sealed product's at-a-glance strip: how many pieces its box holds, how many cards are
 // guaranteed, how many are only in the booster pull pool (with the booster-family exclusives
@@ -33,12 +38,15 @@ const containersQuery = useProductContainersQuery(game, id)
 // Physical pieces, not line items: a booster box is one `30× pack` row plus a topper — 31
 // items, not 2. Shares boxItemCount with ProductContents' own heading so the two agree.
 const boxItems = computed(() => boxItemCount(contentsQuery.data.value?.data ?? []))
-const manifest = computed(() => sectionsQuery.data.value?.data ?? [])
+// The *visible* manifest — the same filter ProductCards renders through, so a chip can
+// never count a pool the sections below have hidden (an inherited booster/exclusive
+// section defers to the listed sub-product's own page).
+const manifest = computed(() => visibleProductSections(sectionsQuery.data.value?.data ?? []))
 const counts = computed(() => productCardCounts(manifest.value))
 // The exclusives' booster family, when the backend names one. This strip takes no
 // `product_type`, so there's no own-family fallback — the chip goes generic instead.
 const exclusiveFamily = computed(() => {
-  const family = manifest.value.find((s) => s.key === 'exclusive')?.booster_family
+  const family = manifest.value.find((s) => !s.component && s.key === 'exclusive')?.booster_family
   return family ? boosterFamilyLabel(family) : null
 })
 const CHIP_ICONS = { guaranteed: Layers, pull: Dices, exclusive: Sparkles, variable: Shuffle }

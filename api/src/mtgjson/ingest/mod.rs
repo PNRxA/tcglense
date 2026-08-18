@@ -55,10 +55,12 @@ pub(super) const IN_CHUNK: usize = 900;
 /// Rows per membership insert. Eight columns, so ~2000 rows ≈ 16k binds — under the limit.
 pub(super) const INSERT_BATCH: usize = 2000;
 
-/// A resolved-to-internal-ids membership row: `(product_id, card_id, membership, foil)`.
-/// Both the MTGJSON pass and the fallback merge accumulate into a `HashSet<Row>`, which
-/// deduplicates across the two sources for free.
-pub(super) type Row = (i32, i32, &'static str, bool);
+/// A resolved-to-internal-ids membership row:
+/// `(product_id, card_id, membership, foil, component)` — `component` being the top-level
+/// box component the row was inherited through (`None` for a product's own contents; see
+/// [`RawMembership::component`]). Both the MTGJSON pass and the fallback merge accumulate
+/// into a `HashSet<Row>`, which deduplicates across the two sources for free.
+pub(super) type Row = (i32, i32, &'static str, bool, Option<String>);
 
 /// A resolved-to-internal-ids composition row, ready to insert into `sealed_components`.
 /// The MTGJSON pass and the fallback merge both accumulate into a `Vec<ComponentRow>`
@@ -86,7 +88,7 @@ const VERSION_SEP: char = '\u{1f}';
 /// change takes effect, since the sync is otherwise ETag-gated. Bump it whenever any of that
 /// logic changes (including a change to how a precon slug is derived, since the slug is the
 /// browser's URL identity).
-const DERIVATION_VERSION: &str = "booster-pool-1+precon-2";
+const DERIVATION_VERSION: &str = "booster-pool-2+precon-2";
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
@@ -249,7 +251,13 @@ async fn refresh_inner(
             products.get(&m.tcgplayer_product_id),
             cards.get(&m.scryfall_id),
         ) {
-            rows.insert((product_id, card_id, m.membership, m.foil));
+            rows.insert((
+                product_id,
+                card_id,
+                m.membership,
+                m.foil,
+                m.component.clone(),
+            ));
             mtgjson_products.insert(product_id);
         }
     }
@@ -334,6 +342,7 @@ async fn refresh_inner(
                     sealed_content::Column::CardId,
                     sealed_content::Column::Membership,
                     sealed_content::Column::Foil,
+                    sealed_content::Column::Component,
                 ])
                 .do_nothing()
                 .to_owned(),
@@ -427,13 +436,14 @@ async fn refresh_inner(
 fn rows_to_models(rows: &HashSet<Row>, now: DateTimeUtc) -> Vec<sealed_content::ActiveModel> {
     rows.iter()
         .map(
-            |&(product_id, card_id, membership, foil)| sealed_content::ActiveModel {
+            |(product_id, card_id, membership, foil, component)| sealed_content::ActiveModel {
                 id: NotSet,
                 game: Set(GAME.to_string()),
-                product_id: Set(product_id),
-                card_id: Set(card_id),
+                product_id: Set(*product_id),
+                card_id: Set(*card_id),
                 membership: Set(membership.to_string()),
-                foil: Set(foil),
+                foil: Set(*foil),
+                component: Set(component.clone()),
                 created_at: Set(now),
                 updated_at: Set(now),
             },
@@ -543,6 +553,11 @@ mod tests {
     use crate::entities::{card, product};
     use crate::test_support::{insert_card, migrated_memory_db};
     use sea_orm::{PaginatorTrait, QueryOrder};
+
+    /// A [`Row`] with no component attribution — the shape almost every test asserts.
+    fn row(product_id: i32, card_id: i32, membership: &'static str, foil: bool) -> Row {
+        (product_id, card_id, membership, foil, None)
+    }
 
     /// Insert a product row and return its id (products carry only an external id + name).
     async fn insert_product(db: &DatabaseConnection, external_id: &str) -> i32 {
@@ -695,8 +710,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(added, 2);
-        assert!(rows.contains(&(product, sol, "contains", false)));
-        assert!(rows.contains(&(product, swat, "variable", false)));
+        assert!(rows.contains(&row(product, sol, "contains", false)));
+        assert!(rows.contains(&row(product, swat, "variable", false)));
     }
 
     /// MTGJSON stays authoritative: a product it already described takes no fallback rows.
@@ -736,8 +751,8 @@ mod tests {
         // Upstream described the bundle: a booster row (its sealed recursion) plus one
         // row identical to a supplement row (as if upstream had started authoring it).
         let mut rows = HashSet::from([
-            (bundle, sol, "booster", true),
-            (bundle, sol, "contains", false),
+            row(bundle, sol, "booster", true),
+            row(bundle, sol, "contains", false),
         ]);
         let covered = HashSet::from([bundle]);
         let added = merge_fallback(&db, &data, &covered, &mut rows)
@@ -745,11 +760,11 @@ mod tests {
             .unwrap();
         assert_eq!(added, 1, "the upstream-duplicated row dedups away");
         assert!(
-            rows.contains(&(bundle, sol, "booster", true)),
+            rows.contains(&row(bundle, sol, "booster", true)),
             "upstream rows untouched"
         );
-        assert!(rows.contains(&(bundle, sol, "contains", false)));
-        assert!(rows.contains(&(bundle, swat, "variable", false)));
+        assert!(rows.contains(&row(bundle, sol, "contains", false)));
+        assert!(rows.contains(&row(bundle, swat, "variable", false)));
     }
 
     /// A membership override corrects only contradictory buckets for the curated cards;
@@ -773,11 +788,11 @@ mod tests {
         // though ten form a two-of-ten random pool. It also emits the contained boosters'
         // pools — including for the curated cards themselves, which are on those sheets.
         let mut rows = HashSet::from([
-            (bundle, sol, "contains", false),
-            (bundle, sol, "booster", true),
-            (bundle, swat, "contains", false),
-            (bundle, swat, "booster", false),
-            (bundle, pull, "booster", false),
+            row(bundle, sol, "contains", false),
+            row(bundle, sol, "booster", true),
+            row(bundle, swat, "contains", false),
+            row(bundle, swat, "booster", false),
+            row(bundle, pull, "booster", false),
         ]);
         let covered = HashSet::from([bundle]);
         let added = merge_fallback(&db, &data, &covered, &mut rows)
@@ -785,17 +800,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(added, 1, "the matching guaranteed row already exists");
-        assert!(rows.contains(&(bundle, sol, "contains", false)));
-        assert!(!rows.contains(&(bundle, swat, "contains", false)));
-        assert!(rows.contains(&(bundle, swat, "variable", false)));
+        assert!(rows.contains(&row(bundle, sol, "contains", false)));
+        assert!(!rows.contains(&row(bundle, swat, "contains", false)));
+        assert!(rows.contains(&row(bundle, swat, "variable", false)));
         assert!(
-            rows.contains(&(bundle, sol, "booster", true))
-                && rows.contains(&(bundle, swat, "booster", false)),
+            rows.contains(&row(bundle, sol, "booster", true))
+                && rows.contains(&row(bundle, swat, "booster", false)),
             "the booster axis is independent of the certainty correction — curated cards \
              keep their pullable-from-boosters rows"
         );
         assert!(
-            rows.contains(&(bundle, pull, "booster", false)),
+            rows.contains(&row(bundle, pull, "booster", false)),
             "unrelated rows survive"
         );
     }
@@ -1036,10 +1051,10 @@ mod tests {
         // plus all thirteen Commander cards as `contains` through the deck reference —
         // including the ten-card random pool (represented here by Deflecting Swat).
         let mut rows = HashSet::from([
-            (bundle, pull, "booster", false),
-            (bundle, signet, "contains", false),
-            (bundle, sol, "contains", false),
-            (bundle, swat, "contains", false),
+            row(bundle, pull, "booster", false),
+            row(bundle, signet, "contains", false),
+            row(bundle, sol, "contains", false),
+            row(bundle, swat, "contains", false),
         ]);
         let mut components = vec![
             ComponentRow {
@@ -1072,15 +1087,15 @@ mod tests {
 
         // The supplement keeps the guaranteed staples + land printings as `contains`,
         // reclassifies the random pool as `variable`, and leaves upstream's booster row.
-        assert!(rows.contains(&(bundle, signet, "contains", false)));
-        assert!(rows.contains(&(bundle, sol, "contains", false)));
-        assert!(!rows.contains(&(bundle, swat, "contains", false)));
-        assert!(rows.contains(&(bundle, swat, "variable", false)));
-        assert!(rows.contains(&(bundle, plains, "contains", false)));
-        assert!(rows.contains(&(bundle, plains, "contains", true)));
-        assert!(rows.contains(&(bundle, appa, "contains", true)));
+        assert!(rows.contains(&row(bundle, signet, "contains", false)));
+        assert!(rows.contains(&row(bundle, sol, "contains", false)));
+        assert!(!rows.contains(&row(bundle, swat, "contains", false)));
+        assert!(rows.contains(&row(bundle, swat, "variable", false)));
+        assert!(rows.contains(&row(bundle, plains, "contains", false)));
+        assert!(rows.contains(&row(bundle, plains, "contains", true)));
+        assert!(rows.contains(&row(bundle, appa, "contains", true)));
         assert!(
-            rows.contains(&(bundle, pull, "booster", false)),
+            rows.contains(&row(bundle, pull, "booster", false)),
             "upstream row untouched"
         );
         // The composition is upstream's, verbatim: the deck line stays and the entry's
@@ -1113,10 +1128,10 @@ mod tests {
         // plus the thirteen Commander cards as `contains` through the recursed deck reference —
         // including the ten-card pool (represented here by Deflecting Swat).
         let mut rows = HashSet::from([
-            (case, pull, "booster", false),
-            (case, signet, "contains", false),
-            (case, sol, "contains", false),
-            (case, swat, "contains", false),
+            row(case, pull, "booster", false),
+            row(case, signet, "contains", false),
+            row(case, sol, "contains", false),
+            row(case, swat, "contains", false),
         ]);
 
         merge_fallback(&db, fallback::data(), &HashSet::from([case]), &mut rows)
@@ -1125,14 +1140,14 @@ mod tests {
 
         // Guaranteed staples + land printings stay `contains`; the pool is reclassified
         // `variable`; upstream's booster row survives (an independent axis).
-        assert!(rows.contains(&(case, signet, "contains", false)));
-        assert!(rows.contains(&(case, sol, "contains", false)));
-        assert!(!rows.contains(&(case, swat, "contains", false)));
-        assert!(rows.contains(&(case, swat, "variable", false)));
-        assert!(rows.contains(&(case, plains, "contains", false)));
-        assert!(rows.contains(&(case, plains, "contains", true)));
+        assert!(rows.contains(&row(case, signet, "contains", false)));
+        assert!(rows.contains(&row(case, sol, "contains", false)));
+        assert!(!rows.contains(&row(case, swat, "contains", false)));
+        assert!(rows.contains(&row(case, swat, "variable", false)));
+        assert!(rows.contains(&row(case, plains, "contains", false)));
+        assert!(rows.contains(&row(case, plains, "contains", true)));
         assert!(
-            rows.contains(&(case, pull, "booster", false)),
+            rows.contains(&row(case, pull, "booster", false)),
             "upstream booster row untouched"
         );
     }
@@ -1240,8 +1255,8 @@ mod tests {
     fn boosters_of(rows: &HashSet<Row>, product_id: i32) -> Vec<(i32, bool)> {
         let mut v: Vec<(i32, bool)> = rows
             .iter()
-            .filter(|&&(p, _, m, _)| p == product_id && m == "booster")
-            .map(|&(_, c, _, f)| (c, f))
+            .filter(|(p, _, m, _, _)| *p == product_id && *m == "booster")
+            .map(|(_, c, _, f, _)| (*c, *f))
             .collect();
         v.sort_unstable();
         v
@@ -1268,12 +1283,12 @@ mod tests {
         let collector = 102;
         let mut rows: HashSet<Row> = HashSet::from([
             // The bundle's own guaranteed card (not a booster row) — must be left untouched.
-            (bundle, 1, "contains", false),
+            row(bundle, 1, "contains", false),
             // Play booster pool.
-            (play, 10, "booster", false),
-            (play, 11, "booster", false),
+            row(play, 10, "booster", false),
+            row(play, 11, "booster", false),
             // Collector booster pool (one foil).
-            (collector, 20, "booster", true),
+            row(collector, 20, "booster", true),
         ]);
         let components = vec![sealed_child(bundle, play), sealed_child(bundle, collector)];
 
@@ -1284,7 +1299,13 @@ mod tests {
             vec![(10, false), (11, false), (20, true)]
         );
         // The children and the bundle's own guarantee are unchanged.
-        assert!(rows.contains(&(bundle, 1, "contains", false)));
+        assert!(rows.contains(&row(bundle, 1, "contains", false)));
+        // Each inherited row is attributed to the component it came through, so the
+        // handler can flag the bundle's pool sections as inherited-from-a-listed-child.
+        assert!(
+            rows.contains(&(bundle, 10, "booster", false, Some("Booster".to_string()))),
+            "inherited rows carry the component name"
+        );
     }
 
     /// A parent that already carries its own booster pool (MTGJSON recursion) is left as-is.
@@ -1293,8 +1314,8 @@ mod tests {
         let bundle = 100;
         let collector = 102;
         let mut rows: HashSet<Row> = HashSet::from([
-            (bundle, 5, "booster", false), // the bundle already has a pool
-            (collector, 20, "booster", true),
+            row(bundle, 5, "booster", false), // the bundle already has a pool
+            row(collector, 20, "booster", true),
         ]);
         let components = vec![sealed_child(bundle, collector)];
 
@@ -1347,11 +1368,11 @@ mod tests {
 
         let mut rows: HashSet<Row> = HashSet::from([
             // The canonical play pack's pool (the largest in the fin/play group).
-            (pack, 10, "booster", false),
-            (pack, 11, "booster", false),
-            (pack, 12, "booster", true),
+            row(pack, 10, "booster", false),
+            row(pack, 11, "booster", false),
+            row(pack, 12, "booster", true),
             // The sample pack carries its own smaller curated pool — must be preserved.
-            (sample, 99, "booster", false),
+            row(sample, 99, "booster", false),
             // A different set's play pack, empty, but its family group has no pool at all.
             // (other_set intentionally has no rows.)
         ]);
@@ -1391,18 +1412,21 @@ mod tests {
                 scryfall_id: "sf-a".to_string(),
                 membership: "contains",
                 foil: false,
+                component: None,
             },
             RawMembership {
                 tcgplayer_product_id: "1001".to_string(),
                 scryfall_id: "sf-a".to_string(),
                 membership: "booster",
                 foil: true,
+                component: None,
             },
             RawMembership {
                 tcgplayer_product_id: "9999".to_string(), // no such product
                 scryfall_id: "sf-b".to_string(),
                 membership: "contains",
                 foil: false,
+                component: None,
             },
         ];
 
@@ -1453,6 +1477,7 @@ mod tests {
                 card_id: Set(card_id),
                 membership: Set(m.membership.to_string()),
                 foil: Set(m.foil),
+                component: Set(m.component.clone()),
                 created_at: Set(now),
                 updated_at: Set(now),
             });
@@ -1472,6 +1497,7 @@ mod tests {
                     sealed_content::Column::CardId,
                     sealed_content::Column::Membership,
                     sealed_content::Column::Foil,
+                    sealed_content::Column::Component,
                 ])
                 .do_nothing()
                 .to_owned(),
@@ -1543,7 +1569,7 @@ mod tests {
         assert_eq!(rows.len(), 5);
         assert!(
             rows.iter()
-                .all(|&(p, _, m, f)| p == pid && m == "contains" && !f)
+                .all(|(p, _, m, f, _)| *p == pid && *m == "contains" && !*f)
         );
     }
 
@@ -1564,7 +1590,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 5);
-        assert!(rows.iter().all(|&(_, _, m, f)| m == "contains" && f));
+        assert!(rows.iter().all(|(_, _, m, f, _)| *m == "contains" && *f));
     }
 
     #[tokio::test]
@@ -1640,7 +1666,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(
             rows.iter()
-                .all(|&(p, _, m, f)| p == pid && m == "variable" && !f)
+                .all(|(p, _, m, f, _)| *p == pid && *m == "variable" && !*f)
         );
     }
 
@@ -1666,7 +1692,7 @@ mod tests {
         merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         assert_eq!(rows.len(), 9);
-        assert!(rows.iter().all(|&(_, _, m, f)| m == "variable" && f));
+        assert!(rows.iter().all(|(_, _, m, f, _)| *m == "variable" && *f));
     }
 
     #[tokio::test]
@@ -1685,7 +1711,7 @@ mod tests {
         // add-only and dedups per card via the row set: 7062 is not re-counted, only the missing
         // 7063 is added, and the row is never doubled.
         let mut rows: HashSet<Row> = HashSet::new();
-        rows.insert((pid, c7062, "variable", false));
+        rows.insert(row(pid, c7062, "variable", false));
         let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         assert_eq!(added, 1, "only the un-authored pool card (7063) is added");
@@ -1708,12 +1734,15 @@ mod tests {
         .await;
 
         let mut rows: HashSet<Row> = HashSet::new();
-        rows.insert((pid, c7001, "variable", false)); // MTGJSON's per-drop card
+        rows.insert(row(pid, c7001, "variable", false)); // MTGJSON's per-drop card
         let added = merge_sld_bonus_cards(&db, &mut rows).await.unwrap();
 
         assert_eq!(added, 5, "the five shared Evoke rares surface");
         assert_eq!(rows.len(), 6, "alongside MTGJSON's per-drop 7001");
-        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "variable"));
+        assert!(
+            rows.iter()
+                .all(|(p, _, m, _, _)| *p == pid && *m == "variable")
+        );
     }
 
     #[tokio::test]
@@ -1764,6 +1793,9 @@ mod tests {
         // Only the bonus pool is present, as `variable` — the drop's own cards came from (skipped)
         // MTGJSON, so a covered product still surfaces its "may be in" bonus.
         assert_eq!(rows.len(), 2, "the two bonus-pool cards are linked");
-        assert!(rows.iter().all(|&(p, _, m, _)| p == pid && m == "variable"));
+        assert!(
+            rows.iter()
+                .all(|(p, _, m, _, _)| *p == pid && *m == "variable")
+        );
     }
 }

@@ -226,26 +226,48 @@ async fn seed_product_price_history(db: &DatabaseConnection) -> Result<u64, Inge
 /// mirroring the real ingest's wholesale rebuild, so a reseed is idempotent. Returns
 /// the number of rows written.
 async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestError> {
-    // (card external id, product external id, membership, foil-only). Product ids match
-    // `dummy::products` (900001 collector box, 900002 play pack, 900003 bundle, 900004
-    // commander deck, 900005 draft box); card ids match `dummy::catalog`.
-    let mut seed: Vec<(String, &'static str, Membership, bool)> = Vec::new();
+    // (card external id, product external id, membership, foil-only, source component).
+    // Product ids match `dummy::products` (900001 collector box, 900002 play pack, 900003
+    // bundle, 900004 commander deck, 900005 draft box); card ids match `dummy::catalog`.
+    // Component names match `seed_sealed_components`, mirroring the real ingest's
+    // attribution: rows inherited through a **listed** child (the play pack) carry its
+    // component name so the parent's booster section reads `inherited`; rows packed in the
+    // **unlisted** land pack carry that name so they render as its own named section.
+    const PACK_COMPONENT: &str = "Dummy Base Set Play Booster Pack";
+    const LAND_PACK_COMPONENT: &str = "Dummy Base Set Land Pack";
+    let mut seed: Vec<(String, &'static str, Membership, bool, Option<&'static str>)> = Vec::new();
     // Found in: the reprinted relic + the prerelease promo ship in the base-set bundle;
     // a few cards make up the Universe commander deck.
     for card_ext in ["dummy-dmb-0080", "dummy-dmb-0078"] {
-        seed.push((card_ext.to_string(), "900003", Membership::Contains, false));
+        seed.push((
+            card_ext.to_string(),
+            "900003",
+            Membership::Contains,
+            false,
+            None,
+        ));
     }
     for card_ext in ["dummy-dmu-0001", "dummy-dmu-0002", "dummy-dmu-0013"] {
-        seed.push((card_ext.to_string(), "900004", Membership::Contains, false));
+        seed.push((
+            card_ext.to_string(),
+            "900004",
+            Membership::Contains,
+            false,
+            None,
+        ));
     }
-    // Can be pulled from: base-set boosters (collector box + play pack) and the Universe
-    // draft box. The foil-only showcase is a foil pull from the collector box.
+    // Can be pulled from: base-set boosters. The collector box's and bundle's pools are
+    // inherited through their linked play-booster component (attributed, so their pages
+    // defer to the pack's own); the pack itself and the Universe draft box (no composition
+    // seeded — nothing to defer to) own their pools directly. The foil-only showcase is a
+    // foil pull, inherited like the rest of the box's pool.
     for n in 1..=10 {
         seed.push((
             format!("dummy-dmb-{n:04}"),
             "900001",
             Membership::Booster,
             false,
+            Some(PACK_COMPONENT),
         ));
     }
     for n in 1..=5 {
@@ -254,6 +276,14 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
             "900002",
             Membership::Booster,
             false,
+            None,
+        ));
+        seed.push((
+            format!("dummy-dmb-{n:04}"),
+            "900003",
+            Membership::Booster,
+            false,
+            Some(PACK_COMPONENT),
         ));
     }
     for n in 1..=8 {
@@ -262,6 +292,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
             "900005",
             Membership::Booster,
             false,
+            None,
         ));
     }
     seed.push((
@@ -269,6 +300,27 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
         "900001",
         Membership::Booster,
         true,
+        Some(PACK_COMPONENT),
+    ));
+    // Packed in the bundle's land pack — a sub-product that is not individually sold, so
+    // its cards render as their own named section on the bundle page instead of being
+    // merged into "Guaranteed cards": five always-included lands plus one that only some
+    // land packs carry.
+    for n in 71..=75 {
+        seed.push((
+            format!("dummy-dmb-{n:04}"),
+            "900003",
+            Membership::Contains,
+            false,
+            Some(LAND_PACK_COMPONENT),
+        ));
+    }
+    seed.push((
+        "dummy-dmb-0070".to_string(),
+        "900003",
+        Membership::Variable,
+        false,
+        Some(LAND_PACK_COMPONENT),
     ));
     // May be in: the starlit promo is a randomized foil box insert; the werewolf a
     // randomized bundle insert.
@@ -277,12 +329,14 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
         "900001",
         Membership::Variable,
         true,
+        None,
     ));
     seed.push((
         "dummy-dmb-0076".to_string(),
         "900003",
         Membership::Variable,
         false,
+        None,
     ));
 
     // Resolve external ids -> internal ids from the just-seeded rows.
@@ -314,7 +368,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
     let now = Utc::now();
     let models: Vec<sealed_content::ActiveModel> = seed
         .into_iter()
-        .filter_map(|(card_ext, product_ext, membership, foil)| {
+        .filter_map(|(card_ext, product_ext, membership, foil, component)| {
             let card_id = *card_ids.get(&card_ext)?;
             let product_id = *product_ids.get(product_ext)?;
             Some(sealed_content::ActiveModel {
@@ -324,6 +378,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
                 card_id: Set(card_id),
                 membership: Set(membership.as_str().to_string()),
                 foil: Set(foil),
+                component: Set(component.map(str::to_string)),
                 created_at: Set(now),
                 updated_at: Set(now),
             })
@@ -375,9 +430,21 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
             Some("900002"),
             None,
         ),
+        // An **unlisted** sub-product (no child link — it isn't sold on its own): its
+        // packed cards are attributed to this name in `seed_sealed_contents`, so the
+        // bundle page renders it as its own named card section.
         (
             "900003",
             1,
+            ComponentKind::Sealed,
+            "Dummy Base Set Land Pack",
+            1,
+            None,
+            None,
+        ),
+        (
+            "900003",
+            2,
             ComponentKind::Card,
             "Dummy Prerelease Promo",
             1,
@@ -386,7 +453,7 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
         ),
         (
             "900003",
-            2,
+            3,
             ComponentKind::Other,
             "Spindown life counter",
             1,
@@ -395,7 +462,7 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
         ),
         (
             "900003",
-            3,
+            4,
             ComponentKind::Other,
             "Card storage box",
             1,

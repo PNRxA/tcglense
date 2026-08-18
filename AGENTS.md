@@ -206,6 +206,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   fallback, like `lib/legality.ts` mirrors the format table — a fifth key or a reordering lands on
   both sides. A label that names a pool must be true of the block it heads: the `booster` section
   is the pool's *shared remainder* whenever `exclusive` was split out above it.
+  **Sections split by source, and the split starts at ingest:** the MTGJSON walk stamps every
+  membership row inherited through a nested `sealed` reference with the top-level component's
+  name (`sealed_contents.component`, same string as the `sealed_components` row, `NULL` for a
+  product's own cards). The manifest then renders an **unlisted** sub-product (a bundle's land
+  pack — no catalog listing to click through to) as its own named per-certainty sections
+  (`component` on the wire, paged via `?component=`), and flags a plain section `inherited`
+  when every card came through a **listed** sub-product. The SPA hides inherited
+  `booster`/`exclusive` sections — that pool lives on the linked child's page, one click away
+  in "What's in the box" — through `visibleProductSections` in `lib/productCounts.ts`, shared
+  by ProductCards and ProductOverview so the chips can never count a pool the sections hid.
+  An inherited `contains` stays visible (hiding a guarantee loses information); the flat
+  (`?section`-less) `/cards` list stays whole-product and per-card-deduped for API consumers.
 - **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
   in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
   so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse

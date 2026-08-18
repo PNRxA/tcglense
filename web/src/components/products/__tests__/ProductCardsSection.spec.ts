@@ -98,12 +98,21 @@ beforeEach(() => {
 describe('ProductCardsSection', () => {
   it('queries its own section key + the shared search & sort (so each block pages independently)', () => {
     mountSection({ props: { sectionKey: 'booster', search: 't:goblin', sort: 'price:desc' } })
-    // useProductCardsQuery(game, id, page, section, search, sort) — the 4th arg is this block's
-    // own section, the 5th the shared search (a ref), the 6th the shared sort (a ref).
+    // useProductCardsQuery(game, id, page, section, component, search, sort) — the 4th arg is
+    // this block's own section, the 5th its component (unset here — a plain section), the 6th
+    // the shared search (a ref), the 7th the shared sort (a ref).
     const call = state.calls[0] ?? []
     expect(call[3]).toBe('booster')
-    expect((call[4] as Ref<string>).value).toBe('t:goblin')
-    expect((call[5] as Ref<string>).value).toBe('price:desc')
+    expect(call[4]).toBeUndefined()
+    expect((call[5] as Ref<string>).value).toBe('t:goblin')
+    expect((call[6] as Ref<string>).value).toBe('price:desc')
+  })
+
+  it('threads its component (an unlisted box piece) into the query beside the section key', () => {
+    mountSection({ props: { sectionKey: 'contains', component: 'Land Pack' } })
+    const call = state.calls[0] ?? []
+    expect(call[3]).toBe('contains')
+    expect(call[4]).toBe('Land Pack')
   })
 
   it('sizes its pagination off its own query total, not the parent', async () => {
@@ -168,18 +177,27 @@ describe('ProductCardsSection', () => {
     expect(wrapper.get('h3').text()).toContain('Exclusive to Collector Booster')
     expect(wrapper.get('h3').text()).toContain('42')
     expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false')
-    // …but no body — and no fetch: the enabled ref threaded into the query (7th arg) is off.
+    // …but no body — and no fetch: the enabled ref threaded into the query (8th arg) is off.
     expect(wrapper.findComponent(CardGrid).exists()).toBe(false)
     expect(wrapper.findComponent(CardPagination).exists()).toBe(false)
     expect(wrapper.findComponent(LoadingRow).exists()).toBe(false)
-    expect(((state.calls[0] ?? [])[6] as Ref<boolean>).value).toBe(false)
+    expect(((state.calls[0] ?? [])[7] as Ref<boolean>).value).toBe(false)
   })
 
   it('enables the paged query on expand', async () => {
     const wrapper = mountSection({ data: undefined, isPending: true })
     await expand(wrapper)
     expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('true')
-    expect(((state.calls[0] ?? [])[6] as Ref<boolean>).value).toBe(true)
+    expect(((state.calls[0] ?? [])[7] as Ref<boolean>).value).toBe(true)
+  })
+
+  it('exposes open(): the box-list click-through expands the block programmatically', async () => {
+    const wrapper = mountSection({ data: pageData(3) })
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(false)
+    ;(wrapper.vm as unknown as { open: (scroll?: boolean) => void }).open(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findComponent(CardGrid).exists()).toBe(true)
   })
 
   it('auto-expands when a search is active (a match must not hide behind the toggle)', () => {
