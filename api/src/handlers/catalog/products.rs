@@ -1167,10 +1167,24 @@ pub async fn product_card_sections(
         search_matched_ids(&state, game_meta, params.q.as_deref(), &index.ordered).await?;
     let keep = |cid: i32| matched.as_ref().is_none_or(|set| set.contains(&cid));
 
+    // `inherited` is a **provenance** property of a section, so it's decided over the
+    // UNFILTERED plain view: a `?q=` narrows a section's `total` but must never flip its
+    // provenance — the flag drives `visibleProductSections`' wholesale hiding client-side,
+    // and letting a search flip it made a mixed (direct + inherited) booster section vanish
+    // from the manifest for exactly the searches that matched only its inherited cards,
+    // while `product_cards` still served them. Same stance as `booster_family`, which is
+    // also read off the unfiltered index.
+    let mut section_has_direct: HashMap<&'static str, bool> = HashMap::new();
+    for &cid in &index.plain_ordered {
+        let Some(section) = index.plain_section_of(cid) else {
+            continue;
+        };
+        let has_direct = section_has_direct.entry(section.key()).or_insert(false);
+        *has_direct = *has_direct || index.direct.contains(&cid);
+    }
+
     // Count the plain sections by walking the plain view in display order. A Vec (≤ 4
     // sections) keeps that order — a HashMap wouldn't — and the linear find is trivial.
-    // `inherited` starts true and clears as soon as any of the section's cards is carried
-    // by a direct (unattributed) row.
     let mut plain: Vec<ProductCardSection> = Vec::new();
     for &cid in &index.plain_ordered {
         if !keep(cid) {
@@ -1180,27 +1194,20 @@ pub async fn product_card_sections(
             continue;
         };
         let key = section.key();
-        let entry = match plain.iter_mut().find(|s| s.key == key) {
-            Some(existing) => existing,
-            None => {
-                plain.push(ProductCardSection {
-                    key: key.to_string(),
-                    total: 0,
-                    // Only the exclusive section names its booster family (for the
-                    // heading); every other section leaves it `None`.
-                    booster_family: match section {
-                        CardSection::Exclusive => index.exclusive_family.clone(),
-                        _ => None,
-                    },
-                    component: None,
-                    inherited: true,
-                });
-                plain.last_mut().expect("just pushed")
-            }
-        };
-        entry.total += 1;
-        if index.direct.contains(&cid) {
-            entry.inherited = false;
+        match plain.iter_mut().find(|s| s.key == key) {
+            Some(existing) => existing.total += 1,
+            None => plain.push(ProductCardSection {
+                key: key.to_string(),
+                total: 1,
+                // Only the exclusive section names its booster family (for the
+                // heading); every other section leaves it `None`.
+                booster_family: match section {
+                    CardSection::Exclusive => index.exclusive_family.clone(),
+                    _ => None,
+                },
+                component: None,
+                inherited: !section_has_direct.get(key).copied().unwrap_or(false),
+            }),
         }
     }
 

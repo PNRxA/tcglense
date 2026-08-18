@@ -63,6 +63,15 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // The re-keyed index permits rows that differ only in `component` — a card
+        // inherited through two box components, or held both directly and via one — and
+        // those rows collide under the 5-column key recreated below, so a naive rollback
+        // fails on real post-upgrade data. The table is rebuilt wholesale by every sync,
+        // so the honest rollback is to clear it and let the next sync repopulate under the
+        // old key.
+        manager
+            .exec_stmt(Query::delete().from_table(SealedContents::Table).to_owned())
+            .await?;
         manager
             .drop_index(
                 Index::drop()

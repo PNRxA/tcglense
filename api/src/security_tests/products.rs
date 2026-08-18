@@ -1910,3 +1910,96 @@ async fn product_card_sections_booster_with_any_direct_row_is_not_inherited() {
         "one direct row keeps the section visible"
     );
 }
+
+#[tokio::test]
+async fn product_card_sections_inherited_is_provenance_not_a_search_result() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    // The mixed section from the test above: an inherited pool card + one direct row.
+    let inherited = insert_card(db, "sf-inherited").await;
+    let own = insert_card(db, "sf-own").await;
+    let pack = insert_product(db, "200", "Play Booster Pack", "fin", "play_pack", None).await;
+    let boxp = insert_product(db, "100", "Play Booster Box", "fin", "play_display", None).await;
+    insert_sealed(db, pack, inherited, "booster", false).await;
+    insert_sealed_via(
+        db,
+        boxp,
+        inherited,
+        "booster",
+        false,
+        Some("Play Booster Pack"),
+    )
+    .await;
+    insert_sealed(db, boxp, own, "booster", false).await;
+    insert_component(
+        db,
+        boxp,
+        0,
+        "sealed",
+        "Play Booster Pack",
+        36,
+        Some(pack),
+        None,
+    )
+    .await;
+
+    // A search matching only the *inherited* card must not flip the section's provenance:
+    // `total` is search-scoped, `inherited` is not — flipping it made the SPA hide the very
+    // section that holds the match, while the paged read still served it.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards/sections?q=inherited"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["key"], "booster");
+    assert_eq!(sections[0]["total"], 1, "the count IS search-scoped");
+    assert_eq!(
+        sections[0]["inherited"], false,
+        "provenance comes from the unfiltered view — the direct row keeps it visible"
+    );
+
+    // And the manifest agrees with the paged read under the same q.
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/100/cards?section=booster&q=inherited"),
+    )
+    .await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["card"]["id"], "sf-inherited");
+
+    // The counterpart: a section that IS fully inherited stays flagged under a search too
+    // — provenance is stable in both directions.
+    let case = insert_product(db, "300", "Booster Box Case", "fin", "case", None).await;
+    insert_sealed_via(
+        db,
+        case,
+        inherited,
+        "booster",
+        false,
+        Some("Play Booster Box"),
+    )
+    .await;
+    insert_component(
+        db,
+        case,
+        0,
+        "sealed",
+        "Play Booster Box",
+        6,
+        Some(boxp),
+        None,
+    )
+    .await;
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/products/300/cards/sections?q=inherited"),
+    )
+    .await;
+    let sections = body["data"].as_array().unwrap();
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["inherited"], true);
+}

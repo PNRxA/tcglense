@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import type { ProductCardSection, ProductCardSectionKey } from '@/lib/api'
 import { useProductCardSectionsQuery } from '@/composables/useProducts'
 import {
@@ -58,7 +58,9 @@ const searching = computed(() => query.value.length > 0)
 // sub-product's own page (linked from "What's in the box"), so it's dropped here rather
 // than doubled up. lib/productCounts.ts owns that rule, shared with ProductOverview.
 const sectionsQuery = useProductCardSectionsQuery(game, id, query)
-const manifest = computed(() => visibleProductSections(sectionsQuery.data.value?.data ?? []))
+// The server's manifest as-is — the exclusive-split fact below must survive the hiding.
+const rawManifest = computed(() => sectionsQuery.data.value?.data ?? [])
+const manifest = computed(() => visibleProductSections(rawManifest.value))
 // A malformed search comes back as 422; surface its message and skip the (also-failing) blocks.
 const searchError = computed(() => searchErrorMessage(sectionsQuery.error.value))
 
@@ -182,7 +184,11 @@ function componentSectionMeta(section: ProductCardSection): { title: string; blu
 // v-for (a component section repeats a plain key, so the key alone no longer identifies a
 // block) and addresses the block for the box-list click-through below.
 const sections = computed(() => {
-  const hasExclusive = manifest.value.some(
+  // Whether the server split the family exclusives out of the pool — read off the RAW
+  // manifest, not the visible one: an inherited (hidden) exclusive section still means the
+  // booster block is the pool's shared remainder, and titling it "the whole pool" because
+  // its sibling was hidden would state a wholeness the split already broke.
+  const hasExclusive = rawManifest.value.some(
     (section) => !section.component && section.key === 'exclusive',
   )
   return manifest.value.map((section) => ({
@@ -202,16 +208,23 @@ function setSectionRef(id: string, el: unknown) {
   if (el) sectionRefs.set(id, el as InstanceType<typeof ProductCardsSection>)
   else sectionRefs.delete(id)
 }
+const rootEl = ref<HTMLElement | null>(null)
 function openComponent(name: string) {
-  sections.value
-    .filter((section) => section.component === name)
-    .forEach((section, index) => sectionRefs.get(section.id)?.open(index === 0))
+  const matches = sections.value.filter((section) => section.component === name)
+  if (!matches.length) {
+    // The component's blocks aren't rendered right now — a committed card search filtered
+    // them out, or the manifest is still loading. Don't leave the click dead: land on the
+    // cards area itself, where the active filter (and the way to clear it) is in view.
+    rootEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+  matches.forEach((section, index) => sectionRefs.get(section.id)?.open(index === 0))
 }
 defineExpose({ openComponent })
 </script>
 
 <template>
-  <section v-if="showSection">
+  <section v-if="showSection" ref="rootEl">
     <!-- The heading is worded by the certainties the manifest actually holds: a booster's
          pull pool must not be announced as cards the product contains (the pool is ~600, the
          pack holds ~15). lib/productCounts.ts owns the rule. -->

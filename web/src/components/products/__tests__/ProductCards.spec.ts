@@ -234,6 +234,32 @@ describe('ProductCards sections', () => {
     expect(sections.map((s) => s.key)).toEqual(['contains'])
   })
 
+  it('keeps calling the booster block "shared" when the exclusive section is hidden', () => {
+    // A hidden (inherited) exclusive section still means the server split those cards OUT
+    // of the booster block — so the surviving block is the pool's shared remainder and must
+    // not reclaim wholeness just because its sibling isn't rendered.
+    const { sections } = mountCards(
+      [
+        { ...inherited('exclusive', 80), booster_family: 'collector_pack' },
+        section('booster', 520),
+      ],
+      'collector_pack',
+    )
+    expect(sections.map((s) => s.key)).toEqual(['booster'])
+    expect(sections[0]!.title).toBe('Shared Collector Booster pool')
+  })
+
+  it('falls back to scrolling the cards area when the clicked component has no visible block', () => {
+    // A committed search can filter a component's sections out of the manifest while the
+    // "What's in the box" row (built from the unfiltered manifest) still offers the click —
+    // it must land somewhere, not die.
+    const scrolled = vi.fn<() => void>()
+    Element.prototype.scrollIntoView = scrolled
+    const { wrapper } = mountCards([section('contains', 1)], 'bundle', { query: 't:goblin' })
+    ;(wrapper.vm as unknown as { openComponent: (name: string) => void }).openComponent('Land Pack')
+    expect(scrolled).toHaveBeenCalled()
+  })
+
   it('renders an unlisted component’s sections, titled after the box piece, in order', () => {
     const { sections } = mountCards(
       [
