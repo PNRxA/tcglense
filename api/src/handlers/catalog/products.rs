@@ -197,10 +197,11 @@ pub(crate) struct ProductCardSection {
     /// How many cards fall in this section.
     pub total: u64,
     /// For the `exclusive` section only: a representative `product_type` slug for the booster
-    /// family these cards are exclusive to (e.g. `collector_pack` -> "Collector Booster"), so
-    /// the SPA titles a collector *display*'s section after the family's single-pack form
-    /// rather than the box. Only booster products get an exclusive section — a bundle never
-    /// does (its wrapped boosters' pages carry the call-out). `None` for every other section.
+    /// family these cards are exclusive to, in its single-pack form (e.g. `collector_pack` ->
+    /// "Collector Booster") — the family stated on the wire so a client needn't re-derive it
+    /// from the product's own type. Only booster products get an exclusive section — a bundle
+    /// never does (its wrapped boosters' pages carry the call-out). `None` for every other
+    /// section.
     pub booster_family: Option<String>,
     /// The unlisted box component this section's cards are packed in (the matching
     /// composition line item's display name — also the `?component=` value that pages it),
@@ -1460,10 +1461,9 @@ async fn build_product_card_index(
 
     // Which of this product's booster cards are exclusive to its booster family (a
     // collector-booster-only printing, say), plus a slug naming that family for the section
-    // heading — one small cross-product lookup, empty for a non-booster product that wraps no
-    // premium booster, or a set with nothing to compare against. Judged over the plain view:
-    // the exclusive/booster display split only applies there (component sections keep their
-    // own certainty split).
+    // heading — one small cross-product lookup, empty for any non-booster product, or a set
+    // with nothing to compare against. Judged over the plain view: the exclusive/booster
+    // display split only applies there (component sections keep their own certainty split).
     let (exclusive, exclusive_family) =
         booster_exclusive_card_ids(state, game, product, &plain).await?;
 

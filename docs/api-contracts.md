@@ -645,9 +645,10 @@ thousands of cards — can't blow SQLite's per-statement bind limit.
 `exclusive` / `booster` / `variable` (the value the `?section` filter takes), `total` its card
 count. `booster_family` is set **only on the plain `exclusive` section** — a representative
 `product_type` slug naming the family those cards are exclusive to by its single-pack form
-(e.g. `collector_pack`, so a collector *display*'s section is titled "Collector Booster", not
-the box); `null` on every other section, and only booster products ever get the section at
-all. `component` names the **unlisted** box component the
+(one canonical slug per family: `collector_pack` on a collector display's section too, so a
+client needn't re-derive the family from the product's own type); `null` on every other
+section, and only booster products ever get the section at all. `component` names the
+**unlisted** box component the
 section's cards are packed in (a sub-product with no catalog listing of its own — a bundle's
 land pack, a starter kit's half-deck; the same string as the matching `ProductComponent.name`,
 and the `?component` page key), `null` for a plain section. `inherited` is `true` when every
