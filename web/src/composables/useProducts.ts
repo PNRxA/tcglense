@@ -89,19 +89,22 @@ export function useProductQuery(game: Ref<string>, id: Ref<string>) {
  * and the caller resets `page` to 1 alongside it. `sort` is the shared card sort (a
  * `field:dir` option, or the `default` sentinel for the product's natural order): it too
  * goes in the key so changing it refetches, with the caller resetting `page` to 1.
- * `enabled` gates the fetch — a collapsed section block passes its expanded state so
- * pages are only pulled once the user reveals the section (issue #291). */
+ * `component` addresses an **unlisted** box component's cards instead of a plain section
+ * (`section` then narrows within it); fixed per block like `section`, so it sits in the
+ * key as a plain value. `enabled` gates the fetch — a collapsed section block passes its
+ * expanded state so pages are only pulled once the user reveals the section (issue #291). */
 export function useProductCardsQuery(
   game: Ref<string>,
   id: Ref<string>,
   page: Ref<number>,
   section: ProductCardSectionKey,
+  component: string | undefined,
   q: Ref<string>,
   sort: Ref<string>,
   enabled?: Ref<boolean>,
 ) {
   return useQuery({
-    queryKey: ['product-cards', game, id, section, q, sort, page],
+    queryKey: ['product-cards', game, id, section, component ?? null, q, sort, page],
     enabled,
     queryFn: ({ signal }) => {
       // The default sentinel maps to *no* `sort` param (the API's natural order); any other
@@ -116,6 +119,7 @@ export function useProductCardsQuery(
         page.value,
         PRODUCT_CARDS_PAGE_SIZE,
         section,
+        component,
         q.value || undefined,
         sortParam?.sort,
         sortParam?.dir,

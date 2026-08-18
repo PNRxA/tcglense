@@ -55,7 +55,17 @@ vi.mock('@/composables/useCardSearch', () => ({
 }))
 
 function section(key: string, total = 1, boosterFamily: string | null = null): ProductCardSection {
-  return { key, total, booster_family: boosterFamily }
+  return { key, total, booster_family: boosterFamily, component: null, inherited: false }
+}
+
+/// A section whose every card arrived through a listed sub-product (its page shows them).
+function inherited(key: string, total = 1): ProductCardSection {
+  return { ...section(key, total), inherited: true }
+}
+
+/// An unlisted component's section — the cards packed in a named box piece.
+function componentSection(key: string, name: string, total = 1): ProductCardSection {
+  return { ...section(key, total), component: name }
 }
 
 // Mount over a manifest (+ optional search state) and return the section blocks the parent
@@ -87,6 +97,7 @@ function mountCards(
     wrapper,
     sections: wrapper.findAllComponents(ProductCardsSection).map((c) => ({
       key: c.props('sectionKey') as string,
+      component: c.props('component') as string | undefined,
       title: c.props('title') as string,
       count: c.props('count') as number,
       search: c.props('search') as string,
@@ -203,6 +214,66 @@ describe('ProductCards sections', () => {
     expect(sections).toHaveLength(0)
     expect(wrapper.text()).toContain('Malformed search.')
     expect(wrapper.text()).not.toContain('No cards match')
+  })
+
+  it('hides an inherited booster/exclusive section — its pool lives on the linked child’s page', () => {
+    // A booster box / bundle whose whole pool arrived through a listed sub-product ("What's
+    // in the box" links it): rendering the pool here doubled it up, so only the sections
+    // with something of their own survive. The guaranteed card is direct and stays.
+    const { wrapper, sections } = mountCards(
+      [section('contains', 2), inherited('exclusive', 80), inherited('booster', 520)],
+      'bundle',
+    )
+    expect(sections.map((s) => s.key)).toEqual(['contains'])
+    // The heading total must agree with what's on screen, not with the hidden pool.
+    expect(wrapper.find('h2').text()).toContain('2')
+  })
+
+  it('keeps an inherited guarantee — hiding it would lose information, not deduplicate it', () => {
+    const { sections } = mountCards([inherited('contains', 3)], 'bundle')
+    expect(sections.map((s) => s.key)).toEqual(['contains'])
+  })
+
+  it('renders an unlisted component’s sections, titled after the box piece, in order', () => {
+    const { sections } = mountCards(
+      [
+        section('contains', 1),
+        componentSection('contains', 'Land Pack', 5),
+        componentSection('variable', 'Land Pack', 1),
+        section('variable', 2),
+      ],
+      'bundle',
+    )
+    expect(sections.map((s) => [s.key, s.component ?? null])).toEqual([
+      ['contains', null],
+      ['contains', 'Land Pack'],
+      ['variable', 'Land Pack'],
+      ['variable', null],
+    ])
+    expect(sections.map((s) => s.title)).toEqual([
+      'Guaranteed cards',
+      'In the Land Pack',
+      'May be in the Land Pack',
+      'May be included',
+    ])
+  })
+
+  it('words a component pool as pullable, never as containment', () => {
+    const { sections } = mountCards([componentSection('booster', 'Welcome Pack', 40)], 'bundle')
+    expect(sections.map((s) => s.title)).toEqual(['Pullable from the Welcome Pack'])
+  })
+
+  it('never lets a component section borrow the exclusive family label', () => {
+    // Only the *plain* exclusive section names a booster family; a component exclusive key
+    // (the server never emits one today) must not trip the family lookup.
+    const { sections } = mountCards(
+      [componentSection('contains', 'Land Pack'), section('exclusive', 1, 'collector_pack')],
+      'bundle',
+    )
+    expect(sections.map((s) => s.title)).toEqual([
+      'In the Land Pack',
+      'Exclusive to Collector Booster',
+    ])
   })
 })
 

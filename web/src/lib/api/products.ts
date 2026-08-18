@@ -152,11 +152,13 @@ export type ProductCardSectionKey = 'contains' | 'exclusive' | 'booster' | 'vari
  *
  * Pass `section` to page just one display section (each rendered with its own pagination,
  * issue #224); omit it for the whole ordered list. `total`/`has_more` then describe the
- * selected section. Pass `q` to narrow the page to the product's cards matching a
- * Scryfall-style search (the same grammar the card catalog accepts — name substrings plus
- * `c:r`, `t:goblin`, `r:mythic`, …), applied on top of `section` (issue #222). Pass
- * `sort`/`dir` (the shared card-list sort vocabulary) to re-order the cards *within* each
- * section; omit them for the product's natural membership / set-number order.
+ * selected section. Pass `component` (a `component` value from the sections manifest) to
+ * page the cards packed in one **unlisted** box component instead — `section` then narrows
+ * within that component's cards. Pass `q` to narrow the page to the product's cards
+ * matching a Scryfall-style search (the same grammar the card catalog accepts — name
+ * substrings plus `c:r`, `t:goblin`, `r:mythic`, …), applied on top of `section` (issue
+ * #222). Pass `sort`/`dir` (the shared card-list sort vocabulary) to re-order the cards
+ * *within* each section; omit them for the product's natural membership / set-number order.
  */
 export function getProductCards(
   game: string,
@@ -164,6 +166,7 @@ export function getProductCards(
   page = 1,
   pageSize?: number,
   section?: ProductCardSectionKey,
+  component?: string,
   q?: string,
   sort?: string,
   dir?: string,
@@ -175,6 +178,7 @@ export function getProductCards(
   if (page > 1) search.set('page', String(page))
   if (pageSize) search.set('page_size', String(pageSize))
   if (section) search.set('section', section)
+  if (component) search.set('component', component)
   if (q) search.set('q', q)
   if (sort) search.set('sort', sort)
   if (dir) search.set('dir', dir)

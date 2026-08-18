@@ -1,20 +1,31 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import type { Card, Product, ProductComponent } from '@/lib/api'
+import type { Card, Product, ProductCardSection, ProductComponent } from '@/lib/api'
 import ProductContents from '../ProductContents.vue'
 
-// Drive the component off a controlled composition, stubbing the query composable so no
-// QueryClient is needed — the unit under test is which line items render, their quantity + name,
-// which ones link, and that a link opens the shared detail modal in place (issue #485) rather
-// than navigating away.
-const state = vi.hoisted(() => ({ components: [] as ProductComponent[] }))
+// Drive the component off a controlled composition (+ card-sections manifest), stubbing the
+// query composables so no QueryClient is needed — the unit under test is which line items
+// render, their quantity + name, which ones link, that a link opens the shared detail modal
+// in place (issue #485) rather than navigating away, and that an *unlinked* sub-product with
+// a matching component section becomes a scroll-through button instead.
+const state = vi.hoisted(() => ({
+  components: [] as ProductComponent[],
+  sections: [] as ProductCardSection[],
+}))
 
 vi.mock('@/composables/useProducts', () => ({
   useProductContentsQuery: () => ({
     data: {
       get value() {
         return { data: state.components }
+      },
+    },
+  }),
+  useProductCardSectionsQuery: () => ({
+    data: {
+      get value() {
+        return { data: state.sections }
       },
     },
   }),
@@ -30,6 +41,15 @@ function linkedProduct(id: string, hasImage = true): Product {
 function linkedCard(id: string, hasImage = false): Card {
   return { id, name: `Card ${id}`, has_image: hasImage } as unknown as Card
 }
+
+/// A manifest entry for an unlisted component's packed cards.
+function componentSection(name: string, key = 'contains'): ProductCardSection {
+  return { key, total: 1, booster_family: null, component: name, inherited: false }
+}
+
+beforeEach(() => {
+  state.sections = []
+})
 
 // The section renders on a real sealed-product page, so a plain click opening a nested item's
 // modal lands `?product=`/`?card=` over the current path — exactly what happens inside the
@@ -166,5 +186,47 @@ describe('ProductContents', () => {
     expect(items[2]!.find('img').exists()).toBe(true)
     expect(items[3]!.find('img').exists()).toBe(false)
     expect(items[4]!.find('img').exists()).toBe(false)
+  })
+
+  it('carries each row’s full name in a tooltip (a long name truncates in the row)', async () => {
+    const { wrapper } = await mountContents([
+      comp({
+        kind: 'sealed',
+        name: 'A Very Long Sub-Product Name That Truncates In The Row',
+        quantity: 1,
+      }),
+    ])
+    // The name paragraph is the tooltip trigger; its full text is what the tooltip shows.
+    const name = wrapper.get('li p')
+    expect(name.text()).toContain('A Very Long Sub-Product Name That Truncates In The Row')
+    expect(name.classes()).toContain('truncate')
+    expect(wrapper.findComponent({ name: 'TooltipRoot' }).exists()).toBe(true)
+  })
+
+  it('turns an unlinked sub-product with a matching card section into a scroll-through button', async () => {
+    state.sections = [componentSection('Land Pack'), componentSection('Land Pack', 'variable')]
+    const { wrapper } = await mountContents([
+      comp({ kind: 'sealed', name: 'Land Pack', quantity: 1 }),
+      comp({ kind: 'other', name: 'Spindown', quantity: 1 }),
+    ])
+    // The land pack (no page of its own, but its cards render below) is a button; the
+    // spindown (no cards anywhere) stays a plain div.
+    const items = wrapper.findAll('li')
+    const button = items[0]!.find('button')
+    expect(button.exists()).toBe(true)
+    expect(items[1]!.find('button').exists()).toBe(false)
+    expect(items[1]!.find('a').exists()).toBe(false)
+    // Clicking asks the page to open that component's section(s), once.
+    await button.trigger('click')
+    expect(wrapper.emitted('openComponent')).toEqual([['Land Pack']])
+  })
+
+  it('keeps a linked sub-product a modal link even when a same-named section exists', async () => {
+    state.sections = [componentSection('Play Booster')]
+    const { wrapper } = await mountContents([
+      comp({ kind: 'sealed', name: 'Play Booster', quantity: 9, product: linkedProduct('648640') }),
+    ])
+    expect(wrapper.find('a').exists()).toBe(true)
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

@@ -8,7 +8,7 @@ import {
 } from '@/composables/useProductCardsSearch'
 import { searchErrorMessage } from '@/composables/useCardSearch'
 import { boosterFamilyLabel } from '@/lib/productType'
-import { productCardCounts, productCardsHeading } from '@/lib/productCounts'
+import { productCardCounts, productCardsHeading, visibleProductSections } from '@/lib/productCounts'
 import ProductCardsSection from '@/components/products/ProductCardsSection.vue'
 import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
@@ -53,9 +53,12 @@ const { searchInput, query, sort } = useProductCardsSearch(
 const searching = computed(() => query.value.length > 0)
 
 // The manifest is filtered by the committed `query`, so it lists exactly the sections that
-// still have matches (with recomputed counts).
+// still have matches (with recomputed counts) — then narrowed to the *visible* ones: an
+// inherited booster/exclusive section duplicates a pool that lives on a listed
+// sub-product's own page (linked from "What's in the box"), so it's dropped here rather
+// than doubled up. lib/productCounts.ts owns that rule, shared with ProductOverview.
 const sectionsQuery = useProductCardSectionsQuery(game, id, query)
-const manifest = computed(() => sectionsQuery.data.value?.data ?? [])
+const manifest = computed(() => visibleProductSections(sectionsQuery.data.value?.data ?? []))
 // A malformed search comes back as 422; surface its message and skip the (also-failing) blocks.
 const searchError = computed(() => searchErrorMessage(sectionsQuery.error.value))
 
@@ -146,18 +149,65 @@ function sectionMeta(
   }
 }
 
+// Heading + certainty note for a **component** section — the cards packed in one unlisted
+// sub-product (a bundle's land pack, a starter kit's half-deck), named after its "What's
+// in the box" line item. The certainty wording stays as honest as the plain sections':
+// only `contains` is containment; `booster` is a pool, `variable` a maybe.
+function componentSectionMeta(section: ProductCardSection): { title: string; blurb: string } {
+  const name = section.component ?? ''
+  switch (section.key) {
+    case 'contains':
+      return {
+        title: `In the ${name}`,
+        blurb:
+          'In every copy, packed in this piece — different cards, so extra copies of one count once.',
+      }
+    case 'booster':
+      return {
+        title: `Pullable from the ${name}`,
+        blurb: "Every card this pack can draw from — the whole pool, not one pack's worth.",
+      }
+    default:
+      return {
+        title: `May be in the ${name}`,
+        blurb: 'Cards this piece sometimes includes (a randomized configuration).',
+      }
+  }
+}
+
 // The sections to render, in the manifest's (display) order, each dressed with its heading.
 // Each block owns its own paged query (and thus its own pagination), so only the key +
 // labels + the shared search are threaded down — plus the manifest count, which labels the
-// block's collapsed-by-default header (issue #291) and feeds the grand total.
+// block's collapsed-by-default header (issue #291) and feeds the grand total. `id` keys the
+// v-for (a component section repeats a plain key, so the key alone no longer identifies a
+// block) and addresses the block for the box-list click-through below.
 const sections = computed(() => {
-  const hasExclusive = manifest.value.some((section) => section.key === 'exclusive')
+  const hasExclusive = manifest.value.some(
+    (section) => !section.component && section.key === 'exclusive',
+  )
   return manifest.value.map((section) => ({
+    id: section.component ? `${section.key}:${section.component}` : section.key,
     key: section.key as ProductCardSectionKey,
+    component: section.component ?? undefined,
     count: section.total,
-    ...sectionMeta(section, hasExclusive),
+    ...(section.component ? componentSectionMeta(section) : sectionMeta(section, hasExclusive)),
   }))
 })
+
+// The box-list click-through (ProductContents → ProductDetailContent → here): open every
+// block belonging to the named unlisted component and scroll to the first, so "what does
+// the land pack hold" lands on its guaranteed cards with its maybes revealed beneath.
+const sectionRefs = new Map<string, InstanceType<typeof ProductCardsSection>>()
+function setSectionRef(id: string, el: unknown) {
+  if (el) sectionRefs.set(id, el as InstanceType<typeof ProductCardsSection>)
+  else sectionRefs.delete(id)
+}
+function openComponent(name: string) {
+  sections.value
+    .filter((section) => section.component === name)
+    .forEach((section, index) => sectionRefs.get(section.id)?.open(index === 0))
+}
+defineExpose({ openComponent })
 </script>
 
 <template>
@@ -203,10 +253,12 @@ const sections = computed(() => {
         collapsed-by-default economy. -->
       <ProductCardsSection
         v-for="(section, index) in sections"
-        :key="section.key"
+        :key="section.id"
+        :ref="(el) => setSectionRef(section.id, el)"
         :game="game"
         :id="id"
         :section-key="section.key"
+        :component="section.component"
         :title="section.title"
         :blurb="section.blurb"
         :count="section.count"

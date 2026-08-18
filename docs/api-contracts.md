@@ -574,8 +574,8 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
-| `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
-| `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, in display order (`contains` → `exclusive` → `booster` → `variable`) with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. `[]` when the product has no ingested contents; `404` for an unknown game/product |
+| `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. A plain `?section` page spans the product's own cards plus those inherited through **listed** sub-products; the optional `?component` param (a `component` value from the sections manifest) instead pages the cards packed in one **unlisted** box component, with `?section` narrowing to one certainty within it — a name matching no component is an empty page, not an error (names are data, not vocabulary). Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
+| `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. Display order: the plain `contains` section, then one section per certainty of each **unlisted** box component (`component` = its name, in box order), then the plain `exclusive` → `booster` → `variable` sections. A plain section whose every card arrived through a **listed** sub-product is flagged `inherited`. `[]` when the product has no ingested contents; `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/containers` | `{ data: ProductContainer[] }` — the **reverse structural composition**: parent sealed products that directly contain this product, so an individual booster page can link to its booster boxes and bundles. Each entry embeds the parent `Product` plus the quantity of the viewed product it contains; duplicate component lines for one parent are summed. Ordered by parent name; `[]` when no ingested composition references the product; `404` for an unknown game/product |
 
@@ -621,16 +621,25 @@ is both contained in and pullable from the same product reports its **strongest*
 (`PRODUCT_CARDS_IN_CHUNK`, 900) so a giant product — Secret Lair "festival" bundles reference
 thousands of cards — can't blow SQLite's per-statement bind limit.
 
-`ProductCardSection = { key, total, booster_family }` (the `.../cards/sections` endpoint) is
-the display-section manifest: `key` is `contains` / `exclusive` / `booster` / `variable` (the
-value the `?section` filter takes), `total` its card count. `booster_family` is set **only on
-the `exclusive` section** — a representative `product_type` slug (e.g. `collector_pack`) naming
-the family those cards are exclusive to, so the SPA titles the block after the *contained*
-booster even for a bundle whose own type carries no family; `null` on every other section. Only
-non-empty sections are returned, in display order — so the SPA renders one
-independently-paginated block per section (issue #224) and knows each's size without fetching
-its cards. The four sections are the membership buckets with the `booster` pool split by
-`exclusive`; their combined `total` is the whole card count.
+`ProductCardSection = { key, total, booster_family, component, inherited }` (the
+`.../cards/sections` endpoint) is the display-section manifest: `key` is `contains` /
+`exclusive` / `booster` / `variable` (the value the `?section` filter takes), `total` its card
+count. `booster_family` is set **only on the plain `exclusive` section** — a representative
+`product_type` slug (e.g. `collector_pack`) naming the family those cards are exclusive to, so
+the SPA titles the block after the *contained* booster even for a bundle whose own type carries
+no family; `null` on every other section. `component` names the **unlisted** box component the
+section's cards are packed in (a sub-product with no catalog listing of its own — a bundle's
+land pack, a starter kit's half-deck; the same string as the matching `ProductComponent.name`,
+and the `?component` page key), `null` for a plain section. `inherited` is `true` when every
+card of a plain section arrived through a **listed** sub-product (the ingest attributes
+inherited rows to the component they came through), so a client can defer to that sub-product's
+own page instead of duplicating its pool — the SPA hides inherited `booster`/`exclusive`
+sections for exactly that reason; always `false` on component sections. Only non-empty sections
+are returned, in display order — so the SPA renders one independently-paginated block per
+section (issue #224) and knows each's size without fetching its cards. The plain sections are
+the membership buckets over the product's own + listed-inherited cards, with the `booster` pool
+split by `exclusive`; a card two unlisted packs share appears in each pack's section (each
+section's own count is exact), while the unfiltered `.../cards` list still dedupes it.
 
 **Only `contains` is a containment claim.** `exclusive` is a *subset* of the `booster` pull pool
 (never additional to it) and `variable` is a randomized configuration, so a `total` summed across

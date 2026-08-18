@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, nextTick, ref, toRef, watch } from 'vue'
 import type { Card, ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_PAGE_SIZE, useProductCardsQuery } from '@/composables/useProducts'
 import { useOwnedCounts } from '@/composables/useCollection'
@@ -24,6 +24,9 @@ const props = defineProps<{
   game: string
   id: string
   sectionKey: ProductCardSectionKey
+  // The unlisted box component this block pages (the manifest's `component` value), or
+  // unset for a plain section. Fixed per mount like `sectionKey` (the parent keys on both).
+  component?: string
   title: string
   blurb: string
   // This section's card count from the parent's manifest — shown on the header so a
@@ -81,7 +84,16 @@ watch(id, () => {
   expanded.value = props.defaultExpanded === true || search.value.length > 0
 })
 
-const query = useProductCardsQuery(game, id, page, props.sectionKey, search, sort, expanded)
+const query = useProductCardsQuery(
+  game,
+  id,
+  page,
+  props.sectionKey,
+  props.component,
+  search,
+  sort,
+  expanded,
+)
 const cards = computed<Card[]>(() => (query.data.value?.data ?? []).map((entry) => entry.card))
 // This section's own card count drives the page count — always the total of the very page set
 // being shown, so pagination can never point past the data (keepPreviousData holds the prior
@@ -102,6 +114,20 @@ const show = computed(() => !loaded.value || total.value > 0)
 const { ownership } = useOwnedCounts(game, cards)
 // Wish-list wanted counts for the same cards — a Heart chip flags wishlisted cards (#364).
 const { ownership: wishlistOwnership } = useWishlistCounts(game, cards)
+
+// Programmatic reveal, for the "What's in the box" click-through: an unlinked component
+// line item opens its matching section(s) down here. Expands (mounting the body + firing
+// the gated query) and — for the first matching block — scrolls this block's own top into
+// view once the body exists, so the jump lands on the heading like the pager's does.
+function open(scroll = true) {
+  expanded.value = true
+  if (scroll) {
+    void nextTick(() => {
+      sectionTop.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+}
+defineExpose({ open })
 </script>
 
 <template>

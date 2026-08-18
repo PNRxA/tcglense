@@ -99,10 +99,17 @@ const alertFinishes = computed<AlertFinish[]>(() => {
 // of always-rendered wrapper divs that would leave stray gaps in its spacing.
 const contentsEl = ref<ComponentPublicInstance | null>(null)
 const containersEl = ref<ComponentPublicInstance | null>(null)
-const cardsEl = ref<ComponentPublicInstance | null>(null)
+const cardsEl = ref<InstanceType<typeof ProductCards> | null>(null)
 function jumpTo(target: 'contents' | 'cards' | 'containers') {
   const el = { contents: contentsEl, cards: cardsEl, containers: containersEl }[target].value?.$el
   if (el instanceof HTMLElement) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// "What's in the box" → the card sections: an unlinked component row (a sub-product not
+// individually sold) scrolls down to — and expands — its own named card section(s), the
+// counterpart of the linked rows' modal open. ProductCards owns the matching + reveal.
+function openComponent(name: string) {
+  cardsEl.value?.openComponent(name)
 }
 </script>
 
@@ -213,8 +220,15 @@ function jumpTo(target: 'contents' | 'cards' | 'containers') {
 
         <!-- What's in the box: the structural composition (nested packs/boxes linked to their
           own pages, decks, promos, physical extras). Mounts off the route id and self-hides
-          when the product has no ingested composition. -->
-        <ProductContents ref="contentsEl" class="scroll-mt-6" :game="game" :id="id" />
+          when the product has no ingested composition. An unlinked sub-product row opens its
+          card section below instead of a page. -->
+        <ProductContents
+          ref="contentsEl"
+          class="scroll-mt-6"
+          :game="game"
+          :id="id"
+          @open-component="openComponent"
+        />
 
         <!-- The reverse structural relation: boxes, bundles, and other parent products that
           directly contain this product. Most useful on individual booster-pack pages; it

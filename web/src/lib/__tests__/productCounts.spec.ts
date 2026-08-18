@@ -5,10 +5,27 @@ import {
   productCardChips,
   productCardCounts,
   productCardsHeading,
+  visibleProductSections,
 } from '@/lib/productCounts'
 
 const section = (key: string, total: number, boosterFamily: string | null = null) =>
-  ({ key, total, booster_family: boosterFamily }) as ProductCardSection
+  ({
+    key,
+    total,
+    booster_family: boosterFamily,
+    component: null,
+    inherited: false,
+  }) as ProductCardSection
+
+const inheritedSection = (key: string, total: number) => ({
+  ...section(key, total),
+  inherited: true,
+})
+
+const componentSection = (key: string, name: string, total: number) => ({
+  ...section(key, total),
+  component: name,
+})
 
 const component = (name: string, quantity: number) =>
   ({ kind: 'sealed', name, quantity, product: null, card: null }) as ProductComponent
@@ -52,6 +69,44 @@ describe('productCardCounts', () => {
 
   it('is all zeroes for an empty manifest (a search matching nothing)', () => {
     expect(counts([])).toMatchObject({ guaranteed: 0, pool: 0, variable: 0, total: 0 })
+  })
+
+  it('folds a component section into the certainty bucket its key names', () => {
+    // What the land pack guarantees, the box guarantees; what a pack pool offers stays a pool.
+    const c = counts([
+      componentSection('contains', 'Land Pack', 5),
+      componentSection('variable', 'Land Pack', 1),
+      section('contains', 2),
+    ])
+    expect(c.guaranteed).toBe(7)
+    expect(c.variable).toBe(1)
+    expect(c.total).toBe(8)
+  })
+})
+
+describe('visibleProductSections', () => {
+  it('drops an inherited booster/exclusive section — the pool lives on the linked child’s page', () => {
+    const visible = visibleProductSections([
+      section('contains', 2),
+      inheritedSection('exclusive', 80),
+      inheritedSection('booster', 520),
+      section('variable', 1),
+    ])
+    expect(visible.map((s) => s.key)).toEqual(['contains', 'variable'])
+  })
+
+  it('keeps a non-inherited pool, an inherited guarantee, and every component section', () => {
+    const visible = visibleProductSections([
+      inheritedSection('contains', 3),
+      componentSection('contains', 'Land Pack', 5),
+      section('booster', 600),
+    ])
+    expect(visible).toHaveLength(3)
+  })
+
+  it('keeps everything when nothing is flagged (a pack page, a precon)', () => {
+    const manifest = [section('exclusive', 8), section('booster', 52)]
+    expect(visibleProductSections(manifest)).toEqual(manifest)
   })
 })
 

@@ -6,6 +6,16 @@
  * `booster` → `variable`, the [`CardSection`] display order); this manifest lets the SPA
  * render one **independently paginated** block per section (issue #224) — knowing which
  * sections exist and how big each is — without fetching every card first.
+ *
+ * Sections come in two sources. **Plain** sections (`component` = `None`) hold the
+ * product's own cards plus those inherited through *listed* sub-products (box components
+ * that resolve to their own catalog product); when every card of a plain section is
+ * inherited that way it's flagged `inherited`, so a client can defer to the sub-product's
+ * own page instead of duplicating its pool. **Component** sections (`component` =
+ * `Some(name)`) hold the cards packed in one *unlisted* sub-product — a bundle's land
+ * pack, a starter kit's half-deck — named after the matching "what's in the box" line
+ * item; they slot between the plain `contains` section and the pool sections, in box
+ * order, one entry per certainty the component actually has.
  */
 export type ProductCardSection = { 
 /**
@@ -23,4 +33,16 @@ total: number,
  * the SPA can title the section after the *contained* booster even when the viewed
  * product is a bundle whose own type carries no family. `None` for every other section.
  */
-booster_family: string | null, };
+booster_family: string | null, 
+/**
+ * The unlisted box component this section's cards are packed in (the matching
+ * composition line item's display name — also the `?component=` value that pages it),
+ * or `None` for a plain section.
+ */
+component: string | null, 
+/**
+ * `true` when **every** card of a plain section arrived through a listed sub-product
+ * (so the same cards are browsable on that sub-product's own page and a client may
+ * collapse or hide the duplicate here). Always `false` for component sections.
+ */
+inherited: boolean, };
