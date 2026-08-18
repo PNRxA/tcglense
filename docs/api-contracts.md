@@ -707,7 +707,10 @@ only owned cards. Model: `entities/collection_item.rs` (`collection_items`, uniq
 
 The collection also holds **sealed products** (issue #435) in the independent
 `collection_product_items` table. Product ids on the wire are external TCGplayer ids;
-the handler resolves them to `products.id` for storage so rows survive catalog re-syncs.
+the handler resolves them to `products.id` for storage so rows survive catalog re-syncs
+(with the same one exception as the wish-list twin below: the sweep deleting a product
+the feed reclassifies as a single card orphans the FK-less holding row, and every read —
+including the paginated list's `total` — then skips it).
 The UI exposes one quantity while preserving `foil_quantity` (foil sealed variants are
 separate TCGplayer SKUs), and both counts zero deletes the row. Collection product routes
 share their wire shaping, validation, pagination, and valuation with the wish list through
@@ -1030,7 +1033,8 @@ independent from the collection's matching product surface introduced by issue #
 `{id}` is the external (TCGplayer) product id, resolved to the internal `products.id` on
 write so a row survives catalog re-syncs (the daily TCGCSV sweep upserts sealed products
 in place; its one delete — a product the feed reclassifies as a single card — orphans the
-FK-less holding row, which every read then skips); both
+FK-less holding row, which every read then skips — the paginated list excludes it from
+its `total` too, so the pager, the rows, and the summary all agree); both
 counts zero deletes the row. The wire keeps the shared two-count
 `{ quantity, foil_quantity }` shape (foil sealed variants are separate TCGplayer SKUs),
 but the UI exposes a single **Quantity** and preserves an existing foil count. Both

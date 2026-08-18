@@ -5,7 +5,10 @@ use sea_orm::entity::prelude::*;
 /// One row per `(user, game, product)` records how many copies of a sealed product a
 /// signed-in user owns. A product with both counts at zero has no row. Product ids are
 /// the catalog's internal integer ids; the HTTP surface resolves the provider's external
-/// id before reading or writing this table.
+/// id before reading or writing this table. Like its wish-list twin, `product_id` is
+/// deliberately FK-less: the daily TCGCSV sweep's one delete (a product the feed
+/// reclassifies as a single card) orphans the row, and the reads — including the
+/// paginated list's `total` — skip it.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "collection_product_items")]
 pub struct Model {

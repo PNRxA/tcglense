@@ -46,7 +46,7 @@ fn row(item: wishlist_product_item::Model) -> ProductHoldingRow {
     }
 }
 
-struct WishlistProductRepository;
+pub(super) struct WishlistProductRepository;
 
 impl ProductHoldingRepository for WishlistProductRepository {
     async fn page(
@@ -57,7 +57,14 @@ impl ProductHoldingRepository for WishlistProductRepository {
         page: u64,
         page_size: u64,
     ) -> Result<(u64, Vec<(ProductHoldingRow, Option<product::Model>)>), AppError> {
-        let mut query = wanted_products_query(user_id, game);
+        // Count only rows the page can render: the TCGCSV sweep's reclassified-singles
+        // delete can orphan a holding (FK-less `product_id`), and `num_items()` counts the
+        // LEFT-joined orphan while the handler's `filter_map` drops it — leaving `total`/
+        // `has_more` promising entries the list can never return and disagreeing with the
+        // orphan-skipping summary. The set-scoped branch below is already implicitly
+        // orphan-free (its joined-column predicate is NULL-false).
+        let mut query =
+            wanted_products_query(user_id, game).filter(product::Column::Id.is_not_null());
         if let Some(set) = set {
             query = query.filter(product::Column::SetCode.eq(set));
         }
