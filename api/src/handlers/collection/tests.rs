@@ -971,3 +971,72 @@ async fn holdings_search_resolves_the_foil_star_arm_under_the_card_join() {
         "the folded base is the only foil holding"
     );
 }
+
+/// The collection twin of the wish list's `product_page_total_excludes_orphaned_holdings`:
+/// `page`'s query excludes a holding whose product row is gone (the TCGCSV sweep's
+/// reclassified-singles delete orphans them), so the paginated `total` agrees with the
+/// rows it can actually render and with the orphan-skipping summary.
+#[tokio::test]
+async fn product_page_total_excludes_orphaned_holdings() {
+    use crate::entities::collection_product_item;
+    use crate::handlers::shared::product_holdings::ProductHoldingRepository;
+    use sea_orm::prelude::DateTimeUtc;
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+        session_version: Set(0),
+        username: Set(None),
+        discriminator: Set(None),
+        currency: Set("USD".into()),
+        accent: Set("pink".into()),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    let valid = crate::test_support::insert_product(
+        &db,
+        "100",
+        "Booster Box",
+        "aaa",
+        "collector_display",
+        Some("120.00"),
+    )
+    .await;
+
+    let own = |id: i32, product_id: i32, updated: &str| collection_product_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        product_id: Set(product_id),
+        quantity: Set(1),
+        foil_quantity: Set(0),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at(updated)),
+    };
+    for o in [
+        own(1, valid, "2024-02-01T00:00:00Z"),
+        own(2, 9999, "2024-01-15T00:00:00Z"),
+    ] {
+        o.insert(&db).await.expect("insert collection product row");
+    }
+
+    let (total, rows) =
+        super::products::CollectionProductRepository::page(&db, 1, "mtg", None, 1, 60)
+            .await
+            .expect("page");
+    assert_eq!(total, 1, "the orphan is excluded from the count");
+    assert_eq!(rows.len(), 1, "…and from the rows, so the two agree");
+    assert_eq!(
+        rows[0].1.as_ref().map(|p| p.external_id.as_str()),
+        Some("100")
+    );
+}

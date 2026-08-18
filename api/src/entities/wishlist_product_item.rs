@@ -11,7 +11,9 @@ use sea_orm::entity::prelude::*;
 /// sealed products in separate tables, so a product can be wanted independently of any
 /// card or collection product row. `product_id` references `products.id` — the internal
 /// integer id, not the provider's external id — so a wish-list row survives a catalog
-/// re-import (the daily TCGCSV sweep is upsert-only); `game` is denormalised from the
+/// re-import (the daily TCGCSV sweep upserts sealed products in place; the one delete it
+/// performs, of products reclassified as single cards, leaves this FK-less row orphaned
+/// and the reads skip it); `game` is denormalised from the
 /// product so a user's
 /// per-game sealed wish list can be listed and counted without joining `products`.
 ///

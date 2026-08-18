@@ -10,6 +10,11 @@ use super::model::ExtendedData;
 /// single card. Per TCGCSV's own guidance, a product with a `Rarity` or `Number`
 /// entry in its `extendedData` is a card; sealed products have neither. (A `UPC`
 /// entry corroborates "sealed" but isn't required, so it isn't relied on here.)
+///
+/// The rule's known failure mode: preview-season card listings can ship with **no**
+/// `extendedData` at all and read as sealed here. The daily sweep compensates by
+/// deleting a stored product once the feed carries its card attributes (see
+/// `ingest::remove_reclassified_cards`) — don't "fix" that by guessing from names.
 pub fn is_sealed(extended_data: &[ExtendedData]) -> bool {
     !extended_data
         .iter()

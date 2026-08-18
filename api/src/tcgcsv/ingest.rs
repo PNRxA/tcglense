@@ -3,7 +3,11 @@
 //! The sweep is: fetch every group (`/tcgplayer/1/groups`), then per group fetch its
 //! products and prices, keep only **sealed** products (see [`super::classify`]),
 //! classify each into a coarse `product_type`, and upsert them with their current
-//! market prices. The whole sweep is **version-gated** on TCGCSV's `last-updated.txt`
+//! market prices. Stored products the feed has since **reclassified as single cards**
+//! are deleted in the same pass (see [`remove_reclassified_cards`]) — early
+//! preview-season card listings often arrive with no `extendedData` at all, get swept
+//! in as "sealed", and would otherwise sit on the sealed set pages forever.
+//! The whole sweep is **version-gated** on TCGCSV's `last-updated.txt`
 //! (recorded in an `ingest_state` row keyed `(mtg, tcgcsv_products)`), so an unchanged
 //! day costs one request. Requests are paced ~100 ms apart — a full sweep is ~900
 //! requests, well under TCGCSV's ~10k/day budget.
@@ -20,7 +24,7 @@ use chrono::Utc;
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    DatabaseConnection, EntityTrait, Iterable,
+    ColumnTrait, DatabaseConnection, EntityTrait, Iterable, QueryFilter,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -42,17 +46,29 @@ const REQUEST_SPACING: Duration = Duration::from_millis(100);
 /// parameters — under SQLite's 32 766 limit.
 const PRODUCT_BATCH: usize = 1000;
 
+/// External ids per reclassified-card delete statement (one bound parameter each, so
+/// this sits far under SQLite's 32 766 limit; kept moderate to keep statements cheap).
+const CARD_DELETE_BATCH: usize = 1000;
+
+/// Version tag for the sweep's own derivation logic, folded into the stored version (see
+/// [`compose_version`]) so a deploy that changes what the sweep *computes* — not just what
+/// TCGCSV serves — forces one full re-sweep on the next tick. Bumped to `"2"` when the
+/// sweep started deleting products reclassified as single cards: existing deployments
+/// carry misclassified card rows that only a full sweep can clean up.
+const SWEEP_DERIVATION_VERSION: &str = "2";
+
 /// Separator joining TCGCSV's `last-updated` value with the curated MSRP file's content
 /// hash in the stored version (a US control byte, which can't occur in either part — the
 /// `last-updated` value is a timestamp and the MSRP hash is hex). Mirrors the coupling
 /// [`crate::mtgjson::ingest`] uses for its ETag + fallback hash.
 const VERSION_SEP: char = '\u{1f}';
 
-/// Compose the stored sync version from TCGCSV's `last-updated` value and the curated MSRP
-/// file's content hash, so an MSRP-data-only edit changes the version and forces a
-/// re-sweep on the next tick even when TCGCSV itself is unchanged.
+/// Compose the stored sync version from TCGCSV's `last-updated` value, the curated MSRP
+/// file's content hash, and the sweep's own [`SWEEP_DERIVATION_VERSION`], so an
+/// MSRP-data-only edit — or a change to the sweep's derivation logic — changes the
+/// version and forces a re-sweep on the next tick even when TCGCSV itself is unchanged.
 fn compose_version(tcgcsv: &str, msrp_hash: &str) -> String {
-    format!("{tcgcsv}{VERSION_SEP}{msrp_hash}")
+    format!("{tcgcsv}{VERSION_SEP}{msrp_hash}{VERSION_SEP}{SWEEP_DERIVATION_VERSION}")
 }
 
 /// Sync MTG sealed products from TCGCSV, recording status in `ingest_state`. On error
@@ -132,6 +148,7 @@ async fn refresh_inner(
     // product's `msrp` stays set (or NULL) idempotently on each re-upsert.
     let msrp = super::msrp::price_map();
     let mut total_products: i32 = 0;
+    let mut total_removed: u64 = 0;
     let groups_total = groups.len() as i32;
     // Live terminal progress: a determinate bar over the groups being swept, with a
     // running sealed-product tally (see `super::progress`). Dropping it (incl. on any
@@ -162,7 +179,10 @@ async fn refresh_inner(
             .results,
         );
 
-        let models = build_group_products(group, products, &prices, msrp, now);
+        let GroupSweep {
+            sealed: models,
+            card_external_ids,
+        } = build_group_products(group, products, &prices, msrp, now);
         let sealed = models.len();
         // Secret Lair product `released_at` is owned by `catalog::sld_product_dates` (derived
         // from each product's contents after this sweep). Keep the sweep from writing that
@@ -170,12 +190,15 @@ async fn refresh_inner(
         // and its `updated_at` isn't churned (which would needlessly over-scan its price alerts).
         let preserve_released_at = group_set_code(group) == sld::SET_CODE;
         total_products += upsert_products(db, models, preserve_released_at).await? as i32;
+        let removed = remove_reclassified_cards(db, card_external_ids).await?;
+        total_removed += removed;
         progress.inc();
         progress.set_count(total_products as u64);
         tracing::debug!(
             group = group.group_id,
             name = group.name.as_deref().unwrap_or(""),
             sealed,
+            removed,
             "tcgcsv products: swept group"
         );
 
@@ -202,6 +225,13 @@ async fn refresh_inner(
 
     // Clear the progress bar before the completion line so it prints cleanly.
     drop(progress);
+    let mut detail =
+        format!("imported {total_products} sealed products from {groups_total} groups");
+    if total_removed > 0 {
+        detail.push_str(&format!(
+            "; removed {total_removed} products reclassified as single cards"
+        ));
+    }
     ingest_state::put(
         db,
         StateFields {
@@ -209,9 +239,7 @@ async fn refresh_inner(
             dataset: PRODUCTS_DATASET,
             status: "complete",
             source_updated_at: Some(&version),
-            detail: &format!(
-                "imported {total_products} sealed products from {groups_total} groups"
-            ),
+            detail: &detail,
             sets_imported: groups_total,
             cards_imported: total_products,
             started_at: started,
@@ -221,6 +249,7 @@ async fn refresh_inner(
     .await?;
     tracing::info!(
         products = total_products,
+        removed = total_removed,
         groups = groups_total,
         "tcgcsv products sync complete"
     );
@@ -238,6 +267,15 @@ fn group_set_code(group: &Group) -> String {
         .unwrap_or_default()
 }
 
+/// A group's swept products, split by classification: the **sealed** rows to upsert, and
+/// the external ids of the group's **card** products — the removal list for
+/// [`remove_reclassified_cards`], so a card the sweep once stored as sealed (see below)
+/// is cleaned up the moment the feed carries its card attributes.
+struct GroupSweep {
+    sealed: Vec<product::ActiveModel>,
+    card_external_ids: Vec<String>,
+}
+
 /// Build product `ActiveModel`s for a group's **sealed** products, attaching each
 /// product's current market prices from `prices` and its retail price. The curated `msrp`
 /// map (keyed by TCGplayer product id) wins; a Secret Lair Drop product not listed there
@@ -251,21 +289,28 @@ fn group_set_code(group: &Group) -> String {
 /// product, from their own contents after the contents sync (see
 /// [`crate::catalog::sld_product_dates`]).
 ///
-/// Cards (products with a `Rarity`/`Number` attribute) are filtered out. Pure so it's
-/// unit-testable without a DB.
+/// Cards (products with a `Rarity`/`Number` attribute) are split out into the removal
+/// list rather than built. Pure so it's unit-testable without a DB.
 fn build_group_products(
     group: &Group,
     products: Vec<super::model::Product>,
     prices: &HashMap<i64, super::model::DayPrice>,
     msrp: &HashMap<i64, String>,
     now: DateTimeUtc,
-) -> Vec<product::ActiveModel> {
+) -> GroupSweep {
     let set_code = group_set_code(group);
     let group_released_at = published_on_to_date(group.published_on.as_deref());
 
-    products
+    let (sealed, cards): (Vec<_>, Vec<_>) = products
         .into_iter()
-        .filter(|p| super::classify::is_sealed(&p.extended_data))
+        .partition(|p| super::classify::is_sealed(&p.extended_data));
+    let card_external_ids = cards
+        .into_iter()
+        .map(|p| p.product_id.to_string())
+        .collect();
+
+    let sealed = sealed
+        .into_iter()
         .map(|p| {
             let product_type = super::classify::classify_product_type(&p.name);
             let day = prices.get(&p.product_id);
@@ -302,7 +347,42 @@ fn build_group_products(
                 updated_at: Set(now),
             }
         })
-        .collect()
+        .collect();
+
+    GroupSweep {
+        sealed,
+        card_external_ids,
+    }
+}
+
+/// Delete previously stored product rows the feed now classifies as **single cards**.
+///
+/// Early preview-season card listings often arrive with **no** `extendedData` at all —
+/// indistinguishable from a sealed product under the `Rarity`/`Number` rule — so the
+/// daily sweep inserts them as sealed; once TCGCSV backfills the card attributes they'd
+/// otherwise sit on the sealed set pages forever (The Hobbit shipped dozens of them).
+/// Deletion is keyed on the feed's **positive** card signal for ids in *this* group's
+/// response — never on absence from the feed — so a transient short fetch can't wipe
+/// good rows. Dependent rows follow the schema: `product_price_history` cascades away,
+/// sealed contents/components cascade or null out, and the holdings/price-alert links
+/// are FK-less and orphan-tolerant (their reads skip a missing product).
+///
+/// Most ids probed here never had a row (the sweep never inserts cards), so each pass is
+/// index probes against `(game, external_id)`; a re-run is an idempotent no-op.
+async fn remove_reclassified_cards(
+    db: &DatabaseConnection,
+    external_ids: Vec<String>,
+) -> Result<u64, BackfillError> {
+    let mut total: u64 = 0;
+    for chunk in external_ids.chunks(CARD_DELETE_BATCH) {
+        total += Product::delete_many()
+            .filter(product::Column::Game.eq(GAME))
+            .filter(product::Column::ExternalId.is_in(chunk.iter().cloned()))
+            .exec(db)
+            .await?
+            .rows_affected;
+    }
+    Ok(total)
 }
 
 /// Batched upsert on `(game, external_id)`, updating every provider-owned column (all
@@ -415,9 +495,17 @@ mod tests {
         // Curated MSRP for the box only; the bundle isn't listed.
         let msrp: HashMap<i64, String> = HashMap::from([(100, "249.99".to_string())]);
         let now = Utc::now();
-        let models = build_group_products(&group(), products, &prices, &msrp, now);
+        let GroupSweep {
+            sealed: models,
+            card_external_ids,
+        } = build_group_products(&group(), products, &prices, &msrp, now);
 
         assert_eq!(models.len(), 2, "the single card is filtered out");
+        assert_eq!(
+            card_external_ids,
+            vec!["200".to_string()],
+            "the single card lands on the removal list"
+        );
         let box_model = models
             .iter()
             .find(|m| m.external_id.as_ref() == "100")
@@ -456,7 +544,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         assert_eq!(models[0].set_code.as_ref(), "");
         assert!(models[0].released_at.as_ref().is_none());
     }
@@ -472,7 +561,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             now,
-        );
+        )
+        .sealed;
         upsert_products(&db, first, false)
             .await
             .expect("first upsert");
@@ -492,7 +582,8 @@ mod tests {
             &prices,
             &HashMap::new(),
             now,
-        );
+        )
+        .sealed;
         upsert_products(&db, second, false)
             .await
             .expect("second upsert");
@@ -504,6 +595,93 @@ mod tests {
             "same (game, external_id) upserts, not duplicates"
         );
         assert_eq!(all[0].price_usd.as_deref(), Some("149.99"));
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_products_reclassified_as_cards() {
+        // Preview-season card listings often arrive with no `extendedData`, so an earlier
+        // sweep stored them as sealed (which is how The Hobbit's singles piled up on its
+        // sealed page). Once the feed carries their Rarity/Number they land on the
+        // removal list, and the sweep must delete the stored row — cascading its price
+        // history — while leaving real sealed products untouched.
+        let db = crate::test_support::migrated_memory_db().await;
+        let now = Utc::now();
+
+        // First sweep: the card ships bare, indistinguishable from sealed, and is stored.
+        let first = build_group_products(
+            &group(),
+            vec![
+                src_product(100, "Collector Booster Box", &["UPC"]),
+                src_product(200, "Radagast of Rhosgobel", &[]),
+            ],
+            &HashMap::new(),
+            &HashMap::new(),
+            now,
+        );
+        assert!(first.card_external_ids.is_empty(), "nothing to remove yet");
+        upsert_products(&db, first.sealed, false)
+            .await
+            .expect("first sweep");
+
+        // A daily snapshot lands a price-history row for the misclassified product.
+        use crate::entities::product_price_history;
+        let stale = Product::find()
+            .filter(product::Column::ExternalId.eq("200"))
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("misclassified card stored as sealed");
+        product_price_history::ActiveModel {
+            id: NotSet,
+            game: Set(GAME.to_string()),
+            product_id: Set(stale.id),
+            as_of_date: Set("2026-08-14".to_string()),
+            price_usd: Set(Some("1.23".to_string())),
+            price_usd_foil: Set(None),
+            created_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .expect("history row");
+
+        // Later sweep: TCGCSV has backfilled the card attributes.
+        let second = build_group_products(
+            &group(),
+            vec![
+                src_product(100, "Collector Booster Box", &["UPC"]),
+                src_product(200, "Radagast of Rhosgobel", &["Rarity", "Number"]),
+            ],
+            &HashMap::new(),
+            &HashMap::new(),
+            now,
+        );
+        assert_eq!(second.card_external_ids, vec!["200".to_string()]);
+        upsert_products(&db, second.sealed, false)
+            .await
+            .expect("second sweep");
+        let removed = remove_reclassified_cards(&db, second.card_external_ids.clone())
+            .await
+            .expect("removal");
+        assert_eq!(removed, 1, "exactly the reclassified row is deleted");
+
+        let remaining = Product::find().all(&db).await.unwrap();
+        assert_eq!(remaining.len(), 1, "the real sealed product survives");
+        assert_eq!(remaining[0].external_id, "100");
+        assert_eq!(
+            crate::entities::prelude::ProductPriceHistory::find()
+                .all(&db)
+                .await
+                .unwrap()
+                .len(),
+            0,
+            "the deleted product's price history cascades away"
+        );
+
+        // The next day's sweep re-probes the same ids: an idempotent no-op.
+        let again = remove_reclassified_cards(&db, second.card_external_ids)
+            .await
+            .expect("re-run");
+        assert_eq!(again, 0, "re-running the removal deletes nothing");
     }
 
     #[tokio::test]
@@ -528,7 +706,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         upsert_products(&db, insert, true).await.expect("insert");
 
         // `catalog::sld_product_dates` stamps the derived date (without bumping `updated_at`).
@@ -551,7 +730,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         upsert_products(&db, resweep, true).await.expect("resweep");
         let after = Product::find().one(&db).await.unwrap().unwrap();
         assert_eq!(
@@ -572,7 +752,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         upsert_products(&db, clobber, false).await.expect("clobber");
         let blanked = Product::find().one(&db).await.unwrap().unwrap();
         assert_eq!(
@@ -614,7 +795,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         let non_foil = models
             .iter()
             .find(|m| m.external_id.as_ref() == "700795")
@@ -642,7 +824,8 @@ mod tests {
             &HashMap::new(),
             &msrp,
             Utc::now(),
-        );
+        )
+        .sealed;
         assert_eq!(models[0].msrp.as_ref().as_deref(), Some("49.99"));
     }
 
@@ -674,7 +857,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             Utc::now(),
-        );
+        )
+        .sealed;
         for model in &models {
             assert!(
                 model.released_at.as_ref().is_none(),
@@ -700,5 +884,9 @@ mod tests {
         assert_ne!(a, b);
         // …and the same inputs are stable (the equality the version gate compares on).
         assert_eq!(a, compose_version("2024-02-08", "aaaa"));
+        // The sweep's own derivation tag is the final component, so bumping
+        // `SWEEP_DERIVATION_VERSION` alone (a deploy that changes what the sweep
+        // computes) mismatches every previously stored version and forces one re-sweep.
+        assert!(a.ends_with(&format!("{VERSION_SEP}{SWEEP_DERIVATION_VERSION}")));
     }
 }
