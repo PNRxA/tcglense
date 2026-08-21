@@ -2259,3 +2259,113 @@ async fn containing_reports_maybeboard_copies_apart() {
     assert_eq!(data[0]["quantity"], 1);
     assert_eq!(data[0]["maybeboard_quantity"], 3);
 }
+
+/// The deck list's `value_usd` is the deck page's own `summary.total_value_usd` — the same
+/// valuation at the same grain, so the shelf and the page it opens can never name two
+/// different values. Maybeboard copies don't value the deck (the line `card_count` already
+/// draws), and a deck with nothing priced answers **null**, never `"0.00"`.
+#[tokio::test]
+async fn the_deck_list_values_a_deck_like_its_own_page() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "deck-value@example.com", PW).await;
+
+    // A card the catalog prices in both finishes, so the expected value is computable
+    // from the same payload a client sees.
+    let (_, _, catalog) = send(&app, get("/api/games/mtg/cards?page_size=25")).await;
+    let priced = catalog["data"]
+        .as_array()
+        .expect("catalog cards")
+        .iter()
+        .find(|c| {
+            c["prices"]["usd"].as_str().is_some() && c["prices"]["usd_foil"].as_str().is_some()
+        })
+        .expect("a card priced in both finishes")
+        .clone();
+    let card = priced["id"].as_str().expect("card id").to_string();
+    let usd: f64 = priced["prices"]["usd"].as_str().unwrap().parse().unwrap();
+    let usd_foil: f64 = priced["prices"]["usd_foil"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let deck = create_deck(&app, &access, "Valued").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let sections = deck["sections"].as_array().expect("sections");
+    let section_of = |maybeboard: bool| {
+        sections
+            .iter()
+            .find(|s| s["is_maybeboard"] == maybeboard)
+            .expect("section")["id"]
+            .as_i64()
+            .expect("section id")
+    };
+
+    // 3 regular + 1 foil in the deck proper; 4 more copies merely *considered* in the
+    // seeded maybeboard, which must not inflate the value.
+    for (section_id, quantity, foil_quantity) in
+        [(section_of(false), 3, 1), (section_of(true), 4, 0)]
+    {
+        let (status, _, body) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+                &access,
+                json!({
+                    "quantity": quantity,
+                    "foil_quantity": foil_quantity,
+                    "section_id": section_id,
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "add card failed: {body:?}");
+    }
+
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    let (status, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    let header = list["data"]
+        .as_array()
+        .expect("deck list")
+        .iter()
+        .find(|d| d["id"].as_i64() == Some(deck_id))
+        .expect("the valued deck")
+        .clone();
+
+    assert_eq!(
+        header["value_usd"], detail["summary"]["total_value_usd"],
+        "the list and the deck page disagree on the deck's value"
+    );
+    let value: f64 = header["value_usd"]
+        .as_str()
+        .expect("a priced deck's value")
+        .parse()
+        .expect("decimal value");
+    let expected = 3.0 * usd + usd_foil;
+    assert!(
+        (value - expected).abs() < 0.005,
+        "3 regular + 1 foil, maybeboard excluded: expected {expected}, got {value}"
+    );
+
+    // A deck with nothing in it has nothing priced: null, never "0.00".
+    let empty = create_deck(&app, &access, "Empty").await;
+    let empty_id = empty["id"].as_i64().expect("deck id");
+    let (_, _, list) = send(&app, get_with_bearer("/api/decks/mtg", &access)).await;
+    let header = list["data"]
+        .as_array()
+        .expect("deck list")
+        .iter()
+        .find(|d| d["id"].as_i64() == Some(empty_id))
+        .expect("the empty deck")
+        .clone();
+    assert!(
+        header["value_usd"].is_null(),
+        "an unpriced deck answers null, not $0.00: {header:?}"
+    );
+}

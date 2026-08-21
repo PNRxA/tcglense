@@ -886,6 +886,15 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
     let precon_rows = seed_precons(db).await?;
     tracing::info!(rows = precon_rows, "seeded dummy preconstructed decks");
 
+    // Price the seeded precons through the same derived-value fold a sync tick runs
+    // (`precon_decks.price_cents` is refresher-owned, never written at seed/rebuild), so
+    // the offline browse shows and sorts by value exactly as a synced instance does.
+    let precon_values = crate::catalog::precon_values::refresh_precon_values(db).await?;
+    tracing::info!(
+        rows = precon_values,
+        "derived dummy preconstructed-deck values"
+    );
+
     // Card rulings ("Notes and Rules Information"), so the card-detail rulings section
     // renders offline. Keyed on the reprinted card's oracle id (seeded above).
     let ruling_rows = seed_rulings(db).await?;

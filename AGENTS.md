@@ -370,6 +370,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
   own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
   a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.
+  The tile's **price is the one facet that is a column but *not* ingest's**: card prices move
+  on ticks the ETag-gated rebuild doesn't run on, so the rebuild writes `price_cents` NULL and
+  `catalog::precon_values::refresh_precon_values` re-folds it from the live prices every sync
+  tick + once at boot on the no-sync path (the `cards.folded_onto_id` model — both wirings are
+  load-bearing, and no `DERIVATION_VERSION` bump was needed because derivation never computes
+  it). It folds the deck proper through the shared `Valuation` — the same fold as the detail's
+  `summary` — so the tile's `price_usd` and the page can't disagree, `sort=price` is a plain
+  `ORDER BY … NULLS LAST`, and NULL stays "unpriced", never `$0.00`. The deck list's
+  `value_usd` is the same idea per user (`deck_values_by_deck`, in the `deck_headers` seam).
   The browse is a set-tile **landing** (`/decks/{game}/precons`, the deck mirror of
   `/cards/{game}`, whose tiles **nest a set's related sub-sets** the way `groupSets` nests them
   there) and **three route shapes**, each offered only the groupings that answer something

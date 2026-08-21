@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entities::precon_deck;
 use crate::error::AppError;
+use crate::handlers::shared::valuation::format_cents;
 use crate::handlers::shared::{CardResponse, CollectionSummary, ProductResponse};
 use crate::state::AppState;
 
@@ -81,6 +82,13 @@ pub struct PreconDeckResponse {
     pub card_count: i32,
     /// Copies in the sideboard, counted apart from `card_count`.
     pub sideboard_count: i32,
+    /// Estimated USD value of the deck proper (regular copies at `usd`, foil copies at
+    /// `usd_foil`, sideboard excluded — the same grain as `card_count`), a 2-dp decimal
+    /// string. `null` when none of its cards are priced — never `"0.00"`. Folded from the
+    /// live card prices once per sync tick (`catalog::precon_values`), through the same
+    /// valuation the detail page's `summary.total_value_usd` uses, so the tile and the
+    /// page it opens agree.
+    pub price_usd: Option<String>,
     /// The card that fronts the deck — its commander, else the first card upstream lists.
     /// `None` when that card is no longer in the catalog.
     pub face_card: Option<PreconFaceCard>,
@@ -258,7 +266,7 @@ pub(crate) struct PreconListParams {
     pub include_related: Option<bool>,
     #[serde(rename = "type")]
     pub deck_type: Option<String>,
-    /// `released` (default, newest first) or `name`.
+    /// `released` (default, newest first), `name`, or `price` (most valuable first).
     pub sort: Option<String>,
     /// Grouped listings only: what to bucket by (`set`, the default, or `type`).
     #[serde(default)]
@@ -298,6 +306,9 @@ pub(crate) fn precon_response(
             .map(|letters| letters.chars().map(|c| c.to_string()).collect()),
         card_count: model.card_count,
         sideboard_count: model.sideboard_count,
+        // Cents -> the 2-dp decimal string every USD value rides the wire as; NULL stays
+        // `null` (an unpriced deck, as distinct from one worth $0.00).
+        price_usd: model.price_cents.map(|cents| format_cents(cents.into())),
         face_card,
     }
 }

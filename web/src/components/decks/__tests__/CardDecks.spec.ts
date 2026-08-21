@@ -32,6 +32,12 @@ vi.mock('@/composables/usePrecons', async () => {
   return { useCardPreconsQuery: () => ({ data: h.precons }) }
 })
 
+// The embedded PreconTile prices its deck through the currency store; mock the composable
+// (the PrintingTile spec's idiom) so mounting needs no Pinia.
+vi.mock('@/composables/useCurrency', () => ({
+  useCurrency: () => ({ formatUsd: (amount: string | null) => (amount ? `$${amount}` : null) }),
+}))
+
 const VIEWED_ID = 'dummy-dmb-0080'
 
 function deck(overrides: Partial<Deck>): Deck {
@@ -46,6 +52,7 @@ function deck(overrides: Partial<Deck>): Deck {
     card_count: 99,
     color_identity: ['W', 'U'],
     commanders: [],
+    value_usd: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-02T00:00:00Z',
     ...overrides,
@@ -74,6 +81,7 @@ function precon(overrides: Partial<PreconDeck>): PreconDeck {
     color_identity: ['W'],
     card_count: 100,
     sideboard_count: 0,
+    price_usd: null,
     face_card: null,
     ...overrides,
   }

@@ -183,6 +183,7 @@ async fn a_group_ships_every_deck_it_counts() {
             sideboard_count: Set(0),
             face_card_id: Set(None),
             product_id: Set(None),
+            price_cents: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -899,4 +900,100 @@ async fn card_precons_spans_decks_and_paginates() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _, _) = send(&app, get("/api/games/zzz/cards/dummy-dmb-0002/precons")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// `sort=price` orders the flat list most-valuable-first with unpriced decks parked last,
+/// and the tile's `price_usd` is the **same figure** the detail page's summary reports —
+/// the stored per-tick fold (`catalog::precon_values`) and the live detail valuation must
+/// never name two different values for one deck.
+#[tokio::test]
+async fn precon_list_sorts_by_price_and_prices_the_tile_like_the_page() {
+    let app = test_app_with_catalog().await;
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/precons?sort=price")).await;
+    assert_eq!(status, StatusCode::OK);
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(data.len(), 5, "the sort re-orders, never filters");
+
+    // Descending by value; a null price (nothing in the deck priced) sinks below every
+    // valued deck rather than leading a descending sort.
+    let prices: Vec<Option<f64>> = data
+        .iter()
+        .map(|d| d["price_usd"].as_str().map(|p| p.parse().expect("price")))
+        .collect();
+    assert!(
+        prices.iter().any(Option::is_some),
+        "the seeded dummy cards are priced, so the seeded precons must be: {prices:?}"
+    );
+    let mut seen_null = false;
+    let mut last: Option<f64> = None;
+    for price in &prices {
+        match price {
+            Some(value) => {
+                assert!(!seen_null, "a priced deck may never follow an unpriced one");
+                if let Some(previous) = last {
+                    assert!(previous >= *value, "descending order: {prices:?}");
+                }
+                last = Some(*value);
+            }
+            None => seen_null = true,
+        }
+    }
+
+    // The tile and the page it opens agree, sideboard exclusion included: the starter
+    // deck's sideboard is valued apart (`sideboard_summary`), so its header price must
+    // equal the deck-proper summary, not the whole box.
+    for slug in [COMMANDER_SLUG, STARTER_SLUG] {
+        let (_, _, detail) = send(&app, get(&format!("/api/games/mtg/precons/{slug}"))).await;
+        assert_eq!(
+            detail["price_usd"], detail["summary"]["total_value_usd"],
+            "{slug}: the stored tile price and the live summary disagree"
+        );
+        assert!(
+            detail["price_usd"].as_str().is_some(),
+            "{slug} holds priced dummy cards"
+        );
+    }
+}
+
+/// On the grouped listing `sort=price` orders the decks **inside** each group (the groups
+/// keep their natural order — a group has no price of its own to claim).
+#[tokio::test]
+async fn grouped_precons_sort_by_price_within_each_group() {
+    let app = test_app_with_catalog().await;
+
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/precons/groups?group=set&sort=price"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let groups = body["data"].as_array().expect("groups array");
+    assert!(!groups.is_empty());
+    for group in groups {
+        let prices: Vec<Option<f64>> = group["decks"]
+            .as_array()
+            .expect("decks array")
+            .iter()
+            .map(|d| d["price_usd"].as_str().map(|p| p.parse().expect("price")))
+            .collect();
+        let mut seen_null = false;
+        let mut last: Option<f64> = None;
+        for price in &prices {
+            match price {
+                Some(value) => {
+                    assert!(!seen_null, "unpriced decks sort last within a group");
+                    if let Some(previous) = last {
+                        assert!(
+                            previous >= *value,
+                            "group {} not price-descending: {prices:?}",
+                            group["title"]
+                        );
+                    }
+                    last = Some(*value);
+                }
+                None => seen_null = true,
+            }
+        }
+    }
 }
