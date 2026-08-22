@@ -300,7 +300,9 @@ usePageMeta({
           </SelectContent>
         </Select>
         <Select v-model="sort">
-          <SelectTrigger size="sm" class="w-36" aria-label="Sort decks">
+          <!-- w-48 (not w-36): "Price (high → low)" needs the room, and it matches the
+               type filter beside it. -->
+          <SelectTrigger size="sm" class="w-48" aria-label="Sort decks">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

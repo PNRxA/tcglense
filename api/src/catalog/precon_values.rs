@@ -83,15 +83,20 @@ pub async fn refresh_precon_values(db: &DatabaseConnection) -> Result<u64, DbErr
             .all(db)
             .await?;
         for (deck_id, quantity, foil, usd, usd_foil) in rows {
-            // A precon row is a single finish: its copies land in whichever price bucket
+            // A precon row is a single finish: its copies land in whichever count bucket
             // `foil` selects — the exact shape `HoldingCounts for precon_deck_card::Model`
-            // gives the detail page's summary fold.
-            let valuation = folds.entry(deck_id).or_default();
-            if foil {
-                valuation.add(None, 0, usd_foil.as_deref(), quantity);
-            } else {
-                valuation.add(usd.as_deref(), quantity, None, 0);
-            }
+            // gives the detail page's summary fold. Both *prices* are always passed, zero
+            // quantity and all, because that is what `summarize_holdings` does and
+            // `Valuation::add_finish` flips `any_priced` on any parseable price regardless
+            // of count: substituting `None` for the other finish here would store NULL for
+            // a deck the detail page calls "$0.00" (a foil-only row of a card priced only
+            // as regular), splitting the tile from the page on the null-vs-zero line.
+            folds.entry(deck_id).or_default().add(
+                usd.as_deref(),
+                if foil { 0 } else { quantity },
+                usd_foil.as_deref(),
+                if foil { quantity } else { 0 },
+            );
         }
     }
 
@@ -244,13 +249,25 @@ mod tests {
         let ghost = insert_deck(&db, "unpriced-tmc").await;
         insert_row(&db, ghost, unpriced, PreconBoard::Main, 60, false).await;
 
+        // A foil-only row of a card priced only as *regular*: the copies value nothing, but
+        // the card is priced, so this stores "$0.00" — exactly what `summarize_holdings`
+        // answers on the detail page (its `any_priced` flips on the other finish's price at
+        // zero quantity), and a different claim from `ghost`'s NULL.
+        let zero = insert_deck(&db, "zero-not-null-tmc").await;
+        insert_row(&db, zero, plain, PreconBoard::Main, 2, true).await;
+
         let changed = refresh_precon_values(&db).await.expect("refresh");
-        assert_eq!(changed, 1, "only the priceable deck changes");
+        assert_eq!(changed, 2, "the priceable and the zero-valued decks change");
         assert_eq!(stored(&db, deck).await, Some(1800));
         assert_eq!(
             stored(&db, ghost).await,
             None,
             "nothing priced answers NULL, never $0.00"
+        );
+        assert_eq!(
+            stored(&db, zero).await,
+            Some(0),
+            "priced-but-worth-nothing answers $0.00, matching the detail fold"
         );
 
         let again = refresh_precon_values(&db).await.expect("refresh again");
