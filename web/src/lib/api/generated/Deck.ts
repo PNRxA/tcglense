@@ -5,7 +5,8 @@ import type { DeckCommander } from "./DeckCommander";
  * A deck header, for the deck list. `card_count` is the total copies (regular + foil)
  * across every section — computed with one grouped aggregate, so the list stays cheap;
  * `color_identity` and `commanders` are the derived facets from [`facets`], folded for the
- * whole list in three more bounded queries.
+ * whole list in three more bounded queries; `value_usd` is one more bounded fold
+ * ([`deck_values_by_deck`]) through the shared valuation.
  */
 export type Deck = { id: number, 
 /**
@@ -34,4 +35,13 @@ color_identity: Array<string> | null,
  * The card(s) in the deck's command zone — one for most Commander decks, two for
  * partners or an Oathbreaker pair. Empty for every deck that doesn't have one.
  */
-commanders: Array<DeckCommander>, created_at: string, updated_at: string, };
+commanders: Array<DeckCommander>, 
+/**
+ * Estimated USD value of the deck (regular copies at the card's `usd`, foil copies at
+ * `usd_foil`), a 2-dp decimal string — the same grain as `card_count`: everything
+ * outside a maybeboard, sideboard included. Folded through the shared valuation the
+ * deck page's `summary.total_value_usd` uses (see [`deck_values_by_deck`]), so the
+ * list and the page it opens agree. **`null` means nothing in the deck is priced** —
+ * never `"0.00"`, which would claim the cards are worthless rather than unpriced.
+ */
+value_usd: string | null, created_at: string, updated_at: string, };

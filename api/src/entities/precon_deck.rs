@@ -48,6 +48,12 @@ pub struct Model {
     /// `products.id` of the sealed product that ships this deck, when MTGJSON linked one
     /// and we carry it. Orphan-tolerant for the same reason.
     pub product_id: Option<i32>,
+    /// Estimated USD value of the deck proper (commander + mainboard, never the sideboard)
+    /// in integer cents, or `None` when none of its cards are priced. Derived, not ingest
+    /// data: card prices move every sync tick while these rows are rebuilt only when
+    /// MTGJSON changes, so `catalog::precon_values::refresh_precon_values` recomputes it
+    /// from the live card prices each tick — the rebuild itself writes `NULL` (`m..077`).
+    pub price_cents: Option<i64>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

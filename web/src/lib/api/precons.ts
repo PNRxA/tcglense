@@ -49,7 +49,7 @@ export interface PreconListParams {
   includeRelated?: boolean
   /** Restrict to one deck type, e.g. `Commander Deck` (see the facets endpoint). */
   type?: string
-  /** `released` (default, newest first) or `name`. */
+  /** `released` (default, newest first), `name`, or `price` (most valuable first). */
   sort?: string
   /** Grouped listings only: `set` (default) or `type`. */
   group?: PreconGrouping

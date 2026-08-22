@@ -187,7 +187,8 @@ const MAX_FOLDER_NAME: usize = 100;
 /// A deck header, for the deck list. `card_count` is the total copies (regular + foil)
 /// across every section — computed with one grouped aggregate, so the list stays cheap;
 /// `color_identity` and `commanders` are the derived facets from [`facets`], folded for the
-/// whole list in three more bounded queries.
+/// whole list in three more bounded queries; `value_usd` is one more bounded fold
+/// ([`deck_values_by_deck`]) through the shared valuation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "Deck"))]
 pub struct DeckResponse {
@@ -213,6 +214,13 @@ pub struct DeckResponse {
     /// The card(s) in the deck's command zone — one for most Commander decks, two for
     /// partners or an Oathbreaker pair. Empty for every deck that doesn't have one.
     pub commanders: Vec<DeckCommanderResponse>,
+    /// Estimated USD value of the deck (regular copies at the card's `usd`, foil copies at
+    /// `usd_foil`), a 2-dp decimal string — the same grain as `card_count`: everything
+    /// outside a maybeboard, sideboard included. Folded through the shared valuation the
+    /// deck page's `summary.total_value_usd` uses (see [`deck_values_by_deck`]), so the
+    /// list and the page it opens agree. **`null` means nothing in the deck is priced** —
+    /// never `"0.00"`, which would claim the cards are worthless rather than unpriced.
+    pub value_usd: Option<String>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
     #[schema(value_type = String, format = DateTime)]
@@ -220,7 +228,12 @@ pub struct DeckResponse {
 }
 
 impl DeckResponse {
-    pub(crate) fn from_model(d: &deck::Model, card_count: i64, facets: DeckFacets) -> Self {
+    pub(crate) fn from_model(
+        d: &deck::Model,
+        card_count: i64,
+        facets: DeckFacets,
+        value_usd: Option<String>,
+    ) -> Self {
         Self {
             id: d.id,
             game: d.game.clone(),
@@ -232,6 +245,7 @@ impl DeckResponse {
             card_count,
             color_identity: facets.color_identity,
             commanders: facets.commanders,
+            value_usd,
             created_at: d.created_at,
             updated_at: d.updated_at,
         }
@@ -253,6 +267,7 @@ pub(crate) async fn deck_headers(
     let ids: Vec<i32> = decks.iter().map(|d| d.id).collect();
     let counts = card_counts_by_deck(db, &ids).await?;
     let mut facets = deck_facets_by_deck(db, decks).await?;
+    let mut values = deck_values_by_deck(db, &ids).await?;
     Ok(decks
         .iter()
         .map(|d| {
@@ -260,6 +275,7 @@ pub(crate) async fn deck_headers(
                 d,
                 counts.get(&d.id).copied().unwrap_or(0),
                 facets.remove(&d.id).unwrap_or_default(),
+                values.remove(&d.id),
             )
         })
         .collect())
@@ -281,7 +297,8 @@ pub(crate) async fn deck_header(
         .await?
         .remove(&deck.id)
         .unwrap_or_default();
-    Ok(DeckResponse::from_model(deck, count, facets))
+    let value = deck_values_by_deck(db, &[deck.id]).await?.remove(&deck.id);
+    Ok(DeckResponse::from_model(deck, count, facets, value))
 }
 
 /// A deck folder (organises decks), with how many decks are filed under it.
@@ -726,6 +743,62 @@ pub(crate) async fn card_counts_by_deck(
         .all(db)
         .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// Estimated USD value per deck, keyed by deck id — the deck list's third derived facet
+/// beside `card_count` and the colour/commander pair. A deck with nothing priced is simply
+/// **absent** (the caller reads that as `null`): "unpriced" and "worth $0.00" are different
+/// claims, the same distinction `CollectionSummary::total_value_usd` keeps.
+///
+/// Folds in Rust through the shared [`Valuation`](crate::handlers::shared::valuation) —
+/// the exact machinery `deck_detail`'s `summarize_holdings` totals with — rather than a SQL
+/// `SUM` over dialect-guarded string casts, so the list can never disagree with the deck
+/// page's own `summary.total_value_usd` on rounding or on the null-vs-zero line. Same scope
+/// too: **inner-joins `cards`** (an orphaned holding values nothing, as the detail skips
+/// it) and **excludes maybeboard sections** while keeping the sideboard — `card_count`'s
+/// grain, issue #570's line. One query selecting five narrow columns; the row count is the
+/// listed decks' cards, the same scale the facet fold's union fallback already scans.
+pub(crate) async fn deck_values_by_deck(
+    db: &sea_orm::DatabaseConnection,
+    deck_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, String>, AppError> {
+    use crate::entities::prelude::{Card, DeckCard};
+    use crate::entities::{card, deck_card};
+    use crate::handlers::shared::valuation::Valuation;
+    use sea_orm::QuerySelect;
+
+    if deck_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows: Vec<(i32, i32, i32, Option<String>, Option<String>)> = DeckCard::find()
+        .select_only()
+        .column(deck_card::Column::DeckId)
+        .column(deck_card::Column::Quantity)
+        .column(deck_card::Column::FoilQuantity)
+        .column(card::Column::PriceUsd)
+        .column(card::Column::PriceUsdFoil)
+        .inner_join(Card)
+        .filter(deck_card::Column::DeckId.is_in(deck_ids.iter().copied()))
+        .filter(
+            deck_card::Column::SectionId.not_in_subquery(maybeboard_section_ids(deck_ids.to_vec())),
+        )
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    let mut folds: std::collections::HashMap<i32, Valuation> = std::collections::HashMap::new();
+    for (deck_id, quantity, foil_quantity, usd, usd_foil) in rows {
+        folds.entry(deck_id).or_default().add(
+            usd.as_deref(),
+            quantity,
+            usd_foil.as_deref(),
+            foil_quantity,
+        );
+    }
+    Ok(folds
+        .into_iter()
+        .filter_map(|(deck_id, valuation)| valuation.total_usd().map(|total| (deck_id, total)))
+        .collect())
 }
 
 /// Sub-select of the maybeboard `deck_sections.id` belonging to `deck_ids` — the seam the

@@ -263,6 +263,10 @@ pub(super) async fn seed_precons(db: &DatabaseConnection) -> Result<u64, IngestE
             product_id: Set(precon
                 .product_external_id
                 .and_then(|ext| products.get(ext).copied())),
+            // Left NULL exactly as the real rebuild leaves it; the dummy seed runs the
+            // shared value refresher after seeding, so an offline row is priced the same
+            // way a synced one is.
+            price_cents: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         };

@@ -39,7 +39,8 @@ use super::{
 /// `GET /api/games/{game}/precons` -> the published decklists that shipped with the game's
 /// sets, newest first: Commander decks, Planeswalker / Challenger / Starter decks, Jumpstart
 /// themes, intro packs. Filter by `set`, by `type` (see the facets endpoint for the
-/// vocabulary), or by a name substring `q`; `sort=name` orders alphabetically instead.
+/// vocabulary), or by a name substring `q`; `sort=name` orders alphabetically instead, and
+/// `sort=price` most valuable first (unpriced decks last).
 #[utoipa::path(
     get,
     path = "/api/games/{game}/precons",
@@ -52,7 +53,7 @@ use super::{
         ("set" = Option<String>, Query, description = "Set code, e.g. `tmc`"),
         ("include_related" = Option<bool>, Query, description = "With `set`, span its whole group (root + related sub-sets)"),
         ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
-        ("sort" = Option<String>, Query, description = "`released` (default, newest first) or `name`"),
+        ("sort" = Option<String>, Query, description = "`released` (default, newest first), `name`, or `price` (most valuable first; unpriced last)"),
     ),
     responses(
         (status = 200, description = "A page of preconstructed decks.", body = Page<PreconDeckResponse>),
@@ -338,14 +339,27 @@ fn filtered_query(
     Ok(query)
 }
 
-/// The list's order: newest first by default, `sort=name` alphabetical.
+/// The list's order: newest first by default, `sort=name` alphabetical, `sort=price` most
+/// valuable first.
 ///
 /// `released_at` is nullable (upstream doesn't date every deck), and a NULL must sort **last**
 /// in both dialects rather than first on one of them — hence the explicit null ordering,
-/// matching the product list's. `slug` breaks the final tie so a page boundary is stable.
+/// matching the product list's. The same rule holds for `price_cents` (`NULL` = "none of its
+/// cards are priced", which must sink below every valued deck, never lead the descending
+/// order the way a bare `ORDER BY` would put it on Postgres). Being our own derived integer
+/// column, the price needs none of the dialect-guarded `CAST` machinery the product list's
+/// string prices sort through. `slug` breaks the final tie so a page boundary is stable.
 fn sorted_query(query: Select<PreconDeck>, params: &PreconListParams) -> Select<PreconDeck> {
     match trim_query(params.sort.as_deref()) {
         Some("name") => query
+            .order_by_asc(precon_deck::Column::Name)
+            .order_by_asc(precon_deck::Column::Slug),
+        Some("price") => query
+            .order_by_with_nulls(
+                precon_deck::Column::PriceCents,
+                sea_orm::Order::Desc,
+                NullOrdering::Last,
+            )
             .order_by_asc(precon_deck::Column::Name)
             .order_by_asc(precon_deck::Column::Slug),
         _ => query
@@ -380,7 +394,7 @@ fn sorted_query(query: Select<PreconDeck>, params: &PreconListParams) -> Select<
         ("set" = Option<String>, Query, description = "Set code, e.g. `tmc`"),
         ("include_related" = Option<bool>, Query, description = "With `set`, span its whole group (root + related sub-sets)"),
         ("type" = Option<String>, Query, description = "Deck type, e.g. `Commander Deck`"),
-        ("sort" = Option<String>, Query, description = "`released` (default) or `name`; also orders the groups"),
+        ("sort" = Option<String>, Query, description = "`released` (default), `name`, or `price` (most valuable first). `name` also orders the groups; `price` orders the decks inside each group, the groups keep their natural order"),
     ),
     responses(
         (status = 200, description = "A page of groups, each with its preconstructed decks.", body = Page<PreconGroup>),
@@ -538,6 +552,11 @@ fn group_rows(
 ///   endpoint gives the type dropdown, so the sections and the filter agree on what leads.
 ///
 /// `sort=name` orders either grouping by heading instead, matching what it does to the decks.
+/// `sort=price` deliberately does **not** re-order the groups: a group has no price of its
+/// own worth claiming (a set's would just be its dearest deck), so the decks inside each
+/// group carry the price order (via [`group_rows`]' arrival-order preservation) while the
+/// groups keep the natural order above — the same layout-only stance the shared
+/// `filtered_query` takes.
 fn sort_buckets(
     buckets: &mut [(String, Vec<precon_deck::Model>)],
     set_dates: &HashMap<String, Option<String>>,

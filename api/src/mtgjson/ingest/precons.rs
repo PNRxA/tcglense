@@ -254,6 +254,10 @@ impl<'a> Resolved<'a> {
             sideboard_count: Set(self.sideboard_count),
             face_card_id: Set(self.face_card_id),
             product_id: Set(self.product_id),
+            // Derived by `catalog::precon_values::refresh_precon_values` (each sync tick,
+            // right after this rebuild), never here: card prices move on ticks this
+            // ETag-gated rebuild doesn't run on, so a value folded now would go stale.
+            price_cents: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }

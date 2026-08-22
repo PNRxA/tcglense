@@ -16,6 +16,7 @@ function makeDeck(over: Partial<Deck> = {}): Deck {
     card_count: 60,
     color_identity: [],
     commanders: [],
+    value_usd: null,
     created_at: '',
     updated_at: '',
     ...over,

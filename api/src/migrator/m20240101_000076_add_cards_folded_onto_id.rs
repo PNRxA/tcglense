@@ -28,7 +28,7 @@ use sea_orm_migration::prelude::*;
 /// price-alert evaluator's change-narrowing keys on). Both entries ship with this column.
 ///
 /// **No backfill here.** The refresh pass runs on every sync tick and once at boot on the
-/// no-sync path (`tasks::spawn_foil_price_enrichment`), so the column populates itself
+/// no-sync path (`tasks::spawn_derived_price_passes`), so the column populates itself
 /// within a tick of deploy. Leaving it `NULL` until then is the safe direction: a `NULL`
 /// folds nothing, so the listings simply behave as they did before this migration rather
 /// than hiding a row the pass hasn't validated yet.

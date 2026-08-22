@@ -163,16 +163,18 @@ fn spawn_maintenance(
     });
 }
 
-/// Run the two foil-variant passes once, off the startup path. Normally
-/// [`catalog::refresh_all`] does both every sync tick, but when the periodic sync is
+/// Run the derived-price passes once, off the startup path. Normally
+/// [`catalog::refresh_all`] does all three every sync tick, but when the periodic sync is
 /// disabled (`SYNC_ON_STARTUP=false`) they never run.
 ///
 /// The price enrichment matters there because the `m..023` migration may have folded legacy
 /// foil-★ holdings onto their nonfoil base, whose foil price would then stay empty and value
 /// those copies at $0 (issue #209). The listing fold matters because `m..076` ships
 /// `cards.folded_onto_id` empty: until this runs, every catalog grid still shows a folded
-/// star beside its base. Both are no-ops on a fresh/dummy catalog with no such pairs.
-fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsCache>) {
+/// star beside its base. The precon value fold matters for the same reason one migration
+/// later: `m..077` ships `precon_decks.price_cents` empty, and without a tick nothing else
+/// would ever price the browse tiles. All are no-ops on a fresh/dummy catalog.
+fn spawn_derived_price_passes(db: DatabaseConnection, analytics: Arc<AnalyticsCache>) {
     tokio::spawn(async move {
         match crate::scryfall::enrich_foil_variant_prices(&db).await {
             Ok(rows) if rows > 0 => {
@@ -185,7 +187,19 @@ fn spawn_foil_price_enrichment(db: DatabaseConnection, analytics: Arc<AnalyticsC
             Err(err) => tracing::error!(error = %err, "foil-variant price enrichment failed"),
         }
         refresh_foil_variant_folds(&db).await;
+        refresh_precon_values(&db).await;
     });
+}
+
+/// Recompute `precon_decks.price_cents` from the live card prices, logging what moved.
+/// Shared by the boot one-shot above and the sync tick
+/// ([`crate::catalog::refresh_all`]), so the fold can't be wired into one and not the other.
+pub(crate) async fn refresh_precon_values(db: &DatabaseConnection) {
+    match crate::catalog::precon_values::refresh_precon_values(db).await {
+        Ok(0) => {}
+        Ok(changed) => tracing::info!(changed, "refreshed preconstructed-deck values"),
+        Err(err) => tracing::error!(error = %err, "precon value refresh failed"),
+    }
 }
 
 /// Recompute `cards.folded_onto_id` for every game, logging what moved. Shared by the boot
@@ -569,10 +583,10 @@ pub async fn start(state: &AppState, http: &Client) {
         );
     } else {
         tracing::info!("SYNC_ON_STARTUP disabled; skipping card-data import");
-        // No sync will run enrich_foil_variant_prices per tick, so do it once here against
+        // No sync will run the derived-price passes per tick, so do them once here against
         // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
-        // values at $0 (issue #209).
-        spawn_foil_price_enrichment(state.db.clone(), state.analytics_cache.clone());
+        // values at $0 (issue #209) and `m..077`'s precon values never populate.
+        spawn_derived_price_passes(state.db.clone(), state.analytics_cache.clone());
         // Cards already exist from a prior run (no sync this boot); if the operator opted
         // into the fingerprint build, run it against the existing catalogue.
         if state.config.fingerprint_build_enabled {

@@ -12,6 +12,7 @@ pub mod fingerprints;
 pub mod images;
 pub mod ingest_state;
 pub mod keywords;
+pub mod precon_values;
 pub mod sld_product_dates;
 
 use reqwest::Client;
@@ -152,6 +153,12 @@ pub async fn refresh_all(
                 if let Err(err) = crate::mtgjson::ingest::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "sealed-contents refresh failed");
                 }
+                // Preconstructed-deck values (`precon_decks.price_cents`), folded from the
+                // live card prices. Runs after the sealed-contents sync above (which owns
+                // the precon rebuild, and leaves the column NULL) and every tick — even
+                // when the version-gated syncs were skipped — because card prices move on
+                // ticks the precon tables don't (see `catalog::precon_values`).
+                crate::tasks::refresh_precon_values(db).await;
                 // Secret Lair per-product release dates, derived from each product's own
                 // contents (its `contains` cards' modal release date). Runs after the contents
                 // sync so the rows exist to read, and every tick — even when the version-gated
