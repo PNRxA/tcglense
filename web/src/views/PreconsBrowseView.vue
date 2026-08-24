@@ -89,10 +89,11 @@ const includeRelated = computed(() => scoped.value && route.query.related === '1
 // showing several sets, so it behaves like the all-decks view for grouping purposes.
 const singleSet = computed(() => scoped.value && !includeRelated.value)
 
-// Page, name search and sort live in the URL, shared with every other browse view. The two
-// sorts are the API's own vocabulary — newest first (the default: a precon browser is mostly
-// "what came out recently") or by name.
-const SORT_OPTIONS = ['released', 'name']
+// Page, name search and sort live in the URL, shared with every other browse view. The
+// sorts are the API's own vocabulary — newest first (the default: a precon browser is
+// mostly "what came out recently"), by name, or by price (most valuable first; the server
+// parks unpriced decks last).
+const SORT_OPTIONS = ['released', 'name', 'price']
 const { page, searchInput, query, sort } = useCardSearch('released', SORT_OPTIONS)
 
 // How the decks are laid out, as a URL mode (`?view=`) so it's shareable and survives a
@@ -299,12 +300,15 @@ usePageMeta({
           </SelectContent>
         </Select>
         <Select v-model="sort">
-          <SelectTrigger size="sm" class="w-36" aria-label="Sort decks">
+          <!-- w-48 (not w-36): "Price (high → low)" needs the room, and it matches the
+               type filter beside it. -->
+          <SelectTrigger size="sm" class="w-48" aria-label="Sort decks">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="released">Newest first</SelectItem>
             <SelectItem value="name">Name (A–Z)</SelectItem>
+            <SelectItem value="price">Price (high → low)</SelectItem>
           </SelectContent>
         </Select>
       </div>

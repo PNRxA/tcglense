@@ -431,6 +431,7 @@ mod tests {
             sideboard_count: 0,
             face_card_id: None,
             product_id: None,
+            price_cents: None,
             created_at: now,
             updated_at: now,
         };

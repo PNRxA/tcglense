@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { Layers } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
+import { useCurrency } from '@/composables/useCurrency'
 import { colorLettersToText } from '@/lib/mana'
 import type { PreconDeck } from '@/lib/api'
 
@@ -42,6 +43,13 @@ const identityLabel = computed(() => {
 
 /** "2026" from an ISO date — the year is what dates a precon on a tile. */
 const year = computed(() => props.precon.released_at?.slice(0, 4) ?? '')
+
+// The decklist's estimated singles value (the deck proper — the same figure the detail
+// page's "singles worth" clause shows, folded server-side through the same valuation).
+// `null` means nothing in the deck is priced, and the line is simply omitted — an unpriced
+// deck isn't a $0 deck, and the price sort already parks these last.
+const money = useCurrency()
+const value = computed(() => money.formatUsd(props.precon.price_usd))
 </script>
 
 <template>
@@ -88,6 +96,7 @@ const year = computed(() => props.precon.released_at?.slice(0, 4) ?? '')
         <span v-if="precon.sideboard_count"> · +{{ precon.sideboard_count }} sideboard</span>
         <span v-if="year"> · {{ year }}</span>
       </p>
+      <p v-if="value" class="mt-0.5 text-sm font-medium tabular-nums">{{ value }}</p>
     </div>
   </RouterLink>
 </template>

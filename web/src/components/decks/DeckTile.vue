@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { Globe, Layers, MoreVertical } from '@lucide/vue'
 import {
@@ -10,12 +11,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import DeckIdentity from '@/components/decks/DeckIdentity.vue'
+import { useCurrency } from '@/composables/useCurrency'
 import type { Deck, DeckFolder } from '@/lib/api'
 
 // One deck in the game's deck list: a link to the builder plus a "…" menu to move it
 // between folders or delete it. The parent owns the mutations (so the menu just emits).
 const props = defineProps<{ deck: Deck; game: string; folders: DeckFolder[] }>()
 const emit = defineEmits<{ move: [folderId: number | null]; remove: [] }>()
+
+// The deck's estimated value — the same figure the deck page's own header shows (both come
+// off the shared server-side valuation), formatted in the viewer's currency. `null` (an
+// entirely unpriced deck) simply omits the clause, exactly as the deck page does.
+const money = useCurrency()
+const value = computed(() => money.formatUsd(props.deck.value_usd))
 </script>
 
 <template>
@@ -34,6 +42,7 @@ const emit = defineEmits<{ move: [folderId: number | null]; remove: [] }>()
       <p class="text-muted-foreground mt-1 text-sm">
         {{ deck.card_count }} card{{ deck.card_count === 1 ? '' : 's' }}
         <span v-if="deck.format"> · {{ deck.format }}</span>
+        <span v-if="value" class="tabular-nums"> · {{ value }}</span>
       </p>
     </RouterLink>
 

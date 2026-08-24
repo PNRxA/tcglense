@@ -58,6 +58,15 @@ card_count: number,
  */
 sideboard_count: number, 
 /**
+ * Estimated USD value of the deck proper (regular copies at `usd`, foil copies at
+ * `usd_foil`, sideboard excluded — the same grain as `card_count`), a 2-dp decimal
+ * string. `null` when none of its cards are priced — never `"0.00"`. Folded from the
+ * live card prices once per sync tick (`catalog::precon_values`), through the same
+ * valuation the detail page's `summary.total_value_usd` uses, so the tile and the
+ * page it opens agree.
+ */
+price_usd: string | null, 
+/**
  * The card that fronts the deck — its commander, else the first card upstream lists.
  * `None` when that card is no longer in the catalog.
  */

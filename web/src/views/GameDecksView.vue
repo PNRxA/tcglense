@@ -22,6 +22,7 @@ import {
 import DeckTile from '@/components/decks/DeckTile.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckImportDialog from '@/components/decks/DeckImportDialog.vue'
+import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import CountLineCue from '@/components/cards/CountLineCue.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -37,6 +38,7 @@ import {
 import { useStableOrder } from '@/composables/useStableOrder'
 import { ApiError, type Deck } from '@/lib/api'
 import { defaultFormatFor } from '@/lib/deckFormats'
+import { DECK_DEFAULT_SORT, DECK_SORT_OPTIONS, sortDecks } from '@/lib/deckSort'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
 
@@ -59,10 +61,17 @@ const foldersQuery = useFoldersQuery(game)
 // pushing every tile below the mover down a full row while you're reaching for one. Pin the
 // order this visit painted: each refetch still refreshes every tile's name, count and colours
 // in place, it just can't move them. The true order lands on the next visit.
-const decks = useStableOrder(
+const stableDecks = useStableOrder(
   () => decksQuery.data.value?.data ?? [],
   (deck) => deck.id,
 )
+// The user-chosen order over the pinned list. `updated` (the default) passes the stable
+// order through untouched, so the freeze above keeps doing its job; `name`/`price` impose
+// a deterministic order with full tie-breaks, which a refetch can't reshuffle either —
+// the two mechanisms answer the same "tiles must not move under a tap" concern, one for
+// the re-pickable sorts `useStableOrder` explicitly doesn't cover.
+const deckSort = ref(DECK_DEFAULT_SORT)
+const decks = computed(() => sortDecks(stableDecks.value, deckSort.value))
 const folders = computed(() => foldersQuery.data.value?.data ?? [])
 
 // Decks grouped: one bucket per folder (even empty ones), then the loose decks — partitioned
@@ -283,6 +292,9 @@ function removeFolder(folderId: number, name: string) {
         </div>
         <!-- Wrap on narrow screens so the action buttons never run off-screen. -->
         <div class="flex flex-wrap gap-2">
+          <!-- Re-order the shelf (recency / name / price) — client-side, the list is
+               unpaginated. -->
+          <CardSortMenu v-if="decks.length > 1" v-model="deckSort" :options="DECK_SORT_OPTIONS" />
           <!-- Cards needed across all decks vs the collection (issue #499). -->
           <RouterLink
             v-if="decks.length"

@@ -76,6 +76,7 @@ mod m20240101_000073_add_cards_token_parts;
 mod m20240101_000074_add_precon_deck_cards_card_id_index;
 mod m20240101_000075_add_sealed_contents_component;
 mod m20240101_000076_add_cards_folded_onto_id;
+mod m20240101_000077_add_precon_decks_price_cents;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -162,6 +163,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000074_add_precon_deck_cards_card_id_index::Migration),
             Box::new(m20240101_000075_add_sealed_contents_component::Migration),
             Box::new(m20240101_000076_add_cards_folded_onto_id::Migration),
+            Box::new(m20240101_000077_add_precon_decks_price_cents::Migration),
         ]
     }
 }
