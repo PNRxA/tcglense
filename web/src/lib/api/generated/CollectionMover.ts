@@ -2,22 +2,29 @@
 import type { Card } from "./Card";
 
 /**
- * One card's movement, counts held, and holding-value change.
+ * One card's single-copy price movement, plus the counts held for context.
  */
 export type CollectionMover = { card: Card, quantity: number, foil_quantity: number, 
 /**
- * Current holding value over the finishes comparable at both anchors, 2-dp USD string.
+ * Whether the reported prices are the **foil** finish's. An owned holding is represented
+ * by the owned finish whose single-copy price moved the most over the window (ties
+ * prefer regular).
  */
-value_now: string, 
+foil: boolean, 
 /**
- * Holding value at the window baseline over the same finishes, 2-dp USD string.
+ * The represented finish's current price for **one copy**, 2-dp USD string — never
+ * multiplied by the quantities above.
  */
-value_prev: string, 
+price_now: string, 
 /**
- * `value_now - value_prev`, signed 2-dp USD string (negative for a loss, e.g. `"-3.50"`).
+ * The same finish's single-copy price at the window baseline, 2-dp USD string.
+ */
+price_prev: string, 
+/**
+ * `price_now - price_prev`, signed 2-dp USD string (negative for a loss, e.g. `"-3.50"`).
  */
 change_usd: string, 
 /**
- * Percent change = change / value_prev * 100. `None` when `value_prev` is 0.
+ * Percent change = change / price_prev * 100. `None` when `price_prev` is 0.
  */
 change_pct: number | null, };

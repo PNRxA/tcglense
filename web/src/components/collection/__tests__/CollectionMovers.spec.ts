@@ -21,8 +21,9 @@ const cardMover: CollectionMover = {
   card: { id: 'card-1', name: 'Singles winner' } as Card,
   quantity: 1,
   foil_quantity: 0,
-  value_now: '12.00',
-  value_prev: '10.00',
+  foil: false,
+  price_now: '12.00',
+  price_prev: '10.00',
   change_usd: '2.00',
   change_pct: 20,
 }
@@ -30,8 +31,9 @@ const sealedMover: CollectionSealedMover = {
   product: { id: 'product-1', name: 'Sealed winner' } as Product,
   quantity: 1,
   foil_quantity: 0,
-  value_now: '60.00',
-  value_prev: '50.00',
+  foil: false,
+  price_now: '60.00',
+  price_prev: '50.00',
   change_usd: '10.00',
   change_pct: 20,
 }

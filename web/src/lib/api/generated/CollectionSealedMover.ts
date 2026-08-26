@@ -2,6 +2,7 @@
 import type { Product } from "./Product";
 
 /**
- * One sealed product's movement, counts held, and holding-value change.
+ * One sealed product's single-copy price movement, plus the counts held for context (the
+ * same per-copy semantics as [`CollectionMover`]).
  */
-export type CollectionSealedMover = { product: Product, quantity: number, foil_quantity: number, value_now: string, value_prev: string, change_usd: string, change_pct: number | null, };
+export type CollectionSealedMover = { product: Product, quantity: number, foil_quantity: number, foil: boolean, price_now: string, price_prev: string, change_usd: string, change_pct: number | null, };
