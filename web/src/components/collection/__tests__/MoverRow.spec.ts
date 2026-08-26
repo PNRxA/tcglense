@@ -160,6 +160,9 @@ describe('MoverRow mixed catalog items', () => {
     // Total is regular + foil (3); the separate foil chip counts just the foils (1).
     expect(wrapper.find('[aria-label="3 owned"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
+    // Owning foils is NOT what marks the price as the foil's: this mover's movement is the
+    // regular printing's (`foil: false`), so no Foil price chip renders despite the count.
+    expect(wrapper.text()).not.toContain('Foil')
   })
 
   it('shows the single-copy price change, never scaled by the owned count', async () => {

@@ -1916,6 +1916,53 @@ mod tests {
     }
 
     #[test]
+    fn an_unowned_finish_never_represents_the_holding() {
+        // Foil-only holding (0 regular, 2 foil) where BOTH finishes are priced at both
+        // anchors and the *regular* moved more: +$8.00 vs the foil's +$1.00. The regular is
+        // not owned, so it is not the user's news — the foil must represent the card. This
+        // pins the `qty > 0` candidacy gate, which per-copy semantics made load-bearing: it
+        // now decides which price and which `foil` flag are published, not a zero-weighted
+        // addend.
+        let holdings = vec![holding(1, 0, 2)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), Some("20.00")),
+                cell("2024-01-02", Some("18.00"), Some("21.00")),
+            ],
+        );
+
+        let (gainers, _losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(gainers[0].foil, "an unowned regular must not represent it");
+        assert_eq!(gainers[0].price_prev_cents, 2000);
+        assert_eq!(gainers[0].price_now_cents, 2100);
+        assert_eq!(gainers[0].change_cents, 100);
+    }
+
+    #[test]
+    fn an_unowned_foil_never_represents_the_holding() {
+        // The mirror: regular-only holding whose foil moved more.
+        let holdings = vec![holding(1, 3, 0)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), Some("20.00")),
+                cell("2024-01-02", Some("11.00"), Some("30.00")),
+            ],
+        );
+
+        let (gainers, _losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(!gainers[0].foil, "an unowned foil must not represent it");
+        assert_eq!(gainers[0].change_cents, 100);
+    }
+
+    #[test]
     fn zero_change_card_is_excluded() {
         let holdings = vec![holding(1, 1, 0)];
         let mut prices = HashMap::new();
