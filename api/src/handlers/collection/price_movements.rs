@@ -1,10 +1,14 @@
 //! Collection price movements: the biggest **gain and loss movements** across the cards and
 //! sealed products a signed-in user owns, from one day through all captured history.
 //!
-//! A "movement" is the change in the USD value of one current holding over a window — the
-//! item's per-unit price change × quantity, summed over the regular and foil price columns.
-//! Cards and sealed products are ranked independently by that value change, then selected in
-//! the UI with a Singles / Sealed switch. Both expose seven windows (1d / 7d / 30d / 1y /
+//! A "movement" is the change in the USD price of **one copy** of an owned item over a window
+//! — never multiplied by how many copies the user holds (a $10 card that gained $1 reads
+//! `10.00 +1.00` whether they own one copy or twenty; issue: owning two made it `20.00
+//! +2.00`, which read as the card's price doubling). A holding owned in both finishes is
+//! represented by the finish whose single-copy price moved the most (ties prefer regular),
+//! and the response says which finish that was (`foil`).
+//! Cards and sealed products are ranked independently by that per-copy change, then selected
+//! in the UI with a Singles / Sealed switch. Both expose seven windows (1d / 7d / 30d / 1y /
 //! 2y / 3y / all time), measured back from the latest snapshot for that holding kind. When
 //! the latest 1d comparison has no movers, the day window retries from the previous available
 //! snapshot so an unchanged current capture does not hide the last daily movement. Fixed
@@ -14,11 +18,12 @@
 //!
 //! Like [`super::value_history`], this reconstructs everything from the daily
 //! card/product price snapshots (keyed by the same internal ids the holdings store)
-//! plus the user's *current* counts — there's no per-holding quantity history, so an item's
-//! today counts are used at both window anchors. A finish contributes to a window only when
-//! both anchors are priced (else the delta would be bogus), and a card counts as a mover
-//! only when its total value actually moved. All money math is integer cents; f64 is used
-//! only for the reported percentage.
+//! plus the user's *current* counts — the counts only decide which finishes are candidates
+//! (an unowned finish's price is not the user's news) and still ride the response so the UI
+//! can show how many copies sit behind a movement. A finish is a candidate for a window only
+//! when both anchors are priced (else the delta would be bogus), and a card counts as a mover
+//! only when its chosen finish's price actually moved. All money math is integer cents; f64
+//! is used only for the reported percentage.
 //!
 //! The per-item anchors are gathered by *point-seeking*, not scanning. The query is driven
 //! from the holdings table ([`CollectionItem`] / [`CollectionProductItem`], filtered to the
@@ -203,20 +208,25 @@ pub struct CollectionMoverList {
     pub losers: Vec<CollectionMover>,
 }
 
-/// One card's movement, counts held, and holding-value change.
+/// One card's single-copy price movement, plus the counts held for context.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionMover {
     pub card: CardResponse,
     pub quantity: i32,
     pub foil_quantity: i32,
-    /// Current holding value over the finishes comparable at both anchors, 2-dp USD string.
-    pub value_now: String,
-    /// Holding value at the window baseline over the same finishes, 2-dp USD string.
-    pub value_prev: String,
-    /// `value_now - value_prev`, signed 2-dp USD string (negative for a loss, e.g. `"-3.50"`).
+    /// Whether the reported prices are the **foil** finish's. An owned holding is represented
+    /// by the owned finish whose single-copy price moved the most over the window (ties
+    /// prefer regular).
+    pub foil: bool,
+    /// The represented finish's current price for **one copy**, 2-dp USD string — never
+    /// multiplied by the quantities above.
+    pub price_now: String,
+    /// The same finish's single-copy price at the window baseline, 2-dp USD string.
+    pub price_prev: String,
+    /// `price_now - price_prev`, signed 2-dp USD string (negative for a loss, e.g. `"-3.50"`).
     pub change_usd: String,
-    /// Percent change = change / value_prev * 100. `None` when `value_prev` is 0.
+    /// Percent change = change / price_prev * 100. `None` when `price_prev` is 0.
     pub change_pct: Option<f64>,
 }
 
@@ -244,15 +254,17 @@ pub struct CollectionSealedMoverList {
     pub losers: Vec<CollectionSealedMover>,
 }
 
-/// One sealed product's movement, counts held, and holding-value change.
+/// One sealed product's single-copy price movement, plus the counts held for context (the
+/// same per-copy semantics as [`CollectionMover`]).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct CollectionSealedMover {
     pub product: ProductResponse,
     pub quantity: i32,
     pub foil_quantity: i32,
-    pub value_now: String,
-    pub value_prev: String,
+    pub foil: bool,
+    pub price_now: String,
+    pub price_prev: String,
     pub change_usd: String,
     pub change_pct: Option<f64>,
 }
@@ -311,8 +323,9 @@ impl CollectionMoverList {
 
 /// List collection movers
 ///
-/// `GET /api/collection/{game}/movers` -> the signed-in user's biggest gain/loss movements
-/// over the 1d / 7d / 30d / 1y / 2y / 3y / all-time windows. `404` if the game is unknown;
+/// `GET /api/collection/{game}/movers` -> the signed-in user's biggest gain/loss movements —
+/// single-copy price changes, never quantity-weighted — over the 1d / 7d / 30d / 1y / 2y /
+/// 3y / all-time windows. `404` if the game is unknown;
 /// an all-empty `{ "as_of": null, ... }` when the user owns nothing or no owned item has
 /// captured price history. An empty latest-day comparison retries from the previous available
 /// snapshot. The existing card lists stay backward-compatible; sealed products use the
@@ -327,7 +340,7 @@ impl CollectionMoverList {
         ("window" = Option<String>, Query, description = "Restrict to one window (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) and compute only that date range on demand; absent = every window (the original response). Both the Singles and Sealed series for the requested window are returned; unrequested windows come back empty."),
     ),
     responses(
-        (status = 200, description = "The user's biggest card/sealed-product gain/loss movements. Absent `window` returns every window (1d / 7d / 30d / 1y / 2y / 3y / all-time); a `window` value populates only that one. An empty latest-day comparison retries the previous available snapshot (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
+        (status = 200, description = "The user's biggest card/sealed-product gain/loss movements, each the price change of ONE copy of an owned finish (never multiplied by the quantities held; `foil` says which finish moved). Absent `window` returns every window (1d / 7d / 30d / 1y / 2y / 3y / all-time); a `window` value populates only that one. An empty latest-day comparison retries the previous available snapshot (all-empty when nothing owned or no captured price history).", body = CollectionMovers),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
         (status = 422, description = "Unknown `window` value."),
@@ -397,8 +410,9 @@ async fn movers_payload(
     let needs = AnchorNeeds::for_window(window);
     let day_requested = window.is_none() || window == Some(MoverWindowSel::Day);
 
-    // The user's current card + sealed holdings, reduced to ids/counts. Movements value
-    // today's counts at both anchors because there is no per-holding quantity history.
+    // The user's current card + sealed holdings, reduced to ids/counts. The counts decide
+    // which finishes are movement candidates (and ride the response as context); the reported
+    // movement itself is always a single copy's price change.
     let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
         .select_only()
         .column(collection_item::Column::CardId)
@@ -1118,14 +1132,16 @@ struct PriceCell {
     foil_cents: Option<i128>,
 }
 
-/// A ranked movement before it is dressed with the card/product payload: counts held and the
-/// window's value change, all in integer cents.
+/// A ranked movement before it is dressed with the card/product payload: the counts held (for
+/// context), which finish is represented, and that finish's single-copy prices/change over the
+/// window, all in integer cents.
 struct RawMover {
     item_id: i32,
     quantity: i32,
     foil_quantity: i32,
-    value_now_cents: i128,
-    value_prev_cents: i128,
+    foil: bool,
+    price_now_cents: i128,
+    price_prev_cents: i128,
     change_cents: i128,
     change_pct: Option<f64>,
 }
@@ -1333,16 +1349,19 @@ pub(super) fn decode_snapshot(
     ))
 }
 
-/// Rank the holdings by their value change between `target` (the window baseline) and
-/// `latest` (the reference date), returning `(gainers, losers)` — gainers sorted by change
-/// descending, losers by change ascending (most negative first), each capped at `top_n`.
+/// Rank the holdings by their **single-copy** price change between `target` (the window
+/// baseline) and `latest` (the reference date), returning `(gainers, losers)` — gainers
+/// sorted by change descending, losers by change ascending (most negative first), each
+/// capped at `top_n`.
 ///
-/// Per holding, each finish (regular at `quantity`, foil at `foil_quantity`) contributes
-/// **only** when both anchors have a snapshot, that finish is priced at both, and its
-/// quantity is positive — so an unpriced-at-one-anchor finish never fabricates a delta. A
-/// card is a mover only when at least one finish contributed *and* its total value actually
-/// changed. Ties break toward the higher current value, then the lower card id, so the
-/// order is fully deterministic.
+/// Per holding, each **owned** finish (regular when `quantity > 0`, foil when
+/// `foil_quantity > 0`) is a candidate **only** when both anchors have a snapshot and that
+/// finish is priced at both — so an unpriced-at-one-anchor finish never fabricates a delta.
+/// The card is represented by the candidate finish whose price moved the most in absolute
+/// terms (a tie prefers regular, so the canonical printing wins over its foil), and it is a
+/// mover only when that price actually changed. The quantities never scale anything — they
+/// only gate candidacy and ride along as context. Ties across cards break toward the higher
+/// current price, then the lower card id, so the order is fully deterministic.
 fn window_movers(
     holdings: &[HoldingRow],
     prices: &HashMap<i32, Vec<PriceCell>>,
@@ -1399,32 +1418,33 @@ fn rank_movers(
             )
         };
 
-        let mut value_now_cents: i128 = 0;
-        let mut value_prev_cents: i128 = 0;
-        let mut change_cents: i128 = 0;
-        let mut contributed = false;
-
-        for (now, prev, qty) in [
-            (now_cell.usd_cents, prev_usd, holding.quantity),
-            (now_cell.foil_cents, prev_foil, holding.foil_quantity),
+        // The represented finish: the owned, both-anchors-priced finish with the biggest
+        // absolute single-copy change. Regular is evaluated first and only a strictly
+        // bigger move replaces it, so a tie keeps the regular printing.
+        let mut best: Option<(bool, i128, i128, i128)> = None;
+        for (is_foil, now, prev, qty) in [
+            (false, now_cell.usd_cents, prev_usd, holding.quantity),
+            (true, now_cell.foil_cents, prev_foil, holding.foil_quantity),
         ] {
             if qty > 0
                 && let (Some(now), Some(prev)) = (now, prev)
             {
-                let q = i128::from(qty);
-                value_now_cents += now * q;
-                value_prev_cents += prev * q;
-                change_cents += (now - prev) * q;
-                contributed = true;
+                let change = now - prev;
+                if best.is_none_or(|(_, _, _, current)| change.abs() > current.abs()) {
+                    best = Some((is_foil, now, prev, change));
+                }
             }
         }
 
-        if !contributed || change_cents == 0 {
+        let Some((foil, price_now_cents, price_prev_cents, change_cents)) = best else {
+            continue;
+        };
+        if change_cents == 0 {
             continue;
         }
 
-        let change_pct = if value_prev_cents != 0 {
-            Some(change_cents as f64 / value_prev_cents as f64 * 100.0)
+        let change_pct = if price_prev_cents != 0 {
+            Some(change_cents as f64 / price_prev_cents as f64 * 100.0)
         } else {
             None
         };
@@ -1433,8 +1453,9 @@ fn rank_movers(
             item_id: holding.item_id,
             quantity: holding.quantity,
             foil_quantity: holding.foil_quantity,
-            value_now_cents,
-            value_prev_cents,
+            foil,
+            price_now_cents,
+            price_prev_cents,
             change_cents,
             change_pct,
         });
@@ -1460,7 +1481,7 @@ fn rank_partitioned(
     gainers.sort_by(|a, b| {
         b.change_cents
             .cmp(&a.change_cents)
-            .then(b.value_now_cents.cmp(&a.value_now_cents))
+            .then(b.price_now_cents.cmp(&a.price_now_cents))
             .then(a.item_id.cmp(&b.item_id))
     });
     gainers.truncate(top_n);
@@ -1468,7 +1489,7 @@ fn rank_partitioned(
     losers.sort_by(|a, b| {
         a.change_cents
             .cmp(&b.change_cents)
-            .then(b.value_now_cents.cmp(&a.value_now_cents))
+            .then(b.price_now_cents.cmp(&a.price_now_cents))
             .then(a.item_id.cmp(&b.item_id))
     });
     losers.truncate(top_n);
@@ -1494,8 +1515,9 @@ fn shape_card_movers(
                 card: cards.get(&raw.item_id)?.clone(),
                 quantity: raw.quantity,
                 foil_quantity: raw.foil_quantity,
-                value_now: format_cents(raw.value_now_cents),
-                value_prev: format_cents(raw.value_prev_cents),
+                foil: raw.foil,
+                price_now: format_cents(raw.price_now_cents),
+                price_prev: format_cents(raw.price_prev_cents),
                 change_usd: format_signed_cents(raw.change_cents),
                 change_pct: raw.change_pct,
             })
@@ -1524,8 +1546,9 @@ fn shape_sealed_movers(
                 product: products.get(&raw.item_id)?.clone(),
                 quantity: raw.quantity,
                 foil_quantity: raw.foil_quantity,
-                value_now: format_cents(raw.value_now_cents),
-                value_prev: format_cents(raw.value_prev_cents),
+                foil: raw.foil,
+                price_now: format_cents(raw.price_now_cents),
+                price_prev: format_cents(raw.price_prev_cents),
                 change_usd: format_signed_cents(raw.change_cents),
                 change_pct: raw.change_pct,
             })
@@ -1774,9 +1797,11 @@ mod tests {
     }
 
     #[test]
-    fn regular_and_foil_contribute_quantity_weighted() {
-        // Card 1: 2 regular + 3 foil. Regular $1->$2 (×2 = +$2), foil $2->$5 (×3 = +$9).
-        // Card 2: foil-only, 2 copies, $3->$4 (×2 = +$2).
+    fn mixed_finish_holding_reports_its_biggest_single_copy_move() {
+        // Card 1: 2 regular + 3 foil. Regular moved $1->$2 (+$1/copy), foil $2->$5
+        // (+$3/copy): the foil is the bigger single-copy move, so it represents the card —
+        // and none of the numbers are multiplied by the counts held.
+        // Card 2: foil-only, 2 copies, $3->$4 -> a +$1 foil movement (not +$2).
         let holdings = vec![holding(1, 2, 3), holding(2, 0, 2)];
         let mut prices = HashMap::new();
         prices.insert(
@@ -1798,14 +1823,143 @@ mod tests {
             window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
         assert!(losers.is_empty());
         assert_eq!(ids(&gainers), vec![1, 2]);
-        // Card 1: value_now = 2×2 + 5×3 = $19; value_prev = 1×2 + 2×3 = $8; change = +$11.
-        assert_eq!(gainers[0].value_now_cents, 1900);
-        assert_eq!(gainers[0].value_prev_cents, 800);
-        assert_eq!(gainers[0].change_cents, 1100);
-        // Card 2 (foil-only): value_now = 4×2 = $8; value_prev = 3×2 = $6; change = +$2.
-        assert_eq!(gainers[1].value_now_cents, 800);
-        assert_eq!(gainers[1].value_prev_cents, 600);
-        assert_eq!(gainers[1].change_cents, 200);
+        // Card 1 is represented by its foil: $2 -> $5, +$3 for one copy.
+        assert!(gainers[0].foil);
+        assert_eq!(gainers[0].price_now_cents, 500);
+        assert_eq!(gainers[0].price_prev_cents, 200);
+        assert_eq!(gainers[0].change_cents, 300);
+        // Card 2 (foil-only): $3 -> $4, +$1 for one copy despite owning two.
+        assert!(gainers[1].foil);
+        assert_eq!(gainers[1].price_now_cents, 400);
+        assert_eq!(gainers[1].price_prev_cents, 300);
+        assert_eq!(gainers[1].change_cents, 100);
+        // The counts still ride along as context, unscaled.
+        assert_eq!(gainers[0].quantity, 2);
+        assert_eq!(gainers[0].foil_quantity, 3);
+    }
+
+    #[test]
+    fn quantity_never_multiplies_the_movement_or_the_ranking() {
+        // Card 1: four copies of a +$0.50 mover. Card 2: one copy of a +$1.00 mover. The
+        // old holding-value ranking put card 1 first (4 × $0.50 = +$2.00 > +$1.00); the
+        // per-copy ranking puts card 2 first, and card 1's movement reads +$0.50, not +$2.
+        let holdings = vec![holding(1, 4, 0), holding(2, 1, 0)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), None),
+                cell("2024-01-02", Some("10.50"), None),
+            ],
+        );
+        prices.insert(
+            2,
+            vec![
+                cell("2024-01-01", Some("10.00"), None),
+                cell("2024-01-02", Some("11.00"), None),
+            ],
+        );
+
+        let (gainers, losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert!(losers.is_empty());
+        assert_eq!(ids(&gainers), vec![2, 1]);
+        assert_eq!(changes(&gainers), vec![100, 50]);
+        assert_eq!(gainers[1].price_now_cents, 1050);
+        assert_eq!(gainers[1].quantity, 4);
+        assert!(!gainers[1].foil);
+    }
+
+    #[test]
+    fn equal_finish_moves_prefer_the_regular_printing() {
+        // Both owned finishes moved by the same +$1: the regular printing represents the
+        // card (its price is the one a player recognises), not the foil.
+        let holdings = vec![holding(1, 1, 1)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("4.00"), Some("9.00")),
+                cell("2024-01-02", Some("5.00"), Some("10.00")),
+            ],
+        );
+
+        let (gainers, _losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(!gainers[0].foil);
+        assert_eq!(gainers[0].price_now_cents, 500);
+        assert_eq!(gainers[0].change_cents, 100);
+    }
+
+    #[test]
+    fn offsetting_finishes_no_longer_cancel_out() {
+        // Regular +$5 while the foil fell -$5: under the old summed holding value (one of
+        // each) the card netted to zero and vanished; per-copy it is represented by the
+        // regular's +$5 (the tie on |change| prefers regular).
+        let holdings = vec![holding(1, 1, 1)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), Some("20.00")),
+                cell("2024-01-02", Some("15.00"), Some("15.00")),
+            ],
+        );
+
+        let (gainers, losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert!(losers.is_empty());
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(!gainers[0].foil);
+        assert_eq!(gainers[0].change_cents, 500);
+    }
+
+    #[test]
+    fn an_unowned_finish_never_represents_the_holding() {
+        // Foil-only holding (0 regular, 2 foil) where BOTH finishes are priced at both
+        // anchors and the *regular* moved more: +$8.00 vs the foil's +$1.00. The regular is
+        // not owned, so it is not the user's news — the foil must represent the card. This
+        // pins the `qty > 0` candidacy gate, which per-copy semantics made load-bearing: it
+        // now decides which price and which `foil` flag are published, not a zero-weighted
+        // addend.
+        let holdings = vec![holding(1, 0, 2)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), Some("20.00")),
+                cell("2024-01-02", Some("18.00"), Some("21.00")),
+            ],
+        );
+
+        let (gainers, _losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(gainers[0].foil, "an unowned regular must not represent it");
+        assert_eq!(gainers[0].price_prev_cents, 2000);
+        assert_eq!(gainers[0].price_now_cents, 2100);
+        assert_eq!(gainers[0].change_cents, 100);
+    }
+
+    #[test]
+    fn an_unowned_foil_never_represents_the_holding() {
+        // The mirror: regular-only holding whose foil moved more.
+        let holdings = vec![holding(1, 3, 0)];
+        let mut prices = HashMap::new();
+        prices.insert(
+            1,
+            vec![
+                cell("2024-01-01", Some("10.00"), Some("20.00")),
+                cell("2024-01-02", Some("11.00"), Some("30.00")),
+            ],
+        );
+
+        let (gainers, _losers) =
+            window_movers(&holdings, &prices, "2024-01-02", "2024-01-01", TOP_N);
+        assert_eq!(ids(&gainers), vec![1]);
+        assert!(!gainers[0].foil, "an unowned foil must not represent it");
+        assert_eq!(gainers[0].change_cents, 100);
     }
 
     #[test]
@@ -1883,7 +2037,7 @@ mod tests {
         // Gainers: card 1 (+50%) then card 3 (zero-baseline, None).
         assert_eq!(ids(&gainers), vec![1, 3]);
         assert_eq!(gainers[0].change_pct, Some(50.0));
-        assert_eq!(gainers[1].value_prev_cents, 0);
+        assert_eq!(gainers[1].price_prev_cents, 0);
         assert_eq!(gainers[1].change_pct, None);
         // Loser: card 2 at -50%.
         assert_eq!(ids(&losers), vec![2]);
@@ -1920,7 +2074,8 @@ mod tests {
     #[test]
     fn all_time_uses_each_finish_earliest_non_null_price() {
         // Regular history begins on 01-01 while foil starts on 01-02. All time compares
-        // each finish to its own honest first price: regular $1->$4 and foil $3->$5.
+        // each finish to its own honest first price: regular $1->$4 (+$3) and foil $3->$5
+        // (+$2) — the regular's move is bigger, so it represents the card.
         let holdings = vec![holding(1, 1, 1)];
         let mut prices = HashMap::new();
         prices.insert(
@@ -1935,9 +2090,10 @@ mod tests {
         let (gainers, losers) = all_time_movers(&holdings, &prices, "2024-01-03", TOP_N);
         assert!(losers.is_empty());
         assert_eq!(ids(&gainers), vec![1]);
-        assert_eq!(gainers[0].value_prev_cents, 400);
-        assert_eq!(gainers[0].value_now_cents, 900);
-        assert_eq!(gainers[0].change_cents, 500);
+        assert!(!gainers[0].foil);
+        assert_eq!(gainers[0].price_prev_cents, 100);
+        assert_eq!(gainers[0].price_now_cents, 400);
+        assert_eq!(gainers[0].change_cents, 300);
     }
 
     #[test]

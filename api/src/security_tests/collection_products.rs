@@ -276,7 +276,10 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     assert_eq!(movers["sealed"]["day_as_of"], yesterday);
     let gainer = &movers["sealed"]["day"]["gainers"][0];
     assert_eq!(gainer["product"]["id"], "100");
-    assert_eq!(gainer["change_usd"], "20.00", "two boxes gained $10 each");
+    assert_eq!(
+        gainer["change_usd"], "10.00",
+        "one box's gain, not doubled by owning two"
+    );
     let loser = &movers["sealed"]["day"]["losers"][0];
     assert_eq!(loser["product"]["id"], "200");
     assert_eq!(loser["change_usd"], "-5.00");
@@ -285,8 +288,8 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     let week_gainer = &movers["sealed"]["week"]["gainers"][0];
     assert_eq!(week_gainer["product"]["id"], "100");
     assert_eq!(
-        week_gainer["change_usd"], "30.00",
-        "two boxes gained $15 each since d10"
+        week_gainer["change_usd"], "15.00",
+        "a box gained $15 since d10 (never scaled by the two owned)"
     );
     let week_loser = &movers["sealed"]["week"]["losers"][0];
     assert_eq!(week_loser["product"]["id"], "200");
@@ -684,11 +687,11 @@ async fn sealed_movers_day_falls_back_across_a_missing_capture_day() {
     let gainer = &body["sealed"]["day"]["gainers"][0];
     assert_eq!(gainer["product"]["id"], "100");
     assert_eq!(
-        gainer["value_prev"], "10.00",
-        "two boxes at the four-day row"
+        gainer["price_prev"], "5.00",
+        "one box at the four-day row (never scaled by the two owned)"
     );
-    assert_eq!(gainer["value_now"], "16.00");
-    assert_eq!(gainer["change_usd"], "6.00");
+    assert_eq!(gainer["price_now"], "8.00");
+    assert_eq!(gainer["change_usd"], "3.00");
     assert!(
         body["sealed"]["day"]["losers"]
             .as_array()

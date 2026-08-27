@@ -1075,7 +1075,7 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
     let ids = sample_card_ids(&app, 3).await;
     let (a, b, c) = (&ids[0], &ids[1], &ids[2]);
 
-    // One regular copy of each, so a card's holding value change equals its price change.
+    // One regular copy of each (a movement is a single copy's price change regardless).
     for id in &ids {
         own_card(&app, &token, id, 1).await;
     }
@@ -1134,8 +1134,9 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
         vec![a.clone(), c.clone()]
     );
     assert_eq!(body["day"]["gainers"][0]["change_usd"], "10.00");
-    assert_eq!(body["day"]["gainers"][0]["value_now"], "20.00");
-    assert_eq!(body["day"]["gainers"][0]["value_prev"], "10.00");
+    assert_eq!(body["day"]["gainers"][0]["price_now"], "20.00");
+    assert_eq!(body["day"]["gainers"][0]["price_prev"], "10.00");
+    assert_eq!(body["day"]["gainers"][0]["foil"], false);
     assert_eq!(body["day"]["gainers"][1]["change_usd"], "2.00");
     assert_eq!(mover_ids(&body["day"]["losers"]), vec![b.clone()]);
     assert_eq!(body["day"]["losers"][0]["change_usd"], "-10.00");
@@ -1153,13 +1154,102 @@ async fn movers_rank_across_windows_and_dedup_a_flipping_card() {
     assert!(mover_ids(&body["month"]["losers"]).contains(c));
 }
 
+/// A movement is the price change of ONE copy, whatever the counts held (issue: a $10 card up
+/// $1 owned twice read "20.00 +2.00" — the card looked like it doubled). Owning more copies
+/// must neither scale the reported numbers nor buy a higher rank, and a holding owned in both
+/// finishes is represented by the finish whose single-copy price moved the most, flagged
+/// `foil` when that's the foil.
+#[tokio::test]
+async fn movers_report_single_copy_prices_never_scaled_by_quantity() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "movers-per-copy@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 3).await;
+    let (x, y, z) = (&ids[0], &ids[1], &ids[2]);
+
+    // X: two regular copies of a +$1.00 mover. Y: one copy of a +$1.50 mover. Z: one regular
+    // (+$0.10) + two foils (+$5.00/copy) — the foil is the represented finish.
+    own_card(&app, &token, x, 2).await;
+    own_card(&app, &token, y, 1).await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &card_path(z),
+            &token,
+            json!({ "quantity": 1, "foil_quantity": 2 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+
+    let (d0, d1) = (day_offset(0), day_offset(1));
+    set_price_history(
+        db,
+        internal_card_id(db, x).await,
+        &[
+            (d1.clone(), Some("10.00"), None),
+            (d0.clone(), Some("11.00"), None),
+        ],
+    )
+    .await;
+    set_price_history(
+        db,
+        internal_card_id(db, y).await,
+        &[
+            (d1.clone(), Some("10.00"), None),
+            (d0.clone(), Some("11.50"), None),
+        ],
+    )
+    .await;
+    set_price_history(
+        db,
+        internal_card_id(db, z).await,
+        &[
+            (d1.clone(), Some("5.00"), Some("20.00")),
+            (d0.clone(), Some("5.10"), Some("25.00")),
+        ],
+    )
+    .await;
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/movers?window=day", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
+
+    // Per-copy ranking: Z's foil (+$5.00), Y (+$1.50), then X (+$1.00) — the old
+    // holding-value ranking would have put X (2 × $1 = +$2.00) above Y.
+    assert_eq!(
+        mover_ids(&body["day"]["gainers"]),
+        vec![z.clone(), y.clone(), x.clone()]
+    );
+
+    let gainers = &body["day"]["gainers"];
+    assert_eq!(gainers[0]["foil"], true, "Z is represented by its foil");
+    assert_eq!(gainers[0]["price_prev"], "20.00");
+    assert_eq!(gainers[0]["price_now"], "25.00");
+    assert_eq!(gainers[0]["change_usd"], "5.00");
+    assert_eq!(gainers[0]["quantity"], 1);
+    assert_eq!(gainers[0]["foil_quantity"], 2);
+
+    // X reads as one copy's movement despite the two owned copies riding along as context.
+    assert_eq!(gainers[2]["foil"], false);
+    assert_eq!(gainers[2]["price_prev"], "10.00");
+    assert_eq!(gainers[2]["price_now"], "11.00");
+    assert_eq!(gainers[2]["change_usd"], "1.00");
+    assert_eq!(gainers[2]["change_pct"], 10.0);
+    assert_eq!(gainers[2]["quantity"], 2);
+}
+
 /// An unchanged newest capture must not make 1D look history-less. The daily window retries
 /// from the previous available snapshot (including across a missing calendar day), while the
 /// overall `as_of` and every longer window remain anchored to the newest capture.
 ///
 /// The ten-day-old row makes the retry's baseline resolution load-bearing: the three-days-ago
 /// snapshot reaches the ranker only as the day-before-yesterday anchor (the day anchor is `d1`,
-/// the week anchor and earliest price are `d10`), so the correct `value_prev` of `5.00` pins
+/// the week anchor and earliest price are `d10`), so the correct `price_prev` of `5.00` pins
 /// that anchor — carrying forward from `d10` would report `3.00`.
 #[tokio::test]
 async fn movers_day_falls_back_to_the_previous_available_snapshot() {
@@ -1188,12 +1278,12 @@ async fn movers_day_falls_back_to_the_previous_available_snapshot() {
     assert_eq!(body["as_of"], d0, "longer windows keep the newest anchor");
     assert_eq!(body["day_as_of"], d1, "1D reports its fallback anchor");
     assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
-    assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
-    assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
+    assert_eq!(body["day"]["gainers"][0]["price_prev"], "5.00");
+    assert_eq!(body["day"]["gainers"][0]["price_now"], "8.00");
     assert_eq!(body["day"]["gainers"][0]["change_usd"], "3.00");
     assert!(body["day"]["losers"].as_array().unwrap().is_empty());
     // 7D stays on the newest anchor: latest 8.00 against the d10 carry-forward of 3.00.
-    assert_eq!(body["week"]["gainers"][0]["value_prev"], "3.00");
+    assert_eq!(body["week"]["gainers"][0]["price_prev"], "3.00");
     assert_eq!(body["week"]["gainers"][0]["change_usd"], "5.00");
 }
 
@@ -1237,8 +1327,8 @@ async fn movers_day_falls_back_across_a_missing_capture_day() {
         "1D reports the previous available capture"
     );
     assert_eq!(mover_ids(&body["day"]["gainers"]), vec![id.clone()]);
-    assert_eq!(body["day"]["gainers"][0]["value_prev"], "5.00");
-    assert_eq!(body["day"]["gainers"][0]["value_now"], "8.00");
+    assert_eq!(body["day"]["gainers"][0]["price_prev"], "5.00");
+    assert_eq!(body["day"]["gainers"][0]["price_now"], "8.00");
     assert_eq!(body["day"]["gainers"][0]["change_usd"], "3.00");
     assert!(body["day"]["losers"].as_array().unwrap().is_empty());
 }
@@ -1347,14 +1437,14 @@ async fn movers_supports_year_two_year_three_year_and_all_time() {
     assert_eq!(status, StatusCode::OK, "movers failed: {body:?}");
     assert_eq!(body["as_of"].as_str(), Some(d0.as_str()));
 
-    for (window, value_prev, change_usd) in [
+    for (window, price_prev, change_usd) in [
         ("year", "4.00", "6.00"),
         ("two_year", "3.00", "7.00"),
         ("three_year", "2.00", "8.00"),
         ("all_time", "1.00", "9.00"),
     ] {
         assert_eq!(mover_ids(&body[window]["gainers"]), vec![id.clone()]);
-        assert_eq!(body[window]["gainers"][0]["value_prev"], value_prev);
+        assert_eq!(body[window]["gainers"][0]["price_prev"], price_prev);
         assert_eq!(body[window]["gainers"][0]["change_usd"], change_usd);
         assert!(body[window]["losers"].as_array().unwrap().is_empty());
     }

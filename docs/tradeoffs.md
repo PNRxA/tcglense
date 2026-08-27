@@ -344,7 +344,10 @@ catalog) is planned but not implemented.
   movers panel switches between independent Singles and Sealed rankings; both reuse the same
   current-count and captured-price assumptions as the original card analytics. Value history
   deliberately ignores holding add dates, revaluing the whole current basket at every historic
-  price point; movers likewise rank the current basket rather than reconstructing ownership.
+  price point; movers rank the currently owned items — by the **single-copy** price change of
+  the owned finish that moved most, never scaled by how many copies are held (a $10 card up
+  $1 owned twice used to read "$20 +$2", i.e. as the card's price doubling) — rather than
+  reconstructing ownership.
   Their 1d lists independently fall back one available snapshot when the newest comparison has
   no non-zero movers, while longer windows stay anchored to the newest snapshot; `day_as_of`
   reports the fallback date only when that retry actually found movement. The retry's baseline

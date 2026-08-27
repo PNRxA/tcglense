@@ -52,6 +52,15 @@ function makeProduct(): Product {
   }
 }
 
+// Mirrors lib/money's formatUsd so the expected strings track the host locale (a hard-coded
+// '$1.00' only passes where toLocaleString resolves to a US-style locale).
+function usd(amount: number) {
+  return `$${amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 const CardImageStub = {
   name: 'CardImage',
   template: '<div class="card-image-stub" />',
@@ -90,9 +99,10 @@ describe('MoverRow mixed catalog items', () => {
       product,
       quantity: 2,
       foil_quantity: 0,
-      value_now: '60.00',
-      value_prev: '40.00',
-      change_usd: '20.00',
+      foil: false,
+      price_now: '30.00',
+      price_prev: '20.00',
+      change_usd: '10.00',
       change_pct: 50,
     })
 
@@ -116,8 +126,9 @@ describe('MoverRow mixed catalog items', () => {
       card,
       quantity: 1,
       foil_quantity: 0,
-      value_now: '8.00',
-      value_prev: '10.00',
+      foil: false,
+      price_now: '8.00',
+      price_prev: '10.00',
       change_usd: '-2.00',
       change_pct: -20,
     })
@@ -139,8 +150,9 @@ describe('MoverRow mixed catalog items', () => {
       card,
       quantity: 2,
       foil_quantity: 1,
-      value_now: '30.00',
-      value_prev: '20.00',
+      foil: false,
+      price_now: '30.00',
+      price_prev: '20.00',
       change_usd: '10.00',
       change_pct: 50,
     })
@@ -148,5 +160,45 @@ describe('MoverRow mixed catalog items', () => {
     // Total is regular + foil (3); the separate foil chip counts just the foils (1).
     expect(wrapper.find('[aria-label="3 owned"]').exists()).toBe(true)
     expect(wrapper.find('[aria-label="1 foil"]').exists()).toBe(true)
+    // Owning foils is NOT what marks the price as the foil's: this mover's movement is the
+    // regular printing's (`foil: false`), so no Foil price chip renders despite the count.
+    expect(wrapper.text()).not.toContain('Foil')
+  })
+
+  it('shows the single-copy price change, never scaled by the owned count', async () => {
+    // Two owned copies of a $10 -> $11 card: the row must read +$1.00 / $11.00 (one copy's
+    // movement), not the +$2.00 / $22.00 holding total the panel used to show.
+    const card = makeCard()
+    const { wrapper } = await mountRow({
+      card,
+      quantity: 2,
+      foil_quantity: 0,
+      foil: false,
+      price_now: '11.00',
+      price_prev: '10.00',
+      change_usd: '1.00',
+      change_pct: 10,
+    })
+
+    expect(wrapper.text()).toContain(`+${usd(1)}`)
+    expect(wrapper.text()).toContain(usd(11))
+    expect(wrapper.text()).not.toContain('Foil')
+  })
+
+  it('marks a movement carried by the foil printing with a foil chip', async () => {
+    const card = makeCard()
+    const { wrapper } = await mountRow({
+      card,
+      quantity: 1,
+      foil_quantity: 2,
+      foil: true,
+      price_now: '25.00',
+      price_prev: '20.00',
+      change_usd: '5.00',
+      change_pct: 25,
+    })
+
+    expect(wrapper.text()).toContain('Foil')
+    expect(wrapper.text()).toContain(usd(25))
   })
 })

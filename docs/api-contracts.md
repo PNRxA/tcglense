@@ -786,7 +786,7 @@ surface.
 | `GET /api/collection/{game}?…&set&include_related` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`) |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
-| `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five largest holding-value gainers/losers for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
+| `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
 | `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
@@ -827,14 +827,14 @@ all_time, sealed }`:
 `as_of`, but when that comparison has no non-zero movers it retries from the previous
 available snapshot and, when the retry finds movement, reports that date instead (a retry
 that also finds nothing keeps `day_as_of` at `as_of`). Every window is a required
-`CollectionMoverList = { gainers, losers }`; both arrays are value-change ordered and capped
-at five. A `CollectionMover` is
-the backward-compatible card shape `{ card, quantity, foil_quantity, value_now, value_prev,
-change_usd, change_pct }`. `sealed` is an independent `CollectionSealedMovers` with its own
+`CollectionMoverList = { gainers, losers }`; both arrays are ordered by the single-copy price
+change and capped at five. A `CollectionMover` is
+`{ card, quantity, foil_quantity, foil, price_now, price_prev, change_usd, change_pct }`.
+`sealed` is an independent `CollectionSealedMovers` with its own
 `as_of`, `day_as_of`, and the same seven window keys; its lists contain
 `CollectionSealedMover` rows with `product` in place of `card`. Singles and sealed products
-do not compete in one ranking; the SPA switches between the two series. The three values are
-2-dp USD strings and `change_pct` is null when the baseline value is zero.
+do not compete in one ranking; the SPA switches between the two series. The three prices are
+2-dp USD strings and `change_pct` is null when the baseline price is zero.
 The optional `?window=<day|week|month|year|two_year|three_year|all_time>` scopes the whole
 computation to one date range: only that window's lists are ranked (for both series) and the
 rest are returned empty, so a landing that only ever shows its default window seeks ~two
@@ -844,10 +844,14 @@ still renders; omitting the param keeps the original all-windows response for AP
 consumers. Each window caches independently under the same holdings/price version keys. The SPA
 passes the active window (the window selector then fetches on demand and caches per window,
 while the Singles/Sealed switch stays a client-side toggle because both series ship together).
-Movement is the per-finish unit-price change multiplied by the user's current regular/foil
-counts. Fixed windows carry forward the latest snapshot at or before their calendar baseline
+Movement is the price change of **one copy** of an owned finish — never multiplied by the
+user's counts (`quantity`/`foil_quantity` ride along as context only). A holding owned in
+both finishes is represented by the finish whose single-copy price moved the most over the
+window (ties prefer regular); `foil` says when the reported `price_now`/`price_prev`/
+`change_usd` are the foil printing's. Fixed windows carry forward the latest snapshot at or
+before their calendar baseline
 measured back from `as_of`; the 1d fallback alone measures from `day_as_of`. A finish
-participates only when both endpoints have a price. `all_time` instead compares each finish
+is a candidate only when both endpoints have a price. `all_time` instead compares each finish
 with its own earliest non-null captured price, so a newer catalog item is not excluded by an
 older item's history. A holding kind with no captured history has null `as_of` / `day_as_of`
 and fourteen empty arrays, independently of the other kind.

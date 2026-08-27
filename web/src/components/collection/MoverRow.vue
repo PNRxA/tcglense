@@ -43,11 +43,12 @@ const metaText = computed(() => {
   return ''
 })
 
-// How many of this item the user holds. Each mover's value is quantity-weighted (owning two
-// doubles it), so surfacing the count explains the figure the row already shows. Mirrors
-// OwnedCountBadge's semantics — a total (regular + foil) with a stacked-cards icon, plus a
-// foil count with a sparkles icon only when some copies are foil — but rendered in the row's
-// muted inline style rather than the solid overlay pill that badge uses over card art.
+// How many of this item the user holds — context only: the movement shown is the price
+// change of ONE copy (never multiplied by these counts), so the badges say how many copies
+// the news applies to without changing the figures. Mirrors OwnedCountBadge's semantics — a
+// total (regular + foil) with a stacked-cards icon, plus a foil count with a sparkles icon
+// only when some copies are foil — but rendered in the row's muted inline style rather than
+// the solid overlay pill that badge uses over card art.
 const ownedTotal = computed(() => props.mover.quantity + props.mover.foil_quantity)
 const foilCount = computed(() => props.mover.foil_quantity)
 const to = computed(() =>
@@ -95,7 +96,10 @@ const pctText = computed(() => {
   if (pct == null) return null
   return `${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%`
 })
-const valueNow = computed(() => money.formatUsd(props.mover.value_now))
+// The represented finish's single-copy price today; `foil` marks the rows whose movement is
+// the foil printing's, so a $25 figure over a $5 regular isn't read as a data error.
+const priceNow = computed(() => money.formatUsd(props.mover.price_now))
+const isFoilPrice = computed(() => props.mover.foil)
 
 // The success/destructive tokens keep the 4.5:1 WCAG AA contrast threshold on the
 // white card, matching the chips.
@@ -167,8 +171,14 @@ const chipClass = computed(() =>
         >
           {{ pctText }}
         </span>
-        <span v-if="valueNow" class="text-muted-foreground text-xs tabular-nums">
-          {{ valueNow }}
+        <span
+          v-if="isFoilPrice"
+          class="bg-foil/15 text-foil rounded-md px-1.5 py-0.5 text-[0.65rem] leading-none font-semibold"
+        >
+          Foil
+        </span>
+        <span v-if="priceNow" class="text-muted-foreground text-xs tabular-nums">
+          {{ priceNow }}
         </span>
       </p>
     </div>
