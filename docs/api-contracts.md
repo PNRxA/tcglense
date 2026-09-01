@@ -1538,11 +1538,12 @@ conditional.
 
 TCGCSV's dated price **archives** (`archive/…`) are the one mirror route cached
 **`immutable`** (a year): `prices-{date}.ppmd.7z` is fixed once published, unlike the live
-JSON beside it. The short meta TTL was actively wrong there — the one-time historic price
-backfill walks ~900 archive days and **each day is a distinct URL fetched exactly once**
-per consumer, so no shared cache ever serves a repeat *within* one walk, and a one-hour TTL
-has long expired before the next self-host walks. Pinning a *missing* day is not a risk: an
-unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
+JSON beside it. The short meta TTL was actively wrong there — the historic price
+backfill's first run walks ~900 archive days and **each day is a distinct URL fetched once
+per walk**, so no shared cache ever serves a repeat *within* one walk, and a one-hour TTL
+has long expired before the next self-host walks; the year-long cache is also what absorbs
+the gap-aware backfill's later healing walks (issue #655). Pinning a *missing* day is not
+a risk: an unpublished day is a `404`, which `public_cache_layer` marks `no-store`.
 
 | Method & path | Returns |
 |---------------|---------|

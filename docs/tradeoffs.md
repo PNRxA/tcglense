@@ -763,18 +763,33 @@ catalog) is planned but not implemented.
     `(mtg, tcgcsv_products)`), so an unchanged day costs one request. Requests are paced
     ~100 ms apart — a full sweep is ~900 requests, well under TCGCSV's ~10k req/day budget.
     Wired into `catalog::refresh_all` / `catalog::snapshot_all` alongside the card sync.
-  - **One-time historic price backfill** (`tcgcsv::backfill`, opt-in via
+  - **Gap-aware historic price backfill** (`tcgcsv::backfill`, opt-in via
     `PRICE_BACKFILL_ENABLED`): walks TCGCSV's daily price *archives* (one solid-PPMd `7z`
     per day since **2024-02-08**) and fills `card_price_history` **and**
-    `product_price_history` for the days before the app began capturing its own snapshots.
-    It runs **once**, gated on an `ingest_state` row keyed `(mtg, tcgcsv_price_backfill)`
-    (distinct from the Scryfall `default_cards` dataset the status route reports), and is
-    **resumable per date** — the last completed archive date is recorded after every day
-    (even a 404 day), so a crash resumes at the next day rather than restarting. It
-    **never overwrites** an existing `(game, card/product, date)` row (`ON CONFLICT DO
-    NOTHING`), so a real daily snapshot always wins over a historic fill. `PRICE_BACKFILL_DAYS`
-    (`0` = every archive day, `N` = only the most recent N) bounds a first run. Off by
-    default because the walk is slow and hits an external service.
+    `product_price_history` for the days the daily snapshot missed. It was originally a
+    one-shot gated on its `ingest_state` row, which made the 2026-08 outage's missing
+    days unrepairable (issue #655): the snapshot only ever writes *today*, and the
+    one-shot's forward-only resume cursor could never revisit a day behind it. Now every
+    run plans its own walk (`tcgcsv::gaps`): one `GROUP BY as_of_date` count per history
+    table, walking exactly the days whose count is zero (absent) or under a quarter of
+    the table's median nonzero day (partially written). The threshold is deliberately
+    lenient because a *healthy* filled day legitimately counts low — TCGCSV fills are
+    **USD-only** (no eur/tix) and cover only TCGplayer-joinable priced entities, and the
+    catalog grows over time — and a too-tight threshold would re-fetch such days on
+    every boot, forever. So the backfill is idempotent + self-healing: it's spawned
+    every boot, a no-gap run costs two count queries, a crash mid-walk needs no cursor
+    (a filled day stops being a gap), and a future outage's gaps fill themselves. Gaps
+    before 2024-02-08 or outside `PRICE_BACKFILL_DAYS` are logged as unfillable rather
+    than silently narrowed; a day whose archive 404s (never published) stays a
+    zero-count gap and is re-probed each run — one cheap 404 per boot. Product-side gap
+    detection is skipped while `products` is empty (the join map would match nothing,
+    so an all-zero product history proves nothing — and would otherwise re-walk the
+    whole window every boot). It **never overwrites** an existing
+    `(game, card/product, date)` row (`ON CONFLICT DO NOTHING`), so a real daily
+    snapshot always wins over a historic fill; the `(mtg, tcgcsv_price_backfill)`
+    `ingest_state` row is observability + error bookkeeping only. `PRICE_BACKFILL_DAYS`
+    (`0` = every archive day, `N` = only the most recent N) bounds the walkable window.
+    Off by default because a first walk is slow and hits an external service.
   - Trade-offs: (1) **Classification is derived, not fed** (`tcgcsv::classify`, pure +
     unit-tested) — neither "sealed vs. single card" nor product *type* is a structured
     field in TCGCSV. Sealed-vs-card follows TCGCSV's own guidance: a product with a
@@ -837,12 +852,14 @@ catalog) is planned but not implemented.
   **archives** are the one mirror route cached **`immutable`** (a year), because
   `archive/tcgplayer/prices-{date}.ppmd.7z` is fixed once published — unlike the live JSON
   beside it, which re-describes a moving catalog. The short meta TTL was actively wrong
-  there: the one-time historic price backfill (`tcgcsv::backfill`) walks ~900 archive days
-  and **each day is a distinct URL fetched exactly once** per consumer, so no shared cache
+  there: the historic price backfill (`tcgcsv::backfill`) walks ~900 archive days on a
+  first run and **each day is a distinct URL fetched once per walk**, so no shared cache
   ever serves a repeat *within* one walk, and a one-hour TTL has long expired before the
   next self-host walks — so the mirror re-fetched every archive from TCGCSV for every
   consumer that backfilled, spending TCGCSV's ~10k/day courtesy budget under the *mirror's*
-  User-Agent and IP (`tcgcsv_proxy` sends its own UA, not the consumer's). Pinning a
+  User-Agent and IP (`tcgcsv_proxy` sends its own UA, not the consumer's). The year-long
+  edge cache also absorbs the gap-aware backfill's later healing walks (issue #655) — a
+  re-walked day re-serves from the edge instead of re-hitting TCGCSV. Pinning a
   *missing* day is not a risk: a day TCGCSV hasn't published is a `404`, which
   `public_cache_layer` marks `no-store`; (4) MTGJSON stays ETag-gated end-to-end — the
   mirror forwards `If-None-Match` and relays the upstream `304` (its cache is

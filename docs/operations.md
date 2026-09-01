@@ -339,15 +339,18 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `TCGCSV_USER_AGENT` (descriptive UA sent on **every** TCGCSV request — the daily
-  sealed-product sweep and the one-time historic price backfill; TCGCSV blocks generic
+  sealed-product sweep and the historic price backfill; TCGCSV blocks generic
   UAs; defaults to the same fallback as the Scryfall UA),
-  `PRICE_BACKFILL_ENABLED` (`false`; the one-time TCGCSV historic price backfill is
-  **opt-in** — set `true` to walk TCGCSV's daily archives once and fill
-  `card_price_history` for the days before the app began capturing its own snapshots. Off
-  by default because the walk is slow and hits an external service; it's internally gated
-  by an `ingest_state` row so it only ever runs once and never overwrites an existing
-  `(card, date)` row), `PRICE_BACKFILL_DAYS` (`0` = every archive day since 2024-02-08;
-  `N` = only the most recent `N` days, to bound a first run),
+  `PRICE_BACKFILL_ENABLED` (`false`; the TCGCSV historic price backfill is **opt-in** —
+  set `true` to walk TCGCSV's daily archives and fill `card_price_history` +
+  `product_price_history` for the days the daily snapshot missed. Gap-aware (issue
+  #655): each boot it walks exactly the missing days inside the walkable window — a
+  run with no gaps costs one `GROUP BY` per history table — and it never overwrites an
+  existing `(card, date)` row, so an outage's gap days heal on the next boot. Filled
+  days are USD-only (TCGCSV carries no eur/tix). Off by default because a first walk
+  is slow and hits an external service), `PRICE_BACKFILL_DAYS` (`0` = every archive
+  day since 2024-02-08; `N` = only the most recent `N` days — gap days outside the
+  window are logged as unfillable, not filled),
   `MOXFIELD_USER_AGENT` (unset; the Moxfield-approved UA for collection URL imports —
   email support@moxfield.com to get one approved, and treat it as a secret),
   `RESEND_API_KEY` (unset; the Resend API key for registration-completion/verification/reset email — a
