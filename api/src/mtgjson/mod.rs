@@ -44,12 +44,13 @@
 //! cards by matching the product name to its drop (self-maintaining as new drops sync),
 //! merged under the same "only when MTGJSON left it empty" gate.
 //!
-//! Trade-off: `AllPrintings.json` is one ~600 MB document. We fetch the ~160 MB gzip and
-//! parse only the trimmed structs, but the fetch still buffers the compressed body and
-//! the resolved membership set is large (a normal set's booster sheets span ~its whole
-//! card list), so a rebuild transiently uses a few hundred MB. It runs at most daily on
-//! a background task, gated on the `ETag`. Per-set streaming to bound that further is
-//! possible future work.
+//! Trade-off: `AllPrintings.json` is one ~600 MB document. We stream the ~160 MB gzip
+//! straight through decode + parse (the compressed body is never resident) and retain
+//! only the trimmed structs, but the resolved membership set is large (a normal set's
+//! booster sheets span ~its whole card list), so a rebuild still transiently uses a few
+//! hundred MB. It runs at most daily on a background task, gated on the `ETag`. Resolving
+//! catalog ids before the walk so it emits internal-id rows directly is possible future
+//! work to bound that further.
 
 pub mod client;
 mod error;

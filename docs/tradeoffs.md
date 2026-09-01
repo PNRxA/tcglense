@@ -938,10 +938,12 @@ catalog) is planned but not implemented.
   on the wrapped boosters' own pages (issue #646 follow-up).
 
   Trade-offs: (1) `AllPrintings`
-  is one ~600 MB document; we fetch the ~160 MB gzip and parse only trimmed structs, but
-  a rebuild still transiently uses a few hundred MB (the fetch buffers the compressed
-  body and a normal set's booster sheets span ~its whole card list) — acceptable for a
-  daily, ETag-gated background task; per-set streaming to bound that is future work.
+  is one ~600 MB document; we stream the ~160 MB gzip straight through decode + parse
+  (the compressed body is never resident) and retain only trimmed structs, but a rebuild
+  still transiently uses a few hundred MB (the resolved membership set is large — a
+  normal set's booster sheets span ~its whole card list) — acceptable for a daily,
+  ETag-gated background task; resolving catalog ids before the walk so it emits
+  internal-id rows directly is future work to bound that further.
   (2) The `booster` bucket ("can be pulled from") is inherently the whole set, so a
   common card lists ~its set's booster products — honest but low-signal; the UI groups it
   as a distinct "Can be pulled from" section so it doesn't masquerade as a guaranteed

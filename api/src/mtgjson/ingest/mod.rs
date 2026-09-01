@@ -181,13 +181,13 @@ async fn refresh_inner(
     // published precon decklists off the async runtime (CPU-bound over a big document).
     // `all` is dropped when the closure returns, freeing the parse tree; all three passes
     // run in the one blocking task so it's moved once — and they share ONE `Indexes`, whose
-    // build walks every card in the document (~600k rows): three passes each building their
+    // build walks every card in the document (~115k cards): three passes each building their
     // own would triple that walk for a document that only ever produces one answer.
     progress.set_stage("resolving contents");
     let all = *all;
     #[allow(clippy::type_complexity)]
     let (memberships, components, precons): (
-        Vec<RawMembership>,
+        HashSet<RawMembership>,
         Vec<RawComponent>,
         Vec<RawPrecon>,
     ) = tokio::task::spawn_blocking(move || {
@@ -241,23 +241,25 @@ async fn refresh_inner(
     progress.set_stage("matching to catalog");
     let products = resolve_products(db, &product_ext).await?;
     let cards = resolve_cards(db, &card_ext).await?;
+    // The external-id lists are folded into the two maps; free them before the merge +
+    // write phases pile their own allocations on top (this path has to fit the 1 GB
+    // App Platform instance — see `.do/app.yaml`).
+    drop(product_ext);
+    drop(card_ext);
 
     // Resolve MTGJSON memberships whose product AND card are both in our catalog into a
-    // deduplicated row set, tracking which products MTGJSON actually described.
+    // deduplicated row set, tracking which products MTGJSON actually described. The loop
+    // **consumes** the membership set — each row's `component` moves rather than clones,
+    // and the whole set is freed at the loop's end instead of at the function's, for the
+    // same 1 GB budget as above.
     let mut rows: HashSet<Row> = HashSet::new();
     let mut mtgjson_products: HashSet<i32> = HashSet::new();
-    for m in &memberships {
+    for m in memberships {
         if let (Some(&product_id), Some(&card_id)) = (
             products.get(&m.tcgplayer_product_id),
             cards.get(&m.scryfall_id),
         ) {
-            rows.insert((
-                product_id,
-                card_id,
-                m.membership,
-                m.foil,
-                m.component.clone(),
-            ));
+            rows.insert((product_id, card_id, m.membership, m.foil, m.component));
             mtgjson_products.insert(product_id);
         }
     }
@@ -286,6 +288,8 @@ async fn refresh_inner(
     let (mut component_rows, mtgjson_component_products) =
         resolve_component_rows(&components, &products, &cards);
     let components_from_mtgjson = component_rows.len();
+    // The raw components are resolved into `component_rows`; free them too.
+    drop(components);
 
     // Fill products MTGJSON left without a composition with curated fallback components.
     let components_from_fallback = merge_fallback_components(
@@ -306,17 +310,22 @@ async fn refresh_inner(
     let from_contained = merge_contained_booster_pools(&mut rows, &component_rows);
     let from_siblings = merge_sibling_booster_pools(db, &mut rows).await?;
 
-    // Materialise both merged row sets as models.
+    // Materialise the membership models **per insert batch**, not whole-set: the full
+    // `Vec<ActiveModel>` copy of a several-hundred-thousand-row set (each row cloning its
+    // strings again) landed on top of everything above at exactly this point, and was
+    // enough to breach a 1 GB instance's memory ceiling — the process died here, mid-sync,
+    // with no error to log. The counts are read off `rows` up front; the set itself is
+    // consumed batch by batch below. The composition set stays whole-set (a few thousand
+    // rows; `components_to_models` is also the tested seam the component write shares).
     let now = Utc::now();
-    let models = rows_to_models(&rows, now);
-    let component_models = components_to_models(&component_rows, now);
-    let matched = models.len();
-    let component_count = component_models.len();
+    let matched = rows.len();
     let product_count = rows
         .iter()
         .map(|&(pid, ..)| pid)
         .collect::<HashSet<i32>>()
         .len();
+    let component_models = components_to_models(&component_rows, now);
+    let component_count = component_models.len();
     progress.set_rows("writing", (matched + component_count) as u64);
 
     // Replace the game's rows in one transaction so a reader never sees a half-rebuilt table
@@ -326,9 +335,13 @@ async fn refresh_inner(
         .filter(sealed_content::Column::Game.eq(GAME))
         .exec(&txn)
         .await?;
-    let mut iter = models.into_iter();
+    let mut iter = rows.into_iter();
     loop {
-        let chunk: Vec<sealed_content::ActiveModel> = iter.by_ref().take(INSERT_BATCH).collect();
+        let chunk: Vec<sealed_content::ActiveModel> = iter
+            .by_ref()
+            .take(INSERT_BATCH)
+            .map(|row| row_to_model(row, now))
+            .collect();
         if chunk.is_empty() {
             break;
         }
@@ -350,6 +363,10 @@ async fn refresh_inner(
             .exec_without_returning(&txn)
             .await?;
     }
+    // The drained set's bucket table (a couple of million slots) is freed only when the
+    // iterator drops — do that now, not at function exit, so the component + precon
+    // writes below don't stack on top of it.
+    drop(iter);
     // Rebuild the composition table alongside the memberships, in the same transaction.
     SealedComponent::delete_many()
         .filter(sealed_component::Column::Game.eq(GAME))
@@ -432,23 +449,23 @@ async fn refresh_inner(
     Ok(())
 }
 
-/// Materialise a resolved row set as insertable models, all stamped `now`.
-fn rows_to_models(rows: &HashSet<Row>, now: DateTimeUtc) -> Vec<sealed_content::ActiveModel> {
-    rows.iter()
-        .map(
-            |(product_id, card_id, membership, foil, component)| sealed_content::ActiveModel {
-                id: NotSet,
-                game: Set(GAME.to_string()),
-                product_id: Set(*product_id),
-                card_id: Set(*card_id),
-                membership: Set(membership.to_string()),
-                foil: Set(*foil),
-                component: Set(component.clone()),
-                created_at: Set(now),
-                updated_at: Set(now),
-            },
-        )
-        .collect()
+/// Materialise one resolved membership row as an insertable model, stamped `now`. Called
+/// per insert batch (never over the whole set at once — see the write phase above).
+fn row_to_model(
+    (product_id, card_id, membership, foil, component): Row,
+    now: DateTimeUtc,
+) -> sealed_content::ActiveModel {
+    sealed_content::ActiveModel {
+        id: NotSet,
+        game: Set(GAME.to_string()),
+        product_id: Set(product_id),
+        card_id: Set(card_id),
+        membership: Set(membership.to_string()),
+        foil: Set(foil),
+        component: Set(component),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
 }
 
 /// Resolve raw composition components to insertable rows, mapping each component's parent
@@ -1196,6 +1213,72 @@ mod tests {
         // Re-run replaces rather than duplicating (the transaction wipes first).
         write_components_for_test(&db, &rows).await;
         assert_eq!(SealedComponent::find().count(&db).await.unwrap(), 2);
+    }
+
+    /// The membership write path: delete-then-insert replaces (not duplicates) the game's
+    /// rows, batches are materialised per chunk through `row_to_model`, and every column
+    /// round-trips — including a `component` attribution and a foil finish.
+    #[tokio::test]
+    async fn memberships_write_replaces_and_round_trips() {
+        let db = migrated_memory_db().await;
+        let bundle = insert_product(&db, "648686").await;
+        let sol = insert_card_at(&db, "sf-sol", "tle", "316").await;
+        let rows: HashSet<Row> = HashSet::from([
+            row(bundle, sol, "contains", false),
+            (
+                bundle,
+                sol,
+                "booster",
+                true,
+                Some("Play Booster".to_string()),
+            ),
+        ]);
+
+        write_contents_for_test(&db, rows.clone()).await;
+        let stored = SealedContent::find().all(&db).await.unwrap();
+        assert_eq!(stored.len(), 2);
+        let foil = stored.iter().find(|r| r.foil).expect("the booster row");
+        assert_eq!(foil.game, GAME);
+        assert_eq!(foil.product_id, bundle);
+        assert_eq!(foil.card_id, sol);
+        assert_eq!(foil.membership, "booster");
+        assert_eq!(foil.component.as_deref(), Some("Play Booster"));
+        let plain = stored.iter().find(|r| !r.foil).expect("the contains row");
+        assert_eq!(plain.membership, "contains");
+        assert_eq!(plain.component, None);
+
+        // Re-run replaces rather than duplicating (the transaction wipes first).
+        write_contents_for_test(&db, rows).await;
+        assert_eq!(SealedContent::find().count(&db).await.unwrap(), 2);
+    }
+
+    /// Drives the membership delete + chunked insert without the network fetch, mirroring
+    /// the `sealed_contents` write inside `refresh_inner` (per-batch `row_to_model` over a
+    /// consumed row set).
+    async fn write_contents_for_test(db: &DatabaseConnection, rows: HashSet<Row>) {
+        let now = Utc::now();
+        let txn = db.begin().await.unwrap();
+        SealedContent::delete_many()
+            .filter(sealed_content::Column::Game.eq(GAME))
+            .exec(&txn)
+            .await
+            .unwrap();
+        let mut iter = rows.into_iter();
+        loop {
+            let chunk: Vec<sealed_content::ActiveModel> = iter
+                .by_ref()
+                .take(INSERT_BATCH)
+                .map(|row| row_to_model(row, now))
+                .collect();
+            if chunk.is_empty() {
+                break;
+            }
+            SealedContent::insert_many(chunk)
+                .exec_without_returning(&txn)
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
     }
 
     /// Drives the composition delete + insert without the network fetch, mirroring the

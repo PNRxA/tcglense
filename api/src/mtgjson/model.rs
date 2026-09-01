@@ -2,7 +2,7 @@
 //! of a sealed product's contents into per-card membership rows.
 //!
 //! Only the handful of fields the sealed-contents feature needs are deserialized (serde
-//! ignores the rest), so parsing the ~600 MB document retains only ~a few hundred MB of
+//! ignores the rest), so parsing the ~600 MB document retains on the order of 100 MB of
 //! structs rather than the whole tree. The shapes were verified against a live
 //! `AllPrintings.json` build; see [`super`] for the field-by-field mapping notes.
 //!
@@ -191,10 +191,42 @@ pub struct BoosterConfig {
 pub struct Sheet {
     #[serde(default)]
     pub foil: bool,
-    /// `uuid -> weight`; we keep only the keys (membership, not odds), so the weight is
-    /// deserialized straight into `IgnoredAny` (zero-sized) rather than retained.
-    #[serde(default)]
-    pub cards: HashMap<String, serde::de::IgnoredAny>,
+    /// `uuid -> weight`; we keep only the keys (membership, not odds), so the map is
+    /// deserialized straight to its key list — the weights are skipped, and no map is
+    /// built at all: document-wide the sheets hold on the order of a million uuid
+    /// entries, and a `HashMap` of ignored values was pure table overhead on the sync
+    /// path that has to fit a 1 GB instance.
+    #[serde(default, deserialize_with = "map_keys")]
+    pub cards: Vec<Box<str>>,
+}
+
+/// Deserialize a JSON map retaining only its keys (values are skipped unread).
+fn map_keys<'de, D>(de: D) -> Result<Vec<Box<str>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct KeysVisitor;
+    impl<'de> serde::de::Visitor<'de> for KeysVisitor {
+        type Value = Vec<Box<str>>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a map")
+        }
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            // Capped pre-allocation: the size hint is attacker-controlled input on some
+            // deserializers (serde_json's reader gives none), so never trust it whole.
+            let mut keys = Vec::with_capacity(map.size_hint().unwrap_or(0).min(4096));
+            while let Some((key, serde::de::IgnoredAny)) =
+                map.next_entry::<Box<str>, serde::de::IgnoredAny>()?
+            {
+                keys.push(key);
+            }
+            Ok(keys)
+        }
+    }
+    de.deserialize_map(KeysVisitor)
 }
 
 /// A precon decklist: its three boards (each card by `uuid`, with a count + foil flag) plus
@@ -380,6 +412,8 @@ pub struct RawComponent {
 #[cfg(test)]
 pub fn build_memberships(all: &AllPrintings) -> Vec<RawMembership> {
     memberships_from(all, &Indexes::build(all))
+        .into_iter()
+        .collect()
 }
 
 /// Resolve every sealed product's **structural composition** into ordered component rows —
@@ -398,8 +432,11 @@ pub fn build_compositions(all: &AllPrintings) -> Vec<RawComponent> {
     compositions_from(all, &Indexes::build(all))
 }
 
-/// The membership walk over a prebuilt [`Indexes`] (see [`build_memberships`]).
-pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMembership> {
+/// The membership walk over a prebuilt [`Indexes`] (see [`build_memberships`]). Returns
+/// the dedup set itself rather than collecting it into a `Vec`: the collect briefly held
+/// the ~million-row table and its full copy side by side, on the sync path that has to
+/// fit a 1 GB instance (the caller iterates and then consumes the set anyway).
+pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> HashSet<RawMembership> {
     let resolver = Resolver { idx };
     let mut out: HashSet<RawMembership> = HashSet::new();
     for data in all.data.values() {
@@ -413,7 +450,7 @@ pub(super) fn memberships_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawMemb
             }
         }
     }
-    out.into_iter().collect()
+    out
 }
 
 /// The composition walk over a prebuilt [`Indexes`] (see [`build_compositions`]).
@@ -501,8 +538,9 @@ fn push_component(
 /// code, `uuid` / `(set, number)` -> Scryfall id, and sealed-product `uuid` -> the product
 /// it names.
 ///
-/// Building it walks every card in `AllPrintings` (~600k rows), so [`super::ingest`] builds
-/// **one** and lends it to all three passes rather than each pass building its own.
+/// Building it walks every card in `AllPrintings` (~115k cards across ~870 sets), so
+/// [`super::ingest`] builds **one** and lends it to all three passes rather than each
+/// pass building its own.
 pub(super) struct Indexes<'a> {
     sets: HashMap<String, &'a SetData>,
     uuid_to_scryfall: HashMap<&'a str, &'a str>,
@@ -648,8 +686,8 @@ impl Resolver<'_> {
         };
         let mut cards = Vec::new();
         for sheet in config.sheets.values() {
-            for uuid in sheet.cards.keys() {
-                cards.push((uuid.as_str(), sheet.foil));
+            for uuid in &sheet.cards {
+                cards.push((&**uuid, sheet.foil));
             }
         }
         cards
