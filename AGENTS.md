@@ -666,9 +666,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   holder is a zombie for `pg_terminate_backend`. `record_completed` **only when every provider
   pass succeeded** (`refresh_all`'s flag): stamping an errored or timed-out tick would freeze
   the catalog for a full interval with restarts as no-ops, since the boot deferral reads that
-  stamp. The one-time TCGCSV backfill holds its own `PRICE_BACKFILL` lock for the walk's whole
-  duration — its `ingest_state` gate stays open mid-walk, so unlocked concurrent boots would
-  interleave the resume cursor.
+  stamp. The TCGCSV backfill is **gap-aware** (issue #655): every run re-plans from per-day
+  `GROUP BY` row counts over both history tables (`tcgcsv::gaps`) and walks exactly the missing
+  days — zero-count, or under a quarter of the median nonzero day; the threshold is lenient on
+  purpose, since a healthy TCGCSV-filled day counts low (USD-only, TCGplayer-joinable entities
+  only) and must not re-fetch forever. It's spawned every boot, a no-gap run is two count
+  queries, and its `ingest_state` row is observability only (no completion gate, no resume
+  cursor — a filled day stops being a gap). It still holds its own `PRICE_BACKFILL` lock for
+  the walk's whole duration, or concurrent boots would double-walk the same gap days.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling

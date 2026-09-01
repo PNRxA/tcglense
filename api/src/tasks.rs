@@ -233,7 +233,7 @@ async fn bump_all_price_epochs(analytics: &AnalyticsCache) {
     }
 }
 
-/// Parameters for the one-time TCGCSV historic price backfill, when enabled. `None`
+/// Parameters for the gap-aware TCGCSV historic price backfill, when enabled. `None`
 /// disables it. Passed into the card-sync task so the backfill can start once the
 /// first card sync has populated `cards.tcgplayer_id` (its join key).
 struct BackfillConfig {
@@ -241,20 +241,20 @@ struct BackfillConfig {
     days: u32,
 }
 
-/// Kick off the one-time historic price backfill (once cards exist) as its own
-/// detached task, so a long walk over TCGCSV's daily archives never blocks the
-/// periodic card-sync ticker. The backfill is internally gated (an `ingest_state`
-/// row), so re-invoking it after it has completed is a cheap no-op. Errors are
-/// logged, never fatal.
+/// Kick off the historic price backfill (once cards exist) as its own detached task,
+/// so a long walk over TCGCSV's daily archives never blocks the periodic card-sync
+/// ticker. The backfill is gap-aware (issue #655): each run fills exactly the days
+/// missing from the daily price history, so a run with nothing missing is a cheap
+/// no-op — which is what makes spawning it on every boot both safe and useful (an
+/// outage's gap days heal themselves without operator action). Errors are logged,
+/// never fatal.
 ///
 /// The walk itself is leader-gated by the [`crate::db_lock::PRICE_BACKFILL`] advisory
-/// lock for its whole duration: its internal completion gate stays open while the
-/// (resumable, possibly multi-hour) walk is in progress, so without a lock, N replicas
-/// booting with a prior sync recorded would all walk TCGCSV's daily archives at once —
-/// interleaving the shared resume cursor, and a slow walker's `mark_error` could even
-/// un-complete a faster walker's finished run. Skipping when a peer holds the lock is
-/// correct: the job is global and one-time; the holder finishes it, or the next boot
-/// resumes it.
+/// lock for its whole duration: without a lock, N replicas booting with a prior sync
+/// recorded would all plan the same gap days and walk TCGCSV's archives at once —
+/// double-fetching an external service and racing their `ingest_state` bookkeeping
+/// writes. Skipping when a peer holds the lock is correct: the job is global; the
+/// holder fills the gaps, or the next boot's run re-plans whatever is still missing.
 fn spawn_price_backfill(
     db: DatabaseConnection,
     http: Client,
@@ -362,9 +362,10 @@ async fn run_sync_tick(
 /// as the restart that cost it — a schedule that never self-healed (the 2026-08
 /// snapshot outage).
 ///
-/// After the first completed sync (so `cards.tcgplayer_id` is populated), the one-time
-/// TCGCSV historic price backfill is spawned if `backfill` is `Some` — immediately at
-/// boot when a prior completion is already recorded.
+/// After the first completed sync (so `cards.tcgplayer_id` is populated), the
+/// gap-aware TCGCSV historic price backfill is spawned if `backfill` is `Some` —
+/// immediately at boot when a prior completion is already recorded, so missing
+/// history days heal on every boot.
 fn spawn_card_sync(
     db: DatabaseConnection,
     http: Client,
@@ -495,8 +496,8 @@ fn spawn_card_sync(
             };
             if completed {
                 // After the first completed sync, cards carry their tcgplayer_id, so
-                // the one-time historic backfill can join against them. `take` ensures
-                // it's only spawned once.
+                // the historic backfill can join against them. `take` ensures it's
+                // only spawned once per boot.
                 if let Some(cfg) = backfill.take() {
                     spawn_price_backfill(
                         db.clone(),

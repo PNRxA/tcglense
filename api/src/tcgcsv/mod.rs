@@ -4,12 +4,14 @@
 //! [TCGCSV](https://tcgcsv.com) is a free, keyless daily mirror of TCGplayer's
 //! catalog and prices. Two features live here:
 //!
-//! - **Historic price backfill** ([`backfill`]): on the first boot after the Scryfall
-//!   card sync populates `cards.tcgplayer_id` (and, for products, after the first
-//!   product sync), it walks TCGCSV's daily price *archives* (one solid-PPMd `7z` per
-//!   day since 2024-02-08) and fills `card_price_history` **and** `product_price_history`
-//!   for the days before we began capturing our own daily snapshots. It runs **once**
-//!   (gated on an `ingest_state` row) and never overwrites an existing row.
+//! - **Historic price backfill** ([`backfill`]): gap-aware (issue #655) — each run
+//!   (spawned every boot once the Scryfall card sync has populated
+//!   `cards.tcgplayer_id`) compares the daily price history against TCGCSV's archive
+//!   range (one solid-PPMd `7z` per day since 2024-02-08, planned by [`gaps`]) and
+//!   walks exactly the missing days, filling `card_price_history` **and**
+//!   `product_price_history`. A run with no gaps costs one count query per table,
+//!   and an existing row is never overwritten — so an outage's missing days heal
+//!   themselves on the next boot.
 //! - **Sealed products** ([`ingest`] + [`price_history`]): a daily sweep of the groups +
 //!   products feeds that imports MTG sealed products (booster boxes, bundles, decks, …)
 //!   into `products` and captures their daily market prices into `product_price_history`.
@@ -23,6 +25,7 @@ pub mod backfill;
 pub mod classify;
 pub mod client;
 mod error;
+mod gaps;
 pub mod ingest;
 pub mod model;
 pub mod msrp;
@@ -41,8 +44,10 @@ pub const BASE_URL: &str = "https://tcgcsv.com";
 /// TCGplayer category id for Magic: The Gathering (the only game we sync).
 pub const MTG_CATEGORY_ID: u32 = 1;
 
-/// `ingest_state.dataset` key that gates the one-time historic price backfill (distinct
-/// from the Scryfall `default_cards` card-data dataset, which the status route reports).
+/// `ingest_state.dataset` key that tracks the historic price backfill (distinct from
+/// the Scryfall `default_cards` card-data dataset, which the status route reports).
+/// Observability + error bookkeeping only: the gap-aware walk re-plans each run from
+/// the history tables themselves, never from this row.
 pub const DATASET: &str = "tcgcsv_price_backfill";
 
 /// `ingest_state.dataset` key that version-gates the daily sealed-product sweep.

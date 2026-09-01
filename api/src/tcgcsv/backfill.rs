@@ -1,11 +1,15 @@
-//! The one-time historic price backfill: walk TCGCSV's daily price archives from
-//! the first available day forward and insert `card_price_history` rows for MTG
-//! cards we already imported from Scryfall, joined on `tcgplayer_id`.
+//! The gap-aware historic price backfill: find the days missing from the daily
+//! price history and fill them from TCGCSV's per-day price archives, joined on
+//! `tcgplayer_id` (cards) and the TCGplayer `productId` (sealed products).
 //!
-//! It runs once (gated on an `ingest_state` row) and is **resumable per date**: the
-//! last completed archive date is recorded after every day, so a crash resumes at
-//! the next day rather than restarting. Existing `(game, card, date)` rows are
-//! never overwritten (`ON CONFLICT DO NOTHING`), so a real Scryfall daily snapshot
+//! Every run plans its own walk ([`super::gaps`], issue #655): the days inside the
+//! walkable window whose history row count is zero — or far below the median day, a
+//! partially-written day — are fetched and filled; healthy days are never touched,
+//! and a run with no gaps costs one `GROUP BY` per history table. That makes the
+//! backfill idempotent and self-healing: an outage's missing days (the 2026-08
+//! blocks) fill themselves on the next boot, and a crash mid-walk needs no resume
+//! cursor — a filled day simply stops being a gap. Existing `(game, entity, date)`
+//! rows are never overwritten (`ON CONFLICT DO NOTHING`), so a real daily snapshot
 //! always wins over a historic TCGCSV fill.
 
 use std::collections::HashMap;
@@ -22,9 +26,9 @@ use sea_orm::{
 };
 use sevenz_rust2::{ArchiveReader, Password};
 
-use super::BackfillError;
 use super::model::{DayPrice, PriceFile, aggregate_prices};
 use super::progress::SyncProgress;
+use super::{BackfillError, gaps};
 use super::{DATASET, GAME, MTG_CATEGORY_ID};
 use crate::catalog::ingest_state::{self, StateFields};
 use crate::entities::prelude::{Card, CardPriceHistory, Product, ProductPriceHistory};
@@ -44,11 +48,13 @@ const REQUEST_SPACING: Duration = Duration::from_millis(100);
 /// snapshot's batch size).
 const INSERT_CHUNK: usize = 2000;
 
-/// Run the historic price backfill for MTG. Idempotent and gated: once the
-/// `ingest_state` row for `(mtg, tcgcsv_price_backfill)` is `complete` it returns
-/// immediately. `days_cap` (`0` = all) limits the walk to the most recent N archive
-/// days. Errors are returned for the caller to log; the state row is best-effort
-/// marked `error` so a later boot retries from where it left off.
+/// Run the historic price backfill for MTG. Gap-aware and idempotent: each run
+/// fills exactly the days missing from the daily price history inside the walkable
+/// window (`days_cap`, `0` = all, bounds it to the most recent N archive days), so
+/// invoking it on every boot is safe — a no-gap run costs one `GROUP BY` per
+/// history table. Errors are returned for the caller to log; the state row
+/// (`(mtg, tcgcsv_price_backfill)`, kept for observability) is best-effort marked
+/// `error`, and the next boot's run re-plans from the history tables themselves.
 pub async fn run(
     db: &DatabaseConnection,
     http: &Client,
@@ -73,14 +79,37 @@ async fn run_inner(
     source: &crate::datasets::SyncSource,
 ) -> Result<(), BackfillError> {
     let base_url = source.tcgcsv_base_url();
-    let existing = ingest_state::load(db, GAME, DATASET).await?;
-    if existing.as_ref().map(|s| s.status.as_str()) == Some("complete") {
-        tracing::info!("tcgcsv price backfill already complete; skipping");
+
+    // Walkable window: `[max(first archive, today - days_cap + 1), today]`.
+    let today = Utc::now().date_naive();
+    let mut window_start = first_archive_date();
+    if days_cap > 0 {
+        let cap_start = today - chrono::Duration::days(i64::from(days_cap) - 1);
+        window_start = window_start.max(cap_start);
+    }
+
+    // Plan first: a no-gap run must stay cheap (one `GROUP BY` per history table),
+    // so the heavier join maps load only when there is something to fill.
+    let plan = gaps::plan(db, window_start, today).await?;
+    if let (Some(first), Some(last)) = (plan.unfillable.first(), plan.unfillable.last()) {
+        tracing::warn!(
+            days = plan.unfillable.len(),
+            from = %first,
+            to = %last,
+            "tcgcsv backfill: gap days behind the walkable window (before TCGCSV's \
+             first archive, or outside PRICE_BACKFILL_DAYS) cannot be filled"
+        );
+    }
+
+    let started = Utc::now();
+    if plan.walkable.is_empty() {
+        tracing::info!("tcgcsv backfill: no gap days in the walkable window; nothing to do");
+        finish(db, started, "no gap days to fill", 0).await?;
         return Ok(());
     }
 
     // Join key: every MTG card that carries a TCGplayer product id. Built once and
-    // reused across every archived day.
+    // reused across every gap day.
     let map = load_tcgplayer_map(db).await?;
     if map.is_empty() {
         // Cards haven't been imported (or none carry a tcgplayer_id) yet. Leave the
@@ -89,9 +118,9 @@ async fn run_inner(
         return Ok(());
     }
     // The parallel join key for sealed products: `productId -> products.id`. Empty when
-    // products haven't been synced yet (the backfill runs once, and tasks.rs orders the
-    // first product sync before it, so normally it's populated) — an empty map just
-    // means no product rows are backfilled, which is fine.
+    // products haven't been synced yet (tasks.rs orders the first product sync before
+    // the backfill, so normally it's populated) — an empty map just means no product
+    // rows are backfilled, which is fine (gap detection skips the product side too).
     let product_map = load_product_map(db).await?;
     tracing::info!(
         cards = map.len(),
@@ -99,42 +128,29 @@ async fn run_inner(
         "tcgcsv backfill: built tcgplayer_id maps"
     );
 
-    let today = Utc::now().date_naive();
-    // Candidate window: [start, today]. `days_cap` bounds it to the most recent N
-    // days; resumption skips everything up to and including the last completed date.
-    let mut start = first_archive_date();
-    if days_cap > 0 {
-        let cap_start = today - chrono::Duration::days(i64::from(days_cap) - 1);
-        start = start.max(cap_start);
-    }
-    if let Some(last) = existing
-        .as_ref()
-        .and_then(|s| s.source_updated_at.as_deref())
-        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-    {
-        start = start.max(last + chrono::Duration::days(1));
-    }
+    // `walkable` is non-empty (guarded above) and ascending.
+    tracing::info!(
+        days = plan.walkable.len(),
+        from = %plan.walkable[0],
+        to = %plan.walkable[plan.walkable.len() - 1],
+        "tcgcsv backfill: filling gap days"
+    );
+    put_running(
+        db,
+        started,
+        None,
+        &format!("filling {} gap days", plan.walkable.len()),
+        0,
+    )
+    .await?;
 
-    let started = existing.and_then(|s| s.started_at).unwrap_or_else(Utc::now);
-    if start > today {
-        // Nothing left to do (an already-finished window resumed, or cap already met).
-        finish(db, started, "no archive days in range", 0).await?;
-        return Ok(());
-    }
-
-    tracing::info!(from = %start, to = %today, "tcgcsv backfill: walking price archives");
-    put_running(db, started, None, &format!("starting at {start}"), 0).await?;
-
-    // Live terminal progress: a determinate bar over every candidate archive day in
-    // `[start, today]` (incl. the days with no archive, which still count as one step),
-    // with a running backfilled-row tally (see `super::progress`). `start <= today` is
-    // guaranteed by the guard above, so the length is at least 1.
-    let total_days = (today - start).num_days().max(0) as u64 + 1;
-    let progress = SyncProgress::start_backfill(total_days);
+    // Live terminal progress: a determinate bar over every gap day (incl. the days
+    // with no archive, which still count as one step), with a running backfilled-row
+    // tally (see `super::progress`).
+    let progress = SyncProgress::start_backfill(plan.walkable.len() as u64);
 
     let mut total_rows: i64 = 0;
-    let mut date = start;
-    while date <= today {
+    for date in plan.walkable {
         tokio::time::sleep(REQUEST_SPACING).await;
 
         match super::client::fetch_archive(http, &base_url, user_agent, date).await {
@@ -145,13 +161,16 @@ async fn run_inner(
                 tracing::debug!(date = %date, rows = rows_written, "tcgcsv day backfilled");
             }
             Ok(None) => {
+                // A day TCGCSV never published stays a zero-count gap, so a later
+                // run probes it again — one cheap 404 per run.
                 tracing::debug!(date = %date, "tcgcsv: no archive for day (404), skipping");
             }
             Err(err) => return Err(err),
         }
 
-        // Record progress after every day (incl. a 404 day) so a crash resumes at
-        // the next date rather than re-fetching the whole range.
+        // Record the last walked day after every step (incl. a 404 day) — pure
+        // observability now: a crash needs no cursor, since a filled day stops
+        // being a gap on the next run's plan.
         put_running(
             db,
             started,
@@ -162,7 +181,6 @@ async fn run_inner(
         .await?;
         progress.inc();
         progress.set_count(total_rows.max(0) as u64);
-        date += chrono::Duration::days(1);
     }
 
     // Clear the progress bar before the completion line so it prints cleanly.
@@ -174,7 +192,7 @@ async fn run_inner(
         total_rows,
     )
     .await?;
-    tracing::info!(rows = total_rows, "tcgcsv price backfill complete");
+    tracing::info!(rows = total_rows, "tcgcsv price backfill pass complete");
     Ok(())
 }
 
@@ -429,9 +447,10 @@ async fn load_product_map(db: &DatabaseConnection) -> Result<HashMap<i64, i32>, 
 //
 // The load / upsert / mark-error mechanics are shared in `catalog::ingest_state`;
 // `put_running` and `finish` are thin backfill-specific wrappers over its `put`.
-// `last_date` is stored in `source_updated_at` as the resume cursor (the last completed
-// archive date), and `rows_total` is the cumulative history-row count, clamped into the
-// `i32` column.
+// The row is pure observability now (the gap-aware walk re-plans from the history
+// tables themselves): `last_date` lands in `source_updated_at` as the last walked
+// archive day, and `rows_total` is the cumulative history-row count, clamped into
+// the `i32` column.
 
 async fn put_running(
     db: &DatabaseConnection,
@@ -465,8 +484,9 @@ async fn finish(
     detail: &str,
     rows_total: i64,
 ) -> Result<(), BackfillError> {
-    // Preserve the resume cursor and the cumulative row count already stored (a fresh
-    // read avoids clobbering them when this run added nothing, e.g. a resumed finish).
+    // Preserve the last-walked day and the cumulative row count already stored (a
+    // fresh read avoids clobbering them when this run added nothing, e.g. the
+    // no-gap fast path).
     let existing = ingest_state::load(db, GAME, DATASET).await?;
     let last = existing.as_ref().and_then(|s| s.source_updated_at.clone());
     let total = rows_total.max(existing.map(|s| i64::from(s.cards_imported)).unwrap_or(0));

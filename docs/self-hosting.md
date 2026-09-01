@@ -261,7 +261,7 @@ the same `cf-cache-status` has very different causes:
 > TTLs hand-synced to the code. Prefer the first two.
 
 A `BYPASS` on `/api/mirror/*` is worth catching early: it makes every self-host's dataset
-pull — and especially the ~900-day archive walk of the one-time price backfill
+pull — and especially the ~900-day first-run archive walk of the price backfill
 (`PRICE_BACKFILL_ENABLED`, see [`operations.md`](./operations.md)) — miss the edge and hit
 your origin, which then re-fetches each file from the upstream under *your* User-Agent and
 IP. Cached, the edge absorbs those repeats and the upstream is hit about once per file.
