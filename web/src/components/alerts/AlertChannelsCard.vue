@@ -415,7 +415,7 @@ async function onTestAll() {
               <div class="space-y-0.5">
                 <Label for="set-release" class="font-medium">New set releases</Label>
                 <p class="text-muted-foreground text-xs">
-                  One heads-up per new set (e.g. an upcoming expansion), not per product.
+                  One heads-up per new set (e.g. an upcoming expansion or box set), not per product.
                 </p>
               </div>
             </div>

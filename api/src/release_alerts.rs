@@ -23,7 +23,9 @@
 //! - **Regular sets** carry `card_sets.released_at` directly. A single notification per set
 //!   (the theme), never per sealed product: top-level sets only (`parent_set_code IS NULL`, so
 //!   an expansion's tied Commander/token child sets fold into the one theme), a curated set-type
-//!   allow-list, non-digital, and never the continuously-restocked Secret Lair line.
+//!   allow-list, non-digital, and never the continuously-restocked `sld` set itself. The
+//!   allow-list includes `box`: a standalone Secret Lair set (The Zeta Set, `slz`) is filed as a
+//!   top-level `box` set with no `sld` parent, so this path is the only one that ever sees it.
 //!
 //! Memory stays O(batch): the opted-in users are keyset-paginated by `alert_channels.id`, and
 //! the notified-ledger lookup + delivery run per page — nothing loads every subscriber at once.
@@ -59,8 +61,16 @@ const USER_BATCH: u64 = 2_000;
 
 /// The set types a "new set release" heads-up covers: the major retail themes a collector
 /// would want a heads-up for. Deliberately excludes the noise (tokens, promos, memorabilia,
-/// the Secret Lair `box` line, digital-only alchemy, minigames, …) so the notification is a
-/// real release, not a same-day accessory printing.
+/// digital-only alchemy, minigames, …) so the notification is a real release, not a same-day
+/// accessory printing.
+///
+/// `box` is in the list because it is how Scryfall files a **standalone Secret Lair set**: The
+/// Zeta Set (`slz`, 2026-09-02) is a top-level `box` set with no `sld` parent, so the per-drop
+/// path (which reads `sld` cards only) never saw it and, without `box` here, neither did this
+/// one — nobody was told. The `sld` set itself stays out by code (its drops notify per-drop),
+/// its spin-offs (`slu`, `slc`, `slp`) by their `sld` parent; the remaining top-level `box`
+/// sets are a few retail products a year (Game Night, Guild Kits, Challenger Decks), each a
+/// release a collector would want a heads-up for.
 const NOTIFY_SET_TYPES: &[&str] = &[
     "core",
     "expansion",
@@ -68,6 +78,7 @@ const NOTIFY_SET_TYPES: &[&str] = &[
     "draft_innovation",
     "masters",
     "funny",
+    "box",
 ];
 
 /// Which kind of upcoming release a heads-up is for. Determines the opt-in flag it reads, the
@@ -334,7 +345,8 @@ async fn upcoming_sld_drops(db: &DatabaseConnection, from: &str, to: &str) -> Ve
 
 /// Regular sets releasing inside `[from, to]`: one entry per theme. Top-level sets only (so an
 /// expansion's tied child sets don't each notify), a curated set-type allow-list, non-digital,
-/// and never the Secret Lair line (handled per-drop above).
+/// and never the `sld` set itself (handled per-drop above) — a standalone Secret Lair set under
+/// its own code (`slz`) is a top-level `box` set and notifies here like any other set.
 async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<UpcomingRelease> {
     let rows: Vec<card_set::Model> = match CardSet::find()
         .filter(card_set::Column::ReleasedAt.gte(from))
@@ -600,8 +612,10 @@ mod tests {
         assert_eq!(ledger_count(&db).await, 1);
     }
 
-    /// A regular set releasing tomorrow notifies an opted-in user; a set releasing outside the
-    /// window, a non-notifiable set type, and a Secret Lair `box` set are all skipped.
+    /// A regular set releasing tomorrow notifies an opted-in user, as does a top-level `box` set
+    /// (how a standalone Secret Lair set like The Zeta Set is filed); a set releasing outside
+    /// the window, a non-notifiable set type, a tied child set, the `sld` set itself, and a
+    /// Secret Lair spin-off parented to `sld` are all skipped.
     #[tokio::test]
     async fn set_release_notifies_top_level_only_and_windows() {
         let db = crate::test_support::migrated_memory_db().await;
@@ -618,6 +632,42 @@ mod tests {
             &day(1, today),
             false,
             None,
+        )
+        .await;
+        // Releasing tomorrow, a top-level `box` set — the shape Scryfall gives a standalone
+        // Secret Lair set (The Zeta Set, `slz`, has no `sld` parent) → notifies.
+        insert_set(
+            &db,
+            "tbox",
+            "Test Box Set",
+            Some("box"),
+            &day(1, today),
+            false,
+            None,
+        )
+        .await;
+        // The `sld` set itself, also a top-level `box` set → skipped by code (its drops are
+        // notified per-drop, never as one set).
+        insert_set(
+            &db,
+            "sld",
+            "Secret Lair Drop",
+            Some("box"),
+            &day(1, today),
+            false,
+            None,
+        )
+        .await;
+        // A `box` spin-off parented to `sld` (the `slu` / `slc` shape) → folds into its parent,
+        // skipped.
+        insert_set(
+            &db,
+            "tslu",
+            "Secret Lair: Test Spin-off",
+            Some("box"),
+            &day(1, today),
+            false,
+            Some("sld"),
         )
         .await;
         // Releasing tomorrow but a token set → skipped (not in the allow-list).
@@ -666,13 +716,19 @@ mod tests {
         )
         .await;
 
+        let texts: Vec<String> = mailbox.emails().iter().map(|e| e.text.clone()).collect();
         assert_eq!(
-            mailbox.emails().len(),
-            1,
-            "only the top-level expansion notifies"
+            texts.len(),
+            2,
+            "the top-level expansion and the top-level box set notify: {texts:?}"
         );
-        assert!(mailbox.emails()[0].text.contains("Test Expansion"));
-        assert_eq!(ledger_count(&db).await, 1);
+        assert!(texts.iter().any(|t| t.contains("Test Expansion")));
+        assert!(texts.iter().any(|t| t.contains("Test Box Set")));
+        assert!(
+            texts.iter().all(|t| !t.contains("Secret Lair")),
+            "neither `sld` itself nor an `sld`-parented spin-off notifies as a set: {texts:?}"
+        );
+        assert_eq!(ledger_count(&db).await, 2);
     }
 
     /// A user who didn't opt into a kind gets nothing for it.

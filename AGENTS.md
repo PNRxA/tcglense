@@ -461,7 +461,11 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `released_at` among its cards grouped by the runtime drop table; a set's is
   `card_sets.released_at`. Regular sets are **one notification per theme** — top-level only
   (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
-  handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
+  handle that per-drop). **`box` is on that allow-list on purpose:** a standalone Secret Lair
+  set (The Zeta Set, `slz`) is filed as a top-level `box` set with no `sld` parent, so the
+  per-drop path — which reads `sld` cards only — never sees it, and the set path is the only
+  heads-up it can get; the older spin-offs (`slu`, `slc`, `slp`) stay out via their `sld`
+  parent. Session-only channel settings, like price alerts; the two flags ride
   the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
 - **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
   caller's own rows, grouped so a second tool adds a path segment rather than a new top-level
