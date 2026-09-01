@@ -117,11 +117,19 @@ discriminator column; the catalog layer + routes are generic. Adding a TCG = add
 `Game` to `catalog::GAMES`, a provider module (like `scryfall/`), and one arm each
 in `catalog::refresh_all` (live import) and `catalog::seed_all` (offline dummy seed).
 On startup `tasks::start` spawns `catalog::refresh_all` in the background (gated by
-`SYNC_ON_STARTUP`) so the server is up immediately, then re-runs it on a fixed
-interval (`SYNC_INTERVAL_HOURS`, default 24 = daily) to pick up newer prices/sets;
-the import streams the bulk file with bounded memory and **skips re-import when the
-provider's `updated_at` is unchanged** (`ingest_state.source_updated_at`), so a tick
-with no upstream change is cheap. When `SEED_DUMMY_DATA` is set, `tasks::start`
+`SYNC_ON_STARTUP`) so the server is up immediately, then re-runs it every
+`SYNC_INTERVAL_HOURS` (default 24 = daily) to pick up newer prices/sets. The schedule
+is anchored to the **last completed tick** persisted in `ingest_state`
+(`catalog::sync_state`), not to boot time: a restart soon after a success defers the
+first attempt by the interval's remainder, and an *incomplete* attempt — the leader
+lock held by a peer, a provider pass erroring, or the tick body over its watchdog
+deadline — records nothing and retries after minutes rather than a full interval
+(see `tasks::spawn_card_sync`). Each tick
+captures the daily price snapshot **before** the import as insurance and again after
+it, so a killed or hung import can't cost the day's history row. The import streams
+the bulk file with bounded memory and **skips re-import when the provider's
+`updated_at` is unchanged** (`ingest_state.source_updated_at`), so a tick with no
+upstream change is cheap. When `SEED_DUMMY_DATA` is set, `tasks::start`
 instead **awaits** `catalog::seed_all` (no network, no images) to populate a small
 deterministic offline catalog and skips all syncing.
 

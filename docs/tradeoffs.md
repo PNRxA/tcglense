@@ -678,8 +678,12 @@ catalog) is planned but not implemented.
   cards is recorded as `error` (not version-locked) so it retries next boot. A
   background task re-runs the import every `SYNC_INTERVAL_HOURS` (default 24 = daily)
   to pick up newer prices/sets without a restart; because it's version-gated, a tick
-  with no upstream change costs just the small bulk-data catalog fetch. Set
-  `SYNC_INTERVAL_HOURS=0` to keep the old startup-only behaviour. `default_cards` is
+  with no upstream change costs just the small bulk-data catalog fetch. The tick
+  schedule anchors to the last *completed* tick (persisted in `ingest_state`,
+  `catalog::sync_state`): a restart soon after a success defers the re-import by the
+  interval's remainder, while a tick that errored or timed out records **nothing** and
+  retries within the hour — so restarting after a failure still forces an immediate
+  re-import. Set `SYNC_INTERVAL_HOURS=0` to keep the old startup-only behaviour. `default_cards` is
   English-or-sole-language and **paper-only**
   (digital Arena/MTGO printings filtered out); switch datasets/filters in `scryfall/`.
   The parser assumes Scryfall's one-object-per-line bulk format; per-line length
