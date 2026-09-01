@@ -234,7 +234,7 @@ async fn log_holder(conn: &mut PgConnection, key: i64) {
                 a.client_addr::text, a.application_name \
          FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid \
          WHERE l.locktype = 'advisory' AND l.granted \
-           AND l.classid = $1::oid AND l.objid = $2::oid AND l.objsubid = 1",
+           AND l.classid::bigint = $1 AND l.objid::bigint = $2 AND l.objsubid = 1",
     )
     .bind(classid)
     .bind(objid)
