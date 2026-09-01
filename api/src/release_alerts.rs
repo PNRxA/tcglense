@@ -25,6 +25,13 @@
 //!   an expansion's tied Commander/token child sets fold into the one theme), a curated set-type
 //!   allow-list, non-digital, and never the continuously-restocked `sld` set itself. `box` is on
 //!   that allow-list — see [`NOTIFY_SET_TYPES`] for why (The Zeta Set).
+//! - **A set that is itself a Secret Lair release** — code carrying the family's `sl` prefix,
+//!   filed as its own top-level set the way The Zeta Set (`slz`) was — is found by the set path
+//!   but is worded as a Secret Lair drop and delivered to **either** opt-in: the Secret Lair
+//!   subscribers who expect it and the set subscribers whose filter matched it
+//!   ([`ReleaseKind::SecretLairSet`]). A user holding both opt-ins gets it **once**: the
+//!   audience is one `OR` over the two flags on the user's single `alert_channels` row, and the
+//!   ledger is keyed by the release (`set` / code), never by the opt-in that matched.
 //!
 //! Memory stays O(batch): the opted-in users are keyset-paginated by `alert_channels.id`, and
 //! the notified-ledger lookup + delivery run per page — nothing loads every subscriber at once.
@@ -34,7 +41,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set,
 };
 
 use crate::email::Emailer;
@@ -48,6 +56,11 @@ const GAME: &str = crate::scryfall::GAME;
 
 /// The Secret Lair set code (lowercased, as cards store it).
 const SLD_SET_CODE: &str = "sld";
+
+/// The set-code prefix Scryfall gives the Secret Lair family (`sld`, `slu`, `slc`, `slp`, `slx`,
+/// `slz`, …). A set the set path admits whose code carries it is a Secret Lair release of its
+/// own and is delivered as one — see [`is_secret_lair_set_code`].
+const SECRET_LAIR_CODE_PREFIX: &str = "sl";
 
 /// How many days ahead of a release to notify. `1` = "a day before scheduled release"; the
 /// window is inclusive of today too, so a run that missed yesterday still catches a release on
@@ -83,14 +96,19 @@ const NOTIFY_SET_TYPES: &[&str] = &[
     "box",
 ];
 
-/// Which kind of upcoming release a heads-up is for. Determines the opt-in flag it reads, the
-/// ledger `kind` it dedups on, and the message wording.
+/// Which kind of upcoming release a heads-up is for. Determines the opt-ins it is delivered to,
+/// the ledger `kind` it dedups on, and the message wording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReleaseKind {
-    /// A Secret Lair drop, keyed by its slug.
+    /// A Secret Lair drop inside `sld`, keyed by its slug.
     SldDrop,
     /// A regular set, keyed by its code.
     Set,
+    /// A set that is itself a Secret Lair release — an `sl`-prefixed code filed as its own
+    /// top-level set, the way The Zeta Set (`slz`) was — keyed by its code. Ledgered as a
+    /// `set` (the ledger dedups on the release, never on the opt-in that matched) but worded as
+    /// a drop and delivered to either opt-in.
+    SecretLairSet,
 }
 
 impl ReleaseKind {
@@ -98,17 +116,30 @@ impl ReleaseKind {
     fn as_str(self) -> &'static str {
         match self {
             ReleaseKind::SldDrop => "sld_drop",
-            ReleaseKind::Set => "set",
+            ReleaseKind::Set | ReleaseKind::SecretLairSet => "set",
         }
     }
 
-    /// The `alert_channels` opt-in column gating this kind.
-    fn enabled_column(self) -> alert_channel::Column {
+    /// The subscriber filter over `alert_channels` this kind is delivered to. A user is one row
+    /// there, so the `OR` audience selects — and delivers to — a user holding both opt-ins once.
+    fn audience(self) -> Condition {
+        let secret_lair = alert_channel::Column::SldReleaseEnabled.eq(true);
+        let sets = alert_channel::Column::SetReleaseEnabled.eq(true);
         match self {
-            ReleaseKind::SldDrop => alert_channel::Column::SldReleaseEnabled,
-            ReleaseKind::Set => alert_channel::Column::SetReleaseEnabled,
+            ReleaseKind::SldDrop => Condition::all().add(secret_lair),
+            ReleaseKind::Set => Condition::all().add(sets),
+            ReleaseKind::SecretLairSet => Condition::any().add(secret_lair).add(sets),
         }
     }
+}
+
+/// Whether a set the set path admitted is a Secret Lair release of its own, by the family's
+/// `sl` code prefix. Judged **after** the set filters, never instead of them: `sld` itself is
+/// out by code, its spin-offs (`slu`, `slc`, `slp`, `slx`) by their `sld` parent, and `slci` —
+/// The Lost Caverns of Ixalan's substitute cards, a `token` child set — by both type and
+/// parent, so the prefix only ever upgrades a set that would have notified anyway.
+fn is_secret_lair_set_code(code: &str) -> bool {
+    code.starts_with(SECRET_LAIR_CODE_PREFIX)
 }
 
 /// One upcoming release the evaluator may notify about, resolved to what a message needs.
@@ -142,36 +173,34 @@ pub async fn evaluate_all(
     let to = horizon.to_string();
 
     let sld = upcoming_sld_drops(db, &from, &to).await;
-    let sets = upcoming_sets(db, &from, &to).await;
+    let (secret_lair_sets, sets): (Vec<_>, Vec<_>) = upcoming_sets(db, &from, &to)
+        .await
+        .into_iter()
+        .partition(|release| release.kind == ReleaseKind::SecretLairSet);
 
-    deliver_kind(
-        db,
-        notify_http,
-        emailer,
-        email_globally_enabled,
-        public_site_url,
-        today,
-        ReleaseKind::SldDrop,
-        &sld,
-    )
-    .await;
-    deliver_kind(
-        db,
-        notify_http,
-        emailer,
-        email_globally_enabled,
-        public_site_url,
-        today,
-        ReleaseKind::Set,
-        &sets,
-    )
-    .await;
+    for (kind, releases) in [
+        (ReleaseKind::SldDrop, &sld),
+        (ReleaseKind::SecretLairSet, &secret_lair_sets),
+        (ReleaseKind::Set, &sets),
+    ] {
+        deliver_kind(
+            db,
+            notify_http,
+            emailer,
+            email_globally_enabled,
+            public_site_url,
+            today,
+            kind,
+            releases,
+        )
+        .await;
+    }
 }
 
-/// Deliver a kind's releases to its opted-in users, keyset-paginated over the subscribers so
-/// memory stays O(batch). Per page: load which (user, release) pairs are already in the ledger,
-/// then for each fresh pair deliver + record. Recording only on a successful delivery preserves
-/// the "retry next pass until a channel works" contract.
+/// Deliver a kind's releases to its audience ([`ReleaseKind::audience`]), keyset-paginated over
+/// the subscribers so memory stays O(batch). Per page: load which (user, release) pairs are
+/// already in the ledger, then for each fresh pair deliver + record. Recording only on a
+/// successful delivery preserves the "retry next pass until a channel works" contract.
 #[allow(clippy::too_many_arguments)]
 async fn deliver_kind(
     db: &DatabaseConnection,
@@ -186,7 +215,6 @@ async fn deliver_kind(
     if releases.is_empty() {
         return;
     }
-    let flag = kind.enabled_column();
     let ref_keys: Vec<String> = releases.iter().map(|r| r.ref_key.clone()).collect();
 
     let mut after: i32 = 0;
@@ -195,7 +223,7 @@ async fn deliver_kind(
             .select_only()
             .column(alert_channel::Column::Id)
             .column(alert_channel::Column::UserId)
-            .filter(flag.eq(true))
+            .filter(kind.audience())
             .filter(alert_channel::Column::Id.gt(after))
             .order_by_asc(alert_channel::Column::Id)
             .limit(USER_BATCH)
@@ -348,7 +376,9 @@ async fn upcoming_sld_drops(db: &DatabaseConnection, from: &str, to: &str) -> Ve
 /// Regular sets releasing inside `[from, to]`: one entry per theme. Top-level sets only (so an
 /// expansion's tied child sets don't each notify), a curated set-type allow-list, non-digital,
 /// and never the `sld` set itself (handled per-drop above). A release filed as its own top-level
-/// `box` set (`slz`, The Zeta Set) notifies here like any other set — see [`NOTIFY_SET_TYPES`].
+/// `box` set (`slz`, The Zeta Set) notifies here like any other set — see [`NOTIFY_SET_TYPES`] —
+/// and, carrying the Secret Lair code prefix, is classified [`ReleaseKind::SecretLairSet`] so it
+/// reaches the Secret Lair opt-in too.
 async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<UpcomingRelease> {
     let rows: Vec<card_set::Model> = match CardSet::find()
         .filter(card_set::Column::ReleasedAt.gte(from))
@@ -372,8 +402,13 @@ async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<Upc
     rows.into_iter()
         .filter_map(|set| {
             let release_date = set.released_at?;
+            let kind = if is_secret_lair_set_code(&set.code) {
+                ReleaseKind::SecretLairSet
+            } else {
+                ReleaseKind::Set
+            };
             Some(UpcomingRelease {
-                kind: ReleaseKind::Set,
+                kind,
                 ref_key: set.code,
                 game: set.game,
                 display_name: set.name,
@@ -440,8 +475,9 @@ async fn record_sent(
 }
 
 /// Build the heads-up message for one release: a title, a body with day-aware wording, and a
-/// link to the set's page in the SPA (both kinds live under the set page — a drop under the
-/// Secret Lair set).
+/// link to the set's page in the SPA — an `sld` drop under the Secret Lair set, a set (Secret
+/// Lair-coded or not) under its own. A Secret Lair-coded set reads as a drop, since that is
+/// what its subscribers signed up for and the title they may filter on.
 fn build_notification(
     release: &UpcomingRelease,
     today: NaiveDate,
@@ -454,6 +490,14 @@ fn build_notification(
             title: format!("Secret Lair drop: {}", release.display_name),
             body: format!("✨ The Secret Lair drop “{}” {when}.", release.display_name),
             url: Some(format!("{base}/cards/{}/sets/{SLD_SET_CODE}", release.game)),
+        },
+        ReleaseKind::SecretLairSet => AlertNotification {
+            title: format!("Secret Lair drop: {}", release.display_name),
+            body: format!("✨ The Secret Lair drop “{}” {when}.", release.display_name),
+            url: Some(format!(
+                "{base}/cards/{}/sets/{}",
+                release.game, release.ref_key
+            )),
         },
         ReleaseKind::Set => AlertNotification {
             title: format!("New set: {}", release.display_name),
@@ -516,6 +560,20 @@ mod tests {
             release_phrase("not-a-date", today),
             "releases on not-a-date"
         );
+    }
+
+    /// The Secret Lair family is recognised by its `sl` code prefix and nothing else — the set
+    /// filters, not this test, keep `sld` and its child sets out.
+    #[test]
+    fn secret_lair_set_code_is_the_sl_prefix() {
+        assert!(is_secret_lair_set_code("slz"));
+        assert!(is_secret_lair_set_code("sld"));
+        assert!(is_secret_lair_set_code("slu"));
+        assert!(!is_secret_lair_set_code("tbox"));
+        assert!(!is_secret_lair_set_code("s"));
+        assert!(!is_secret_lair_set_code(""));
+        // Case follows the catalog (codes are stored lowercased).
+        assert!(!is_secret_lair_set_code("SLZ"));
     }
 
     /// Insert a user + an alert-channel row opted into the given release kinds, with the email
@@ -761,6 +819,136 @@ mod tests {
             "SLD opt-out gets no SLD heads-up"
         );
         assert_eq!(ledger_count(&db).await, 0);
+    }
+
+    /// A set that is itself a Secret Lair release (an `sl`-coded top-level set, The Zeta Set's
+    /// shape) is worded as a drop and reaches the Secret Lair opt-in, the set opt-in, and — once,
+    /// not twice — a user holding both; a plain set still reaches only the set opt-in; and the
+    /// prefix never rescues a set the filters drop (`slci`, a `token` child set). A second pass
+    /// re-delivers nothing.
+    #[tokio::test]
+    async fn secret_lair_coded_set_reaches_either_opt_in_once() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let now: DateTimeUtc = "2026-09-01T09:00:00Z".parse().unwrap();
+        let today = now.date_naive();
+        subscriber(&db, "sld-only@example.com", true, false).await;
+        subscriber(&db, "sets-only@example.com", false, true).await;
+        subscriber(&db, "both@example.com", true, true).await;
+
+        // The Zeta Set's shape: `sl`-coded, type `box`, top-level, releasing tomorrow.
+        insert_set(
+            &db,
+            "slz",
+            "The Zeta Set",
+            Some("box"),
+            &day(1, today),
+            false,
+            None,
+        )
+        .await;
+        // A plain expansion releasing tomorrow → the set opt-in only.
+        insert_set(
+            &db,
+            "tst",
+            "Test Expansion",
+            Some("expansion"),
+            &day(1, today),
+            false,
+            None,
+        )
+        .await;
+        // `sl`-coded but a `token` child set (the `slci` shape) → dropped by the filters; the
+        // prefix must not override them.
+        insert_set(
+            &db,
+            "slci",
+            "Test Substitute Cards",
+            Some("token"),
+            &day(1, today),
+            false,
+            Some("tst"),
+        )
+        .await;
+
+        let http = reqwest::Client::new();
+        let mailbox = Mailbox::default();
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+
+        let emails = mailbox.emails();
+        let texts_to = |to: &str| -> Vec<String> {
+            emails
+                .iter()
+                .filter(|e| e.to == to)
+                .map(|e| e.text.clone())
+                .collect()
+        };
+
+        let sld_only = texts_to("sld-only@example.com");
+        assert_eq!(
+            sld_only.len(),
+            1,
+            "the Secret Lair opt-in gets the Secret Lair-coded set and nothing else: {sld_only:?}"
+        );
+        assert!(
+            sld_only[0].contains("The Secret Lair drop “The Zeta Set” releases tomorrow"),
+            "worded as a drop: {}",
+            sld_only[0]
+        );
+        assert!(
+            sld_only[0].contains("https://x.test/cards/mtg/sets/slz"),
+            "links to the set's own page, not `sld`: {}",
+            sld_only[0]
+        );
+
+        let sets_only = texts_to("sets-only@example.com");
+        assert_eq!(
+            sets_only.len(),
+            2,
+            "the set opt-in gets both sets: {sets_only:?}"
+        );
+        assert!(sets_only.iter().any(|t| t.contains("The Zeta Set")));
+        assert!(sets_only.iter().any(|t| t.contains("Test Expansion")));
+
+        let both = texts_to("both@example.com");
+        assert_eq!(
+            both.len(),
+            2,
+            "both opt-ins: the Secret Lair-coded set once, the plain set once: {both:?}"
+        );
+        assert_eq!(
+            both.iter().filter(|t| t.contains("The Zeta Set")).count(),
+            1,
+            "holding both opt-ins never doubles the heads-up: {both:?}"
+        );
+        assert!(both.iter().any(|t| t.contains("Test Expansion")));
+
+        assert!(
+            emails.iter().all(|e| !e.text.contains("Substitute")),
+            "the prefix never rescues a filtered-out set: {emails:?}"
+        );
+        assert_eq!(emails.len(), 5);
+        assert_eq!(ledger_count(&db).await, 5);
+
+        // Second pass: everything is in the ledger, nothing re-delivers.
+        evaluate_all(
+            &db,
+            &http,
+            &Emailer::Capture(mailbox.clone()),
+            true,
+            "https://x.test",
+            now,
+        )
+        .await;
+        assert_eq!(mailbox.emails().len(), 5, "no re-notify on a later pass");
+        assert_eq!(ledger_count(&db).await, 5);
     }
 
     /// A set releasing **today** — the inclusive low bound of the look-ahead window — is caught

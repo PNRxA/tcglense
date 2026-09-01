@@ -398,7 +398,7 @@ async function onTestAll() {
               <div class="space-y-0.5">
                 <Label for="sld-release" class="font-medium">Secret Lair drops</Label>
                 <p class="text-muted-foreground text-xs">
-                  When a new Secret Lair drop is about to release.
+                  When a new Secret Lair drop, or a Secret Lair set of its own, is about to release.
                 </p>
               </div>
             </div>
