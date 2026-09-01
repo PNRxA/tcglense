@@ -246,30 +246,58 @@ struct BackfillConfig {
 /// periodic card-sync ticker. The backfill is internally gated (an `ingest_state`
 /// row), so re-invoking it after it has completed is a cheap no-op. Errors are
 /// logged, never fatal.
+///
+/// The walk itself is leader-gated by the [`crate::db_lock::PRICE_BACKFILL`] advisory
+/// lock for its whole duration: its internal completion gate stays open while the
+/// (resumable, possibly multi-hour) walk is in progress, so without a lock, N replicas
+/// booting with a prior sync recorded would all walk TCGCSV's daily archives at once —
+/// interleaving the shared resume cursor, and a slow walker's `mark_error` could even
+/// un-complete a faster walker's finished run. Skipping when a peer holds the lock is
+/// correct: the job is global and one-time; the holder finishes it, or the next boot
+/// resumes it.
 fn spawn_price_backfill(
     db: DatabaseConnection,
     http: Client,
     cfg: BackfillConfig,
     source: SyncSource,
     analytics: Arc<AnalyticsCache>,
+    database_url: String,
 ) {
     tokio::spawn(async move {
+        let Some(lease) = crate::db_lock::AdvisoryLock::try_acquire(
+            &db,
+            &database_url,
+            crate::db_lock::PRICE_BACKFILL,
+        )
+        .await
+        else {
+            tracing::info!("tcgcsv price backfill skipped: another replica is backfilling");
+            return;
+        };
         match crate::tcgcsv::backfill::run(&db, &http, &cfg.user_agent, cfg.days, &source).await {
             // A completed backfill rewrote history rows: orphan cached analytics (#413).
             Ok(()) => bump_all_price_epochs(&analytics).await,
             Err(err) => tracing::error!(error = %err, "tcgcsv price backfill failed"),
         }
+        lease.release().await;
     });
 }
 
-/// How soon an incomplete card-sync tick — the leader lock lost to a peer, or the tick
-/// body over its deadline — is retried. Short enough that a transient blocker (a peer
-/// mid-sync during a deploy overlap, a lock stranded on a dying leader's session until
-/// the lease keepalives reap it) costs minutes of snapshot delay, where the old
-/// boot-anchored ticker waited a whole `SYNC_INTERVAL_HOURS` — which turned one unlucky
-/// restart into a lost snapshot day, and a nightly same-time restart into the 2026-08
-/// week-long outage.
+/// How soon a tick that lost the leader lock to a peer is retried. A lock probe is one
+/// dedicated dial + one query — no provider traffic — so retrying often is cheap, and a
+/// transient blocker (a peer mid-sync during a deploy overlap, a lock stranded on a
+/// dying leader's session until the lease keepalives reap it) costs minutes of snapshot
+/// delay, where the old boot-anchored ticker waited a whole `SYNC_INTERVAL_HOURS` —
+/// which turned one unlucky restart into a lost snapshot day, and a nightly same-time
+/// restart into the 2026-08 week-long outage.
 const SYNC_RETRY_DELAY: Duration = Duration::from_secs(15 * 60);
+
+/// How soon a tick that ran but did **not** complete — a provider pass errored, or the
+/// body hit [`SYNC_TICK_DEADLINE`] — is retried. Longer than [`SYNC_RETRY_DELAY`]
+/// because this retry re-attempts real provider fetches (potentially the ~500 MB bulk
+/// download): hourly bounds the load on an upstream that is down for the day, while
+/// still healing ~24x faster than waiting out the full interval.
+const SYNC_FAILURE_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
 
 /// Watchdog ceiling on one card-sync tick body (snapshot + refresh + snapshot). Even a
 /// first full import finishes well inside this; the deadline exists so a wedged await —
@@ -286,8 +314,13 @@ const SYNC_TICK_DEADLINE: Duration = Duration::from_secs(4 * 60 * 60);
 /// anything long-running or killable happens, exactly what a version-gated tick records
 /// anyway — then refresh from the providers, then snapshot again so fresh prices land in
 /// today's row (the history upsert's changed-guard touches only rows whose prices moved).
-/// Returns whether the body ran to completion: a timed-out tick must not be recorded as a
-/// completed sync and must not spawn the one-time backfill/fingerprint follow-ups.
+///
+/// Returns whether the tick truly completed: the body finished inside the deadline AND
+/// every provider pass succeeded (`refresh_all`'s flag). Both failure modes must retry
+/// soon, must not be recorded as a completed sync — a stamped "completion" that imported
+/// nothing would freeze the catalog for a full interval with restarts as no-ops, since
+/// the boot deferral reads that stamp — and must not spawn the one-time
+/// backfill/fingerprint follow-ups.
 async fn run_sync_tick(
     db: &DatabaseConnection,
     http: &Client,
@@ -296,11 +329,13 @@ async fn run_sync_tick(
 ) -> bool {
     let body = async {
         catalog::capture_snapshots(db).await;
-        catalog::refresh_all(db, http, tcgcsv_user_agent, source).await;
+        let providers_succeeded = catalog::refresh_all(db, http, tcgcsv_user_agent, source).await;
         catalog::snapshot_all(db).await;
+        providers_succeeded
     };
     match tokio::time::timeout(SYNC_TICK_DEADLINE, body).await {
-        Ok(()) => true,
+        // Provider failures were already logged (per-dataset) inside refresh_all.
+        Ok(providers_succeeded) => providers_succeeded,
         Err(_) => {
             tracing::error!(
                 deadline_secs = SYNC_TICK_DEADLINE.as_secs(),
@@ -360,19 +395,33 @@ fn spawn_card_sync(
             )
             .await;
             let completed = run_sync_tick(&db, &http, &tcgcsv_user_agent, &source).await;
-            // Prices/history may have changed even on a timed-out attempt (the import
+            // Prices/history may have changed even on an incomplete attempt (the import
             // flushes in batches): orphan cached analytics either way (#413).
             bump_all_price_epochs(&analytics).await;
             lease.release().await;
             if completed {
                 crate::catalog::sync_state::record_completed(&db).await;
                 if let Some(cfg) = backfill.take() {
-                    spawn_price_backfill(db.clone(), http.clone(), cfg, source.clone(), analytics);
+                    spawn_price_backfill(
+                        db.clone(),
+                        http.clone(),
+                        cfg,
+                        source.clone(),
+                        analytics,
+                        database_url,
+                    );
                 }
                 // Cards now exist, so the opt-in fingerprint build can walk them.
                 if let Some(cfg) = fingerprint.take() {
                     spawn_fingerprint_build(db.clone(), cfg);
                 }
+            } else {
+                // No later tick exists in this posture, so just say why nothing more
+                // will happen this boot (the next boot re-attempts immediately —
+                // nothing was recorded).
+                tracing::warn!(
+                    "startup card sync incomplete; skipping the one-time follow-ups this boot"
+                );
             }
             return;
         }
@@ -388,6 +437,7 @@ fn spawn_card_sync(
                     cfg,
                     source.clone(),
                     analytics.clone(),
+                    database_url.clone(),
                 );
             }
             if let Some(cfg) = fingerprint.take() {
@@ -425,7 +475,7 @@ fn spawn_card_sync(
                 continue;
             };
             let completed = run_sync_tick(&db, &http, &tcgcsv_user_agent, &source).await;
-            // Prices/history may have changed even on a timed-out attempt (the import
+            // Prices/history may have changed even on an incomplete attempt (the import
             // flushes in batches): orphan cached analytics either way (#413).
             bump_all_price_epochs(&analytics).await;
             lease.release().await;
@@ -433,7 +483,15 @@ fn spawn_card_sync(
                 crate::catalog::sync_state::record_completed(&db).await;
                 interval
             } else {
-                SYNC_RETRY_DELAY
+                // Provider error or deadline: retry re-attempts real fetches, so back
+                // off further than the lock-probe retry. Nothing is recorded, so a
+                // restart still forces an immediate re-attempt (the operator lever
+                // docs/tradeoffs.md promises).
+                tracing::warn!(
+                    retry_secs = SYNC_FAILURE_RETRY_DELAY.as_secs(),
+                    "card-sync tick incomplete; retrying"
+                );
+                SYNC_FAILURE_RETRY_DELAY
             };
             if completed {
                 // After the first completed sync, cards carry their tcgplayer_id, so
@@ -446,6 +504,7 @@ fn spawn_card_sync(
                         cfg,
                         source.clone(),
                         analytics.clone(),
+                        database_url.clone(),
                     );
                 }
                 // Same one-time spawn for the opt-in fingerprint build (cards now exist

@@ -55,12 +55,23 @@ pub fn find(id: &str) -> Option<&'static Game> {
 /// descriptive UA TCGCSV requires; `source` decides whether each provider's dataset is
 /// pulled from the upstream service or a TCGLense mirror (see [`crate::datasets`]). A
 /// failure for one game/source is logged and does not abort the others.
+///
+/// Returns whether **every provider dataset pass succeeded** (a version-gated skip is a
+/// success). The sync loop records a completed tick — and with it the boot deferral and
+/// the full-interval sleep — only on `true`; an errored pass must instead retry soon,
+/// and must never persist a completion a restart would then defer against (a tick that
+/// imported nothing while stamping "complete" would freeze the catalog for a full
+/// interval with no operator lever — the review finding on the 2026-08 outage fix).
+/// The derived-price passes (foil enrichment/folds, precon values, SLD dates) stay
+/// log-only: they read data already in the DB, so the next successful tick re-derives
+/// them; only the passes that pull *upstream* data feed the flag.
 pub async fn refresh_all(
     db: &DatabaseConnection,
     client: &Client,
     tcgcsv_user_agent: &str,
     source: &crate::datasets::SyncSource,
-) {
+) -> bool {
+    let mut providers_succeeded = true;
     for game in GAMES {
         match game.id {
             crate::scryfall::GAME => {
@@ -93,6 +104,7 @@ pub async fn refresh_all(
                             error = ?err,
                             "scryfall bulk catalog fetch failed; skipping its datasets this tick"
                         );
+                        providers_succeeded = false;
                         None
                     }
                 };
@@ -100,6 +112,7 @@ pub async fn refresh_all(
                     && let Err(err) = crate::scryfall::refresh(db, client, source, catalog).await
                 {
                     tracing::error!(game = game.id, error = %err, "card data refresh failed");
+                    providers_succeeded = false;
                 }
                 // Copy each foil-★ variant's foil price onto its nonfoil base card (issue
                 // #209), so a consolidated foil holding values correctly. Runs every tick —
@@ -130,6 +143,7 @@ pub async fn refresh_all(
                         crate::scryfall::rulings::refresh(db, client, source, catalog).await
                 {
                     tracing::error!(game = game.id, error = %err, "card rulings refresh failed");
+                    providers_succeeded = false;
                 }
                 // Tagger art tags (issue #140): community "what's in the artwork" labels
                 // keyed by illustration_id, behind the `art:` search filter. Runs after
@@ -140,6 +154,7 @@ pub async fn refresh_all(
                         crate::scryfall::art_tags::refresh(db, client, source, catalog).await
                 {
                     tracing::error!(game = game.id, error = %err, "art tags refresh failed");
+                    providers_succeeded = false;
                 }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
@@ -147,12 +162,14 @@ pub async fn refresh_all(
                     crate::tcgcsv::ingest::refresh(db, client, tcgcsv_user_agent, source).await
                 {
                     tracing::error!(game = game.id, error = %err, "product data refresh failed");
+                    providers_succeeded = false;
                 }
                 // Sealed-product contents (MTGJSON): which sealed products each card is
                 // found in / can be pulled from. Runs last, after both cards + products
                 // exist to resolve its Scryfall-id / TCGplayer-id references against.
                 if let Err(err) = crate::mtgjson::ingest::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "sealed-contents refresh failed");
+                    providers_succeeded = false;
                 }
                 // Preconstructed-deck values (`precon_decks.price_cents`), folded from the
                 // live card prices. Runs after the sealed-contents sync above (which owns
@@ -186,6 +203,7 @@ pub async fn refresh_all(
             }
         }
     }
+    providers_succeeded
 }
 
 /// Capture today's daily price snapshot for every supported game, then refresh the
@@ -287,6 +305,25 @@ pub async fn maintain_price_history(db: &DatabaseConnection) {
                 tracing::warn!(table, error = %err, "post-capture VACUUM (ANALYZE) failed")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tick whose provider fetches all fail must report failure, so the sync loop
+    /// retries soon and never records a completion the boot deferral would then wait
+    /// out — a tick that imported nothing while stamping "complete" would freeze the
+    /// catalog for a full interval with restarts as no-ops (the review's confirmed
+    /// finding on the 2026-08 outage fix).
+    #[tokio::test]
+    async fn refresh_all_reports_failure_when_no_provider_is_reachable() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let client = Client::new();
+        // A mirror origin nothing listens on: every dataset fetch fails fast, offline.
+        let source = crate::datasets::SyncSource::new(false, "http://127.0.0.1:9");
+        assert!(!refresh_all(&db, &client, "tcglense-tests", &source).await);
     }
 }
 

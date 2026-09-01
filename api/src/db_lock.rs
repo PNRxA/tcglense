@@ -73,6 +73,13 @@ pub const ALERTS: i64 = KEY_NAMESPACE | 3;
 /// heads-ups), so a multi-replica deployment delivers each heads-up once, not per replica.
 pub const RELEASE_ALERTS: i64 = KEY_NAMESPACE | 4;
 
+/// Serialises the one-time TCGCSV historic price backfill for the walk's **whole
+/// duration** (held by the backfill task itself, not per tick): the backfill's internal
+/// `ingest_state` completion gate stays open while a resumable, possibly multi-hour walk
+/// is in progress, so without this lock several replicas booting together would all walk
+/// the daily archives at once and interleave the shared resume cursor.
+pub const PRICE_BACKFILL: i64 = KEY_NAMESPACE | 5;
+
 /// Human-readable name for a known lock key. Stamped into the dedicated connection's
 /// `application_name` (so `pg_stat_activity` names a holder as e.g. `tcglense-lock:card_sync`
 /// instead of an anonymous session) and used in the held-elsewhere log line.
@@ -82,6 +89,7 @@ fn key_name(key: i64) -> &'static str {
         CARD_SYNC => "card_sync",
         ALERTS => "alerts",
         RELEASE_ALERTS => "release_alerts",
+        PRICE_BACKFILL => "price_backfill",
         _ => "other",
     }
 }
@@ -283,6 +291,7 @@ mod tests {
         assert_eq!(key_parts(MIGRATIONS), (31847, 1275068417));
         assert_eq!(key_parts(ALERTS), (31847, 1275068419));
         assert_eq!(key_parts(RELEASE_ALERTS), (31847, 1275068420));
+        assert_eq!(key_parts(PRICE_BACKFILL), (31847, 1275068421));
     }
 
     /// SQLite: both acquisition forms are trivially held (single process — nothing

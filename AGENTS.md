@@ -656,15 +656,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `CARD_SYNC` advisory lock plus a boot-anchored 24h ticker cost a week of daily price
   snapshots). (1) The schedule anchors to the last *completed* tick persisted in
   `ingest_state` (`(all, sync_tick)` via `catalog::sync_state` — the status route pins to the
-  card-data dataset, so bookkeeping rows there never surface); a skipped or timed-out attempt
-  retries in minutes, never a full `SYNC_INTERVAL_HOURS`. (2) The tick body is bounded by
-  `SYNC_TICK_DEADLINE`, so a wedged await can't hold the leader lock forever. (3)
-  `capture_snapshots` runs **before** `refresh_all` and `snapshot_all` after it, so a killed
-  or hung import can't cost the day's history row. (4) A lock lease turns on server-side TCP
-  keepalives (a holder that dies without closing its socket is reaped in ~2 min) and a lost
-  `try_acquire` logs the holder from `pg_locks` — a `state=idle`, days-old holder is a zombie
-  for `pg_terminate_backend`. `record_completed` only after a *fully* completed body — stamping
-  a timed-out tick re-opens the day-long gap.
+  card-data dataset, so bookkeeping rows there never surface); a skipped, errored, or
+  timed-out attempt retries in minutes-to-an-hour, never a full `SYNC_INTERVAL_HOURS`. (2) The
+  tick body is bounded by `SYNC_TICK_DEADLINE`, so a wedged await can't hold the leader lock
+  forever. (3) `capture_snapshots` runs **before** `refresh_all` and `snapshot_all` after it,
+  so a killed or hung import can't cost the day's history row. (4) A lock lease turns on
+  server-side TCP keepalives (a holder that dies without closing its socket is reaped in
+  ~2 min) and a lost `try_acquire` logs the holder from `pg_locks` — a `state=idle`, days-old
+  holder is a zombie for `pg_terminate_backend`. `record_completed` **only when every provider
+  pass succeeded** (`refresh_all`'s flag): stamping an errored or timed-out tick would freeze
+  the catalog for a full interval with restarts as no-ops, since the boot deferral reads that
+  stamp. The one-time TCGCSV backfill holds its own `PRICE_BACKFILL` lock for the walk's whole
+  duration — its `ingest_state` gate stays open mid-walk, so unlocked concurrent boots would
+  interleave the resume cursor.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling
