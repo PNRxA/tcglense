@@ -23,9 +23,8 @@
 //! - **Regular sets** carry `card_sets.released_at` directly. A single notification per set
 //!   (the theme), never per sealed product: top-level sets only (`parent_set_code IS NULL`, so
 //!   an expansion's tied Commander/token child sets fold into the one theme), a curated set-type
-//!   allow-list, non-digital, and never the continuously-restocked `sld` set itself. The
-//!   allow-list includes `box`: a standalone Secret Lair set (The Zeta Set, `slz`) is filed as a
-//!   top-level `box` set with no `sld` parent, so this path is the only one that ever sees it.
+//!   allow-list, non-digital, and never the continuously-restocked `sld` set itself. `box` is on
+//!   that allow-list — see [`NOTIFY_SET_TYPES`] for why (The Zeta Set).
 //!
 //! Memory stays O(batch): the opted-in users are keyset-paginated by `alert_channels.id`, and
 //! the notified-ledger lookup + delivery run per page — nothing loads every subscriber at once.
@@ -64,13 +63,16 @@ const USER_BATCH: u64 = 2_000;
 /// digital-only alchemy, minigames, …) so the notification is a real release, not a same-day
 /// accessory printing.
 ///
-/// `box` is in the list because it is how Scryfall files a **standalone Secret Lair set**: The
-/// Zeta Set (`slz`, 2026-09-02) is a top-level `box` set with no `sld` parent, so the per-drop
-/// path (which reads `sld` cards only) never saw it and, without `box` here, neither did this
-/// one — nobody was told. The `sld` set itself stays out by code (its drops notify per-drop),
-/// its spin-offs (`slu`, `slc`, `slp`) by their `sld` parent; the remaining top-level `box`
-/// sets are a few retail products a year (Game Night, Guild Kits, Challenger Decks), each a
-/// release a collector would want a heads-up for.
+/// `box` is on the list because that is how Scryfall filed The Zeta Set (`slz`, 2026-09-02): a
+/// Secret Lair-line release published as its **own top-level `box` set** — no parent set, no
+/// cards in `sld` — so the per-drop path (which reads `sld` cards only) never saw it and, with
+/// `box` excluded here, neither did this one: nobody was told. The `sld` set itself stays out by
+/// code (its drops notify per-drop) and the `sld`-parented spin-offs (`slu`, `slc`) by the
+/// top-level filter. The bucket is otherwise dormant: the catalog's other top-level `box` sets
+/// (Game Night, Guild Kits, Challenger Decks, and older oddities such as the Salvat and
+/// Hachette partworks) all released between 1996 and 2022, so in practice this entry admits a
+/// future release like `slz` and whatever else Scryfall files as a top-level box — and the
+/// look-ahead window keeps every historical one unreachable regardless.
 const NOTIFY_SET_TYPES: &[&str] = &[
     "core",
     "expansion",
@@ -345,8 +347,8 @@ async fn upcoming_sld_drops(db: &DatabaseConnection, from: &str, to: &str) -> Ve
 
 /// Regular sets releasing inside `[from, to]`: one entry per theme. Top-level sets only (so an
 /// expansion's tied child sets don't each notify), a curated set-type allow-list, non-digital,
-/// and never the `sld` set itself (handled per-drop above) — a standalone Secret Lair set under
-/// its own code (`slz`) is a top-level `box` set and notifies here like any other set.
+/// and never the `sld` set itself (handled per-drop above). A release filed as its own top-level
+/// `box` set (`slz`, The Zeta Set) notifies here like any other set — see [`NOTIFY_SET_TYPES`].
 async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<UpcomingRelease> {
     let rows: Vec<card_set::Model> = match CardSet::find()
         .filter(card_set::Column::ReleasedAt.gte(from))
@@ -613,9 +615,9 @@ mod tests {
     }
 
     /// A regular set releasing tomorrow notifies an opted-in user, as does a top-level `box` set
-    /// (how a standalone Secret Lair set like The Zeta Set is filed); a set releasing outside
-    /// the window, a non-notifiable set type, a tied child set, the `sld` set itself, and a
-    /// Secret Lair spin-off parented to `sld` are all skipped.
+    /// (the shape Scryfall gave The Zeta Set, `slz`); a set releasing outside the window, a
+    /// non-notifiable set type, a tied child set, the `sld` set itself, and a `box` spin-off
+    /// parented to `sld` are all skipped.
     #[tokio::test]
     async fn set_release_notifies_top_level_only_and_windows() {
         let db = crate::test_support::migrated_memory_db().await;
@@ -634,8 +636,8 @@ mod tests {
             None,
         )
         .await;
-        // Releasing tomorrow, a top-level `box` set — the shape Scryfall gives a standalone
-        // Secret Lair set (The Zeta Set, `slz`, has no `sld` parent) → notifies.
+        // Releasing tomorrow, a top-level `box` set — the shape Scryfall gave The Zeta Set
+        // (`slz`: type `box`, no parent set) → notifies.
         insert_set(
             &db,
             "tbox",
@@ -650,7 +652,7 @@ mod tests {
         // notified per-drop, never as one set).
         insert_set(
             &db,
-            "sld",
+            SLD_SET_CODE,
             "Secret Lair Drop",
             Some("box"),
             &day(1, today),
@@ -658,8 +660,8 @@ mod tests {
             None,
         )
         .await;
-        // A `box` spin-off parented to `sld` (the `slu` / `slc` shape) → folds into its parent,
-        // skipped.
+        // A `box` spin-off parented to `sld` (the `slu` / `slc` shape) → not top-level, skipped
+        // (a tied child set never gets a heads-up of its own).
         insert_set(
             &db,
             "tslu",
@@ -667,7 +669,7 @@ mod tests {
             Some("box"),
             &day(1, today),
             false,
-            Some("sld"),
+            Some(SLD_SET_CODE),
         )
         .await;
         // Releasing tomorrow but a token set → skipped (not in the allow-list).
