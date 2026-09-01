@@ -32,18 +32,22 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// `User-Agent` sent to Scryfall (their API guidelines require a descriptive one).
     pub scryfall_user_agent: String,
-    /// `User-Agent` sent to TCGCSV (https://tcgcsv.com) on the one-time historic
-    /// price backfill. TCGCSV blocks generic/unset User-Agents, so a descriptive one
+    /// `User-Agent` sent on every TCGCSV (https://tcgcsv.com) request — the daily
+    /// sealed-product sweep and the historic price backfill. TCGCSV blocks
+    /// generic/unset User-Agents, so a descriptive one
     /// (with a contact URL/email) is required. Not a secret.
     pub tcgcsv_user_agent: String,
-    /// Master switch for the one-time TCGCSV historic price backfill (see
-    /// [`crate::tcgcsv`]). Default `false` (opt-in): the walk over TCGCSV's daily
-    /// archives can take a while and hit an external service, so it never runs unless
-    /// explicitly enabled. Set `true` to run it.
+    /// Master switch for the gap-aware TCGCSV historic price backfill (see
+    /// [`crate::tcgcsv`], issue #655). Default `false` (opt-in): a first walk over
+    /// TCGCSV's daily archives can take a while and hits an external service, so it
+    /// never runs unless explicitly enabled. When `true`, each boot fills exactly
+    /// the days missing from the daily price history — a no-gap boot is a couple of
+    /// count queries.
     pub price_backfill_enabled: bool,
-    /// Cap on how many of the most recent archive days the price backfill downloads.
-    /// `0` (the default) = every archive day since TCGCSV's first (2024-02-08); `N` =
-    /// only the most recent `N` days. Useful to bound a first run.
+    /// Cap on how far back the price backfill's walkable window reaches. `0` (the
+    /// default) = every archive day since TCGCSV's first (2024-02-08); `N` = only
+    /// the most recent `N` days (gap days outside the window are logged as
+    /// unfillable, not filled). Useful to bound a first run.
     pub price_backfill_days: u32,
     /// `User-Agent` sent to Moxfield, when set. Moxfield's API sits behind bot
     /// protection that rejects unknown clients; they approve specific User-Agent
@@ -691,7 +695,7 @@ impl Config {
         let tcgcsv_user_agent = env_trimmed("TCGCSV_USER_AGENT")
             .unwrap_or_else(|| "TCGLense/0.1 (+https://github.com/PNRxA/tcglense)".to_string());
 
-        // The one-time historic price backfill is opt-in (off by default); `0` days = all archives.
+        // The gap-aware historic price backfill is opt-in (off by default); `0` days = all archives.
         let price_backfill_enabled = env_bool("PRICE_BACKFILL_ENABLED", false);
         let price_backfill_days = env_parse::<u32>("PRICE_BACKFILL_DAYS").unwrap_or(0);
 

@@ -5,9 +5,10 @@
 //!
 //! - the **sealed-product sweep** ([`super::ingest`]) walks ~900 TCGplayer groups,
 //!   two paced requests each, so a full sweep is a couple of minutes; and
-//! - the one-time **historic price backfill** ([`super::backfill`]) walks every daily
-//!   price archive since 2024-02-08 (downloading + decompressing one `7z` per day),
-//!   which on a first boot is hundreds of days.
+//! - the gap-aware **historic price backfill** ([`super::backfill`]) downloads +
+//!   decompresses one `7z` price archive per missing day, which on a first boot is
+//!   every day since 2024-02-08 — hundreds of days. (Later boots walk only the gap
+//!   days, and a no-gap boot draws no bar at all.)
 //!
 //! Both are **determinate** — the group count and the archive-day count are known up
 //! front — so each drives a count bar with a running tally and an ETA. Like

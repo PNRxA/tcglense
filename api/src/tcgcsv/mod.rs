@@ -1,4 +1,4 @@
-//! TCGCSV integration: a one-time historic price backfill plus the daily sealed-product
+//! TCGCSV integration: a gap-aware historic price backfill plus the daily sealed-product
 //! catalog + price sync.
 //!
 //! [TCGCSV](https://tcgcsv.com) is a free, keyless daily mirror of TCGplayer's

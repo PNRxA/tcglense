@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
+    sea_query::{Asterisk, Expr},
 };
 
 use super::GAME;
@@ -76,11 +77,16 @@ pub(super) async fn plan(
 
 /// Per-day `card_price_history` row counts for the game, keyed by parsed date
 /// (rows whose `as_of_date` isn't `YYYY-MM-DD` are ignored — none are written).
+///
+/// `COUNT(*)` rather than `COUNT(id)`: `id` isn't in the `(game, card_id,
+/// as_of_date)` unique index, so counting it would force Postgres to visit the
+/// multi-million-row heap; `COUNT(*)` answers from an index-only scan (whose
+/// visibility map the daily post-capture `VACUUM (ANALYZE)` keeps fresh).
 async fn card_day_counts(db: &DatabaseConnection) -> Result<HashMap<NaiveDate, i64>, DbErr> {
     let rows: Vec<(String, i64)> = CardPriceHistory::find()
         .select_only()
         .column(card_price_history::Column::AsOfDate)
-        .column_as(card_price_history::Column::Id.count(), "n")
+        .column_as(Expr::col(Asterisk).count(), "n")
         .filter(card_price_history::Column::Game.eq(GAME))
         .group_by(card_price_history::Column::AsOfDate)
         .into_tuple()
@@ -95,7 +101,7 @@ async fn product_day_counts(db: &DatabaseConnection) -> Result<HashMap<NaiveDate
     let rows: Vec<(String, i64)> = ProductPriceHistory::find()
         .select_only()
         .column(product_price_history::Column::AsOfDate)
-        .column_as(product_price_history::Column::Id.count(), "n")
+        .column_as(Expr::col(Asterisk).count(), "n")
         .filter(product_price_history::Column::Game.eq(GAME))
         .group_by(product_price_history::Column::AsOfDate)
         .into_tuple()

@@ -20,7 +20,8 @@ use chrono::{NaiveDate, Utc};
 use reqwest::Client;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
     prelude::DateTimeUtc,
     sea_query::OnConflict,
 };
@@ -104,7 +105,15 @@ async fn run_inner(
     let started = Utc::now();
     if plan.walkable.is_empty() {
         tracing::info!("tcgcsv backfill: no gap days in the walkable window; nothing to do");
-        finish(db, started, "no gap days to fill", 0).await?;
+        // Leave an already-complete row untouched: its `finished_at` feeds the
+        // sitemaps' `<lastmod>` (`latest_ingest_lastmod` takes the max across every
+        // `ingest_state` row), so re-stamping it on every no-gap boot would falsely
+        // advance every sitemap on every restart. Absent/`running`/`error` rows are
+        // still stamped `complete` once, so the status heals.
+        let existing = ingest_state::load(db, GAME, DATASET).await?;
+        if existing.as_ref().map(|s| s.status.as_str()) != Some("complete") {
+            finish(db, started, "no gap days to fill", 0).await?;
+        }
         return Ok(());
     }
 
@@ -199,6 +208,13 @@ async fn run_inner(
 /// Decompress one day's archive (blocking CPU work → `spawn_blocking`), join its
 /// prices onto our cards **and** sealed products, and insert the new history rows into
 /// both `card_price_history` and `product_price_history`. Returns total rows inserted.
+///
+/// The inserts run in **one transaction per day**: the gap planner re-walks a day
+/// only while its row count is zero or far below the median, so a crash that left a
+/// day, say, half-written would otherwise be neither refilled nor detectable.
+/// Atomic days mean a killed walk leaves each day either whole or absent — absent
+/// re-plans as a gap next boot (the crash-resume contract the old resume cursor
+/// provided). No client I/O happens inside the transaction, only the inserts.
 async fn process_day(
     db: &DatabaseConnection,
     bytes: Vec<u8>,
@@ -215,6 +231,7 @@ async fn process_day(
 
     let now = Utc::now();
     let date_str = date.format("%Y-%m-%d").to_string();
+    let txn = db.begin().await?;
 
     // Cards.
     let card_rows = build_day_rows(map, &aggregate, &date_str, now);
@@ -226,7 +243,7 @@ async fn process_day(
         if chunk.is_empty() {
             break;
         }
-        written += insert_history(db, chunk).await?;
+        written += insert_history(&txn, chunk).await?;
     }
 
     // Sealed products (empty when no products are synced yet).
@@ -238,9 +255,10 @@ async fn process_day(
         if chunk.is_empty() {
             break;
         }
-        written += insert_product_history(db, chunk).await?;
+        written += insert_product_history(&txn, chunk).await?;
     }
 
+    txn.commit().await?;
     Ok(written)
 }
 
@@ -305,9 +323,10 @@ fn build_product_day_rows(
 
 /// Insert history rows, **skipping** any `(game, card, date)` that already exists
 /// (`ON CONFLICT DO NOTHING`) so a real Scryfall snapshot is never overwritten.
-/// Returns the number of rows actually inserted.
-async fn insert_history(
-    db: &DatabaseConnection,
+/// Returns the number of rows actually inserted. Generic over the connection so
+/// [`process_day`] can run a whole day inside one transaction.
+async fn insert_history<C: ConnectionTrait>(
+    db: &C,
     rows: Vec<card_price_history::ActiveModel>,
 ) -> Result<u64, BackfillError> {
     if rows.is_empty() {
@@ -335,9 +354,9 @@ async fn insert_history(
 
 /// Insert product history rows, **skipping** any `(game, product, date)` that already
 /// exists (`ON CONFLICT DO NOTHING`) so a real daily snapshot is never overwritten.
-/// Returns the number of rows actually inserted.
-async fn insert_product_history(
-    db: &DatabaseConnection,
+/// Returns the number of rows actually inserted. Generic like [`insert_history`].
+async fn insert_product_history<C: ConnectionTrait>(
+    db: &C,
     rows: Vec<product_price_history::ActiveModel>,
 ) -> Result<u64, BackfillError> {
     if rows.is_empty() {
@@ -594,6 +613,104 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].product_id.as_ref(), &42);
         assert_eq!(rows[0].price_usd.as_ref().as_deref(), Some("199.99"));
+    }
+
+    /// Seed one healthy history row per day of a `days_cap = 2` window, so the gap
+    /// planner finds nothing to walk.
+    async fn seed_gapless_window(db: &sea_orm::DatabaseConnection, card_id: i32) {
+        let now = Utc::now();
+        for offset in 0..2 {
+            let date = (now.date_naive() - chrono::Duration::days(offset))
+                .format("%Y-%m-%d")
+                .to_string();
+            card_price_history::ActiveModel {
+                id: NotSet,
+                game: Set(GAME.to_string()),
+                card_id: Set(card_id),
+                as_of_date: Set(date),
+                price_usd: Set(Some("1.00".to_string())),
+                price_usd_foil: Set(None),
+                price_eur: Set(None),
+                price_tix: Set(None),
+                created_at: Set(now),
+            }
+            .insert(db)
+            .await
+            .expect("insert history row");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_gap_run_leaves_a_complete_state_row_untouched() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let card_id = crate::test_support::insert_card(&db, "gapless-a").await;
+        seed_gapless_window(&db, card_id).await;
+
+        // A prior completion: its `finished_at` feeds the sitemaps' `<lastmod>`, so
+        // a no-gap boot must not re-stamp it.
+        let old = Utc::now() - chrono::Duration::days(3);
+        ingest_state::put(
+            &db,
+            StateFields {
+                game: GAME,
+                dataset: DATASET,
+                status: "complete",
+                source_updated_at: Some("2026-01-01"),
+                detail: "backfilled 42 price rows",
+                sets_imported: 0,
+                cards_imported: 42,
+                started_at: old,
+                finished_at: Some(old),
+            },
+        )
+        .await
+        .expect("seed state row");
+
+        let source = crate::datasets::SyncSource::new(true, "https://example.invalid");
+        run(&db, &Client::new(), "test-ua", 2, &source)
+            .await
+            .expect("no-gap run succeeds");
+
+        let row = ingest_state::load(&db, GAME, DATASET)
+            .await
+            .expect("load state")
+            .expect("state row exists");
+        assert_eq!(row.status, "complete");
+        assert_eq!(
+            row.detail.as_deref(),
+            Some("backfilled 42 price rows"),
+            "an already-complete row must not be rewritten by a no-gap boot"
+        );
+        let finished = row.finished_at.expect("finished_at kept");
+        assert!(
+            finished < Utc::now() - chrono::Duration::days(1),
+            "finished_at must keep its old stamp (it feeds the sitemap <lastmod>)"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_gap_run_heals_a_non_complete_state_row() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let card_id = crate::test_support::insert_card(&db, "gapless-b").await;
+        seed_gapless_window(&db, card_id).await;
+
+        // A stale error row (e.g. a crashed prior walk): a no-gap run stamps it
+        // complete once so the bookkeeping heals.
+        ingest_state::mark_error(&db, GAME, DATASET, "boom")
+            .await
+            .expect("seed error row");
+
+        let source = crate::datasets::SyncSource::new(true, "https://example.invalid");
+        run(&db, &Client::new(), "test-ua", 2, &source)
+            .await
+            .expect("no-gap run succeeds");
+
+        let row = ingest_state::load(&db, GAME, DATASET)
+            .await
+            .expect("load state")
+            .expect("state row exists");
+        assert_eq!(row.status, "complete");
+        assert_eq!(row.detail.as_deref(), Some("no gap days to fill"));
     }
 
     #[tokio::test]

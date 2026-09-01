@@ -319,7 +319,7 @@ const SYNC_TICK_DEADLINE: Duration = Duration::from_secs(4 * 60 * 60);
 /// every provider pass succeeded (`refresh_all`'s flag). Both failure modes must retry
 /// soon, must not be recorded as a completed sync — a stamped "completion" that imported
 /// nothing would freeze the catalog for a full interval with restarts as no-ops, since
-/// the boot deferral reads that stamp — and must not spawn the one-time
+/// the boot deferral reads that stamp — and must not spawn the once-per-boot
 /// backfill/fingerprint follow-ups.
 async fn run_sync_tick(
     db: &DatabaseConnection,
@@ -421,13 +421,13 @@ fn spawn_card_sync(
                 // will happen this boot (the next boot re-attempts immediately —
                 // nothing was recorded).
                 tracing::warn!(
-                    "startup card sync incomplete; skipping the one-time follow-ups this boot"
+                    "startup card sync incomplete; skipping the once-per-boot follow-ups"
                 );
             }
             return;
         }
         // A recorded prior completion proves a full sync has run against this database
-        // (cards + tcgplayer ids exist), so the one-time follow-ups need not wait out
+        // (cards + tcgplayer ids exist), so the once-per-boot follow-ups need not wait out
         // the boot deferral below for *this* process's first tick.
         let last = crate::catalog::sync_state::last_completed(&db).await;
         if last.is_some() {

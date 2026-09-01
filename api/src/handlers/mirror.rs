@@ -56,14 +56,16 @@ const MIRROR_FILE_CACHE: &str = "public, max-age=300, s-maxage=1800, stale-while
 /// "immutable" is a property of the data, not a promise from upstream; a CDN purge is the
 /// escape hatch if it ever happens again.)
 ///
-/// The short meta TTL is actively wrong here. The one-time historic price backfill
-/// ([`crate::tcgcsv::backfill`]) walks ~900 archive days, and each day is a **distinct URL
-/// fetched exactly once** per consumer — so within one backfill there is no repeat request
-/// for a shared cache to serve, and across consumers a one-hour TTL has long expired by
-/// the time the next self-host backfills. The mirror therefore re-fetches every archive
-/// from TCGCSV for every self-host that runs the walk, under the mirror's own User-Agent
-/// and IP (see [`tcgcsv_proxy`]), spending TCGCSV's request budget on data that never
-/// changed. A year of `immutable` lets the CDN absorb the repeats instead.
+/// The short meta TTL is actively wrong here. The historic price backfill
+/// ([`crate::tcgcsv::backfill`]) walks ~900 archive days on a first run, and each day is
+/// a **distinct URL fetched once per walk** — so within one walk there is no repeat
+/// request for a shared cache to serve, and across consumers a one-hour TTL has long
+/// expired by the time the next self-host walks. The mirror would therefore re-fetch
+/// every archive from TCGCSV for every self-host that runs the walk, under the mirror's
+/// own User-Agent and IP (see [`tcgcsv_proxy`]), spending TCGCSV's request budget on
+/// data that never changed. A year of `immutable` lets the CDN absorb the repeats
+/// instead — including the gap-aware backfill's healing re-walks (issue #655), which
+/// re-serve a published day from the edge instead of re-hitting TCGCSV.
 ///
 /// Safe against pinning a *missing* day: a day TCGCSV has not published is a `404`, which
 /// [`crate::handlers::cache::public_cache_layer`] stamps `no-store`, so this header is only

@@ -339,7 +339,7 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   on-disk cache and only fetch-and-serves — for origins behind a caching CDN),
   `SCRYFALL_USER_AGENT` (descriptive UA Scryfall requires),
   `TCGCSV_USER_AGENT` (descriptive UA sent on **every** TCGCSV request — the daily
-  sealed-product sweep and the one-time historic price backfill; TCGCSV blocks generic
+  sealed-product sweep and the historic price backfill; TCGCSV blocks generic
   UAs; defaults to the same fallback as the Scryfall UA),
   `PRICE_BACKFILL_ENABLED` (`false`; the TCGCSV historic price backfill is **opt-in** —
   set `true` to walk TCGCSV's daily archives and fill `card_price_history` +
