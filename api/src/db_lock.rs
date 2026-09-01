@@ -40,9 +40,20 @@
 //! connection) the caller proceeds as if it held the lock, with a warning — the
 //! worst case is exactly today's unguarded behaviour, never a refused boot or a
 //! skipped-forever sync.
+//!
+//! **Observability + zombie hygiene** (the 2026-08 snapshot outage): the dedicated
+//! connection is dialled with an `application_name` naming its key
+//! (`tcglense-lock:card_sync`), a granted lease turns on aggressive server-side TCP
+//! keepalives so a holder that dies *without* closing its socket is reaped in ~2
+//! minutes rather than holding the lock indefinitely, and a lost `try_acquire` logs
+//! who holds the lock (pid, state, `backend_start`, client address) from `pg_locks`
+//! before skipping — a live peer mid-sync reads very differently from a days-idle
+//! stranded session.
+
+use std::str::FromStr;
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection};
-use sqlx::{Connection, PgConnection, Row};
+use sqlx::{ConnectOptions, Connection, PgConnection, Row, postgres::PgConnectOptions};
 
 /// The app's advisory-lock keys, namespaced under an arbitrary high tag so they
 /// can never collide with anything else int8-keyed on a shared database.
@@ -61,6 +72,25 @@ pub const ALERTS: i64 = KEY_NAMESPACE | 3;
 /// Elects the release-notification leader for one tick (Secret Lair drop / set release
 /// heads-ups), so a multi-replica deployment delivers each heads-up once, not per replica.
 pub const RELEASE_ALERTS: i64 = KEY_NAMESPACE | 4;
+
+/// Human-readable name for a known lock key. Stamped into the dedicated connection's
+/// `application_name` (so `pg_stat_activity` names a holder as e.g. `tcglense-lock:card_sync`
+/// instead of an anonymous session) and used in the held-elsewhere log line.
+fn key_name(key: i64) -> &'static str {
+    match key {
+        MIGRATIONS => "migrations",
+        CARD_SYNC => "card_sync",
+        ALERTS => "alerts",
+        RELEASE_ALERTS => "release_alerts",
+        _ => "other",
+    }
+}
+
+/// The halves an int8 advisory key surfaces as in `pg_locks` (`classid` = high 32 bits,
+/// `objid` = low 32 bits, `objsubid` = 1) — the join key for naming a lock's holder.
+fn key_parts(key: i64) -> (i64, i64) {
+    (key >> 32, key & 0xFFFF_FFFF)
+}
 
 /// A held (or trivially-held) advisory lock, owning the dedicated connection the
 /// lock lives on. Release by [`Self::release`] (graceful close) or by dropping
@@ -119,7 +149,19 @@ impl AdvisoryLock {
         if db.get_database_backend() != DatabaseBackend::Postgres {
             return Some(Self::noop());
         }
-        let mut conn = match PgConnection::connect(database_url).await {
+        // Name the session after the lock it exists for, so `pg_stat_activity` identifies
+        // a holder at a glance (a URL parse failure falls back to an unnamed dial rather
+        // than failing the lock).
+        let connect = match PgConnectOptions::from_str(database_url) {
+            Ok(options) => {
+                options
+                    .application_name(&format!("tcglense-lock:{}", key_name(key)))
+                    .connect()
+                    .await
+            }
+            Err(_) => PgConnection::connect(database_url).await,
+        };
+        let mut conn = match connect {
             Ok(conn) => conn,
             Err(err) => {
                 tracing::warn!(error = %err, key, "advisory lock: dedicated connect failed; failing open");
@@ -127,8 +169,14 @@ impl AdvisoryLock {
             }
         };
         match sqlx::query(sql).bind(key).fetch_one(&mut conn).await {
-            Ok(row) if granted(&row) => Some(Self { conn: Some(conn) }),
-            Ok(_) => None,
+            Ok(row) if granted(&row) => {
+                enable_session_keepalives(&mut conn, key).await;
+                Some(Self { conn: Some(conn) })
+            }
+            Ok(_) => {
+                log_holder(&mut conn, key).await;
+                None
+            }
             Err(err) => {
                 tracing::warn!(error = %err, key, "advisory lock: acquisition failed; failing open");
                 Some(Self::noop())
@@ -149,9 +197,93 @@ impl AdvisoryLock {
     }
 }
 
+/// Ask the server to probe this session's TCP peer aggressively (`tcp_keepalives_*`
+/// session GUCs: first probe after 60 s idle, then every 15 s, dead after 4 misses), so a
+/// lock whose holder died *without* its socket closing — an abrupt container teardown, a
+/// network partition, anything that strands a half-open connection — is reaped by the
+/// server in ~2 minutes instead of held until the OS-default keepalive fires hours later.
+/// A CARD_SYNC lock stranded exactly that way blocked every daily price snapshot for a
+/// week in 2026-08. Best-effort: the settings are ignored on Unix-socket connections and
+/// rejected on platforms without per-socket keepalive support, both of which just keep the
+/// old behaviour.
+async fn enable_session_keepalives(conn: &mut PgConnection, key: i64) {
+    // Fixed name/value literals — the format! carries no untrusted input.
+    for (setting, value) in [
+        ("tcp_keepalives_idle", 60),
+        ("tcp_keepalives_interval", 15),
+        ("tcp_keepalives_count", 4),
+    ] {
+        if let Err(err) = sqlx::query(&format!("SET {setting} = {value}"))
+            .execute(&mut *conn)
+            .await
+        {
+            tracing::debug!(error = %err, key, setting, "advisory lock: keepalive setting rejected");
+        }
+    }
+}
+
+/// Best-effort: name the session holding `key` (via `pg_locks` x `pg_stat_activity`)
+/// before reporting it as taken, so a "held by another session" skip says *who* — a live
+/// peer mid-work reads very differently from a `state = idle` session whose
+/// `backend_start` is days old (a stranded holder an operator should terminate). Runs on
+/// the already-dialled candidate connection; any failure downgrades to the bare skip.
+async fn log_holder(conn: &mut PgConnection, key: i64) {
+    let (classid, objid) = key_parts(key);
+    let row = sqlx::query(
+        "SELECT a.pid, a.state, a.backend_start::text, a.state_change::text, \
+                a.client_addr::text, a.application_name \
+         FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid \
+         WHERE l.locktype = 'advisory' AND l.granted \
+           AND l.classid = $1::oid AND l.objid = $2::oid AND l.objsubid = 1",
+    )
+    .bind(classid)
+    .bind(objid)
+    .fetch_optional(&mut *conn)
+    .await;
+    match row {
+        Ok(Some(row)) => {
+            let text = |i: usize| {
+                row.try_get::<Option<String>, _>(i)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            };
+            tracing::info!(
+                key = key_name(key),
+                holder_pid = row.try_get::<i32, _>(0).unwrap_or_default(),
+                holder_state = %text(1),
+                holder_since = %text(2),
+                holder_state_change = %text(3),
+                holder_addr = %text(4),
+                holder_app = %text(5),
+                "advisory lock is held by another session"
+            );
+        }
+        Ok(None) => tracing::info!(
+            key = key_name(key),
+            "advisory lock is held, but its holder is not visible in pg_stat_activity"
+        ),
+        Err(err) => {
+            tracing::debug!(error = %err, key = key_name(key), "advisory lock: holder lookup failed")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pin the `pg_locks` encoding of the app's int8 advisory keys: `classid` is the high
+    /// half, `objid` the low half. These are the values the holder-diagnostics join uses
+    /// AND the values an operator greps `pg_locks` for by hand — a drifting split would
+    /// silently break both.
+    #[test]
+    fn key_parts_match_the_pg_locks_encoding() {
+        assert_eq!(key_parts(CARD_SYNC), (31847, 1275068418));
+        assert_eq!(key_parts(MIGRATIONS), (31847, 1275068417));
+        assert_eq!(key_parts(ALERTS), (31847, 1275068419));
+        assert_eq!(key_parts(RELEASE_ALERTS), (31847, 1275068420));
+    }
 
     /// SQLite: both acquisition forms are trivially held (single process — nothing
     /// to coordinate) and release is a no-op.

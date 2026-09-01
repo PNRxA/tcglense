@@ -14,6 +14,7 @@ pub mod ingest_state;
 pub mod keywords;
 pub mod precon_values;
 pub mod sld_product_dates;
+pub(crate) mod sync_state;
 
 use reqwest::Client;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection};
@@ -187,14 +188,29 @@ pub async fn refresh_all(
     }
 }
 
-/// Capture today's daily price snapshot for every supported game.
+/// Capture today's daily price snapshot for every supported game, then refresh the
+/// history tables' planner stats ([`maintain_price_history`]).
 ///
 /// Runs on every sync tick **after** [`refresh_all`], reading the already-committed
 /// `cards` rows rather than the streaming import — so the daily series stays
 /// continuous even when [`refresh_all`] is version-gated and skips the import (it
-/// just records today's date with the last-known prices). A failure for one game is
-/// logged and does not abort the others.
+/// just records today's date with the last-known prices).
 pub async fn snapshot_all(db: &DatabaseConnection) {
+    capture_snapshots(db).await;
+
+    // Refresh the price-history tables' planner stats + visibility map now that the
+    // capture has appended today's rows, so the collection analytics reads stay fast.
+    maintain_price_history(db).await;
+}
+
+/// The capture half of [`snapshot_all`]: upsert today's `(game, entity, as_of_date)` price
+/// rows from the live price columns, without the follow-up `VACUUM (ANALYZE)`. The sync
+/// tick also runs this **before** [`refresh_all`] as insurance — securing today's history
+/// row with the last-known prices up front, so a killed, OOM'd, or hung import can no
+/// longer cost the day's snapshot (the 2026-08 outage); the history upsert's changed-guard
+/// makes the post-refresh re-capture touch only rows whose prices actually moved. A failure
+/// for one game is logged and does not abort the others.
+pub async fn capture_snapshots(db: &DatabaseConnection) {
     let as_of_date = crate::scryfall::format_date(chrono::Utc::now().date_naive());
     for game in GAMES {
         match game.id {
@@ -230,10 +246,6 @@ pub async fn snapshot_all(db: &DatabaseConnection) {
             }
         }
     }
-
-    // Refresh the price-history tables' planner stats + visibility map now that the
-    // capture has appended today's rows, so the collection analytics reads stay fast.
-    maintain_price_history(db).await;
 }
 
 /// Refresh the price-history tables' planner statistics and visibility map after a

@@ -652,6 +652,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `status == "complete"` *first*. Nothing in this path retries, and reqwest's own retry is
   compiled out (`is_retryable_error` has bodies only under the `http2`/`http3` features, which
   `Cargo.toml` doesn't enable), so a single lost packet is a lost sync interval.
+- **The card-sync tick self-heals — keep all four legs** (the 2026-08 outage: a stranded
+  `CARD_SYNC` advisory lock plus a boot-anchored 24h ticker cost a week of daily price
+  snapshots). (1) The schedule anchors to the last *completed* tick persisted in
+  `ingest_state` (`(all, sync_tick)` via `catalog::sync_state` — the status route pins to the
+  card-data dataset, so bookkeeping rows there never surface); a skipped or timed-out attempt
+  retries in minutes, never a full `SYNC_INTERVAL_HOURS`. (2) The tick body is bounded by
+  `SYNC_TICK_DEADLINE`, so a wedged await can't hold the leader lock forever. (3)
+  `capture_snapshots` runs **before** `refresh_all` and `snapshot_all` after it, so a killed
+  or hung import can't cost the day's history row. (4) A lock lease turns on server-side TCP
+  keepalives (a holder that dies without closing its socket is reaped in ~2 min) and a lost
+  `try_acquire` logs the holder from `pg_locks` — a `state=idle`, days-old holder is a zombie
+  for `pg_terminate_backend`. `record_completed` only after a *fully* completed body — stamping
+  a timed-out tick re-opens the day-long gap.
 - `SEED_DUMMY_DATA` is upsert-only — point it at a fresh/dedicated DB.
 - Dep pins: `jsonwebtoken` keeps `default-features = false` with exactly one crypto
   provider (`aws_lc_rs`, shared with rustls); enabling no provider panics and enabling

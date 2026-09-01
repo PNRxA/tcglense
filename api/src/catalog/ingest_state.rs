@@ -13,6 +13,8 @@
 //! recorded as `error` (via [`mark_error`]) rather than version-locked as `complete`, so it
 //! retries on the next boot.
 
+use std::time::Duration;
+
 use chrono::Utc;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
@@ -23,6 +25,34 @@ use sea_orm::{
 
 use crate::entities::ingest_state;
 use crate::entities::prelude::IngestState;
+
+/// The delay before a periodic loop's **first** run: `ZERO` (run now) when the interval is
+/// startup-only, nothing has ever run, or the last run is at least an interval old; otherwise
+/// the remaining time until the interval elapses since that last run. Shared by the Secret
+/// Lair drop sync ([`crate::scryfall::sld_tasks`]) and the card-sync tick
+/// ([`crate::tasks`] + [`super::sync_state`]), which each persist their last completed run in
+/// an `ingest_state` row precisely so a restart soon after a success defers instead of
+/// re-running on every boot. Kept pure (takes `now`) so the "skip a too-soon re-run across
+/// restarts" policy is unit-testable without a clock or a DB.
+pub(crate) fn initial_delay(
+    last_run: Option<DateTimeUtc>,
+    interval_hours: u64,
+    now: DateTimeUtc,
+) -> Duration {
+    if interval_hours == 0 {
+        // Startup-only posture: always run the single pass now.
+        return Duration::ZERO;
+    }
+    let interval = Duration::from_secs(interval_hours.saturating_mul(60 * 60));
+    match last_run {
+        None => Duration::ZERO, // never ran: run now
+        Some(last) => {
+            // Negative (a future timestamp from clock skew) -> ZERO elapsed -> wait ~an interval.
+            let elapsed = (now - last).to_std().unwrap_or(Duration::ZERO);
+            interval.saturating_sub(elapsed) // 0 once at least an interval has passed
+        }
+    }
+}
 
 /// Load the `(game, dataset)` `ingest_state` row, if it exists.
 pub async fn load(
@@ -118,4 +148,61 @@ pub async fn mark_error(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn at(secs_ago: i64, now: DateTimeUtc) -> DateTimeUtc {
+        now - chrono::Duration::seconds(secs_ago)
+    }
+
+    #[test]
+    fn initial_delay_runs_now_when_never_run_or_overdue() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        // Never ran -> run now.
+        assert_eq!(initial_delay(None, 24, now), Duration::ZERO);
+        // Ran exactly an interval ago -> run now.
+        assert_eq!(
+            initial_delay(Some(at(24 * 3600, now)), 24, now),
+            Duration::ZERO
+        );
+        // Ran well over an interval ago (the "down for > a day" case) -> run now.
+        assert_eq!(
+            initial_delay(Some(at(72 * 3600, now)), 24, now),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn initial_delay_defers_a_too_soon_run_by_the_remainder() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        // Ran 1h ago on a 24h interval -> wait the remaining 23h.
+        assert_eq!(
+            initial_delay(Some(at(3600, now)), 24, now),
+            Duration::from_secs(23 * 3600)
+        );
+    }
+
+    #[test]
+    fn initial_delay_is_zero_for_the_startup_only_interval() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        // interval 0 = single startup pass: always run now, even if it ran a moment ago.
+        assert_eq!(initial_delay(Some(at(1, now)), 0, now), Duration::ZERO);
+        assert_eq!(initial_delay(None, 0, now), Duration::ZERO);
+    }
+
+    #[test]
+    fn initial_delay_treats_a_future_timestamp_as_not_overdue() {
+        // A last-run in the future (clock moved back) mustn't read as "overdue -> run now" with a
+        // huge negative elapsed; it defers up to an interval rather than hammering on every boot.
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let future = now + chrono::Duration::seconds(3600);
+        assert_eq!(
+            initial_delay(Some(future), 24, now),
+            Duration::from_secs(24 * 3600)
+        );
+    }
 }
