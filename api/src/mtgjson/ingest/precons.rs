@@ -84,12 +84,12 @@ pub(crate) async fn rebuild<C: ConnectionTrait>(
     // this way (rather than one insert per deck, keeping the returned model) is what keeps
     // ~3 000 decks to a handful of round trips instead of 3 000 — the difference between a
     // fast rebuild and a slow one on a networked Postgres.
-    let deck_models: Vec<precon_deck::ActiveModel> = resolved
-        .iter()
-        .map(|r| r.to_active_model(colours.get(r.precon.slug.as_str()).cloned().flatten(), now))
-        .collect();
-    for chunk in deck_models.chunks(INSERT_BATCH) {
-        PreconDeck::insert_many(chunk.iter().cloned())
+    for batch in resolved.chunks(INSERT_BATCH) {
+        let chunk: Vec<precon_deck::ActiveModel> = batch
+            .iter()
+            .map(|r| r.to_active_model(colours.get(r.precon.slug.as_str()).cloned().flatten(), now))
+            .collect();
+        PreconDeck::insert_many(chunk)
             .exec_without_returning(txn)
             .await?;
     }
@@ -104,12 +104,17 @@ pub(crate) async fn rebuild<C: ConnectionTrait>(
         .into_iter()
         .collect();
 
-    // 3. Insert the cards against those ids.
-    let card_models: Vec<precon_deck_card::ActiveModel> = resolved
-        .iter()
-        .filter_map(|r| {
-            let deck_id = ids_by_slug.get(r.precon.slug.as_str()).copied()?;
-            Some(r.cards.iter().map(move |c| precon_deck_card::ActiveModel {
+    // 3. Insert the cards against those ids, materialised per insert batch (never as one
+    // whole-set `Vec` — this runs inside the sealed-sync write transaction, on top of
+    // everything else that phase holds; see `refresh_inner`'s write loop).
+    let mut cards_written = 0usize;
+    let mut buffer: Vec<precon_deck_card::ActiveModel> = Vec::with_capacity(INSERT_BATCH);
+    for r in &resolved {
+        let Some(deck_id) = ids_by_slug.get(r.precon.slug.as_str()).copied() else {
+            continue;
+        };
+        for c in &r.cards {
+            buffer.push(precon_deck_card::ActiveModel {
                 id: NotSet,
                 precon_deck_id: Set(deck_id),
                 card_id: Set(c.card_id),
@@ -117,13 +122,19 @@ pub(crate) async fn rebuild<C: ConnectionTrait>(
                 quantity: Set(c.quantity),
                 foil: Set(c.foil),
                 position: Set(c.position),
-            }))
-        })
-        .flatten()
-        .collect();
-    let cards_written = card_models.len();
-    for chunk in card_models.chunks(INSERT_BATCH) {
-        PreconDeckCard::insert_many(chunk.iter().cloned())
+            });
+            if buffer.len() >= INSERT_BATCH {
+                cards_written += buffer.len();
+                let chunk = std::mem::replace(&mut buffer, Vec::with_capacity(INSERT_BATCH));
+                PreconDeckCard::insert_many(chunk)
+                    .exec_without_returning(txn)
+                    .await?;
+            }
+        }
+    }
+    if !buffer.is_empty() {
+        cards_written += buffer.len();
+        PreconDeckCard::insert_many(buffer)
             .exec_without_returning(txn)
             .await?;
     }

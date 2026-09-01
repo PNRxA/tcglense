@@ -4,16 +4,21 @@
 //!
 //! `AllPrintings.json` is a single ~600 MB JSON document (~160 MB gzipped). We pull the
 //! gzipped variant (the shared client has no `Content-Encoding: gzip` auto-decode for a
-//! pre-compressed *file*, so we decode it ourselves with `flate2`) and parse it in a
-//! blocking task — `serde_json::from_reader` streams the decode + parse, so only the
-//! trimmed [`AllPrintings`] structs are retained, not the whole 600 MB tree. `Meta.json`
-//! bumps daily from price rebuilds, so it's useless as a gate; the file's `ETag` tracks
-//! actual content changes and MTGJSON honours conditional GET.
+//! pre-compressed *file*, so we decode it ourselves with `flate2`) and **stream** it
+//! through the decode + parse on a blocking task — the body is never buffered whole, and
+//! `serde_json::from_reader` retains only the trimmed [`AllPrintings`] structs, not the
+//! 600 MB tree. Both halves matter on a 1 GB instance (App Platform `basic-xs`): buffering
+//! the gzipped body on top of the parsed structs was enough to breach the container's
+//! memory ceiling and take the whole combined app down mid-sync. `Meta.json` bumps daily
+//! from price rebuilds, so it's useless as a gate; the file's `ETag` tracks actual content
+//! changes and MTGJSON honours conditional GET.
 
+use futures_util::TryStreamExt;
 use reqwest::{
     Client, StatusCode,
     header::{ETAG, IF_NONE_MATCH},
 };
+use tokio_util::io::{StreamReader, SyncIoBridge};
 
 use super::MtgjsonError;
 use super::model::AllPrintings;
@@ -55,14 +60,29 @@ pub async fn fetch_all_printings(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
 
-    // Buffer the gzipped body (~160 MB), then decode + parse on a blocking thread so the
-    // CPU-bound work never stalls the async runtime. `from_reader` streams the decode, so
-    // only the trimmed structs are retained (not the ~600 MB decompressed document).
-    let bytes = response.bytes().await?;
+    // Stream the gzipped body (~160 MB) straight through decode + parse on a blocking
+    // thread, so the CPU-bound work never stalls the async runtime AND the compressed
+    // body is never resident in memory — `SyncIoBridge` hands the async byte stream to
+    // the blocking task as a plain `Read` (the same shape `scryfall::client::json_lines`
+    // streams its bulk files in).
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    // Built here (not inside `spawn_blocking`) so the bridge captures this runtime's
+    // handle unconditionally; its blocking reads happen on the blocking thread below.
+    let bridge = SyncIoBridge::new(StreamReader::new(stream));
     let all = tokio::task::spawn_blocking(move || -> Result<AllPrintings, MtgjsonError> {
-        let decoder = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
+        let decoder = flate2::read::GzDecoder::new(bridge);
         let reader = std::io::BufReader::with_capacity(1 << 20, decoder);
-        serde_json::from_reader(reader).map_err(|err| MtgjsonError::Parse(err.to_string()))
+        serde_json::from_reader(reader).map_err(|err| {
+            // A transfer failing mid-stream surfaces here, inside the parse; keep it
+            // classified as a stream error so the recorded failure doesn't read as a
+            // corrupt file when the network blipped. Either way the sync fails like any
+            // other error: the state row is marked and the next tick re-fetches.
+            if err.classify() == serde_json::error::Category::Io {
+                MtgjsonError::Io(std::io::Error::other(err.to_string()))
+            } else {
+                MtgjsonError::Parse(err.to_string())
+            }
+        })
     })
     .await
     .map_err(|err| MtgjsonError::Join(err.to_string()))??;

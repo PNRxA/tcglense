@@ -304,9 +304,10 @@ const SYNC_FAILURE_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
 /// e.g. a query on a half-open connection after a DB failover (there is no runtime
 /// `statement_timeout`) — can no longer hold the leader lock forever and starve every
 /// future tick on every replica. On timeout the attempt is abandoned (in-flight work is
-/// cancelled at its next await; a `spawn_blocking` parse thread may linger to completion,
-/// harmlessly), releasing the lease frees the lock, and the loop retries after
-/// [`SYNC_RETRY_DELAY`].
+/// cancelled at its next await; a `spawn_blocking` task lingers to completion — for the
+/// MTGJSON pass that includes its streamed download, bounded by the shared client's read
+/// timeout rather than this deadline), releasing the lease frees the lock, and the loop
+/// retries after [`SYNC_RETRY_DELAY`].
 const SYNC_TICK_DEADLINE: Duration = Duration::from_secs(4 * 60 * 60);
 
 /// One card-sync tick body, bounded by [`SYNC_TICK_DEADLINE`]. Capture today's price
@@ -470,7 +471,9 @@ fn spawn_card_sync(
             else {
                 tracing::info!(
                     retry_secs = SYNC_RETRY_DELAY.as_secs(),
-                    "card-sync tick skipped: another replica is syncing"
+                    "card-sync tick skipped: the sync lock is held elsewhere (another \
+                     replica — or, on a single instance, a killed predecessor's session \
+                     awaiting the keepalive reap)"
                 );
                 delay = SYNC_RETRY_DELAY;
                 continue;
