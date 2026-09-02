@@ -433,7 +433,8 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   active alert — hourly is plenty since catalog prices refresh at most daily). See
   `api/.env.example`.
 - **Release heads-ups:** `RELEASE_ALERTS_ENABLED` (`true`; a background task that finds Secret
-  Lair drops and new sets releasing the next day and delivers a day-before heads-up to users
+  Lair releases (drops, and sets that are themselves Secret Lair releases, like The Zeta Set)
+  and new sets releasing the next day and delivers a day-before heads-up to users
   who opted in — per-user, in their notification settings — over the same channels as price
   alerts. Its own switch, independent of `ALERTS_ENABLED`; set `false` to stop all release
   heads-ups). Secret Lair drop dates are derived from the drop's cards' `released_at`; set dates

@@ -36,12 +36,14 @@ pub struct Model {
     /// Whether the user opted into email alerts (delivered to their account email).
     /// Effective only when the deployment enables `ALERTS_EMAIL_ENABLED` too.
     pub email_enabled: bool,
-    /// Whether the user opted into a heads-up the day before a **Secret Lair drop** releases.
+    /// Whether the user opted into a heads-up the day before a **Secret Lair release** — a
+    /// drop inside `sld`, or a set that is itself a Secret Lair release (The Zeta Set, `slz`).
     /// Off by default (a deliberate opt-in). Delivered over the same channels above by
     /// [`crate::release_alerts`].
     pub sld_release_enabled: bool,
     /// Whether the user opted into a heads-up the day before a **new regular set** releases
-    /// (one notification per set/theme, not per product). Off by default.
+    /// (one notification per set/theme, not per product; a Secret Lair-coded set counts as a
+    /// set here too, worded as one unless the flag above is also on). Off by default.
     pub set_release_enabled: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

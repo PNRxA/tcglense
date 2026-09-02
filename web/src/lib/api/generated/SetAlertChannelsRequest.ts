@@ -17,8 +17,9 @@ discord_enabled: boolean, telegram_bot_token: string | null, telegram_chat_id: s
  */
 telegram_enabled: boolean, email_enabled: boolean, 
 /**
- * Opt into a heads-up the day before a Secret Lair drop releases. Defaults to `false`
- * (a deliberate subscription — unlike the channel on/off flags, an omitted value is off).
+ * Opt into a heads-up the day before a Secret Lair release (a drop, or a set that is itself
+ * a Secret Lair release) releases. Defaults to `false` (a deliberate subscription — unlike
+ * the channel on/off flags, an omitted value is off).
  */
 sld_release_enabled: boolean, 
 /**

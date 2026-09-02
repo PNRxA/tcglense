@@ -467,11 +467,13 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   set path is its only heads-up; the `sld`-parented spin-offs (`slu`, `slc`) stay out via the
   top-level filter, and every other top-level `box` set in the catalog released before 2023.
   **A set the set path admits whose code carries the family's `sl` prefix is a Secret Lair
-  release of its own** (`ReleaseKind::SecretLairSet`): worded as a drop, linked to its own set
-  page, and delivered to **either** opt-in — one `OR` audience query over the user's single
-  `alert_channels` row, and a ledger keyed by the release (`set` / code) rather than the opt-in
-  that matched, so a user holding both flags gets it exactly once. The prefix only ever
-  *upgrades* a set that already passed the filters; it never rescues one they drop (`slci`).
+  release of its own** (`ReleaseKind::SecretLairSet`, MTG only): linked to its own set page and
+  delivered to **either** opt-in, worded per recipient — a Secret Lair release to anyone holding
+  that opt-in, a new set to a set-only subscriber. A user holding both flags gets it once per
+  pass (one `OR` audience query over their single `alert_channels` row) and once ever (the
+  ledger is keyed by the release, `set` / code, not by the opt-in that matched). The prefix
+  only ever *upgrades* a set that already passed the filters; it never rescues one they drop
+  (`slci`).
   Session-only channel settings, like price alerts; the two flags ride the `AlertChannels` DTO,
   so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
 - **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
