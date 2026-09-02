@@ -129,18 +129,21 @@ describe('HomeView card scanner feature', () => {
 })
 
 describe('HomeView universal search', () => {
-  it('mounts the search box in the hero, above the CTAs, for every visitor', async () => {
+  it('gives the search box its own section, front and centre above the hero, for every visitor', async () => {
     for (const state of ['authenticated', 'guest', 'unresolved'] as const) {
       const wrapper = await mountHome(state)
-      const hero = wrapper.find('section')
-      const box = hero.find('[data-test="universal-search"]')
-      expect(box.exists(), `${state}: the box is in the hero`).toBe(true)
-      // It is handed the (here empty) games registry, and sits above the CTA row.
+      // The first section on the page is the search, labelled by its own heading.
+      const first = wrapper.find('section')
+      expect(first.attributes('aria-labelledby')).toBe('home-search-heading')
+      expect(first.find('#home-search-heading').text()).toBe('Search the whole catalog')
+      const box = first.find('[data-test="universal-search"]')
+      expect(box.exists(), `${state}: the box is in the search section`).toBe(true)
+      // It is handed the (here empty) games registry, and it precedes the hero's h1.
       expect(box.attributes('data-games')).toBe('0')
-      const heading = hero.find('h1').element
+      const heading = wrapper.find('h1').element
       expect(
-        heading.compareDocumentPosition(box.element) & Node.DOCUMENT_POSITION_FOLLOWING,
-        `${state}: the box follows the heading`,
+        heading.compareDocumentPosition(box.element) & Node.DOCUMENT_POSITION_PRECEDING,
+        `${state}: the box comes before the hero heading`,
       ).toBeTruthy()
       wrapper.unmount()
     }

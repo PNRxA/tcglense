@@ -45,9 +45,10 @@ usePageMeta({
   canonicalPath: '/',
 })
 
-// The games registry feeds the hero's universal search box: it searches the first game
-// (today the only one) and offers a picker when there are several. Resilient to an
-// empty/loading list — the box renders at once and its queries wait for a game.
+// The games registry feeds the universal search section at the top of the page: the box
+// searches the first game (today the only one) and offers a picker when there are several.
+// Resilient to an empty/loading list — the box renders at once and its queries wait for a
+// game.
 const gamesQuery = useGamesQuery()
 const games = computed(() => gamesQuery.data.value?.data ?? [])
 
@@ -115,8 +116,28 @@ const rowLinkClass =
 
 <template>
   <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
+    <!-- Universal search: its own section, front and centre above the hero — the fastest way
+         off the homepage to the thing you came for. One box across cards, sealed products,
+         precons and keywords, plus your own decks once signed in. The dropdown overlays the
+         hero below it (z-40 inside the box), so nothing here needs to reserve space for it. -->
+    <section aria-labelledby="home-search-heading" class="mx-auto max-w-2xl text-center">
+      <h2
+        id="home-search-heading"
+        class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl"
+      >
+        Search the whole catalog
+      </h2>
+      <p class="text-muted-foreground mt-3 text-pretty">
+        Cards, sealed products, preconstructed decks, and rules keywords in one box — plus your own
+        decks once you're signed in.
+      </p>
+      <UniversalSearchBox :games="games" class="mt-6 text-left" />
+    </section>
+
     <!-- Hero: value prop + auth-branched CTAs, beside a decorative "show the product" vignette. -->
-    <section class="grid items-center gap-10 lg:grid-cols-[1fr_minmax(0,30rem)] lg:gap-14">
+    <section
+      class="mt-16 grid items-center gap-10 sm:mt-24 lg:grid-cols-[1fr_minmax(0,30rem)] lg:gap-14"
+    >
       <div>
         <span
           class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
@@ -132,10 +153,6 @@ const rowLinkClass =
           singles and sealed prices day by day, and see exactly which cards you own — and which ones
           you're still missing.
         </p>
-
-        <!-- The universal search: one box across cards, sealed, precons, keywords and (signed
-             in) your decks — the fastest way off the homepage to the thing you came for. -->
-        <UniversalSearchBox :games="games" class="mt-8 max-w-xl" />
 
         <!-- Auth-branched CTAs: authed variant on a token, guest variant once resolved
              signed-out, and while the session is still unresolved reserve the two lg
