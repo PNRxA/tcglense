@@ -39,9 +39,9 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DEFAULT_PAGE_SIZE, DataBody, MAX_PAGE_SIZE, Page, PriceRange, ProductResponse,
-    SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows,
+    SearchGroup, SortDir, SortField, apply_card_sort, build_page, cutoff_date, downsample_rows,
     every_word_matches, load_card, load_product, product_response, require_game, resolve_page,
-    set_name_map, trim_query,
+    set_name_map, starts_with_rank, trim_query,
 };
 use crate::state::AppState;
 use crate::tcgcsv::classify::booster_family;
@@ -597,6 +597,43 @@ pub async fn product_image(
         image.bytes,
     )
         .into_response())
+}
+
+/// The universal search's sealed-product leg (`GET /api/games/{game}/search`, see
+/// [`crate::handlers::search`]): up to `limit` products whose name contains every word of
+/// `term`, prefix matches first and then by name, plus whether more matched.
+///
+/// The name rule is [`every_word_matches`] — the very filter [`list_products`] applies to
+/// its own `?q` — so the search can't find a product the browse wouldn't. Dressed as a
+/// listing row is, with the caller lending the set-name map it loaded for the precon leg
+/// too. One row of over-fetch answers `has_more`.
+pub(crate) async fn search_products(
+    state: &AppState,
+    game: &str,
+    term: &str,
+    limit: usize,
+    set_names: &HashMap<String, String>,
+) -> Result<SearchGroup<ProductResponse>, AppError> {
+    let rows = Product::find()
+        .filter(product::Column::Game.eq(game))
+        .filter(every_word_matches(
+            (product::Entity, product::Column::Name),
+            term,
+        )?)
+        .order_by_asc(starts_with_rank(
+            (product::Entity, product::Column::Name),
+            term,
+        ))
+        .order_by_asc(product::Column::Name)
+        .order_by_asc(product::Column::Id)
+        .limit(limit as u64 + 1)
+        .all(&state.db)
+        .await?;
+    let data: Vec<ProductResponse> = rows
+        .into_iter()
+        .map(|p| product_response(p, set_names))
+        .collect();
+    Ok(SearchGroup::from_overfetch(data, limit))
 }
 
 /// Get product filters

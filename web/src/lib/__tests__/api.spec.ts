@@ -163,3 +163,14 @@ describe('exportCards', () => {
     })
   })
 })
+
+describe('searchPath', () => {
+  it('builds the universal search path with the query and an optional per-group limit', async () => {
+    const { searchPath } = await import('../api')
+    expect(searchPath('mtg', 'bolt')).toBe('/api/games/mtg/search?q=bolt')
+    expect(searchPath('mtg', 'sol ring', 4)).toBe('/api/games/mtg/search?q=sol+ring&limit=4')
+    // A name full of punctuation binds safely into the query string.
+    expect(searchPath('mtg', "Krark's Thumb")).toContain('q=Krark%27s+Thumb')
+    expect(searchPath('a/b', 'x')).toContain('/api/games/a%2Fb/search')
+  })
+})

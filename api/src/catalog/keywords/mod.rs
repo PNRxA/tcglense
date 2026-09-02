@@ -156,6 +156,44 @@ static MTG: LazyLock<Vec<KeywordEntry>> = LazyLock::new(|| build(mtg::ENTRIES));
 /// The glossary for a game, name-ordered. A game with no curated table yet returns an
 /// empty slice rather than an error — the endpoint then answers `200 []`, which the SPA
 /// reads as "this game has no glossary" and simply renders no tooltips.
+/// The universal search's keyword leg: the glossary entries whose **name** contains every
+/// whitespace-separated word of `term` (case-insensitively, in any order), the ones whose
+/// name *starts* with the whole term first and the rest in glossary (name) order, cut at
+/// `limit` — plus whether the cut left any behind.
+///
+/// The same rule the SQL legs apply to card, sealed-product and precon names
+/// (`handlers::shared::every_word_matches` + `starts_with_rank`), spelled over the
+/// in-memory table so `first strike`, `strike first` and `FIRST` all find "First strike"
+/// exactly as they would find a card. Name only, never the reminder `text`: a universal
+/// box answers "what is this word", and matching explanations would bury the one keyword
+/// called `Draw`… under every keyword whose text says "draw a card". The index page's
+/// own filter box still searches both.
+///
+/// `to_ascii_lowercase`, not Unicode folding, so the fold matches the SQL legs' (SQLite's
+/// `LOWER()` is ASCII-only, and the table is ASCII anyway). A blank `term` answers nothing.
+pub fn search(game: &str, term: &str, limit: usize) -> (Vec<KeywordEntry>, bool) {
+    let words: Vec<String> = term
+        .split_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if words.is_empty() {
+        return (Vec::new(), false);
+    }
+    let prefix = term.trim().to_ascii_lowercase();
+    let mut hits: Vec<&KeywordEntry> = glossary(game)
+        .iter()
+        .filter(|entry| {
+            let name = entry.name.to_ascii_lowercase();
+            words.iter().all(|word| name.contains(word.as_str()))
+        })
+        .collect();
+    // Stable, so within each rank the glossary's own name order is kept.
+    hits.sort_by_key(|entry| !entry.name.to_ascii_lowercase().starts_with(&prefix));
+    let has_more = hits.len() > limit;
+    hits.truncate(limit);
+    (hits.into_iter().cloned().collect(), has_more)
+}
+
 pub fn glossary(game: &str) -> &'static [KeywordEntry] {
     match game {
         crate::scryfall::GAME => &MTG,
@@ -304,6 +342,58 @@ mod tests {
                 "{name} must stay glossary-only"
             );
         }
+    }
+
+    #[test]
+    fn search_matches_every_word_of_the_name_in_any_order_and_case() {
+        let (hits, _) = search("mtg", "strike first", 10);
+        assert!(
+            hits.iter().any(|e| e.name == "First strike"),
+            "order-independent words should find First strike: {:?}",
+            hits.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        let (hits, _) = search("mtg", "FIRST STRIKE", 10);
+        assert!(hits.iter().any(|e| e.name == "First strike"));
+        // Only the name is searched — a word found solely in reminder text is no hit.
+        let (hits, _) = search("mtg", "discard this card", 10);
+        assert!(hits.is_empty(), "{:?}", hits);
+    }
+
+    #[test]
+    fn search_ranks_prefix_matches_first_then_keeps_glossary_order() {
+        // "cycling" is a prefix of Cycling and a mere substring of Basic landcycling,
+        // Forestcycling, Islandcycling, Landcycling, …: the prefix match leads even though
+        // "Basic landcycling" sorts before it alphabetically, and the rest keep name order.
+        let (hits, _) = search("mtg", "cycling", 50);
+        assert_eq!(hits.first().map(|e| e.name.as_str()), Some("Cycling"));
+        let rest: Vec<&str> = hits[1..].iter().map(|e| e.name.as_str()).collect();
+        let mut sorted = rest.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            rest, sorted,
+            "non-prefix hits keep the glossary's name order"
+        );
+        assert!(rest.contains(&"Landcycling"));
+    }
+
+    #[test]
+    fn search_cuts_at_the_limit_and_reports_the_remainder() {
+        let (all, more) = search("mtg", "cycling", 50);
+        assert!(all.len() > 2, "the fixture needs several cycling keywords");
+        assert!(!more);
+        let (cut, more) = search("mtg", "cycling", 2);
+        assert_eq!(cut.len(), 2);
+        assert!(more, "two of many should report has_more");
+        assert_eq!(
+            cut[0].name, all[0].name,
+            "the cut keeps the same leading order"
+        );
+    }
+
+    #[test]
+    fn search_answers_nothing_for_a_blank_term_or_an_unknown_game() {
+        assert_eq!(search("mtg", "   ", 10).0.len(), 0);
+        assert_eq!(search("nope", "flying", 10).0.len(), 0);
     }
 
     #[test]

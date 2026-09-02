@@ -611,6 +611,22 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   A line that *did* name a printing must stay unmatched when it doesn't resolve — never fall back
   to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
   columns are user-selectable), same refusal Moxfield's `Foil` column gets.
+- **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a fifth
+  search.** Each leg reaches its surface through the seam that surface already exposes
+  (`catalog::search_cards` over `card_name_search_query`, `catalog::search_products`,
+  `precons::search_precons` over the browse's own `filtered_query`, `catalog::keywords::search`), and all
+  four answer the sealed/precon lists' name rule — every whitespace-separated word an order-independent,
+  case-insensitive substring (`shared::every_word_matches[_with]`), prefix matches first
+  (`starts_with_rank`) — **never the Scryfall grammar**, which would turn a colon in a card name into a
+  422 for every group at once (the full grammar is one Enter away on the card listing). The card leg folds
+  **one row per name** through `fold_unique_by` (the engine behind `unique:cards`) and spells its `LIKE` as
+  `indexed_name_like`, the exact expression Postgres's `idx_cards_name_trgm` is built on — a new per-keystroke
+  name read must use that spelling or it seq-scans `cards`. `has_more` is one row of over-fetch, never a
+  `COUNT(*)`. The response is **the same for every visitor** (public, CDN/ETag-cached, per-IP limited like
+  the autocomplete): the signed-in user's decks join **client-side** in `composables/useUniversalSearch.ts`
+  from the cached deck list, filtered by `lib/universalSearch.ts`'s mirror of that name rule — a per-user
+  row must never ride the public read, and the deck query stays gated on a typed term so landing on the
+  homepage fetches nothing per-user.
 - **A search leaf that joins another table needs an index on *both* sides.** The catalog
   listing pairs a filter with `ORDER BY name, set_code, collector_number_int, id` + `LIMIT`,
   and Postgres will happily answer that by walking `idx_cards_game_name` in sort order,

@@ -142,6 +142,8 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::card_names,
         crate::handlers::catalog::list_art_tags,
         crate::handlers::catalog::list_keywords,
+        // --- Search: one query across cards, sealed products, precons and keywords ---
+        crate::handlers::search::universal_search,
         crate::handlers::catalog::ingest_status,
         crate::handlers::catalog::card_sealed,
         crate::handlers::precons::card_precons,
@@ -271,6 +273,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
     modifiers(&SecurityAddon),
     tags(
         (name = "Cards", description = "Card catalog: games, sets, cards, prices."),
+        (name = "Search", description = "One query answered across cards, sealed products, preconstructed decks and the rules-keyword glossary at once — the top matches of each kind, prefix matches first."),
         (name = "Sealed products", description = "Sealed products (boxes, bundles, decks) + prices + contents."),
         (name = "Collection", description = "The signed-in user's owned-card holdings (requires an API key)."),
         (name = "Wish list", description = "The signed-in user's wanted cards + sealed products (requires an API key)."),

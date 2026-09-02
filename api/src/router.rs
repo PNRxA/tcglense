@@ -72,6 +72,7 @@ use crate::{
             precon_bracket, precon_facets, precon_goldfish, precon_legality, precon_stats,
             precon_tokens,
         },
+        search::universal_search,
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
             public_deck_goldfish, public_deck_legality, public_deck_stats, public_deck_tokens,
@@ -587,6 +588,12 @@ pub fn build_router(state: AppState) -> Router {
         // its `/keywords` pages. A curated static table, so this is the cheapest read
         // in the group — and the most cacheable.
         .route("/api/games/{game}/keywords", get(list_keywords))
+        // The universal search: one `q` answered across cards, sealed products, precons
+        // and keywords at once (the homepage search box). The same for every visitor —
+        // the SPA adds the caller's own decks client-side — so it sits here with the
+        // autocomplete: CDN + ETag cached, per-IP rate-limited. `search` is a static
+        // sibling of `cards`/`sets`, so it collides with nothing.
+        .route("/api/games/{game}/search", get(universal_search))
         // The game's legality-tracked deck formats (issue #596) — the vocabulary
         // `deck.format` is normalised against, published so a CLI can complete and validate
         // it. Static sibling of `cards`/`sets`, public and CDN-cacheable like them.

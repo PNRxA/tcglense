@@ -8,14 +8,14 @@ use crate::entities::card;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, DataBody, Page, SortField, apply_card_sort, build_page, load_card, require_game,
-    trim_query,
+    CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort, build_page, load_card,
+    require_game, trim_query,
 };
 use crate::state::AppState;
 
 use super::{
-    ListParams, NameSuggestParams, apply_search, apply_unique, catalog_cards,
-    name_suggestions_query, prints_query,
+    ListParams, NameSuggestParams, apply_search, apply_unique, card_name_search_query,
+    catalog_cards, name_suggestions_query, prints_query,
 };
 
 /// Default / max number of name suggestions the autocomplete endpoint returns.
@@ -127,6 +127,24 @@ pub async fn card_names(
         .await?;
 
     Ok(Json(DataBody { data: names }))
+}
+
+/// The universal search's card leg (`GET /api/games/{game}/search`, see
+/// [`crate::handlers::search`]): up to `limit` distinct card names matching `term`, each
+/// as the full card payload of one representative printing, plus whether more matched.
+/// The query is [`card_name_search_query`]; this runs it with one row of over-fetch so the
+/// group can say `has_more` without a `COUNT(*)`. The game is the caller's to validate.
+pub(crate) async fn search_cards(
+    state: &AppState,
+    game: &str,
+    term: &str,
+    limit: usize,
+) -> Result<SearchGroup<CardResponse>, AppError> {
+    let rows = card_name_search_query(game, term, limit as u64 + 1, state.dialect())?
+        .all(&state.db)
+        .await?;
+    let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
+    Ok(SearchGroup::from_overfetch(data, limit))
 }
 
 /// Get card

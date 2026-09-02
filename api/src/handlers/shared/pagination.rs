@@ -38,6 +38,42 @@ pub(crate) struct Page<T> {
     pub has_more: bool,
 }
 
+/// One group of a universal search's results (`GET /api/games/{game}/search`): the top
+/// matches of one kind plus whether the cut-off left any behind.
+///
+/// Not a [`Page`]: a suggestion list has no page number to turn and deliberately no
+/// `total` — counting every match of a two-character term across the whole `cards`
+/// table on every keystroke would cost more than the matches themselves. `has_more` is
+/// answered by fetching one row past the limit ([`Self::from_overfetch`]), which is all
+/// the SPA needs to decide whether to offer a "see every match" link.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub(crate) struct SearchGroup<T> {
+    pub data: Vec<T>,
+    pub has_more: bool,
+}
+
+impl<T> SearchGroup<T> {
+    /// Build a group from rows fetched with `LIMIT limit + 1`: the extra row, when it
+    /// arrived, proves there is more and is dropped from the payload.
+    pub(crate) fn from_overfetch(mut rows: Vec<T>, limit: usize) -> Self {
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        SearchGroup {
+            data: rows,
+            has_more,
+        }
+    }
+
+    /// The group a blank query answers with: nothing, and nothing withheld.
+    pub(crate) fn empty() -> Self {
+        SearchGroup {
+            data: Vec::new(),
+            has_more: false,
+        }
+    }
+}
+
 impl<T> Page<T> {
     /// Build a page, deriving `has_more` from the cursor position: there is a next
     /// page whenever the rows consumed so far (`page * page_size`) fall short of the
@@ -95,6 +131,20 @@ mod tests {
             resolve_page(Some(u64::MAX), Some(u64::MAX), 60, 200),
             (MAX_PAGE, 200)
         );
+    }
+
+    #[test]
+    fn search_group_overfetch_drops_the_sentinel_row() {
+        // Four rows for a limit of three: the fourth only proves there is more.
+        let group = SearchGroup::from_overfetch(vec![1, 2, 3, 4], 3);
+        assert_eq!(group.data, vec![1, 2, 3]);
+        assert!(group.has_more);
+        // Exactly the limit: nothing withheld.
+        let group = SearchGroup::from_overfetch(vec![1, 2, 3], 3);
+        assert_eq!(group.data, vec![1, 2, 3]);
+        assert!(!group.has_more);
+        let group = SearchGroup::<i32>::empty();
+        assert!(group.data.is_empty() && !group.has_more);
     }
 
     #[test]

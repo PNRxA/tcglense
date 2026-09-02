@@ -12,6 +12,7 @@ pub mod health;
 pub mod mirror;
 pub mod openapi;
 pub mod precons;
+pub mod search;
 pub mod shared;
 pub mod sharing;
 pub mod sitemap;

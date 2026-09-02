@@ -28,6 +28,7 @@ import GitHubMark from '@/components/GitHubMark.vue'
 import DemoCardTile from '@/components/home/DemoCardTile.vue'
 import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
 import ScannerFeatureDemo from '@/components/home/ScannerFeatureDemo.vue'
+import UniversalSearchBox from '@/components/search/UniversalSearchBox.vue'
 import { buttonVariants } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useGamesQuery } from '@/composables/useCatalog'
@@ -44,8 +45,9 @@ usePageMeta({
   canonicalPath: '/',
 })
 
-// Optional, resilient to an empty/loading list: lets a visitor jump straight into a real
-// game's public catalog from the homepage.
+// The games registry feeds the hero's universal search box: it searches the first game
+// (today the only one) and offers a picker when there are several. Resilient to an
+// empty/loading list — the box renders at once and its queries wait for a game.
 const gamesQuery = useGamesQuery()
 const games = computed(() => gamesQuery.data.value?.data ?? [])
 
@@ -130,6 +132,10 @@ const rowLinkClass =
           singles and sealed prices day by day, and see exactly which cards you own — and which ones
           you're still missing.
         </p>
+
+        <!-- The universal search: one box across cards, sealed, precons, keywords and (signed
+             in) your decks — the fastest way off the homepage to the thing you came for. -->
+        <UniversalSearchBox :games="games" class="mt-8 max-w-xl" />
 
         <!-- Auth-branched CTAs: authed variant on a token, guest variant once resolved
              signed-out, and while the session is still unresolved reserve the two lg

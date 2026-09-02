@@ -22,9 +22,9 @@ use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::resolve_bulk_threshold_cents;
 use crate::handlers::shared::{
     CardResponse, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE,
-    MAX_PAGE_SIZE, Page, build_page, every_word_matches, identity_printing_ids, load_card,
-    load_group_set_codes, product_response, require_game, resolve_page, set_name_map,
-    summarize_holdings, trim_query,
+    MAX_PAGE_SIZE, Page, SearchGroup, build_page, every_word_matches, identity_printing_ids,
+    load_card, load_group_set_codes, product_response, require_game, resolve_page, set_name_map,
+    starts_with_rank, summarize_holdings, trim_query,
 };
 use crate::state::AppState;
 
@@ -92,6 +92,49 @@ pub async fn list_precons(
         })
         .collect();
     Ok(Json(build_page(data, page, page_size, total)))
+}
+
+/// The universal search's precon leg (`GET /api/games/{game}/search`, see
+/// [`crate::handlers::search`]): up to `limit` precons whose name contains every word of
+/// `term`, prefix matches first and then by name, plus whether more matched.
+///
+/// Built from [`filtered_query`] — the one builder the flat and grouped listings share —
+/// with only its `q` set, so the search can't answer a name the browse wouldn't. Dressed
+/// exactly as a browse tile is (set name, face card), with the caller lending the set-name
+/// map it already loaded for the sealed leg. One row of over-fetch answers `has_more`.
+pub(crate) async fn search_precons(
+    state: &AppState,
+    game: &str,
+    term: &str,
+    limit: usize,
+    set_names: &HashMap<String, String>,
+) -> Result<SearchGroup<PreconDeckResponse>, AppError> {
+    let params = PreconListParams {
+        q: Some(term.to_string()),
+        ..PreconListParams::default()
+    };
+    let rows = filtered_query(game, &params, None)?
+        .order_by_asc(starts_with_rank(
+            (precon_deck::Entity, precon_deck::Column::Name),
+            term,
+        ))
+        .order_by_asc(precon_deck::Column::Name)
+        .order_by_asc(precon_deck::Column::Slug)
+        .limit(limit as u64 + 1)
+        .all(&state.db)
+        .await?;
+    let faces = face_cards(state, &rows).await?;
+    let data: Vec<PreconDeckResponse> = rows
+        .iter()
+        .map(|row| {
+            precon_response(
+                row,
+                set_names.get(&row.set_code).cloned(),
+                row.face_card_id.and_then(|id| faces.get(&id).cloned()),
+            )
+        })
+        .collect();
+    Ok(SearchGroup::from_overfetch(data, limit))
 }
 
 /// Precon filter facets
