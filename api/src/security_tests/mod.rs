@@ -54,6 +54,7 @@ mod sharing;
 mod signup_toggle;
 mod sitemap;
 mod subtypes;
+mod universal_search;
 mod web_root;
 mod wishlist;
 mod wishlist_products;

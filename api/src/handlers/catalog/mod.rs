@@ -25,7 +25,8 @@ use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
     CardExportFormat, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
-    SortDir, SortField, resolve_page, search_condition, trim_query,
+    SortDir, SortField, every_word_matches_with, resolve_page, search_condition, starts_with_rank,
+    trim_query,
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
@@ -45,11 +46,13 @@ mod status;
 mod tests;
 
 pub use art_tags::{card_art_tags, list_art_tags};
+pub(crate) use cards::search_cards;
 pub use cards::{card_names, card_prints, get_card, list_cards};
 pub use export::{export_cards, export_set_cards};
 pub use image::card_image;
 pub use keywords::list_keywords;
 pub use prices::card_prices;
+pub(crate) use products::search_products;
 pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_containers, product_contents, product_facets, product_image, product_prices,
@@ -224,15 +227,16 @@ pub struct ImageParams {
     pub face: Option<usize>,
 }
 
-/// Query params for the card-name autocomplete endpoint.
+/// Query params for the suggestion-style reads — the card-name autocomplete and the
+/// universal search (`handlers::search`): a text to match and a cap on the answer.
 #[derive(Debug, Deserialize)]
 pub struct NameSuggestParams {
-    /// The substring to match card names against (case-insensitively). Absent/blank
-    /// yields an empty result — there's nothing to suggest yet.
+    /// The text to match names against (case-insensitively). Absent/blank yields an empty
+    /// result — there's nothing to suggest yet.
     #[serde(default)]
     pub q: Option<String>,
-    /// How many suggestions to return, clamped to `[1, MAX_NAME_SUGGESTIONS]`.
-    /// Absent = `DEFAULT_NAME_SUGGESTIONS`.
+    /// How many suggestions to return, clamped to each endpoint's own `[1, max]`. Absent =
+    /// that endpoint's default.
     #[serde(default)]
     pub limit: Option<u64>,
 }
@@ -344,13 +348,7 @@ fn name_suggestions_query(
     dialect: Dialect,
 ) -> Select<card::Entity> {
     let escaped = escape_like(term).to_ascii_lowercase();
-    let name_like = |pattern: String| {
-        cust_vals(
-            dialect,
-            "LOWER(COALESCE(name, '')) LIKE ? ESCAPE '\\'",
-            [pattern],
-        )
-    };
+    let name_like = |pattern: String| indexed_name_like(dialect, pattern);
 
     let contains = name_like(format!("%{escaped}%"));
     // 0/1 rank so MAX() is valid on Postgres (no max(boolean)).
@@ -366,6 +364,57 @@ fn name_suggestions_query(
         .order_by(starts_with_rank, Order::Desc)
         .order_by_asc(card::Column::Name)
         .limit(limit)
+}
+
+/// `LOWER(COALESCE(name, '')) LIKE pattern ESCAPE '\'` — the **one** spelling of a card-name
+/// `LIKE` that Postgres's `idx_cards_name_trgm` expression index (`m..027`) matches, so the
+/// per-keystroke name reads ([`name_suggestions_query`] and the universal search's
+/// [`card_name_search_query`]) become a trigram bitmap scan rather than a scan of the wide
+/// `cards` table. The `''` is inline, not bound, for the same reason (the planner matches the
+/// index expression textually); `name` is `NOT NULL`, so the `COALESCE` is an identity and
+/// the SQLite result set is byte-identical to a bare `LOWER(name)`. `pattern` arrives
+/// ready-made: `LIKE`-escaped, ASCII lower-cased, with its `%` wildcards in place.
+fn indexed_name_like(dialect: Dialect, pattern: String) -> SimpleExpr {
+    cust_vals(
+        dialect,
+        "LOWER(COALESCE(name, '')) LIKE ? ESCAPE '\\'",
+        [pattern],
+    )
+}
+
+/// The universal search's card leg (`handlers::search`): the game's cards whose name
+/// contains every whitespace-separated word of `term`, **one row per distinct name**,
+/// prefix matches first and then by name, capped at `limit`.
+///
+/// Three seams, deliberately none of them new: the name match is
+/// [`every_word_matches_with`] — the same all-words rule the sealed-product and precon
+/// listings answer with, so every leg of the universal search reads "commander tarkir"
+/// identically — spelled through [`indexed_name_like`] so it rides the trigram index; the
+/// one-per-name fold is [`fold_unique_by`], the engine behind the listing's `unique:cards`,
+/// because a suggestion list filled with eight printings of the one card the visitor typed
+/// hides every other card; and the ranking is [`starts_with_rank`], the autocomplete's own.
+/// Built on [`catalog_cards`] like every card grid, so a folded foil-★ variant can't be the
+/// printing that represents its name.
+///
+/// Folds by **name** rather than the listing's `oracle_id`: a name is what the visitor typed
+/// and what a row shows, and — unlike an `oracle_id`, which a reversible printing lacks —
+/// it is never NULL, so one card is always one row. Which printing represents the name is
+/// the fold's pick (`MIN(id)` on Postgres, SQLite's group representative); the row's own
+/// page lists the rest. `limit` is applied as given — a caller that wants a `has_more` asks
+/// for one extra row.
+pub(crate) fn card_name_search_query(
+    game: &str,
+    term: &str,
+    limit: u64,
+    dialect: Dialect,
+) -> Result<Select<card::Entity>, AppError> {
+    let matches = every_word_matches_with(term, |pattern| indexed_name_like(dialect, pattern))?;
+    let query = fold_unique_by(catalog_cards(game).filter(matches), "name", dialect);
+    Ok(query
+        .order_by_asc(starts_with_rank((card::Entity, card::Column::Name), term))
+        .order_by_asc(card::Column::Name)
+        .order_by_asc(card::Column::Id)
+        .limit(limit))
 }
 
 /// The result-shaping directives a `q` may carry (`order:`/`direction:`/`unique:`),
@@ -446,6 +495,19 @@ fn apply_unique(
         // prints / absent: no de-duplication.
         _ => return query,
     };
+    fold_unique_by(query, key_col, dialect)
+}
+
+/// The engine behind [`apply_unique`]: collapse `query` to one row per distinct value of
+/// the `cards` column `key_col`, with the per-backend strategy the doc above describes.
+/// `key_col` is one of a fixed set of column names spliced into SQL — never caller text.
+/// Shared with the universal search's card leg ([`card_name_search_query`]), which folds
+/// by `name`.
+fn fold_unique_by(
+    query: Select<card::Entity>,
+    key_col: &str,
+    dialect: Dialect,
+) -> Select<card::Entity> {
     match dialect {
         // Unchanged from the pre-Postgres compiler — SQLite picks an arbitrary row
         // per group.

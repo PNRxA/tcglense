@@ -646,6 +646,30 @@ fn name_suggestions_compile_the_trgm_indexed_expression() {
     assert!(!s.contains("LOWER(\"cards\".\"name\")"), "{s}");
 }
 
+/// The universal search's card leg is the *other* per-keystroke name read and rides the same
+/// `m..027` expression index. A drift to the typed `every_word_matches` form compiles, is
+/// byte-identical on SQLite (so `security_tests::universal_search` stays green), and silently
+/// un-indexes the homepage box on Postgres — where `fold_unique_by` then evaluates the
+/// un-indexed filter twice. Pin the compiled shape.
+#[test]
+fn card_name_search_compiles_the_trgm_indexed_expression() {
+    let s = card_name_search_query("mtg", "sol ring", 6, Dialect::Postgres)
+        .expect("query")
+        .build(sea_orm::DbBackend::Postgres)
+        .to_string();
+    // One indexed leaf per word in the outer WHERE, and `fold_unique_by`'s Postgres arm
+    // repeats the whole filter inside its MIN(id) subquery — so four, never zero.
+    assert_eq!(
+        s.matches("LOWER(COALESCE(name, '')) LIKE").count(),
+        4,
+        "{s}"
+    );
+    // The only typed-column LIKE is the ORDER BY's `starts_with_rank` (a prefix pattern);
+    // a *contains* leaf on the typed column is exactly what the drift would add.
+    assert!(!s.contains("LOWER(\"cards\".\"name\") LIKE '%"), "{s}");
+    assert!(s.contains("ORDER BY"), "{s}");
+}
+
 #[test]
 fn drop_page_and_size_clamps() {
     let p = ListParams {

@@ -42,6 +42,7 @@ mod read;
 
 pub use analysis::{precon_bracket, precon_goldfish, precon_legality, precon_stats, precon_tokens};
 pub use copy::copy_precon_deck;
+pub(crate) use read::search_precons;
 pub use read::{card_precons, get_precon, list_precon_groups, list_precons, precon_facets};
 
 pub use analysis::{

@@ -42,11 +42,13 @@ pub(crate) use lookup::{
 };
 pub(crate) use pagination::{
     DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, DataBody, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE, Page,
-    build_page, resolve_page, trim_query,
+    SearchGroup, build_page, resolve_page, trim_query,
 };
 pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
 pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
-pub(crate) use search::{every_word_matches, search_condition};
+pub(crate) use search::{
+    every_word_matches, every_word_matches_with, search_condition, starts_with_rank,
+};
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
 pub(crate) use validate::{validate_name, validate_optional};
 #[cfg(test)]

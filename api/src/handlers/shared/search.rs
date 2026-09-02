@@ -58,6 +58,28 @@ pub(crate) fn every_word_matches<C>(column: C, search: &str) -> Result<Condition
 where
     C: IntoColumnRef + Clone,
 {
+    every_word_matches_with(search, |pattern| {
+        Expr::expr(Func::lower(Expr::col(column.clone()))).like(LikeExpr::new(pattern).escape('\\'))
+    })
+}
+
+/// The per-word engine behind [`every_word_matches`], with the `LIKE` leaf pluggable.
+///
+/// The typed column form above is right for `products` and `precon_decks`, but the card
+/// listing's name column is served on Postgres by an **expression** index
+/// (`idx_cards_name_trgm`, `m..027`, built on `LOWER(COALESCE(name, ''))`), and the planner
+/// only matches that index when the `LIKE`'s left side is spelled exactly the same way — so
+/// the universal search's card leg hands in the indexed spelling instead
+/// (`handlers::catalog::indexed_name_like`). Both callers get the one word split, the one
+/// word cap, and the one flat `Condition`, which is the part that must never be forked.
+///
+/// `like` receives each word's ready-made pattern: `%word%`, `LIKE`-escaped and ASCII
+/// lower-cased (see [`every_word_matches`] for why that folding is the portable one), and
+/// must pair it with `ESCAPE '\'`.
+pub(crate) fn every_word_matches_with(
+    search: &str,
+    mut like: impl FnMut(String) -> SimpleExpr,
+) -> Result<Condition, AppError> {
     let words: Vec<&str> = search.split_whitespace().collect();
     if words.len() > MAX_NAME_SEARCH_WORDS {
         return Err(AppError::Validation(format!(
@@ -71,12 +93,28 @@ where
         // Postgres too; `to_ascii_lowercase` matches SQLite's ASCII-only `LOWER()`, so the
         // SQLite result set stays byte-identical.
         let pattern = format!("%{}%", escape_like(word).to_ascii_lowercase());
-        condition = condition.add(
-            Expr::expr(Func::lower(Expr::col(column.clone())))
-                .like(LikeExpr::new(pattern).escape('\\')),
-        );
+        condition = condition.add(like(pattern));
     }
     Ok(condition)
+}
+
+/// A sort key that surfaces the rows whose name **starts with** the whole search text
+/// before the rows that merely contain it: `0` for a prefix match, `1` otherwise, so an
+/// `ORDER BY … ASC` on it leads with "Sol Ring" for `sol r` and only then lists "Parasol
+/// Ring". The card-name autocomplete has always ranked this way (`name_suggestions_query`);
+/// the universal search applies the same rank to every leg so the groups read alike.
+///
+/// Case-insensitive through the same lower-both fold as [`every_word_matches`], and the
+/// text is `LIKE`-escaped so a literal `%`/`_` can't widen the prefix. Pure ordering: it
+/// never filters, so it composes with any `WHERE`.
+pub(crate) fn starts_with_rank<C>(column: C, search: &str) -> SimpleExpr
+where
+    C: IntoColumnRef,
+{
+    let pattern = format!("{}%", escape_like(search.trim()).to_ascii_lowercase());
+    let starts_with =
+        Expr::expr(Func::lower(Expr::col(column))).like(LikeExpr::new(pattern).escape('\\'));
+    Expr::case(starts_with, 0).finally(1).into()
 }
 
 /// A `LOWER(name) LIKE %term%` filter for the fallback (non-Scryfall) game search,

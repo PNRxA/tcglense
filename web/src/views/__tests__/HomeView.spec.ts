@@ -14,6 +14,15 @@ vi.mock('@/composables/useCatalog', async () => {
 
 vi.mock('@/lib/seo', () => ({ usePageMeta: vi.fn<() => void>() }))
 
+// The hero's universal search box has its own spec (and its own queries); here it is a
+// stub that records the games it was handed, so the view's job — mounting it in the hero
+// with the registry — is what's asserted.
+const SearchBoxStub = {
+  name: 'UniversalSearchBox',
+  props: ['games'],
+  template: '<div data-test="universal-search" :data-games="games.length" />',
+}
+
 type AuthState = 'authenticated' | 'guest' | 'unresolved'
 
 async function mountHome(authState: AuthState) {
@@ -46,7 +55,9 @@ async function mountHome(authState: AuthState) {
   await router.push('/')
   await router.isReady()
 
-  return mount(HomeView, { global: { plugins: [pinia, router] } })
+  return mount(HomeView, {
+    global: { plugins: [pinia, router], stubs: { UniversalSearchBox: SearchBoxStub } },
+  })
 }
 
 function scannerRow(wrapper: VueWrapper) {
@@ -114,5 +125,27 @@ describe('HomeView card scanner feature', () => {
     expect(row.querySelector('[data-slot="skeleton"]')).not.toBeNull()
 
     wrapper.unmount()
+  })
+})
+
+describe('HomeView universal search', () => {
+  it('gives the search box its own section, front and centre above the hero, for every visitor', async () => {
+    for (const state of ['authenticated', 'guest', 'unresolved'] as const) {
+      const wrapper = await mountHome(state)
+      // The first section on the page is the search, labelled by its own heading.
+      const first = wrapper.find('section')
+      expect(first.attributes('aria-labelledby')).toBe('home-search-heading')
+      expect(first.find('#home-search-heading').text()).toBe('Search the whole catalog')
+      const box = first.find('[data-test="universal-search"]')
+      expect(box.exists(), `${state}: the box is in the search section`).toBe(true)
+      // It is handed the (here empty) games registry, and it precedes the hero's h1.
+      expect(box.attributes('data-games')).toBe('0')
+      const heading = wrapper.find('h1').element
+      expect(
+        heading.compareDocumentPosition(box.element) & Node.DOCUMENT_POSITION_PRECEDING,
+        `${state}: the box comes before the hero heading`,
+      ).toBeTruthy()
+      wrapper.unmount()
+    }
   })
 })

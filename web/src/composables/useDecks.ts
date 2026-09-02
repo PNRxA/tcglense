@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
-import type { Ref } from 'vue'
+import type { MaybeRefOrGetter, Ref } from 'vue'
 import {
   changeDeckCardPrinting,
   copyPublicDeck,
@@ -58,11 +58,14 @@ import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 // ----- Reads -----
 
-/** The signed-in user's decks for a game, newest edit first. */
-export function useDecksQuery(game: Ref<string>) {
+/** The signed-in user's decks for a game, newest edit first. `enabled` gates the read on
+ * top of the signed-in gate `useAuthedQuery` always applies — the homepage search reads
+ * this same `['decks', game]` entry, but only once there is a term to filter it by. */
+export function useDecksQuery(game: Ref<string>, enabled?: MaybeRefOrGetter<boolean>) {
   const options = {
     queryKey: ['decks', game],
     queryFn: (token: string) => getDecks(token, game.value),
+    enabled,
   }
   return useAuthedQuery<{ data: Deck[] }>(options)
 }
