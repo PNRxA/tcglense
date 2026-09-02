@@ -38,8 +38,9 @@ const telegramBotToken = ref('')
 const telegramChatId = ref('')
 const telegramEnabled = ref(true)
 const emailEnabled = ref(false)
-// Release heads-ups (opt-in, off by default): a day-before notification for a Secret Lair drop
-// and for a new set, delivered over the same channels above.
+// Release heads-ups (opt-in, off by default): a day-before notification for a Secret Lair
+// release (a drop, or a standalone Secret Lair set like The Zeta Set) and for a new set,
+// delivered over the same channels above. A Secret Lair set reaches either opt-in, once.
 const sldReleaseEnabled = ref(false)
 const setReleaseEnabled = ref(false)
 
@@ -398,14 +399,14 @@ async function onTestAll() {
               <div class="space-y-0.5">
                 <Label for="sld-release" class="font-medium">Secret Lair drops</Label>
                 <p class="text-muted-foreground text-xs">
-                  When a new Secret Lair drop is about to release.
+                  When a new Secret Lair drop, or a standalone Secret Lair set, is about to release.
                 </p>
               </div>
             </div>
             <Switch
               id="sld-release"
               :checked="sldReleaseEnabled"
-              aria-label="Secret Lair drop releases"
+              aria-label="Secret Lair releases"
               @update:checked="sldReleaseEnabled = $event"
             />
           </div>
@@ -415,7 +416,8 @@ async function onTestAll() {
               <div class="space-y-0.5">
                 <Label for="set-release" class="font-medium">New set releases</Label>
                 <p class="text-muted-foreground text-xs">
-                  One heads-up per new set (e.g. an upcoming expansion), not per product.
+                  One heads-up per new set (e.g. an upcoming expansion or a standalone boxed set),
+                  not one per sealed product.
                 </p>
               </div>
             </div>

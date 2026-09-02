@@ -461,8 +461,21 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `released_at` among its cards grouped by the runtime drop table; a set's is
   `card_sets.released_at`. Regular sets are **one notification per theme** — top-level only
   (`parent_set_code IS NULL`), a curated set-type allow-list, non-digital, never `sld` (drops
-  handle that per-drop). Session-only channel settings, like price alerts; the two flags ride
-  the `AlertChannels` DTO, so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+  handle that per-drop). **`box` is on that allow-list on purpose:** The Zeta Set (`slz`) is a
+  Secret Lair-line release Scryfall filed as its own top-level `box` set — no parent set, no
+  cards in `sld` — so the per-drop path (which reads `sld` cards only) never sees it and the
+  set path is its only heads-up; the `sld`-parented spin-offs (`slu`, `slc`) stay out via the
+  top-level filter, and every other top-level `box` set in the catalog released before 2023.
+  **A set the set path admits whose code carries the family's `sl` prefix is a Secret Lair
+  release of its own** (`ReleaseKind::SecretLairSet`, MTG only): linked to its own set page and
+  delivered to **either** opt-in, worded per recipient — a Secret Lair release to anyone holding
+  that opt-in, a new set to a set-only subscriber. A user holding both flags gets it once per
+  pass (one `OR` audience query over their single `alert_channels` row) and once ever (the
+  ledger is keyed by the release, `set` / code, not by the opt-in that matched). The prefix
+  only ever *upgrades* a set that already passed the filters; it never rescues one they drop
+  (`slci`).
+  Session-only channel settings, like price alerts; the two flags ride the `AlertChannels` DTO,
+  so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
 - **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
   caller's own rows, grouped so a second tool adds a path segment rather than a new top-level
   route family (the API mirror of the SPA's `/tools` section, placed the way `/keywords` is).

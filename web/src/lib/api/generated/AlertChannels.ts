@@ -20,7 +20,8 @@ telegram_enabled: boolean, email_enabled: boolean,
  */
 email_available: boolean, 
 /**
- * Whether the user opted into a heads-up the day before a **Secret Lair drop** releases.
+ * Whether the user opted into a heads-up the day before a **Secret Lair release** (a drop,
+ * or a set that is itself a Secret Lair release) releases.
  */
 sld_release_enabled: boolean, 
 /**
