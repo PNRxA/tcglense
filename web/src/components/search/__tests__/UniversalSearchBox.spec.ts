@@ -152,14 +152,23 @@ const ProductImageStub = {
 
 let router: Router
 
-async function mountBox(games: Game[] = [MTG], signedIn = false) {
+/** A promise the test resolves by hand, to hold one read in flight past another. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+async function mountBox(games: Game[] = [MTG], signedIn = false, { resolved = true } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  if (signedIn) {
-    const auth = useAuthStore()
-    auth.accessToken = 'token'
-    auth.sessionResolved = true
-  }
+  const auth = useAuthStore()
+  // The router guard resolves the session on the first navigation; a mounted homepage has
+  // that latch set unless a test is specifically about the window before it.
+  auth.sessionResolved = resolved
+  if (signedIn) auth.accessToken = 'token'
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -360,6 +369,123 @@ describe('UniversalSearchBox', () => {
     ])
     expect(mine?.text()).not.toContain('Elves')
     signedIn.unmount()
+  })
+
+  it('keeps the previous rows up while the next term loads, labelled with the term they answer', async () => {
+    const wrapper = await mountBox()
+    const input = await type(wrapper, 'bolt')
+    const next = deferred<SearchResults>()
+    api.searchCatalog.mockImplementation(() => next.promise)
+    await input.setValue('island')
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    await flushPromises()
+
+    const listbox = wrapper.get('[role="listbox"]')
+    // The bolt rows are still on screen, and their "see all" row still says bolt.
+    expect(listbox.text()).toContain('Lightning Bolt')
+    expect(listbox.text()).toContain('All sealed products matching “bolt”')
+    expect(listbox.text()).not.toContain('matching “island”')
+    // The closing row is the hand-off for what was typed, so it does say island…
+    expect(listbox.text()).toContain('Search all cards for “island”')
+    // …and nothing claims that island matched nothing while it is still loading.
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+
+    next.resolve(results())
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).toContain('match “island”')
+    expect(listbox.text()).not.toContain('Lightning Bolt')
+    wrapper.unmount()
+  })
+
+  it('does not say "no matches" for a new term while it is still loading', async () => {
+    api.searchCatalog.mockResolvedValue(results())
+    const wrapper = await mountBox()
+    const input = await type(wrapper, 'zzzz')
+    expect(wrapper.get('[role="status"]').text()).toContain('match “zzzz”')
+
+    // A cached empty answer must not stand in for the next term's verdict.
+    const next = deferred<SearchResults>()
+    api.searchCatalog.mockImplementation(() => next.promise)
+    await input.setValue('bolt')
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).toContain('Searching')
+    expect(wrapper.get('[role="listbox"]').text()).not.toContain('match “bolt”')
+
+    next.resolve(FULL)
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.get('[role="listbox"]').text()).toContain('Lightning Bolt')
+    wrapper.unmount()
+  })
+
+  it('holds the "no matches" verdict until the session has resolved', async () => {
+    api.searchCatalog.mockResolvedValue(results())
+    const wrapper = await mountBox([MTG], false, { resolved: false })
+    await type(wrapper, 'zzzz')
+    // Signed-in or not is unknown, so whether "your decks" match is unknown too.
+    expect(wrapper.get('[role="status"]').text()).toContain('Searching')
+
+    useAuthStore().sessionResolved = true
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).toContain('match “zzzz”')
+    wrapper.unmount()
+  })
+
+  it('keeps the keyboard highlight when the deck list lands after the catalog answer', async () => {
+    const decks = deferred<{ data: Deck[] }>()
+    api.getDecks.mockImplementation(() => decks.promise)
+    const wrapper = await mountBox([MTG], true)
+    const input = await type(wrapper, 'bolt')
+    // Three rows down: the product, after the two cards.
+    for (let i = 0; i < 3; i += 1) await input.trigger('keydown', { key: 'ArrowDown' })
+    const before = wrapper.findAll('[role="option"]')
+    expect(before[2]?.text()).toContain('Bolt Bundle')
+    const productId = before[2]?.attributes('id')
+    expect(input.attributes('aria-activedescendant')).toBe(productId)
+
+    decks.resolve({ data: [deck(7, 'Bolt Storm')] })
+    await flushPromises()
+    await flushPromises()
+    const after = wrapper.findAll('[role="option"]')
+    // The deck row slid in above the product, and the highlight followed the product.
+    expect(after[2]?.text()).toContain('Bolt Storm')
+    expect(after[3]?.attributes('id')).toBe(productId)
+    expect(after[3]?.attributes('aria-selected')).toBe('true')
+    expect(input.attributes('aria-activedescendant')).toBe(productId)
+
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/sealed/mtg/100')
+    wrapper.unmount()
+  })
+
+  it('ignores Enter and the arrows while an IME is composing', async () => {
+    const wrapper = await mountBox()
+    const input = await type(wrapper, 'bolt')
+    await input.trigger('keydown', { key: 'ArrowDown', isComposing: true })
+    expect(input.attributes('aria-activedescendant')).toBeUndefined()
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('asks nothing — not even for decks — until the registry names a game', async () => {
+    const wrapper = await mountBox([], true)
+    await type(wrapper, 'bolt')
+    expect(api.searchCatalog).not.toHaveBeenCalled()
+    expect(api.getDecks).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="status"]').text()).toContain('Searching')
+
+    await wrapper.setProps({ games: [MTG] })
+    await flushPromises()
+    await flushPromises()
+    expect(api.searchCatalog).toHaveBeenCalledTimes(1)
+    expect(api.getDecks).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('shows a game picker only when the registry has more than one game', async () => {

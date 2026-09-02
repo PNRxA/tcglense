@@ -16,6 +16,15 @@ import { useAuthStore } from '@/stores/auth'
  * box's own pause. */
 export const SEARCH_DEBOUNCE_MS = 250
 
+/** What the search query caches: the answer **together with the term it answers**. With
+ * `keepPreviousData` the rows of the previous term stay on screen while the next one loads,
+ * so anything derived from them — a heading, a "see all" link, the deck filter — must be
+ * labelled with the term those rows answer, never with the term being typed. */
+export interface AnsweredSearch {
+  term: string
+  results: SearchResults
+}
+
 /** The universal search read (`GET /api/games/{game}/search`): one request per debounced
  * term, gated on the same minimum length as the quick-add autocomplete so a lone letter
  * never fires a catalog-wide match. A blank `game` (the registry still loading) also gates
@@ -23,11 +32,16 @@ export const SEARCH_DEBOUNCE_MS = 250
 export function useCatalogSearchQuery(game: Ref<string>, term: Ref<string>) {
   const trimmed = computed(() => term.value.trim())
   const enabled = computed(() => game.value !== '' && trimmed.value.length >= SEARCH_MIN_CHARS)
-  return useQuery<SearchResults, ApiError>({
+  return useQuery<AnsweredSearch, ApiError>({
     // Refs go INSIDE the key so a new term (or game) refetches rather than serving the
     // first answer forever.
     queryKey: ['search', game, trimmed],
-    queryFn: ({ signal }) => searchCatalog(game.value, trimmed.value, SEARCH_GROUP_LIMIT, signal),
+    queryFn: async ({ signal }) => {
+      // Captured when the request starts, so the cached answer names the term it is for.
+      const asked = trimmed.value
+      const results = await searchCatalog(game.value, asked, SEARCH_GROUP_LIMIT, signal)
+      return { term: asked, results }
+    },
     enabled,
     placeholderData: keepPreviousData,
     // Catalog names change at most daily; a minute spares the refetch when the visitor
@@ -48,8 +62,9 @@ export type SearchStatus = 'idle' | 'pending' | 'error' | 'empty' | 'results'
  * The user's decks come from the deck list the app already caches (`useDecksQuery`, the
  * `['decks', game]` entry), filtered client-side by the API's own name rule (see
  * `lib/universalSearch.ts`): the search read is public and identical for every visitor,
- * so per-user rows must never ride it. That query is gated on a ready term as well as on
- * being signed in, so merely landing on the homepage never fetches a deck list.
+ * so per-user rows must never ride it. That query is gated on a ready term and a resolved
+ * game as well as on being signed in, so merely landing on the homepage never fetches a
+ * deck list — and nothing ever asks for `/api/decks/` with a blank game.
  */
 export function useUniversalSearch(game: Ref<string>) {
   const router = useRouter()
@@ -66,22 +81,26 @@ export function useUniversalSearch(game: Ref<string>) {
   const searchedTerm = computed(() => debouncedTerm.value.trim())
 
   const query = useCatalogSearchQuery(game, debouncedTerm)
-  // `useAuthedQuery` already ANDs "signed in" into `enabled`; this adds "a term to filter".
+  // `useAuthedQuery` already ANDs "signed in" into `enabled`; this adds "a term to filter"
+  // and, like the catalog read, "a game to ask about".
   const decksQuery = useDecksQuery(
     game,
-    computed(() => searchedTerm.value.length >= SEARCH_MIN_CHARS),
+    computed(() => game.value !== '' && searchedTerm.value.length >= SEARCH_MIN_CHARS),
   )
 
-  const groups = computed(() =>
-    searchedTerm.value.length >= SEARCH_MIN_CHARS
-      ? buildSearchGroups({
-          game: game.value,
-          term: searchedTerm.value,
-          results: query.data.value,
-          decks: auth.isAuthenticated ? decksQuery.data.value?.data : undefined,
-        })
-      : [],
-  )
+  const groups = computed(() => {
+    if (searchedTerm.value.length < SEARCH_MIN_CHARS) return []
+    // The rows on screen may still be the previous answer (`keepPreviousData`): label them
+    // with the term they answer, so a heading, a "see all" link and the deck filter can
+    // never describe a search that hasn't come back yet.
+    const answered = query.data.value
+    return buildSearchGroups({
+      game: game.value,
+      term: answered?.term ?? searchedTerm.value,
+      results: answered?.results,
+      decks: auth.isAuthenticated ? decksQuery.data.value?.data : undefined,
+    })
+  })
   const footer = computed<SearchOption | null>(() =>
     searchedTerm.value.length >= SEARCH_MIN_CHARS
       ? searchAllOption(game.value, searchedTerm.value)
@@ -98,19 +117,37 @@ export function useUniversalSearch(game: Ref<string>) {
   )
   const activeOption = computed<SearchOption | null>(() => options.value[activeIndex.value] ?? null)
 
-  // "In flight" while the debounce hasn't caught up with the live text, or the request is
-  // running — so the box shows a spinner rather than a premature "no matches".
+  // The decks leg is part of the answer the "no matches" message denies, so it holds that
+  // message back too — including the pre-`sessionResolved` window, where the authed read
+  // isn't allowed to start yet (HomeView's CTA skeletons gate on the same latch).
+  const decksPending = computed(
+    () =>
+      ready.value &&
+      (!auth.sessionResolved ||
+        (auth.isAuthenticated && decksQuery.data.value === undefined && !decksQuery.isError.value)),
+  )
+  // "In flight" while the registry hasn't named a game, the debounce hasn't caught up with
+  // the live text, or either read is still running — so the box shows a spinner rather than
+  // a premature "no matches".
   const pending = computed(
-    () => ready.value && (query.isFetching.value || trimmed.value !== searchedTerm.value),
+    () =>
+      ready.value &&
+      (game.value === '' ||
+        query.isFetching.value ||
+        decksPending.value ||
+        trimmed.value !== searchedTerm.value),
   )
   const hasResults = computed(() => groups.value.length > 0)
+  // Results lead so `keepPreviousData`'s rows stay up while the next answer loads; only the
+  // *statement* about the current term waits for it. `pending` must win over `empty`: a
+  // placeholder from the previous term, or a settled-empty catalog answer while the decks
+  // read is still going, is not yet a "nothing matched".
   const status = computed<SearchStatus>(() => {
     if (!ready.value) return 'idle'
     if (hasResults.value) return 'results'
-    if (pending.value && !query.data.value) return 'pending'
+    if (pending.value) return 'pending'
     if (query.isError.value) return 'error'
-    if (query.data.value) return 'empty'
-    return 'pending'
+    return 'empty'
   })
   const showDropdown = computed(() => open.value && ready.value)
 
@@ -126,9 +163,13 @@ export function useUniversalSearch(game: Ref<string>) {
     if (value.trim().length >= SEARCH_MIN_CHARS) open.value = true
   })
 
-  // A fresh option list invalidates the old highlight (its index may not exist now).
-  watch(options, () => {
-    activeIndex.value = -1
+  // A new term clears the highlight; a same-term reshuffle of the list (the decks read
+  // landing after the catalog answer) keeps it by key, so a background per-user read can't
+  // turn the Enter the user is about to press into a hand-off to the full search. The
+  // term guard matters: `more:*` and the closing row's keys are stable across terms.
+  watch([options, searchedTerm], ([next, termNow], [prev, termBefore]) => {
+    const key = termNow === termBefore ? prev?.[activeIndex.value]?.key : undefined
+    activeIndex.value = key ? next.findIndex((option) => option.key === key) : -1
   })
 
   onUnmounted(() => {
@@ -172,6 +213,10 @@ export function useUniversalSearch(game: Ref<string>) {
   }
 
   function onKeydown(event: KeyboardEvent) {
+    // While an IME is composing, Enter commits the candidate and the arrows move through
+    // it — none of those keystrokes are the combobox's. (`keyCode === 229` covers Safari,
+    // which ships composing keydowns with `isComposing` already false.)
+    if (event.isComposing || event.keyCode === 229) return
     switch (event.key) {
       case 'ArrowDown':
         event.preventDefault()

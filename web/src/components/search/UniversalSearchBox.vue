@@ -84,7 +84,9 @@ const activeDescendant = computed(() =>
   showDropdown.value && activeOption.value ? optionId(activeOption.value) : undefined,
 )
 
-// Keep the highlighted row in view as the arrow keys move it past the scroll edge.
+// Keep the highlighted row in view as the arrow keys move it past the scroll edge. The rows
+// highlight on `mousemove`, not `mouseenter`, so the content this scrolls under a parked
+// pointer can't steal the keyboard's highlight back (the reka/Radix rule).
 watch(activeDescendant, (id) => {
   if (id) document.getElementById(id)?.scrollIntoView?.({ block: 'nearest' })
 })
@@ -191,7 +193,7 @@ const placeholder = computed(
             option.kind === 'more' ? 'text-primary font-medium' : '',
           ]"
           @mousedown.prevent
-          @mouseenter="highlight(option.key)"
+          @mousemove="highlight(option.key)"
           @click="close()"
         >
           <!-- The row's text already names the thing, so its thumbnail is decorative. -->
@@ -264,7 +266,7 @@ const placeholder = computed(
         class="mt-1 flex w-full items-center gap-3 rounded-lg border-t px-3 py-2 text-left text-sm outline-none transition-colors"
         :class="footer.key === activeOption?.key ? 'bg-accent text-accent-foreground' : ''"
         @mousedown.prevent
-        @mouseenter="highlight(footer.key)"
+        @mousemove="highlight(footer.key)"
         @click="close()"
       >
         <span

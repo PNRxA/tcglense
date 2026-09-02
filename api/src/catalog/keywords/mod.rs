@@ -153,9 +153,6 @@ fn build(entries: &'static [Entry]) -> Vec<KeywordEntry> {
 
 static MTG: LazyLock<Vec<KeywordEntry>> = LazyLock::new(|| build(mtg::ENTRIES));
 
-/// The glossary for a game, name-ordered. A game with no curated table yet returns an
-/// empty slice rather than an error — the endpoint then answers `200 []`, which the SPA
-/// reads as "this game has no glossary" and simply renders no tooltips.
 /// The universal search's keyword leg: the glossary entries whose **name** contains every
 /// whitespace-separated word of `term` (case-insensitively, in any order), the ones whose
 /// name *starts* with the whole term first and the rest in glossary (name) order, cut at
@@ -194,6 +191,9 @@ pub fn search(game: &str, term: &str, limit: usize) -> (Vec<KeywordEntry>, bool)
     (hits.into_iter().cloned().collect(), has_more)
 }
 
+/// The glossary for a game, name-ordered. A game with no curated table yet returns an
+/// empty slice rather than an error — the endpoint then answers `200 []`, which the SPA
+/// reads as "this game has no glossary" and simply renders no tooltips.
 pub fn glossary(game: &str) -> &'static [KeywordEntry] {
     match game {
         crate::scryfall::GAME => &MTG,

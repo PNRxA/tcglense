@@ -249,6 +249,17 @@ async fn limit_is_clamped_and_has_more_is_honest() {
     assert_eq!(body["cards"]["data"].as_array().unwrap().len(), 10);
     assert_eq!(body["cards"]["has_more"], true);
 
+    // Cut below the five seeded precons — at the SPA's own group limit — so the precon leg's
+    // over-fetch is pinned too: the group says there is more, which is what lets the box
+    // offer "All preconstructed decks matching …".
+    let (_, _, body) = send(
+        &app,
+        get(&format!("/api/games/{game}/search?q=dummy&limit=4")),
+    )
+    .await;
+    assert_eq!(body["precons"]["data"].as_array().unwrap().len(), 4);
+    assert_eq!(body["precons"]["has_more"], true);
+
     // A group with fewer matches than the limit is whole and says so.
     let (_, _, body) = send(
         &app,
