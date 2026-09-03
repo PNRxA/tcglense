@@ -156,8 +156,9 @@ function applySeed() {
 // A card in hand is a card like any other on the deck page: a plain click opens it in the
 // shared detail modal over this panel — the hand, its seed and its bottom decisions stay put
 // underneath, and Back closes it — while the href stays the real card page so modifier and
-// middle clicks, "open in new tab", and crawlers get the full document. The same contract
-// DeckCardRow and CardTile keep, through the same seam. The one time a click means something
+// middle clicks and "open in new tab" get the full document (a hand exists only after the
+// player deals one, so unlike a browse grid no crawler ever sees these links). The same
+// contract DeckCardRow and CardTile keep, through the same seam. The one time a click means something
 // else is the London bottom: while cards are still owed to the bottom, clicking one bottoms
 // it (the button below), and the link waits until that decision is made — a hand mid-mulligan
 // must not open a modal when the prompt above it says "click one in your hand".
@@ -271,12 +272,16 @@ watch(
           <li v-for="(card, index) in cards" :key="`${card.id}-${index}`" class="relative">
             <!-- Two elements rather than one `<component :is>`: what a click *does* differs
               (bottom the card vs open it), so the handlers, the accessible name, and the
-              element's own semantics — a button acts, a link goes somewhere — differ with it. -->
+              element's own semantics — a button acts, a link goes somewhere — differ with it.
+              Both carry the card's name as `title`: a hand shows art only, so the hover is
+              the one label the grid has, and mid-mulligan — when a card can't be opened to
+              check — is exactly when a player has to tell one piece of art from another. -->
             <button
               v-if="toBottom > 0"
               type="button"
               class="focus-visible:ring-ring block w-full cursor-pointer rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
               :aria-label="`Put ${card.name} on the bottom`"
+              :title="card.name"
               @click="putOnBottom(card.id)"
             >
               <CardImage
@@ -289,8 +294,7 @@ watch(
               />
             </button>
             <!-- The image's alt (or the no-image frame's text) is the card's name, which is
-              the link's accessible name; `title` repeats it for the hover the grid doesn't
-              otherwise label, since a hand shows art only. -->
+              the link's accessible name. -->
             <a
               v-else
               :href="hrefFor('card', game, card.id)"

@@ -137,6 +137,12 @@ describe('DeckGoldfish', () => {
     // says "click one in your hand", and that click must not open a modal instead.
     expect(wrapper.findAll('li button')).toHaveLength(7)
     expect(wrapper.findAll('li a')).toHaveLength(0)
+    // The tile still names its card on hover — this is the one state where a card can't be
+    // opened to check, and the moment a player has to tell one piece of art from another.
+    expect(wrapper.findAll('li button')[2]!.attributes('title')).toBe('Card 2')
+    expect(wrapper.findAll('li button')[2]!.attributes('aria-label')).toBe(
+      'Put Card 2 on the bottom',
+    )
 
     // Clicking a card in hand bottoms it.
     await wrapper.findAll('li button')[2]!.trigger('click')
