@@ -12,6 +12,7 @@ import {
   usePreconGoldfishQuery,
   usePublicDeckGoldfishQuery,
 } from '@/composables/useDeckAnalysis'
+import { useDetailModalLink } from '@/composables/useDetailModalLink'
 
 // "Test hand" (issue #596): shuffle up, draw seven, mulligan, and step through draws — the
 // thing every deckbuilder does a dozen times while tuning a list.
@@ -152,6 +153,17 @@ function applySeed() {
   draws.value = 0
 }
 
+// A card in hand is a card like any other on the deck page: a plain click opens it in the
+// shared detail modal over this panel — the hand, its seed and its bottom decisions stay put
+// underneath, and Back closes it — while the href stays the real card page so modifier and
+// middle clicks and "open in new tab" get the full document (a hand exists only after the
+// player deals one, so unlike a browse grid no crawler ever sees these links). The same
+// contract DeckCardRow and CardTile keep, through the same seam. The one time a click means something
+// else is the London bottom: while cards are still owed to the bottom, clicking one bottoms
+// it (the button below), and the link waits until that decision is made — a hand mid-mulligan
+// must not open a modal when the prompt above it says "click one in your hand".
+const { hrefFor, onActivate, warm } = useDetailModalLink()
+
 // Editing the deck invalidates the hand: it was dealt from a library that no longer exists.
 // The hand was dealt from a library that no longer applies — whether the deck was edited or
 // the route swapped the subject entirely. vue-router reuses the precon page across `:slug`,
@@ -258,17 +270,19 @@ watch(
       <UpdatingOverlay :loading="updating">
         <ul v-if="cards.length" class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
           <li v-for="(card, index) in cards" :key="`${card.id}-${index}`" class="relative">
-            <component
-              :is="toBottom > 0 ? 'button' : 'div'"
-              :type="toBottom > 0 ? 'button' : undefined"
-              class="block w-full text-left"
-              :class="
-                toBottom > 0
-                  ? 'focus-visible:ring-ring cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none'
-                  : ''
-              "
-              :aria-label="toBottom > 0 ? `Put ${card.name} on the bottom` : undefined"
-              @click="toBottom > 0 && putOnBottom(card.id)"
+            <!-- Two elements rather than one `<component :is>`: what a click *does* differs
+              (bottom the card vs open it), so the handlers, the accessible name, and the
+              element's own semantics — a button acts, a link goes somewhere — differ with it.
+              Both carry the card's name as `title`: a hand shows art only, so the hover is
+              the one label the grid has, and mid-mulligan — when a card can't be opened to
+              check — is exactly when a player has to tell one piece of art from another. -->
+            <button
+              v-if="toBottom > 0"
+              type="button"
+              class="focus-visible:ring-ring block w-full cursor-pointer rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
+              :aria-label="`Put ${card.name} on the bottom`"
+              :title="card.name"
+              @click="putOnBottom(card.id)"
             >
               <CardImage
                 :game="game"
@@ -276,13 +290,34 @@ watch(
                 :name="card.name"
                 size="normal"
                 :has-image="card.has_image"
-                class="rounded-lg"
-                :class="toBottom > 0 ? 'transition hover:brightness-110' : ''"
+                class="rounded-lg transition hover:brightness-110"
               />
-            </component>
+            </button>
+            <!-- The image's alt (or the no-image frame's text) is the card's name, which is
+              the link's accessible name. -->
+            <a
+              v-else
+              :href="hrefFor('card', game, card.id)"
+              class="focus-visible:ring-ring block w-full rounded-lg focus-visible:ring-2 focus-visible:outline-none"
+              :title="card.name"
+              @click="onActivate($event, 'card', game, card.id)"
+              @pointerenter="warm('card')"
+              @focusin="warm('card')"
+            >
+              <CardImage
+                :game="game"
+                :id="card.id"
+                :name="card.name"
+                size="normal"
+                :has-image="card.has_image"
+                class="rounded-lg transition hover:brightness-110"
+              />
+            </a>
+            <!-- `pointer-events-none`: the badge sits over the card's corner, and a tap on it
+              is a tap on the card — it must fall through to the link or button beneath. -->
             <span
               v-if="index >= firstDrawnIndex"
-              class="bg-primary text-primary-foreground absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
+              class="bg-primary text-primary-foreground pointer-events-none absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
             >
               drawn
             </span>

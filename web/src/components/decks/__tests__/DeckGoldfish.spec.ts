@@ -18,6 +18,12 @@ interface Params {
 }
 
 const captured = vi.hoisted(() => ({ params: null as Ref<Params> | null }))
+/** What the shared detail-modal seam was asked to do: every plain click on a card in hand,
+ * as `[kind, game, id]`, and every chunk warm. The seam itself is covered by its own spec. */
+const modal = vi.hoisted(() => ({
+  activations: [] as [string, string, string][],
+  warms: [] as string[],
+}))
 /** Flip to make the next mounted panel's query report a failure. */
 const failNext = vi.hoisted(() => ({ value: false }))
 /** The query's in-flight state for the next mounted panel: `fetching` alone is a hand being
@@ -72,10 +78,25 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
   }
 })
 
+vi.mock('@/composables/useDetailModalLink', () => ({
+  useDetailModalLink: () => ({
+    hrefFor: (_kind: string, game: string, id: string) => `/cards/${game}/cards/${id}`,
+    onActivate: (event: MouseEvent, kind: string, game: string, id: string) => {
+      event.preventDefault()
+      modal.activations.push([kind, game, id])
+    },
+    warm: (kind: string) => {
+      modal.warms.push(kind)
+    },
+  }),
+}))
+
 beforeEach(() => {
   failNext.value = false
   inFlight.fetching = false
   inFlight.blank = false
+  modal.activations = []
+  modal.warms = []
 })
 
 function mountPanel() {
@@ -112,12 +133,68 @@ describe('DeckGoldfish', () => {
     // Drawing is blocked until the bottoming is done.
     expect((buttonNamed(wrapper, 'Draw').element as HTMLButtonElement).disabled).toBe(true)
 
+    // While a card is owed, the hand is buttons that bottom, not links that open: the prompt
+    // says "click one in your hand", and that click must not open a modal instead.
+    expect(wrapper.findAll('li button')).toHaveLength(7)
+    expect(wrapper.findAll('li a')).toHaveLength(0)
+    // The tile still names its card on hover — this is the one state where a card can't be
+    // opened to check, and the moment a player has to tell one piece of art from another.
+    expect(wrapper.findAll('li button')[2]!.attributes('title')).toBe('Card 2')
+    expect(wrapper.findAll('li button')[2]!.attributes('aria-label')).toBe(
+      'Put Card 2 on the bottom',
+    )
+
     // Clicking a card in hand bottoms it.
     await wrapper.findAll('li button')[2]!.trigger('click')
     expect(captured.params!.value.bottom).toHaveLength(1)
+    expect(modal.activations).toEqual([])
     expect(wrapper.findAll('li')).toHaveLength(6)
     expect(wrapper.text()).toContain('On the bottom:')
     expect((buttonNamed(wrapper, 'Draw').element as HTMLButtonElement).disabled).toBe(false)
+
+    // The bottom paid, the hand goes back to being cards you can open.
+    expect(wrapper.findAll('li button')).toHaveLength(0)
+    expect(wrapper.findAll('li a')).toHaveLength(6)
+  })
+
+  it('opens a card in hand in the detail modal, keeping the real card page as its href', async () => {
+    const wrapper = mountPanel()
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+
+    // Every card in hand is a link to its own page — the href modifier/middle clicks and
+    // "open in new tab" follow — and none is a bottoming button, since nothing is owed.
+    const links = wrapper.findAll('li a')
+    expect(links).toHaveLength(7)
+    expect(wrapper.findAll('li button')).toHaveLength(0)
+    expect(links[2]!.attributes('href')).toBe('/cards/mtg/cards/c2')
+    // The grid shows art only, so the name rides the link for hover and assistive tech.
+    expect(links[2]!.attributes('title')).toBe('Card 2')
+    expect(links[2]!.find('img').attributes('alt')).toBe('Card 2')
+
+    // A plain click goes to the shared seam, which opens the modal over this page.
+    await links[2]!.trigger('click')
+    expect(modal.activations).toEqual([['card', 'mtg', 'c2']])
+    // And the click was a modal open, not a bottom: the hand is untouched.
+    expect(captured.params!.value.bottom).toEqual([])
+    expect(wrapper.findAll('li')).toHaveLength(7)
+
+    // Hovering a card warms the dialog chunk, as every other card link on the page does.
+    await links[4]!.trigger('pointerenter')
+    expect(modal.warms).toEqual(['card'])
+  })
+
+  it('opens a drawn card too — the badge over its corner never swallows the tap', async () => {
+    const wrapper = mountPanel()
+    await buttonNamed(wrapper, 'Draw opening hand').trigger('click')
+    await buttonNamed(wrapper, 'Draw').trigger('click')
+
+    const drawn = wrapper.findAll('li').find((item) => item.text().includes('drawn'))!
+    expect(drawn.find('a').attributes('href')).toBe('/cards/mtg/cards/c7')
+    // The badge is a sibling laid over the link, so it has to let pointer events through.
+    expect(drawn.find('span').classes()).toContain('pointer-events-none')
+
+    await drawn.find('a').trigger('click')
+    expect(modal.activations).toEqual([['card', 'mtg', 'c7']])
   })
 
   it('draws one card at a time and marks what was drawn', async () => {
