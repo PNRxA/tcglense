@@ -40,7 +40,7 @@ use sets::{prints_filter, set, set_type, sets_filter};
 use tags::art_tag;
 use text::{exact, text_field, text_pattern};
 
-pub(crate) use common::{cust_vals, escape_like};
+pub(crate) use common::{array_member_expr, cust_vals, escape_like};
 
 pub(super) fn compile(node: &Node, dialect: Dialect) -> Result<Condition, SearchError> {
     match node {

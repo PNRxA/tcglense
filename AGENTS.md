@@ -638,6 +638,16 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   from the *other* side, so a new leaf that probes a second table lands with the matching
   `cards` index in the same change. Same shape one level down: `deck_cards` had no index
   leading with `section_id`, which is all `decks::facets` selects on (`m..069`).
+  **A leaf on a `cards` expression has the mirror rule:** Postgres uses an expression index
+  only while the query renders the identical expression, so the leaf and the index are built
+  from **one seam** — `kw:` rides `m..078`'s trgm index on `array_member_expr` (drift canary in
+  `search/tests.rs`), as `name:`/`t:`/`o:` ride `m..027`'s — never a second copy of the string.
+  The seam keeps a *fresh* build in step; a deployed Postgres keeps the index it already built,
+  so changing the expression needs a **new migration that drops and recreates the index** (the
+  canary pins the literal so the change can't ship without one).
+  And a `Page`'s `total` is a second full pass over the filter: a surface that shows a handful
+  of rows and never the count reads `/cards/preview` (`SearchGroup`, over-fetched `has_more`,
+  no `COUNT(*)`) — the keyword glossary paid a 5 s scan per page for a number in a button label.
 - Card images are cached lazily on first view — self-hosts **never bulk-download**;
   image fetches are host-allow-listed with redirects disabled. **Don't add any bulk
   image path** — the one sanctioned exception is the opt-in fingerprint build

@@ -20,6 +20,7 @@ mod art_tags;
 mod caching;
 mod captcha;
 mod card_export;
+mod card_preview;
 mod cli_auth;
 mod collection;
 mod collection_import;

@@ -46,8 +46,10 @@ mod status;
 mod tests;
 
 pub use art_tags::{card_art_tags, list_art_tags};
+#[cfg(test)]
+pub(crate) use cards::MAX_PREVIEW_ROWS;
 pub(crate) use cards::search_cards;
-pub use cards::{card_names, card_prints, get_card, list_cards};
+pub use cards::{card_names, card_prints, get_card, list_cards, preview_cards};
 pub use export::{export_cards, export_set_cards};
 pub use image::card_image;
 pub use keywords::list_keywords;
@@ -68,7 +70,9 @@ pub use status::{ingest_status, list_games};
 // sibling `__path_` struct, which lives in the private submodule where the handler is
 // defined). See `crate::openapi`.
 pub use art_tags::{__path_card_art_tags, __path_list_art_tags};
-pub use cards::{__path_card_names, __path_card_prints, __path_get_card, __path_list_cards};
+pub use cards::{
+    __path_card_names, __path_card_prints, __path_get_card, __path_list_cards, __path_preview_cards,
+};
 pub use export::{__path_export_cards, __path_export_set_cards};
 pub use keywords::__path_list_keywords;
 pub use prices::__path_card_prices;
@@ -156,6 +160,10 @@ pub struct ListParams {
     /// default, or `names`). Ignored by every listing endpoint — they answer JSON.
     #[serde(default)]
     pub format: Option<String>,
+    /// Preview endpoint only (`/cards/preview`): how many rows to return, clamped by
+    /// the handler. Ignored by the paginated listings, which take `page`/`page_size`.
+    #[serde(default)]
+    pub limit: Option<u64>,
 }
 
 impl ListParams {

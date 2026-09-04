@@ -112,9 +112,29 @@ pub(super) fn array_member(dialect: Dialect, col: &str, value: &str) -> SimpleEx
     let needle = format!("%,{},%", escape_like(&value.to_lowercase()));
     cust_vals(
         dialect,
-        format!("(',' || LOWER(COALESCE({col}, '')) || ',') LIKE ? ESCAPE '\\'"),
+        format!("{} LIKE ? ESCAPE '\\'", array_member_expr(col)),
         [needle],
     )
+}
+
+/// The comma-wrapped, case-folded membership expression [`array_member`] tests with
+/// `LIKE` — `(',' || LOWER(COALESCE(<col>, '')) || ',')` — as the exact text the compiled
+/// query emits. `pub(crate)` (re-exported beside [`cust_vals`] / [`escape_like`]) because
+/// `m20240101_000078_add_cards_keywords_trgm_index` builds its `kw:` trigram index on this
+/// expression for `keywords`: Postgres uses an expression index only while the query
+/// renders the identical expression, so the leaf and the index are rendered from this one
+/// function rather than two copies of the string (the `m..034` / `HAS_SUBTYPE_SQL_ARMS`
+/// pattern) — `keyword_filter_renders_the_indexed_expression` is the drift canary.
+///
+/// One function guarantees agreement only for an index built *after* the change: a deployed
+/// Postgres keeps the index it built from the old text. So **changing this expression needs
+/// a new migration that drops and recreates `idx_cards_keywords_trgm`** (`CREATE INDEX IF
+/// NOT EXISTS` matches on the name, so a copy-pasted rebuild is a silent no-op) — the canary
+/// pins the literal for that reason. Four leaves render through here (`keywords`,
+/// `finishes`, `promo_types`, `frame_effects`) and only `keywords` is indexed, so an edit
+/// motivated by one of the other three still carries the obligation.
+pub(crate) fn array_member_expr(col: &str) -> String {
+    format!("(',' || LOWER(COALESCE({col}, '')) || ',')")
 }
 
 /// `col IS NOT NULL AND col <> ''` — a total presence test.

@@ -84,9 +84,9 @@ interface RequestOptions {
 
 /**
  * Encode the shared list-endpoint query params in one place. Keys are emitted in a fixed
- * order (page, page_size, q, sort, dir, set, include_related, name, drop, bulk_max_cents)
- * and falsy values are skipped (a 0 page, empty query, or false flag drops out). Returns
- * '' or a leading `?…` string.
+ * order (page, page_size, limit, q, sort, dir, set, include_related, name, drop,
+ * bulk_max_cents) and falsy values are skipped (a 0 page, empty query, or false flag drops
+ * out). Returns '' or a leading `?…` string.
  */
 export function listQuery(params: {
   page?: number
@@ -99,10 +99,12 @@ export function listQuery(params: {
   name?: string
   drop?: string
   bulkMaxCents?: number
+  limit?: number
 }): string {
   const search = new URLSearchParams()
   if (params.page) search.set('page', String(params.page))
   if (params.pageSize) search.set('page_size', String(params.pageSize))
+  if (params.limit) search.set('limit', String(params.limit))
   if (params.q) search.set('q', params.q)
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)

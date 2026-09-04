@@ -12,7 +12,7 @@ import KeywordKindChip from '@/components/keywords/KeywordKindChip.vue'
 import { Button } from '@/components/ui/button'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { useKeywordEntry } from '@/composables/useKeywords'
-import { listCards } from '@/lib/api'
+import { previewCards } from '@/lib/api'
 import { KIND_BLURBS, KIND_LABELS, glossaryPath, keywordPath } from '@/lib/keywords'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 import { usePageMeta } from '@/lib/seo'
@@ -48,15 +48,17 @@ const gameName = computed(
 
 const crumbs = computed(() => (entry.value ? keywordCrumbs(game.value, entry.value.name) : []))
 
-/** A few cards that carry the keyword, newest and priciest first — the `kw:` search
- * filter is exactly what this page wants, and it's the same query the "browse all"
- * button below hands to the catalog. */
+/** A few cards that carry the keyword, priciest first — the `kw:` search filter is
+ * exactly what this page wants, and it's the same query the "browse all" button below
+ * hands to the catalog. Read through the count-free preview rather than the paged
+ * listing: a page's `total` is a second full scan of the catalog, and this panel only
+ * ever showed the number in a button label. */
 const cardsQuery = useQuery({
   queryKey: ['keyword-cards', game, computed(() => entry.value?.name)],
   queryFn: ({ signal }) =>
-    listCards(
+    previewCards(
       game.value,
-      { q: `kw:"${entry.value?.name}"`, pageSize: 8, sort: 'price', dir: 'desc' },
+      { q: `kw:"${entry.value?.name}"`, limit: 8, sort: 'price', dir: 'desc' },
       signal,
     ),
   enabled: computed(() => !!entry.value),
@@ -64,7 +66,6 @@ const cardsQuery = useQuery({
 })
 
 const exampleCards = computed(() => cardsQuery.data.value?.data ?? [])
-const exampleTotal = computed(() => cardsQuery.data.value?.total ?? 0)
 const browseAll = computed(() => ({
   path: `/cards/${game.value}/cards`,
   query: { q: `kw:"${entry.value?.name}"` },
@@ -132,9 +133,7 @@ usePageMeta({
         <template v-else>
           <CardGrid :game="game" :cards="exampleCards" />
           <Button variant="outline" class="mt-4" as-child>
-            <RouterLink :to="browseAll">
-              Browse all {{ exampleTotal }} cards with {{ entry.name }}
-            </RouterLink>
+            <RouterLink :to="browseAll">Browse all cards with {{ entry.name }}</RouterLink>
           </Button>
         </template>
       </section>

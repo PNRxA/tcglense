@@ -4,6 +4,7 @@ import {
   cardExportPath,
   cardImageUrl,
   cardNamesPath,
+  cardPreviewPath,
   exportCards,
   getCardPrintingsByName,
   priceHistoryPath,
@@ -48,6 +49,22 @@ describe('cardNamesPath', () => {
 
   it('encodes the game path segment', () => {
     expect(cardNamesPath('a/b', 'x')).toContain('/api/games/a%2Fb/card-names')
+  })
+})
+
+describe('cardPreviewPath', () => {
+  it('builds the count-free preview URL with the listing vocabulary plus limit', () => {
+    // A non-default limit, so a dropped key can't hide behind the server's default of 8.
+    expect(
+      cardPreviewPath('mtg', { q: 'kw:"First strike"', limit: 3, sort: 'price', dir: 'desc' }),
+    ).toBe('/api/games/mtg/cards/preview?limit=3&q=kw%3A%22First+strike%22&sort=price&dir=desc')
+  })
+
+  it('omits absent params and escapes the game', () => {
+    expect(cardPreviewPath('a/b')).toBe('/api/games/a%2Fb/cards/preview')
+    expect(cardPreviewPath('mtg', { name: 'Ach! Hans, Run!' })).toContain(
+      '/cards/preview?name=Ach%21+Hans%2C+Run%21',
+    )
   })
 })
 
