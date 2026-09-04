@@ -141,7 +141,7 @@ deterministic offline catalog and skips all syncing.
   in-process via `tower`'s `oneshot` (no TCP bind, no network). Each concern is its own
   module under `mod.rs`, over the shared `harness` (a capturing mailbox, an in-memory
   SQLite DB, and the full middleware stack): `alerts`, `api_keys`, `art_tags`, `caching`, `captcha`,
-  `card_export`, `cli_auth`, `collection`, `collection_import`, `collection_products`, `cors`,
+  `card_export`, `card_preview`, `cli_auth`, `collection`, `collection_import`, `collection_products`, `cors`,
   `deck_analysis`, `decks`, `email_verification`, `headers`, `keywords`, `life_counter`, `login`, `mirror`, `openapi`, `pagination`, `precons`,
   `password_reset`, `products`, `public_collection`, `public_wishlist`, `rate_limit`, `readiness`,
   `refresh`, `registration`, `request_body`, `request_params`, `rulings`, `scan`, `search`,

@@ -46,7 +46,9 @@ mod status;
 mod tests;
 
 pub use art_tags::{card_art_tags, list_art_tags};
-pub(crate) use cards::{MAX_PREVIEW_ROWS, search_cards};
+#[cfg(test)]
+pub(crate) use cards::MAX_PREVIEW_ROWS;
+pub(crate) use cards::search_cards;
 pub use cards::{card_names, card_prints, get_card, list_cards, preview_cards};
 pub use export::{export_cards, export_set_cards};
 pub use image::card_image;

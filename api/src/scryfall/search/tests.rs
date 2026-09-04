@@ -616,15 +616,29 @@ fn keyword_filter_renders_the_indexed_expression() {
     // keyword glossary page to two full scans of `cards`. This is the drift canary: if it
     // fails, the leaf and the migration have diverged — change them together (a new
     // migration rebuilds the index).
-    let s = sql("kw:flying");
+    // The literal pin is what lets this fail: the leaf and the migration both render from
+    // `array_member_expr`, so an edit to the seam alone keeps every other test green while
+    // a migrated Postgres keeps the *old* index. A change here needs a new migration that
+    // drops and recreates `idx_cards_keywords_trgm` (`CREATE INDEX IF NOT EXISTS` matches
+    // on the name, so a copy-pasted rebuild would be a silent no-op).
+    assert_eq!(
+        crate::scryfall::search::array_member_expr("keywords"),
+        "(',' || LOWER(COALESCE(keywords, '')) || ',')",
+        "the kw: expression changed: ship a new migration that drops and recreates \
+         idx_cards_keywords_trgm on the new text"
+    );
+    // And the leaf must keep rendering through the seam, on both backends — the index is
+    // Postgres-only, so a Postgres-only divergence in the leaf is the one that matters.
     let expr = format!(
         "{} LIKE",
         crate::scryfall::search::array_member_expr("keywords")
     );
-    assert!(
-        s.contains(&expr),
-        "kw: must render the indexed expression\n  expr: {expr}\n  sql: {s}"
-    );
+    for s in [sql("kw:flying"), pg_sql("kw:flying")] {
+        assert!(
+            s.contains(&expr),
+            "kw: must render the indexed expression\n  expr: {expr}\n  sql: {s}"
+        );
+    }
 }
 
 #[test]

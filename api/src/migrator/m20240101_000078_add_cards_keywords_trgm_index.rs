@@ -21,18 +21,21 @@ use crate::scryfall::search::array_member_expr;
 /// bitmap index scan (the `m..027` mechanism). It works better here than for a generic
 /// substring: the wrapping commas are word separators to `pg_trgm`, so the needle's trigram
 /// set is the keyword's own, undiluted by neighbours. Measured on a 106k-row repro of the
-/// real schema (Postgres 16): the `COUNT(*)` for a keyword under a few percent of the
-/// catalog (all but one of the 365 glossary entries) fell from ~36,700 to 44–507 buffers,
-/// and the page half the same way — i.e. from seconds to milliseconds on prod. Two honest
-/// caveats, both the same shape as `m..027`'s:
+/// real schema (Postgres 16), the cost now scales with the matches — a bitmap heap scan
+/// touches roughly one heap page per matching printing — where the scan read ~36,700
+/// buffers whatever the keyword: a keyword under half a percent of the catalog (about 340
+/// of the 365 glossary entries) reads 44–507 buffers, and the twenty-odd common ones a few
+/// thousand; on prod that is seconds → milliseconds for the tail and a clear win for the
+/// rest. Two honest caveats, both the same shape as `m..027`'s:
 ///
-/// - **The one ubiquitous keyword gains little.** Flying is ~9 % of all printings, spread
-///   over about a third of the heap's pages. The planner may keep the sequential scan or
-///   pick the bitmap plan (fewer buffers warm, but a readahead-hostile page order that on
-///   cold storage with `effective_io_concurrency = 1` can run slower than the scan it
-///   replaces) — a wash for that one page either way. Its real fix is the sibling change in
-///   the same PR: the glossary panel reads `/cards/preview`, which drops the `COUNT(*)`
-///   half entirely for every keyword.
+/// - **The bitmap plan's page order is readahead-hostile**, so on cold storage at
+///   Postgres's default `effective_io_concurrency = 1` any broad keyword's bitmap scan
+///   pays random reads where the sequential scan streamed (measured ~3x between 1 and 0 or
+///   64 on a third-of-the-heap scan; worth setting on a self-host). Flying — ~9 % of all
+///   printings, a third of the heap's pages — is where that stops being a win: the planner
+///   may keep the sequential scan or pick the bitmap plan, and either way that one page is
+///   a wash. Its real fix is the sibling change in the same PR: the glossary panel reads
+///   `/cards/preview`, which drops the `COUNT(*)` half entirely for every keyword.
 /// - **A needle with no word characters extracts no trigrams.** `kw:%` / `kw:.` / `kw:-`
 ///   fall into a full GIN scan plus a whole-table recheck, ~1.5–2x a sequential scan.
 ///   Reachable anonymously, per-IP limited, and already the case for `name:%` since

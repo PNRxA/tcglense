@@ -1330,7 +1330,7 @@ async fn keyword_trgm_index_serves_kw_on_pg() {
     // live backend: (a) the raw `CREATE INDEX` string took, as a `gin_trgm_ops` index on
     // `keywords`; (b) the planner *matches* it against the expression the leaf compiles —
     // Postgres uses an expression index only while the two are identical, and only Postgres
-    // can say whether they are (the SQLite canary pins the leaf's text, not the match); and
+    // can say whether they are (the unit canary pins the leaf's text, not the match); and
     // (c) the listing and its count-free preview answer the same `kw:` rows in the same order.
     use crate::entities::card;
     use sea_orm::{IntoActiveModel, TransactionTrait};

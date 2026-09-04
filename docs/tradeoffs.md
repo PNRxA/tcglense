@@ -230,13 +230,19 @@ catalog) is planned but not implemented.
     leaf compiles through and the migration builds from, with a drift canary
     (`keyword_filter_renders_the_indexed_expression`), because an expression index is matched
     textually and a silent drift would put the scans back (the `m…034` / `HAS_SUBTYPE_SQL_ARMS`
-    pattern; issue #413 is what happens with a doc comment alone). For every keyword under a few
-    percent of the catalog — all but one of the 365 — the count went from ~36,700 to 44–507
-    buffers (seconds → milliseconds); for Flying (~9 % of printings, spread over a third of the
-    heap) it is a wash, and cold at `effective_io_concurrency = 1` the bitmap plan can be slower
-    than the scan it replaces. A needle with no word characters (`kw:%`) falls to a full GIN scan
-    plus recheck, ~1.5–2× a seq scan — `m…027` has shipped the same hazard for `name:%` since
-    day one.
+    pattern; issue #413 is what happens with a doc comment alone). Sharing the function only
+    guarantees agreement for an index built *after* a change — a deployed Postgres keeps the one
+    it built from the old text — so **a change to the expression needs a new migration that
+    drops and recreates the index**, and the canary pins the literal for that reason. The cost now
+    scales with the matches (a bitmap heap scan touches ~one heap page per matching printing)
+    where the scan read ~36,700 buffers whatever the keyword: a keyword under half a percent of
+    the catalog — about 340 of the 365 — reads 44–507 buffers, the twenty-odd common ones a few
+    thousand (seconds → milliseconds for the tail, a clear win for the rest); for Flying (~9 % of
+    printings, spread over a third of the heap) it is a wash, and cold at the default
+    `effective_io_concurrency = 1` any broad keyword's bitmap plan pays random reads where the
+    scan streamed (~3× between 1 and 0/64). A needle with no word characters (`kw:%`) falls to a
+    full GIN scan plus recheck, ~1.5–2× a seq scan — `m…027` has shipped the same hazard for
+    `name:%` since day one.
   - **`GET /cards/preview`, the listing's first rows without its `total`** — the same
     `all_cards_query` (so the preview is provably the grid's own first page, like the `.txt`
     export), answered as a `SearchGroup` with one row of over-fetch for `has_more`, the universal

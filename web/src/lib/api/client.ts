@@ -84,9 +84,9 @@ interface RequestOptions {
 
 /**
  * Encode the shared list-endpoint query params in one place. Keys are emitted in a fixed
- * order (page, page_size, q, sort, dir, set, include_related, name, drop, bulk_max_cents)
- * and falsy values are skipped (a 0 page, empty query, or false flag drops out). Returns
- * '' or a leading `?…` string.
+ * order (page, page_size, limit, q, sort, dir, set, include_related, name, drop,
+ * bulk_max_cents) and falsy values are skipped (a 0 page, empty query, or false flag drops
+ * out). Returns '' or a leading `?…` string.
  */
 export function listQuery(params: {
   page?: number

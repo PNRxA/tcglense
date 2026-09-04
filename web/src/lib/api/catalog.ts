@@ -124,6 +124,12 @@ export interface CardPreviewParams {
   limit?: number
 }
 
+/** The preview URL for a game + params (pinned by `api.spec.ts`; the query string rides
+ * the shared `listQuery` encoder). */
+export function cardPreviewPath(game: string, params: CardPreviewParams = {}): string {
+  return `/api/games/${encodeURIComponent(game)}/cards/preview${listQuery(params)}`
+}
+
 /**
  * The first `limit` rows of a card search, without the listing's `total`.
  *
@@ -138,10 +144,7 @@ export function previewCards(
   params?: CardPreviewParams,
   signal?: AbortSignal,
 ): Promise<CardPreview> {
-  return request<CardPreview>(
-    `/api/games/${encodeURIComponent(game)}/cards/preview${listQuery(params ?? {})}`,
-    { signal },
-  )
+  return request<CardPreview>(cardPreviewPath(game, params), { signal })
 }
 
 // ---------- Card search export (public, plain text) ----------
