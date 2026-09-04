@@ -1322,3 +1322,125 @@ async fn products_list_search_and_price_sort_on_pg() {
 
     db.teardown().await;
 }
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn keyword_trgm_index_serves_kw_on_pg() {
+    // `m..078` builds a GIN trigram index on the `kw:` leaf's exact expression. What needs a
+    // live backend: (a) the raw `CREATE INDEX` string took, as a `gin_trgm_ops` index on
+    // `keywords`; (b) the planner *matches* it against the expression the leaf compiles —
+    // Postgres uses an expression index only while the two are identical, and only Postgres
+    // can say whether they are (the SQLite canary pins the leaf's text, not the match); and
+    // (c) the listing and its count-free preview answer the same `kw:` rows in the same order.
+    use crate::entities::card;
+    use sea_orm::{IntoActiveModel, TransactionTrait};
+
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    // (a)
+    let indexdef: String = conn
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_cards_keywords_trgm'",
+        ))
+        .await
+        .expect("query pg_indexes")
+        .expect("the keyword trigram index exists")
+        .try_get("", "indexdef")
+        .expect("indexdef column");
+    assert!(
+        indexdef.contains("USING gin")
+            && indexdef.contains("gin_trgm_ops")
+            && indexdef.contains("keywords"),
+        "must be a pg_trgm GIN index over the keywords expression: {indexdef}"
+    );
+
+    for (id, keywords, price) in [
+        (1, Some("Flying,Trample"), "3.00"),
+        (2, Some("Flying"), "12.50"),
+        (3, Some("Trample"), "9.99"),
+        (4, None, "1.00"),
+    ] {
+        card::Model {
+            external_id: format!("ext-{id}"),
+            keywords: keywords.map(str::to_string),
+            price_usd: Some(price.to_string()),
+            ..crate::test_support::card_model(id)
+        }
+        .into_active_model()
+        .insert(conn)
+        .await
+        .expect("insert card");
+    }
+
+    // (b): with the sequential scan priced out, the plan can only name the index if the
+    // planner matched its expression against the leaf's — the same text the migration was
+    // rendered from, so this is the textual lock-step proven on the backend it protects.
+    // The predicate stands alone: on a four-row table the listing's `game = ?` would let
+    // the planner take the cheap `game` b-tree and *filter* the keyword, proving nothing,
+    // whereas nothing but the trigram index can serve the keyword expression itself.
+    let predicate = format!(
+        "{} LIKE '%,flying,%' ESCAPE '\\'",
+        crate::scryfall::search::array_member_expr("keywords")
+    );
+    let txn = conn.begin().await.expect("begin");
+    txn.execute_unprepared("SET LOCAL enable_seqscan = off")
+        .await
+        .expect("disable seq scan for this transaction");
+    let plan: Vec<String> = txn
+        .query_all(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            format!("EXPLAIN SELECT id FROM cards WHERE {predicate}"),
+        ))
+        .await
+        .expect("explain")
+        .iter()
+        .map(|row| row.try_get::<String>("", "QUERY PLAN").expect("plan line"))
+        .collect();
+    txn.rollback().await.expect("rollback");
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("idx_cards_keywords_trgm")),
+        "the kw: predicate must be served by the trigram index:\n{}",
+        plan.join("\n")
+    );
+
+    // (c)
+    let router = pg_router(db.conn().clone());
+    let q = enc("kw:flying");
+    let (status, page) = get(
+        &router,
+        &format!("/api/games/mtg/cards?q={q}&sort=price&dir=desc&page_size=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let (status, preview) = get(
+        &router,
+        &format!("/api/games/mtg/cards/preview?q={q}&sort=price&dir=desc&limit=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let ids = |body: &Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .map(|row| row["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+    assert_eq!(
+        ids(&page),
+        vec!["ext-2", "ext-1"],
+        "priciest Flying cards first"
+    );
+    assert_eq!(ids(&preview), ids(&page));
+    assert_eq!(page["total"], 2);
+    assert_eq!(preview["has_more"], false);
+    assert!(preview.get("total").is_none());
+
+    db.teardown().await;
+}

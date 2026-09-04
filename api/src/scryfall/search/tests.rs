@@ -609,6 +609,25 @@ fn keyword_filter_is_comma_delimited_membership() {
 }
 
 #[test]
+fn keyword_filter_renders_the_indexed_expression() {
+    // `m20240101_000078_add_cards_keywords_trgm_index` builds its GIN trigram index on
+    // `array_member_expr("keywords")`. Postgres uses an expression index only while the
+    // query renders the *identical* expression, so a drift here silently returns every
+    // keyword glossary page to two full scans of `cards`. This is the drift canary: if it
+    // fails, the leaf and the migration have diverged — change them together (a new
+    // migration rebuilds the index).
+    let s = sql("kw:flying");
+    let expr = format!(
+        "{} LIKE",
+        crate::scryfall::search::array_member_expr("keywords")
+    );
+    assert!(
+        s.contains(&expr),
+        "kw: must render the indexed expression\n  expr: {expr}\n  sql: {s}"
+    );
+}
+
+#[test]
 fn legality_uses_json_extract() {
     let s = sql("f:modern");
     assert!(s.contains("json_extract"), "{s}");

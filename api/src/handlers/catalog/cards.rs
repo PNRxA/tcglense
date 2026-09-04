@@ -2,7 +2,7 @@
 //! detail, and a card's other printings.
 
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter, Select};
+use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter, QuerySelect, Select};
 
 use crate::entities::card;
 use crate::error::AppError;
@@ -21,6 +21,10 @@ use super::{
 /// Default / max number of name suggestions the autocomplete endpoint returns.
 const DEFAULT_NAME_SUGGESTIONS: u64 = 10;
 const MAX_NAME_SUGGESTIONS: u64 = 25;
+/// Default / max rows the card preview returns — a handful, by definition: a caller
+/// that wants more than a glimpse pages the listing.
+pub(crate) const DEFAULT_PREVIEW_ROWS: u64 = 8;
+pub(crate) const MAX_PREVIEW_ROWS: u64 = 25;
 
 /// List cards
 ///
@@ -61,12 +65,64 @@ pub async fn list_cards(
     Ok(Json(build_page(data, page, page_size, total)))
 }
 
+/// Preview cards
+///
+/// `GET /api/games/{game}/cards/preview?q&name&sort&dir&limit` -> the first `limit` rows
+/// of the same search [`list_cards`] pages through, **without a total**.
+///
+/// A [`Page`]'s `total` is a `COUNT(*)` over every match — a second full pass over the
+/// filter — that a caller showing "a few cards" never reads. The keyword glossary's example
+/// panel is that caller (`kw:"Flying"`, eight cards, priciest first), and its count alone
+/// was a 5 s scan of the whole `cards` heap on prod, for a number that only ever appeared
+/// in a button label. This read is the listing's own query — built by [`all_cards_query`],
+/// so a filter or sort added to the listing is automatically here too, and the preview is
+/// provably the grid's first rows — fetched with one row of over-fetch so `has_more` is
+/// honest without counting (the universal search's [`SearchGroup`] contract). A caller
+/// that needs the total, or page two, uses the listing.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/cards/preview",
+    tag = "Cards",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter, exactly as on the listing"),
+        ("name" = Option<String>, Query, description = "Optional exact-name filter (matched literally)"),
+        ("sort" = Option<String>, Query, description = "Sort key (`name`/`number`/`rarity`/`released`/`cmc`/`price`)"),
+        ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("limit" = Option<u64>, Query, description = "Rows to return (clamped to [1, 25]); absent = 8"),
+    ),
+    responses(
+        (status = 200, description = "The first rows of the matching cards, plus whether more matched.", body = SearchGroup<CardResponse>),
+        (status = 404, description = "Unknown game."),
+        (status = 422, description = "Malformed search query or sort."),
+    ),
+)]
+pub async fn preview_cards(
+    State(state): State<AppState>,
+    Path(game): Path<String>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<SearchGroup<CardResponse>>, AppError> {
+    let game_meta = require_game(&game)?;
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_PREVIEW_ROWS)
+        .clamp(1, MAX_PREVIEW_ROWS);
+
+    let rows = all_cards_query(&game, game_meta, &params, state.dialect())?
+        .limit(limit + 1)
+        .all(&state.db)
+        .await?;
+    let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();
+    Ok(Json(SearchGroup::from_overfetch(data, limit as usize)))
+}
+
 /// The all-cards listing's filtered + sorted query, without pagination.
 ///
-/// Shared by [`list_cards`] and the plain-text export
-/// ([`super::export::export_cards`]) so "export these results" is provably the *same*
-/// search as the grid the visitor is looking at — a filter or sort added to one is
-/// automatically in the other. Only the page/row limit differs between the two callers.
+/// Shared by [`list_cards`], [`preview_cards`] and the plain-text export
+/// ([`super::export::export_cards`]) so "export these results" / "the first few of these
+/// results" is provably the *same* search as the grid the visitor is looking at — a filter
+/// or sort added to one is automatically in the others. Only the page/row limit differs
+/// between the callers.
 pub(super) fn all_cards_query(
     game: &str,
     game_meta: &crate::catalog::Game,

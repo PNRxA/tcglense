@@ -37,9 +37,9 @@ use crate::{
             card_art_tags, card_image, card_names, card_prices, card_prints, card_rulings,
             card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
             ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
-            list_set_cards, list_set_drops, list_set_subtypes, list_sets, product_card_sections,
-            product_cards, product_containers, product_contents, product_facets, product_image,
-            product_prices, scan_cards, set_icon,
+            list_set_cards, list_set_drops, list_set_subtypes, list_sets, preview_cards,
+            product_card_sections, product_cards, product_containers, product_contents,
+            product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -578,6 +578,10 @@ pub fn build_router(state: AppState) -> Router {
         // segment, so it wins over `/cards/{id}` in axum and can never be read as a
         // card id — the same precedence `card-names` relies on below.
         .route("/api/games/{game}/cards/export", get(export_cards))
+        // The first rows of a card search without the listing's `COUNT(*)` — the keyword
+        // glossary's example panel. `preview` is a static segment like `export`, so it wins
+        // over `/cards/{id}` and can never be read as a card id.
+        .route("/api/games/{game}/cards/preview", get(preview_cards))
         // Distinct card-name autocomplete for the collection quick-add box. A sibling
         // of `/cards` (not `/cards/{name}`) so it never collides with `/cards/{id}`.
         .route("/api/games/{game}/card-names", get(card_names))

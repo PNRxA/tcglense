@@ -215,6 +215,47 @@ catalog) is planned but not implemented.
   (é↔É) that SQLite's ASCII-only fold does not. (2) and (3) are narrow result-set
   differences confined to exotic-regex and non-ASCII inputs; ordinary ASCII searches are
   identical across backends.
+- **A search leaf that scans `cards` gets a Postgres-only expression index built from the
+  leaf's own seam, and a surface that never shows a total doesn't pay for one (2026-09 slow-log
+  follow-up).** The keyword glossary's example panel asked the card listing for
+  `kw:"<Keyword>"`, eight rows, priciest first — and the listing answers a `Page`, whose `total`
+  is a `COUNT(*)` over the filter. That leaf compiles to
+  `(',' || LOWER(COALESCE(keywords, '')) || ',') LIKE '%,x,%'`, which nothing indexed, so every
+  one of the 365 glossary pages (all in the sitemap) sequentially scanned the whole ~140 MB
+  `cards` heap **twice** — the count, then the page — for 5.0 s + 5.2 s per page on prod, at any
+  selectivity (a keyword no card carries scans as much as one every card carries). Two changes,
+  each measured on a 106k-row Postgres 16 repro of the real schema:
+  - **`m…078`, a `pg_trgm` GIN index on the leaf's exact expression** — `m…027`'s mechanism, but
+    the expression is rendered from one function (`scryfall::search::array_member_expr`) that the
+    leaf compiles through and the migration builds from, with a drift canary
+    (`keyword_filter_renders_the_indexed_expression`), because an expression index is matched
+    textually and a silent drift would put the scans back (the `m…034` / `HAS_SUBTYPE_SQL_ARMS`
+    pattern; issue #413 is what happens with a doc comment alone). For every keyword under a few
+    percent of the catalog — all but one of the 365 — the count went from ~36,700 to 44–507
+    buffers (seconds → milliseconds); for Flying (~9 % of printings, spread over a third of the
+    heap) it is a wash, and cold at `effective_io_concurrency = 1` the bitmap plan can be slower
+    than the scan it replaces. A needle with no word characters (`kw:%`) falls to a full GIN scan
+    plus recheck, ~1.5–2× a seq scan — `m…027` has shipped the same hazard for `name:%` since
+    day one.
+  - **`GET /cards/preview`, the listing's first rows without its `total`** — the same
+    `all_cards_query` (so the preview is provably the grid's own first page, like the `.txt`
+    export), answered as a `SearchGroup` with one row of over-fetch for `has_more`, the universal
+    search's contract. This is what removes the count for Flying too. The number it used to show
+    lived in one button label ("Browse all N cards with Flying"), which now reads without it.
+    `Page<T>` is untouched (its `total` is non-optional in the generated TS and in the external
+    `tcglense-cli`), and a `count=false` flag was rejected: `Page::new` derives `has_more` from
+    `total`, so a count-free page would need the over-fetch anyway and would ship a wrong
+    `has_more` if it forgot.
+  Measured and **not** shipped: a b-tree on the price sort expression (100–1000× for common
+  keywords and the bare `?sort=price` listing, but sqlx's prepared statement locks a generic plan
+  that walks the price index for *every* keyword, and for a rare or zero-match one that is a
+  random heap walk of most of the table — measured worse than the seq scan, the `m…068` shape on a
+  public endpoint — plus it makes price-only updates non-HOT across every `cards` index); a
+  normalized `card_keywords` mapping table (no gain over the trgm index for the count, and nothing
+  for the page half, which must still materialise every match for the top-N sort); and any
+  `VACUUM`/`fillfactor` treatment of `cards` (bloat measured at ~1.3–1.8×, default autovacuum is
+  not disabled, not the lever). The sibling `array_member` leaves (`finishes`, `promo_types`,
+  `frame_effects`) scan identically and are deliberately unindexed — no surface issues one alone.
 
 ## Transactional email (Resend / Cloudflare)
 

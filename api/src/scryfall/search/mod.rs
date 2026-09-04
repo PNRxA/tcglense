@@ -47,7 +47,7 @@ use compile::compile;
 use lexer::{Token, lex};
 use parser::Parser;
 
-pub(crate) use compile::{cust_vals, escape_like};
+pub(crate) use compile::{array_member_expr, cust_vals, escape_like};
 pub use error::SearchError;
 
 /// A sort field a query can request via `order:`. Mapped to the catalog's own

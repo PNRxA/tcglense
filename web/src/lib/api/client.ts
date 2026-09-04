@@ -99,10 +99,12 @@ export function listQuery(params: {
   name?: string
   drop?: string
   bulkMaxCents?: number
+  limit?: number
 }): string {
   const search = new URLSearchParams()
   if (params.page) search.set('page', String(params.page))
   if (params.pageSize) search.set('page_size', String(params.pageSize))
+  if (params.limit) search.set('limit', String(params.limit))
   if (params.q) search.set('q', params.q)
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)

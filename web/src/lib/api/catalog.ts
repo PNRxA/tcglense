@@ -10,6 +10,7 @@ import type {
   Page,
   PricePoint,
   Ruling,
+  SearchGroup,
   SubtypeGroup,
 } from './generated'
 
@@ -45,6 +46,10 @@ export type DropGroupPage = Page<DropGroup>
 
 /** A page of sub-type groups — `total`/pagination count *sub-types*, not cards. */
 export type SubtypeGroupPage = Page<SubtypeGroup>
+
+/** The first rows of a card search plus whether more matched — the listing's own first
+ * page without its `total` (the universal search's group shape). */
+export type CardPreview = SearchGroup<Card>
 
 export type ImageSize = 'small' | 'normal' | 'large' | 'png' | 'art_crop'
 
@@ -106,6 +111,37 @@ export function listCards(
   return request<CardPage>(`/api/games/${encodeURIComponent(game)}/cards${cardQuery(params)}`, {
     signal,
   })
+}
+
+/** The preview's params: the listing's filter + sort vocabulary, capped by `limit` (the
+ * API clamps it to 1–25, default 8) instead of paged. */
+export interface CardPreviewParams {
+  q?: string
+  /** Restrict to printings whose name matches this exactly (see `CardListParams.name`). */
+  name?: string
+  sort?: string
+  dir?: string
+  limit?: number
+}
+
+/**
+ * The first `limit` rows of a card search, without the listing's `total`.
+ *
+ * A `Page`'s `total` costs the API a second full pass over the filter (a `COUNT(*)`), which
+ * a surface showing a handful of cards never reads — so this is the same query as
+ * `listCards` (same `q`/`sort`/`dir`, same rows in the same order) answered as a
+ * `SearchGroup`: `has_more` from one row of over-fetch, no count. Use `listCards` when the
+ * total, or a second page, is actually shown.
+ */
+export function previewCards(
+  game: string,
+  params?: CardPreviewParams,
+  signal?: AbortSignal,
+): Promise<CardPreview> {
+  return request<CardPreview>(
+    `/api/games/${encodeURIComponent(game)}/cards/preview${listQuery(params ?? {})}`,
+    { signal },
+  )
 }
 
 // ---------- Card search export (public, plain text) ----------
