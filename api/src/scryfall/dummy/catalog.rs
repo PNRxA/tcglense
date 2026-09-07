@@ -107,6 +107,23 @@ const SECRET_LAIR_SET: SetDef = SetDef {
     parent: None,
 };
 
+/// The Zeta Set stand-in (`slz`): a Secret Lair release Scryfall files as its own top-level
+/// `box` set, whose gallery groups the cards into three print-treatment sections the card data
+/// doesn't distinguish (every printing is black-bordered, full-art, nonfoil). The seed gives it
+/// two cards per section, at collector numbers the committed `sld_drops.json` lists under each
+/// ([`ZETA_SECTION_NUMBERS`]), so the offline catalog exercises a *second* drop-grouped set.
+const ZETA_SET: SetDef = SetDef {
+    code: "slz",
+    name: "Dummy Zeta Set",
+    set_type: "box",
+    released: "2026-09-02",
+    parent: None,
+};
+
+/// Collector numbers of the dummy Zeta Set cards: two in each of Scryfall's sections —
+/// Photocopy Cards (1–121), Photocopy Negatives (122–242), Color Banding Cards (243–363).
+const ZETA_SECTION_NUMBERS: [i32; 6] = [1, 2, 122, 123, 243, 244];
+
 /// Per-drop release dates for the dummy Secret Lair cards. Collector numbers 1-5 group into the
 /// "Eldraine Wonderland" drop (given a future date, so the by-drop view shows a "Releases …" due
 /// date offline) and 6 into "Restless in Peace" (already released). Distinct so the two drops
@@ -644,6 +661,16 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
         cards.push(card);
     }
 
+    // The Zeta Set: two cards in each of its gallery's three treatment sections. Stamped
+    // full-art like the real printings, so the by-treatment gate lights up too and a seeded
+    // catalog shows the by-drop view winning over it (the SPA's `groupMode`), as it does live.
+    for n in ZETA_SECTION_NUMBERS {
+        let mut card = numbered_card(&ZETA_SET, n);
+        card.full_art = Some(true);
+        card.border_color = Some("black".to_string());
+        cards.push(card);
+    }
+
     cards
 }
 
@@ -652,20 +679,26 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
 /// the seed path builds it only once.
 pub(super) fn dummy_sets(cards: &[ScryfallCard]) -> Vec<ScryfallSet> {
     let count = |code: &str| cards.iter().filter(|c| c.set == code).count() as i64;
-    [&BASE_SET, &UNIVERSE_SET, &TOKEN_SET, &SECRET_LAIR_SET]
-        .into_iter()
-        .map(|def| ScryfallSet {
-            id: format!("dummy-set-{}", def.code),
-            code: def.code.to_string(),
-            name: def.name.to_string(),
-            set_type: Some(def.set_type.to_string()),
-            released_at: Some(def.released.to_string()),
-            card_count: Some(count(def.code)),
-            digital: Some(false),
-            icon_svg_uri: None,
-            parent_set_code: def.parent.map(str::to_string),
-        })
-        .collect()
+    [
+        &BASE_SET,
+        &UNIVERSE_SET,
+        &TOKEN_SET,
+        &SECRET_LAIR_SET,
+        &ZETA_SET,
+    ]
+    .into_iter()
+    .map(|def| ScryfallSet {
+        id: format!("dummy-set-{}", def.code),
+        code: def.code.to_string(),
+        name: def.name.to_string(),
+        set_type: Some(def.set_type.to_string()),
+        released_at: Some(def.released.to_string()),
+        card_count: Some(count(def.code)),
+        digital: Some(false),
+        icon_svg_uri: None,
+        parent_set_code: def.parent.map(str::to_string),
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -850,6 +883,36 @@ mod tests {
                 .iter()
                 .any(|c| c.border_color.as_deref() == Some("borderless")),
             "expected a borderless card",
+        );
+    }
+
+    #[test]
+    fn zeta_set_cards_land_in_every_gallery_section() {
+        // Each of the Zeta Set's three sections gets two seeded cards, resolved through the
+        // committed drop snapshot exactly as the by-drop view resolves them — so the offline
+        // catalog demonstrates a second drop-grouped set with every section populated.
+        let cards: Vec<ScryfallCard> = dummy_cards()
+            .into_iter()
+            .filter(|c| c.set == "slz")
+            .collect();
+        assert_eq!(cards.len(), ZETA_SECTION_NUMBERS.len());
+        let mut per_section: std::collections::BTreeMap<String, usize> = Default::default();
+        for card in &cards {
+            let drop = crate::scryfall::drops::drop_for("mtg", "slz", &card.collector_number)
+                .unwrap_or_else(|| panic!("slz #{} is in a section", card.collector_number));
+            *per_section.entry(drop.title).or_default() += 1;
+            // Like the real printings: full-art, so the by-treatment gate lights up as well.
+            assert_eq!(card.full_art, Some(true));
+        }
+        let counts: Vec<(&str, usize)> =
+            per_section.iter().map(|(t, n)| (t.as_str(), *n)).collect();
+        assert_eq!(
+            counts,
+            [
+                ("Color Banding Cards", 2),
+                ("Photocopy Cards", 2),
+                ("Photocopy Negatives", 2)
+            ]
         );
     }
 

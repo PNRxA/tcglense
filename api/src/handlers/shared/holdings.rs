@@ -189,6 +189,11 @@ pub struct CollectionSet {
     pub icon_svg_uri: Option<String>,
     pub parent_set_code: Option<String>,
     pub has_drops: bool,
+    /// The catalog set's `drop_noun` (`"drop"` / `"treatment"`; `null` unless `has_drops`),
+    /// carried so the tile shape stays a superset of the catalog `Set` (the SPA reuses
+    /// `SetTile` and its `CardSet` type across both); the holdings' by-drop labels themselves
+    /// read the catalog set list, like every other grouping fact.
+    pub drop_noun: Option<String>,
     /// Whether the user's owned cards in this set include any special treatment, so the
     /// tile can offer the by-sub-type view (mirrors the catalog set's `has_subtypes`).
     pub has_subtypes: bool,
@@ -771,6 +776,7 @@ pub(crate) fn build_collection_sets<R: SummaryRow>(
                 icon_svg_uri: m.and_then(|m| m.icon_svg_uri.clone()),
                 parent_set_code: m.and_then(|m| m.parent_set_code.clone()),
                 has_drops: crate::scryfall::drops::has_drops(game, &code),
+                drop_noun: crate::scryfall::drops::section_noun(game, &code).map(str::to_string),
                 has_subtypes,
                 owned_cards,
                 owned_copies,

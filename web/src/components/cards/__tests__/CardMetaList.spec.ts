@@ -30,6 +30,7 @@ function makeCard(overrides: Partial<Card> = {}): Card {
     has_image: false,
     drop_name: null,
     drop_slug: null,
+    drop_noun: null,
     secret_lair_bonus: false,
     secret_lair_spend_incentive: false,
     faces: [],
@@ -55,6 +56,7 @@ describe('CardMetaList Secret Lair relation', () => {
       makeCard({
         drop_name: 'FINAL FANTASY: Bonus Cards',
         drop_slug: 'final-fantasy-bonus-cards',
+        drop_noun: null,
         secret_lair_bonus: true,
       }),
     )
@@ -66,11 +68,38 @@ describe('CardMetaList Secret Lair relation', () => {
     expect(wrapper.text()).toContain('Chase card')
   })
 
+  it('heads the row with the group noun, so a Zeta Set treatment is not called a drop', () => {
+    const treatment = mountMeta(
+      makeCard({
+        set_code: 'slz',
+        set_name: 'The Zeta Set',
+        drop_name: 'Photocopy Negatives',
+        drop_slug: 'photocopy-negatives',
+        drop_noun: 'treatment',
+      }),
+    )
+    expect(treatment.text()).toContain('Treatment')
+    expect(treatment.text()).not.toContain('Drop')
+    const link = treatment.findAll('a').find((a) => a.text() === 'Photocopy Negatives')
+    expect(link, 'the treatment section is still linked').toBeTruthy()
+
+    // A Secret Lair drop keeps its heading; a card the API predates the noun on reads "Drop".
+    const drop = mountMeta(
+      makeCard({ drop_name: 'Cats of Chaos', drop_slug: 'cats-of-chaos', drop_noun: 'drop' }),
+    )
+    expect(drop.text()).toContain('Drop')
+    const legacy = mountMeta(
+      makeCard({ drop_name: 'Cats of Chaos', drop_slug: 'cats-of-chaos', drop_noun: null }),
+    )
+    expect(legacy.text()).toContain('Drop')
+  })
+
   it('links the drop but shows no chase badge for a non-bonus drop card', () => {
     const wrapper = mountMeta(
       makeCard({
         drop_name: 'Cats of Chaos',
         drop_slug: 'cats-of-chaos',
+        drop_noun: null,
         secret_lair_bonus: false,
       }),
     )
@@ -84,6 +113,7 @@ describe('CardMetaList Secret Lair relation', () => {
       makeCard({
         drop_name: 'Promos / Special',
         drop_slug: 'promos-special',
+        drop_noun: null,
         // A spend incentive is tagged sldbonus too, but the spend badge takes precedence.
         secret_lair_bonus: true,
         secret_lair_spend_incentive: true,

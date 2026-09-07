@@ -18,7 +18,15 @@ const SETS: CardSet[] = [
     set_type: 'commander',
   }),
   // A drop-grouped set (Secret Lair) with one related sub-set, for the by-drop tests.
-  makeCardSet('sld', { name: 'Secret Lair Drop', has_drops: true }),
+  makeCardSet('sld', { name: 'Secret Lair Drop', has_drops: true, drop_noun: 'drop' }),
+  // The Zeta Set: drop-grouped by Scryfall's three print-treatment sections, and full-art
+  // throughout (so the by-treatment gate lights up too); its groups are treatments, not drops.
+  makeCardSet('slz', {
+    name: 'The Zeta Set',
+    has_drops: true,
+    drop_noun: 'treatment',
+    has_subtypes: true,
+  }),
   makeCardSet('sls', {
     name: 'Secret Lair Showdown',
     parent_set_code: 'sld',
@@ -231,6 +239,7 @@ describe('useSetGrouping', () => {
     expect(api.hasDrops.value).toBe(true)
     expect(api.groupMode.value).toBe('drops')
     expect(api.groupLabel.value).toBe('By drop')
+    expect(api.dropNoun.value).toBe('drop')
     expect(api.grouped.value).toBe(true)
 
     // ?view=all opts back into the flat grid.
@@ -241,6 +250,24 @@ describe('useSetGrouping', () => {
     await router.replace({ query: { related: '1' } })
     expect(api.includeRelated.value).toBe(true)
     expect(api.grouped.value).toBe(false)
+  })
+
+  it('labels a drop-grouped set off its drop_noun, so a treatment is never called a drop', async () => {
+    // The Zeta Set is drop-grouped (Scryfall's sections win over the derived "Full Art"
+    // sub-type it would otherwise fall to), but its sections are print treatments — every
+    // label derives from the set's noun, not the literal word "drop".
+    const { api } = await start('/cards/mtg/sets/slz', 'slz')
+    expect(api.hasDrops.value).toBe(true)
+    expect(api.hasSubtypes.value).toBe(true)
+    expect(api.groupMode.value).toBe('drops')
+    expect(api.dropNoun.value).toBe('treatment')
+    expect(api.groupLabel.value).toBe('By treatment')
+    expect(api.grouped.value).toBe(true)
+  })
+
+  it('falls back to "drop" for a drop-grouped set with no noun (an older API)', async () => {
+    const { api } = await start('/cards/mtg/sets/sls', 'sls')
+    expect(api.dropNoun.value).toBe('drop')
   })
 
   it('drives the by-sub-type view off has_subtypes (drops take precedence)', async () => {

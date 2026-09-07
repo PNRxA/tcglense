@@ -53,6 +53,7 @@ const {
   includeRelated,
   groupMode,
   grouped,
+  dropNoun,
   groupLabel,
   setsWord,
   scopeBarProps,
@@ -210,7 +211,7 @@ const countLabel = computed(() => {
   // card search (q) — so its "matching …" suffix reflects whichever is active (the drop
   // filter reads first, as it's what the drop count directly narrows).
   const [n, singular] = grouped.value
-    ? [groupTotal.value, bySubtype.value ? 'sub-type' : 'drop']
+    ? [groupTotal.value, bySubtype.value ? 'sub-type' : dropNoun.value]
     : [total.value, 'printing']
   const active = byDrop.value ? dropQuery.value || query.value : query.value
   if (!n && !active) return ''
@@ -326,8 +327,8 @@ const searchError = computed(() => searchErrorMessage(listError.value))
       <div v-if="byDrop" class="mb-6 max-w-sm">
         <CardSearchBox
           v-model="dropInput"
-          placeholder="Filter drops by name…"
-          aria-label="Filter drops by name"
+          :placeholder="`Filter ${dropNoun}s by name…`"
+          :aria-label="`Filter ${dropNoun}s by name`"
         />
       </div>
 
@@ -339,10 +340,10 @@ const searchError = computed(() => searchErrorMessage(listError.value))
            search `q` empties drops server-side before the title filter sees them), so name
            neither — just report no match. Each filter alone gets its own precise message. -->
       <p v-else-if="isEmpty && byDrop && dropQuery && query" class="text-muted-foreground py-12">
-        No drops match your filters.
+        No {{ dropNoun }}s match your filters.
       </p>
       <p v-else-if="isEmpty && byDrop && dropQuery" class="text-muted-foreground py-12">
-        No drops match “{{ dropQuery }}”.
+        No {{ dropNoun }}s match “{{ dropQuery }}”.
       </p>
       <p v-else-if="isEmpty && query" class="text-muted-foreground py-12">
         No cards match “{{ query }}”.

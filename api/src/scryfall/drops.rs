@@ -4,6 +4,12 @@
 //! "Wild in Bloom") on its gallery page, but those curated titles are **not** in
 //! the bulk card API we ingest — they live only in the page's collector-number
 //! groupings. We match each card to its drop by `(game, set_code, collector_number)`.
+//! The same page structure files The Zeta Set (`slz`, a Secret Lair release Scryfall
+//! lists as its own top-level set) under its three print treatments — Photocopy /
+//! Photocopy Negatives / Color Banding — which the card data doesn't distinguish either
+//! (every card is black-bordered, full-art, nonfoil, with no promo type), so that set
+//! rides the same tables: the galleries scraped are [`GALLERY_SETS`] (the registry lives
+//! here, beside the tables it populates), each its own per-set table.
 //!
 //! **The drop table is a swappable runtime overlay, seeded by a committed snapshot.**
 //! A committed `sld_drops.json` is embedded at compile time ([`SNAPSHOT_JSON`], still
@@ -25,8 +31,10 @@
 //! The store is a process-global `RwLock<Arc<Tables>>` (not per-`AppState`) because the read
 //! path reaches it from a bare `From<card::Model>` conversion with no state in hand; the swap
 //! is the same brief-lock, clone-an-`Arc` pattern the fingerprint index uses. An install that
-//! doesn't cover the Secret Lair set (a broken scrape returning zero drops) is **rejected**, so
-//! a bad fetch can never wipe the good table — the store keeps whatever it last held.
+//! doesn't cover the Secret Lair Drop set (a broken scrape returning zero drops) is **rejected**,
+//! so a bad fetch can never wipe the good table — the store keeps whatever it last held. That
+//! one set is required; the other gallery sets are optional, and the scrape keeps a secondary
+//! set's last-good table when only its own page fails (see `sld_scrape::resolve_set`).
 //!
 //! A card whose collector number isn't listed (e.g. a drop newer than the loaded snapshot)
 //! simply has no drop, and callers fold it into an "Other" group — so a stale snapshot
@@ -42,6 +50,40 @@ use sha2::{Digest, Sha256};
 /// the fallback for an offline / first-boot instance; [`install_snapshot`] replaces it once
 /// a fresher snapshot is scraped (origin) or imported from the mirror (consumer).
 const SNAPSHOT_JSON: &str = include_str!("sld_drops.json");
+
+/// One Secret Lair-line set whose Scryfall gallery groups its cards into named sections the
+/// bulk card API doesn't carry, plus the word the SPA uses for one of those sections.
+#[derive(Debug, Clone, Copy)]
+pub struct GallerySet {
+    /// Lowercase set code, as cards store it (the join key).
+    pub code: &'static str,
+    /// What one section *is*, singular and lowercase — the noun every label that heads a
+    /// section is built from ("By drop" / "Filter drops by name…" / a card's "Drop" row).
+    /// `sld`'s sections are its drops; The Zeta Set's are print treatments, and calling a
+    /// treatment a drop would name a product that doesn't exist.
+    pub noun: &'static str,
+}
+
+/// The gallery sets the drop store is populated for, in scrape order. **`sld` first**: it is
+/// the primary set — the one [`install_snapshot`] requires, and the one whose failed scrape
+/// fails a run — every later set is secondary (see `sld_scrape::resolve_set`). The scrape
+/// walks this list, the committed seed carries every entry (pinned by
+/// `sld_scrape`'s `the_committed_seed_covers_every_gallery_set`), and `SETS` in
+/// `scripts/gen-sld-drops.mjs` mirrors the codes — keep the three in step.
+pub const GALLERY_SETS: &[GallerySet] = &[
+    GallerySet {
+        code: "sld",
+        noun: "drop",
+    },
+    GallerySet {
+        code: "slz",
+        noun: "treatment",
+    },
+];
+
+/// The noun for an unregistered drop-grouped set — a newer mirror's snapshot may carry a
+/// set this build doesn't know; its sections are then called what `sld`'s are.
+const DEFAULT_NOUN: &str = "drop";
 
 /// The canonical JSON an empty store serves — valid, but with no drops. Used only when the
 /// embedded snapshot fails to parse (guarded against by `snapshot_parses`), so drop grouping
@@ -84,6 +126,12 @@ pub struct DropTable {
     drops: Vec<Drop>,
     by_collector: HashMap<String, usize>,
     by_title: HashMap<String, usize>,
+    /// A stable content hash of *this set's* drops alone (same scheme as
+    /// [`data_content_hash`], 16 hex chars). What a consumer that reads one set keys its own
+    /// version on — the sealed-contents derivation reads only `sld`, so its gate hashes this
+    /// rather than the whole snapshot's version, and a change to another gallery set can't
+    /// re-run it.
+    content_version: String,
 }
 
 impl DropTable {
@@ -117,9 +165,21 @@ impl DropTable {
         self.drops.iter().find(|d| d.slug == slug)
     }
 
+    /// Every drop in the set's display order. What the gallery scrape re-emits for a
+    /// secondary set whose page failed to scrape (`sld_scrape::resolve_set`), so the
+    /// snapshot keeps that set's last-good drops instead of dropping the set.
+    pub fn drops(&self) -> &[Drop] {
+        &self.drops
+    }
+
     /// Whether the snapshot lists any drops for this set.
     pub fn is_empty(&self) -> bool {
         self.drops.is_empty()
+    }
+
+    /// A stable content hash of this set's drops alone (see the field docs).
+    pub fn content_version(&self) -> &str {
+        &self.content_version
     }
 }
 
@@ -131,11 +191,13 @@ pub struct Tables {
     /// The canonical snapshot JSON these tables were built from — served verbatim by the
     /// mirror endpoint so consumers install the same drops.
     canonical_json: String,
-    /// A stable content hash (16 hex chars) of the *drop data itself*, **not** the JSON bytes
-    /// (see [`data_content_hash`]). So the pretty-printed committed seed and the mirror's compact
-    /// scrape of the *same* drops share a version — a re-scrape / re-import / reboot-reseed of
-    /// unchanged drops produces the same version (no spurious downstream re-derivation, and a
-    /// conditional mirror fetch is a `304`), while any real drop change bumps it.
+    /// A stable content hash (16 hex chars) of the *drop data itself* across every set, **not**
+    /// the JSON bytes (see [`data_content_hash`]) — the mirror `ETag`. So the pretty-printed
+    /// committed seed and the mirror's compact scrape of the *same* drops share a version — a
+    /// re-scrape / re-import / reboot-reseed of unchanged drops produces the same version (a
+    /// conditional mirror fetch is a `304`), while any real drop change bumps it. A consumer
+    /// that reads one set (the sealed-contents derivation reads only `sld`) keys on that
+    /// table's own [`DropTable::content_version`] instead, so another set can't move it.
     content_version: String,
 }
 
@@ -152,8 +214,10 @@ pub enum SnapshotError {
 
 impl Tables {
     /// Parse + validate a snapshot JSON into per-set tables. Rejects a snapshot that doesn't
-    /// cover the Secret Lair set with a non-empty drop list ([`SnapshotError::MissingSld`]), so
-    /// a broken scrape can't install an empty table over the good one.
+    /// cover the Secret Lair Drop set with a non-empty drop list ([`SnapshotError::MissingSld`]),
+    /// so a broken scrape can't install an empty table over the good one. That is the only
+    /// required set: a snapshot may carry any other gallery set (`slz`) or none — an older
+    /// mirror's snapshot without it still installs, and the set simply isn't drop-grouped.
     pub fn from_json(json: &str) -> Result<Tables, SnapshotError> {
         let snapshot: RawSnapshot = serde_json::from_str(json)?;
         let by_key = build_tables(snapshot);
@@ -183,7 +247,9 @@ impl Tables {
         }
     }
 
-    fn get(&self, game: &str, set_code: &str) -> Option<Arc<DropTable>> {
+    /// One set's table. `pub(crate)` for the consumers that key on a single table's
+    /// version (`mtgjson::sld`'s test builds local `Tables` and reads `sld`'s).
+    pub(crate) fn get(&self, game: &str, set_code: &str) -> Option<Arc<DropTable>> {
         self.by_key.get(&key(game, set_code)).cloned()
     }
 
@@ -193,8 +259,8 @@ impl Tables {
     }
 }
 
-/// The Secret Lair set code (lowercased, as cards/products store it). The set the snapshot
-/// groups; the install guard requires it.
+/// The Secret Lair Drop set code (lowercased, as cards/products store it). The one set the
+/// install guard requires — the primary gallery of `sld_scrape::GALLERY_SETS`.
 const SLD_SET_CODE: &str = "sld";
 
 /// Canonicalise a drop/product title for case- and punctuation-insensitive matching:
@@ -243,20 +309,33 @@ fn data_content_hash(by_key: &HashMap<String, Arc<DropTable>>) -> String {
     for key in keys {
         hasher.update(key.as_bytes());
         hasher.update(b"\x00");
-        // Drops in their snapshot order (significant — it's the display order).
-        for drop in &by_key[key].drops {
-            hasher.update(drop.slug.as_bytes());
-            hasher.update(b"\x01");
-            hasher.update(drop.title.as_bytes());
-            hasher.update(b"\x02");
-            for cn in &drop.collector_numbers {
-                hasher.update(cn.as_bytes());
-                hasher.update(b"\x03");
-            }
-            hasher.update(b"\x04");
-        }
+        hash_drops(&mut hasher, &by_key[key].drops);
         hasher.update(b"\x05");
     }
+    hex::encode(&hasher.finalize()[..8])
+}
+
+/// Feed one set's drops — in their snapshot order, which is significant (it's the display
+/// order) — into `hasher`. The shared core of the whole-snapshot hash and each table's own
+/// [`DropTable::content_version`].
+fn hash_drops(hasher: &mut Sha256, drops: &[Drop]) {
+    for drop in drops {
+        hasher.update(drop.slug.as_bytes());
+        hasher.update(b"\x01");
+        hasher.update(drop.title.as_bytes());
+        hasher.update(b"\x02");
+        for cn in &drop.collector_numbers {
+            hasher.update(cn.as_bytes());
+            hasher.update(b"\x03");
+        }
+        hasher.update(b"\x04");
+    }
+}
+
+/// A stable content hash of one set's drops alone (first 8 bytes of SHA-256, hex).
+fn set_content_hash(drops: &[Drop]) -> String {
+    let mut hasher = Sha256::new();
+    hash_drops(&mut hasher, drops);
     hex::encode(&hasher.finalize()[..8])
 }
 
@@ -288,6 +367,7 @@ fn build_tables(snapshot: RawSnapshot) -> HashMap<String, Arc<DropTable>> {
         tables.insert(
             key(&set.game, &set.set),
             Arc::new(DropTable {
+                content_version: set_content_hash(&drops),
                 drops,
                 by_collector,
                 by_title,
@@ -297,10 +377,12 @@ fn build_tables(snapshot: RawSnapshot) -> HashMap<String, Arc<DropTable>> {
     tables
 }
 
-/// The process-global drop store, seeded lazily from the embedded snapshot. Swapped wholesale
-/// by [`install_snapshot`] when a fresher snapshot is scraped/imported (the same brief-lock,
-/// clone-an-`Arc` pattern the fingerprint index uses).
-static STORE: LazyLock<RwLock<Arc<Tables>>> = LazyLock::new(|| {
+/// The committed seed, parsed once. Seeds [`STORE`] at first access and stays readable on
+/// its own afterwards ([`seed_table`]): after the store has been swapped for a scraped or
+/// persisted snapshot, the seed is still the one place a gallery set that snapshot lacks can
+/// be found — the scrape's carry-forward for a secondary set reads it when the store has no
+/// table for the set (an upgraded instance whose persisted snapshot predates the set).
+static SEED: LazyLock<Arc<Tables>> = LazyLock::new(|| {
     let seed = Tables::from_json(SNAPSHOT_JSON).unwrap_or_else(|err| {
         // A malformed committed snapshot disables drop grouping rather than taking the server
         // down; `snapshot_parses` guards the shipped file so this branch is unreachable in
@@ -308,8 +390,13 @@ static STORE: LazyLock<RwLock<Arc<Tables>>> = LazyLock::new(|| {
         tracing::error!(error = %err, "failed to parse embedded sld_drops.json; drop grouping disabled");
         Tables::empty()
     });
-    RwLock::new(Arc::new(seed))
+    Arc::new(seed)
 });
+
+/// The process-global drop store, seeded lazily from the embedded snapshot. Swapped wholesale
+/// by [`install_snapshot`] when a fresher snapshot is scraped/imported (the same brief-lock,
+/// clone-an-`Arc` pattern the fingerprint index uses).
+static STORE: LazyLock<RwLock<Arc<Tables>>> = LazyLock::new(|| RwLock::new(SEED.clone()));
 
 /// A snapshot of the current store. Clones the inner `Arc` under a brief read lock so callers
 /// read a stable table without holding the lock, and a concurrent [`install_snapshot`] swap
@@ -339,13 +426,6 @@ pub fn current_snapshot() -> (String, String) {
     (store.canonical_json.clone(), store.content_version.clone())
 }
 
-/// A stable content hash of the currently-loaded snapshot (16 hex chars; see [`data_content_hash`]).
-/// Feeds the sealed-contents derivation's version gate, so a drop refresh re-runs the derivation.
-/// (The mirror endpoint reads it together with the body via [`current_snapshot`].)
-pub fn content_version() -> String {
-    store().content_version.clone()
-}
-
 /// The drop table for a game's set, or `None` if that set isn't drop-grouped in the current
 /// snapshot. Returns an owned `Arc` so the caller holds a stable table across `await`s even if
 /// the store is swapped underneath.
@@ -356,6 +436,45 @@ pub fn table(game: &str, set_code: &str) -> Option<Arc<DropTable>> {
 /// Whether this set is broken into Secret Lair-style drops in the current snapshot.
 pub fn has_drops(game: &str, set_code: &str) -> bool {
     table(game, set_code).is_some_and(|t| !t.is_empty())
+}
+
+/// The word for one of this set's sections — `"drop"` for `sld`, `"treatment"` for The Zeta
+/// Set — or `None` when the set isn't drop-grouped in the current snapshot (so the SPA can
+/// hang every section label off one field). A drop-grouped set this build doesn't register
+/// (a newer mirror's snapshot) gets [`DEFAULT_NOUN`]. MTG-only registry today; the `game`
+/// is part of the key so a second game's gallery set can register beside these.
+pub fn section_noun(game: &str, set_code: &str) -> Option<&'static str> {
+    if !has_drops(game, set_code) {
+        return None;
+    }
+    Some(
+        GALLERY_SETS
+            .iter()
+            .find(|g| game == super::GAME && g.code == set_code)
+            .map_or(DEFAULT_NOUN, |g| g.noun),
+    )
+}
+
+/// The committed seed's table for a game's set, or `None` if the seed doesn't cover it —
+/// read by the scrape's carry-forward when the *store* has no table for a secondary set
+/// (see [`SEED`]). Never consulted on the read path: the store is what's served.
+pub fn seed_table(game: &str, set_code: &str) -> Option<Arc<DropTable>> {
+    SEED.get(game, set_code)
+}
+
+/// The set codes the committed seed covers for a game — the seed side of the
+/// seed ↔ [`GALLERY_SETS`] coupling its test pins in both directions (test-only: nothing at
+/// runtime enumerates the seed).
+#[cfg(test)]
+pub fn seed_set_codes(game: &str) -> Vec<String> {
+    let prefix = format!("{game}/");
+    let mut codes: Vec<String> = SEED
+        .by_key
+        .keys()
+        .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string))
+        .collect();
+    codes.sort_unstable();
+    codes
 }
 
 /// The drop a single card belongs to, if its set is drop-grouped and the current snapshot
@@ -461,6 +580,160 @@ mod tests {
         );
         // A collector number the snapshot doesn't list -> no drop (folds to "Other").
         assert!(drop_for("mtg", "sld", "this-cn-does-not-exist").is_none());
+    }
+
+    #[test]
+    fn snapshot_covers_the_zeta_set_by_treatment_section() {
+        // The Zeta Set rides the same seed: Scryfall's three print-treatment sections, in page
+        // order, keyed by the collector-number ranges its gallery lists them under.
+        let table = table("mtg", "slz").expect("slz is drop-grouped");
+        let titles: Vec<&str> = table.drops().iter().map(|d| d.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Photocopy Cards",
+                "Photocopy Negatives",
+                "Color Banding Cards"
+            ]
+        );
+        assert!(has_drops("mtg", "slz"));
+        for (cn, title, order) in [
+            ("1", "Photocopy Cards", 0),
+            ("121", "Photocopy Cards", 0),
+            ("122", "Photocopy Negatives", 1),
+            ("242", "Photocopy Negatives", 1),
+            ("243", "Color Banding Cards", 2),
+            ("363", "Color Banding Cards", 2),
+        ] {
+            let drop = drop_for("mtg", "slz", cn).unwrap_or_else(|| panic!("{cn} is listed"));
+            assert_eq!(drop.title, title, "collector number {cn}");
+            assert_eq!(drop.order, order, "collector number {cn}");
+        }
+        // The three sections partition the set: exactly the numbers 1..=363, each listed once.
+        let listed: Vec<u32> = table
+            .drops()
+            .iter()
+            .flat_map(|d| d.collector_numbers.iter())
+            .map(|cn| cn.parse::<u32>().expect("numeric collector number"))
+            .collect();
+        let distinct: std::collections::BTreeSet<u32> = listed.iter().copied().collect();
+        assert_eq!(listed.len(), 363, "363 numbers listed");
+        assert_eq!(distinct.len(), 363, "none listed twice");
+        assert_eq!(
+            distinct.iter().copied().collect::<Vec<_>>(),
+            (1..=363).collect::<Vec<_>>()
+        );
+        assert!(drop_for("mtg", "slz", "364").is_none());
+    }
+
+    #[test]
+    fn section_noun_names_a_drop_for_sld_and_a_treatment_for_the_zeta_set() {
+        assert_eq!(section_noun("mtg", "sld"), Some("drop"));
+        assert_eq!(section_noun("mtg", "slz"), Some("treatment"));
+        // Not drop-grouped -> no noun at all (the SPA shows no section labels).
+        assert_eq!(section_noun("mtg", "blb"), None);
+        assert_eq!(section_noun("pokemon", "sld"), None);
+    }
+
+    #[test]
+    fn gallery_sets_lead_with_the_required_set_and_are_registered_once() {
+        // The primary set is the one the install guard requires (`mtg/sld`): a snapshot built
+        // without it would be rejected, which is why its failure fails a scrape run.
+        assert_eq!(GALLERY_SETS[0].code, SLD_SET_CODE);
+        let mut seen = std::collections::HashSet::new();
+        for gallery in GALLERY_SETS {
+            assert_eq!(
+                gallery.code,
+                gallery.code.to_lowercase(),
+                "codes are lowercase"
+            );
+            assert!(
+                seen.insert(gallery.code),
+                "{} registered twice",
+                gallery.code
+            );
+            assert!(
+                !gallery.noun.is_empty() && gallery.noun == gallery.noun.to_lowercase(),
+                "the noun is a lowercase singular"
+            );
+        }
+    }
+
+    #[test]
+    fn the_seed_is_readable_beside_the_store() {
+        // The seed's tables stay reachable after the store is swapped: that is what lets the
+        // scrape carry a secondary set forward on an instance whose persisted snapshot
+        // predates it. (These tests never swap the global store, so seed == store here.)
+        let seed = seed_table("mtg", "slz").expect("the seed covers the Zeta Set");
+        assert_eq!(seed.drops().len(), 3);
+        assert!(seed_table("mtg", "blb").is_none());
+        assert_eq!(seed_set_codes("mtg"), ["sld", "slz"]);
+        assert!(seed_set_codes("pokemon").is_empty());
+    }
+
+    #[test]
+    fn a_set_content_version_tracks_only_its_own_drops() {
+        // Two snapshots that agree on `sld` but differ on `slz` share `sld`'s per-set version
+        // while the whole-snapshot version differs — the property the sealed-contents gate
+        // (which reads only `sld`) keys on.
+        let a = Tables::from_json(
+            r#"{"sets":[{"game":"mtg","set":"sld","drops":[{"slug":"a","title":"A","collector_numbers":["1"]}]},
+                        {"game":"mtg","set":"slz","drops":[{"slug":"p","title":"P","collector_numbers":["1"]}]}]}"#,
+        )
+        .expect("valid");
+        let b = Tables::from_json(
+            r#"{"sets":[{"game":"mtg","set":"sld","drops":[{"slug":"a","title":"A","collector_numbers":["1"]}]},
+                        {"game":"mtg","set":"slz","drops":[{"slug":"p","title":"P","collector_numbers":["1","2"]}]}]}"#,
+        )
+        .expect("valid");
+        let sld_a = a.get("mtg", "sld").unwrap();
+        let sld_b = b.get("mtg", "sld").unwrap();
+        assert_eq!(sld_a.content_version(), sld_b.content_version());
+        assert_eq!(sld_a.content_version().len(), 16);
+        assert_ne!(
+            a.get("mtg", "slz").unwrap().content_version(),
+            b.get("mtg", "slz").unwrap().content_version()
+        );
+        assert_ne!(a.content_version, b.content_version);
+    }
+
+    #[test]
+    fn a_set_content_version_ignores_json_representation() {
+        // Like the whole-snapshot version, a table's own version hashes the parsed drops, so
+        // the pretty committed seed and the mirror's compact scrape of the same set agree —
+        // what keeps a reboot-reseed from moving the sealed-contents gate.
+        let pretty = r#"{
+          "//": "GENERATED by gen-sld-drops.mjs",
+          "sets": [
+            { "game": "mtg", "set": "sld", "drops": [
+              { "slug": "a", "title": "A", "collector_numbers": ["1", "2"] }
+            ] },
+            { "game": "mtg", "set": "slz", "drops": [
+              { "slug": "p", "title": "P", "collector_numbers": ["1"] }
+            ] }
+          ]
+        }"#;
+        let compact = r#"{"sets":[{"game":"mtg","set":"slz","drops":[{"slug":"p","title":"P","collector_numbers":["1"]}]},{"game":"mtg","set":"sld","drops":[{"slug":"a","title":"A","collector_numbers":["1","2"]}]}]}"#;
+        let a = Tables::from_json(pretty).expect("valid");
+        let b = Tables::from_json(compact).expect("valid");
+        for set in ["sld", "slz"] {
+            assert_eq!(
+                a.get("mtg", set).unwrap().content_version(),
+                b.get("mtg", set).unwrap().content_version(),
+                "{set}"
+            );
+        }
+        assert_eq!(a.content_version, b.content_version);
+    }
+
+    #[test]
+    fn a_snapshot_without_the_zeta_set_still_installs() {
+        // Only `sld` is required: an older mirror's snapshot (or a first scrape whose secondary
+        // gallery failed with nothing to carry forward) installs, and `slz` is simply not
+        // drop-grouped by it.
+        let tables = Tables::from_json(&snapshot_with("mtg", "sld")).expect("valid");
+        assert!(tables.get("mtg", "sld").is_some());
+        assert!(tables.get("mtg", "slz").is_none());
     }
 
     /// A base whose drop entry names only the foil-★ variant still resolves to that drop —
@@ -614,9 +887,11 @@ mod tests {
         let b = Tables::from_json(&snapshot_with("mtg", "sld")).expect("valid");
         assert_eq!(a.content_version, b.content_version);
         assert_eq!(a.content_version.len(), 16); // 8 bytes hex-encoded
-        // The live store (seeded from the shipped snapshot) has a different, non-empty version.
-        assert!(!content_version().is_empty());
-        assert_ne!(a.content_version, content_version());
+        // The live store (seeded from the shipped snapshot) has a different, non-empty version —
+        // read the way the mirror endpoint reads it, paired with the body.
+        let (_, live_version) = current_snapshot();
+        assert!(!live_version.is_empty());
+        assert_ne!(a.content_version, live_version);
     }
 
     #[test]

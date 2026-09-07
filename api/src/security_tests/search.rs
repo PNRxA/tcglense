@@ -829,3 +829,77 @@ async fn sld_drops_fold_a_foil_star_onto_its_nonfoil_base() {
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert_eq!(body["collector_number"].as_str(), Some("1587★"), "{body:?}");
 }
+
+/// The Zeta Set (`slz`) — a Secret Lair release Scryfall files as its own top-level set — is
+/// drop-grouped like `sld`: its gallery's three print-treatment sections ride the same scraped
+/// snapshot, so the set list offers the by-drop view and the by-drop endpoint groups the cards
+/// under Scryfall's section titles in page order. (Before, the set showed one "Full Art" group —
+/// the only treatment the card data can derive, since every printing is full-art.)
+#[tokio::test]
+async fn zeta_set_groups_by_its_gallery_sections() {
+    let app = test_app_with_catalog().await;
+
+    let (status, _, body) = send(&app, get("/api/games/mtg/sets")).await;
+    assert_eq!(status, StatusCode::OK);
+    let slz = body["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .find(|s| s["code"] == json!("slz"))
+        .expect("the dummy Zeta Set is seeded")
+        .clone();
+    assert_eq!(slz["has_drops"], json!(true), "{slz:?}");
+    // Every printing is full-art, so the by-treatment gate lights up too; the SPA lets the
+    // drops win (`groupMode`), which is what puts the sections on the set page.
+    assert_eq!(slz["has_subtypes"], json!(true), "{slz:?}");
+    // The sections are print treatments, and the set says so — the SPA labels every group
+    // off this noun, where the Secret Lair Drop set's groups are its drops.
+    assert_eq!(slz["drop_noun"], json!("treatment"), "{slz:?}");
+    let sld = body["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .find(|s| s["code"] == json!("sld"))
+        .expect("the dummy Secret Lair Drop set is seeded")
+        .clone();
+    assert_eq!(sld["drop_noun"], json!("drop"), "{sld:?}");
+    let plain = body["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .find(|s| s["code"] == json!("dmb"))
+        .expect("the dummy base set is seeded")
+        .clone();
+    assert_eq!(plain["has_drops"], json!(false), "{plain:?}");
+    assert_eq!(plain["drop_noun"], serde_json::Value::Null, "{plain:?}");
+
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/sets/slz/drops?page=1&page_size=20"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "drops must succeed: {body:?}");
+    let groups = body["data"].as_array().expect("drop groups");
+    let titles: Vec<&str> = groups
+        .iter()
+        .map(|g| g["title"].as_str().expect("title"))
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Photocopy Cards",
+            "Photocopy Negatives",
+            "Color Banding Cards"
+        ]
+    );
+    assert_eq!(body["total"], json!(3), "total counts sections: {body:?}");
+    for group in groups {
+        assert_eq!(group["card_count"], json!(2), "{group:?}");
+    }
+    // Each card names its section as its drop, so the card page links back to it.
+    let first = &groups[0]["cards"][0];
+    assert_eq!(first["drop_name"], json!("Photocopy Cards"));
+    assert_eq!(first["drop_slug"], json!("photocopy-cards"));
+    assert_eq!(first["drop_noun"], json!("treatment"));
+    assert_eq!(first["collector_number"], json!("1"));
+}

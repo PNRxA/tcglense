@@ -19,6 +19,7 @@ function makeSet(over: Partial<CardSet> & Pick<CardSet, 'code'>): CardSet {
     icon_svg_uri: 'https://example.test/icon.svg',
     parent_set_code: null,
     has_drops: false,
+    drop_noun: null,
     has_subtypes: false,
     ...over,
   }

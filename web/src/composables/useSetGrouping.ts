@@ -113,8 +113,18 @@ export function useSetGrouping(
     () => groupMode.value !== null && route.query.view !== 'all' && !includeRelated.value,
   )
 
+  // What one of a drop-grouped set's groups is called — the set's `drop_noun` ("drop" for
+  // the Secret Lair Drop set, "treatment" for The Zeta Set, whose gallery sections are print
+  // treatments). Every label the views hang on a group derives from it, so a treatment is
+  // never called a drop. Falls back to "drop" for a set the API predates the field on.
+  const dropNoun = computed(
+    () => setsQuery.data.value?.data.find((s) => s.code === code.value)?.drop_noun ?? 'drop',
+  )
+
   // The grouped-view toggle's label — what the set would be grouped BY.
-  const groupLabel = computed(() => (groupMode.value === 'subtypes' ? 'By treatment' : 'By drop'))
+  const groupLabel = computed(() =>
+    groupMode.value === 'subtypes' ? 'By treatment' : `By ${dropNoun.value}`,
+  )
 
   // The full prop set SetScopeBar renders, bundled so both set-scoped views bind the
   // bar with one v-bind (the camelCase keys match its props) instead of relaying
@@ -210,6 +220,7 @@ export function useSetGrouping(
     groupMode,
     grouped,
     groupLabel,
+    dropNoun,
     setsWord,
     scopeBarProps,
     setsPending: setsQuery.isPending,

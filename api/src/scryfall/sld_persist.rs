@@ -26,8 +26,10 @@ use sea_orm::{
 
 use crate::entities::{prelude::SldDropSnapshot, sld_drop_snapshot};
 
-/// The single row's discriminator. `"mtg/sld"` mirrors the `(game, dataset)` key used elsewhere and
-/// keeps the door open for a second drop-grouped set/game without a schema change.
+/// The single row's discriminator. `"mtg/sld"` mirrors the `(game, dataset)` key used elsewhere;
+/// the row holds the **whole** snapshot — every gallery set in it (`sld`'s drops and The Zeta
+/// Set's treatments alike), not one set — so a second set never needed a second row. The key is
+/// a historical name, not a scope.
 const SNAPSHOT_KEY: &str = "mtg/sld";
 
 /// Load the persisted canonical snapshot JSON, or `None` when nothing has been persisted yet (first

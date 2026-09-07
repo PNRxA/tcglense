@@ -66,6 +66,10 @@ pub(crate) struct CardResponse {
     pub drop_name: Option<String>,
     /// Stable slug of the drop above (anchors/links), paired with `drop_name`.
     pub drop_slug: Option<String>,
+    /// What the group named above *is* — `"drop"` for a Secret Lair drop, `"treatment"` for
+    /// one of The Zeta Set's print-treatment sections — paired with `drop_name`, so the card
+    /// page heads the row truthfully (the set's `drop_noun`).
+    pub drop_noun: Option<String>,
     /// Whether this printing is a Secret Lair **chase / bonus** card — the optional
     /// card handed out with a qualifying drop purchase (Scryfall's `sldbonus` promo
     /// type). These have no sealed product of their own, so the card page has nothing
@@ -95,6 +99,12 @@ impl From<card::Model> for CardResponse {
             crate::scryfall::drops::drop_for(&m.game, &m.set_code, &m.collector_number)
                 .map(|d| (d.title, d.slug))
                 .unzip();
+        // The noun rides only beside a drop: a set that is drop-grouped but doesn't list this
+        // number (a newer-than-snapshot printing, "Other" in the grouped view) names no group.
+        let drop_noun = drop_name
+            .as_ref()
+            .and_then(|_| crate::scryfall::drops::section_noun(&m.game, &m.set_code))
+            .map(str::to_string);
         let secret_lair_bonus = is_secret_lair_bonus(m.promo_types.as_deref());
         let secret_lair_spend_incentive =
             crate::scryfall::drops::is_spend_incentive(&m.game, &m.set_code, &m.collector_number);
@@ -151,6 +161,7 @@ impl From<card::Model> for CardResponse {
             has_image,
             drop_name,
             drop_slug,
+            drop_noun,
             secret_lair_bonus,
             secret_lair_spend_incentive,
             faces,

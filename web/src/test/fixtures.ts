@@ -25,6 +25,7 @@ export function makeCard(id: string, over: Partial<Card> = {}): Card {
     has_image: false,
     drop_name: null,
     drop_slug: null,
+    drop_noun: null,
     secret_lair_bonus: false,
     secret_lair_spend_incentive: false,
     faces: [],
@@ -48,6 +49,7 @@ export function makeCardSet(code: string, over: Partial<CardSet> = {}): CardSet 
     icon_svg_uri: null,
     parent_set_code: null,
     has_drops: false,
+    drop_noun: null,
     has_subtypes: false,
     ...over,
   }

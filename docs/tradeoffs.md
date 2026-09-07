@@ -1089,7 +1089,8 @@ catalog) is planned but not implemented.
   editing it re-runs the pass on the next sync.
 - **Secret Lair drop snapshot — a runtime overlay, seeded by a committed file (`scryfall::drops`).**
   The curated drop titles aren't in the bulk card API; they live only on Scryfall's `/sets/sld`
-  gallery page. Originally we scraped that page **offline** (`api/scripts/gen-sld-drops.mjs`) and
+  gallery page (and, since (5) below, The Zeta Set's treatment sections only on `/sets/slz`).
+  Originally we scraped that page **offline** (`api/scripts/gen-sld-drops.mjs`) and
   committed the result (`scryfall/sld_drops.json`), so the API had no runtime scrape dependency —
   but new drops then needed a human to re-run the script and redeploy. Now the committed file only
   **seeds** the drop store at boot (and is the offline / first-boot fallback), and the store is
@@ -1124,14 +1125,61 @@ catalog) is planned but not implemented.
   loaded, and when did it last refresh" queryable.
   (4) The content version hashes
   the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
-  committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
-  the mirror `ETag` (a `304` when unchanged) and the sealed-contents derivation version
-  (`sld::derivation_version`, computed live). Hashing the raw bytes instead would make every reboot
-  (which reseeds from the persisted snapshot, or the committed file on first boot) look like a change versus the last-imported compact
-  snapshot and trip a needless full `AllPrintings` rebuild; hashing the data means only a *real* drop
-  change re-derives SLD product contents (even when `AllPrintings.json` is byte-identical). The
+  committed seed and the mirror's compact scrape of the *same* drops share a version. The
+  whole-snapshot hash is the mirror `ETag` (a `304` when unchanged); the sealed-contents derivation
+  version (`sld::derivation_version`, computed live) keys on the **`sld` table's own** hash
+  (`DropTable::content_version`, same scheme, that set alone — see (5)). Hashing the raw bytes
+  instead would make every reboot (which reseeds from the persisted snapshot, or the committed file
+  on first boot) look like a change versus the last-imported compact snapshot and trip a needless
+  full `AllPrintings` rebuild; hashing the data means only a *real* `sld` drop change re-derives
+  SLD product contents (even when `AllPrintings.json` is byte-identical). The
   mirror endpoint also reads the body + version from a single store snapshot, so a concurrent daily
   swap can't pair a stale `ETag` with a fresh body.
+  (5) **The scrape is a list of galleries, and they fail independently.** The Zeta Set (`slz`,
+  2026-09) is a Secret Lair release Scryfall filed as its own top-level set, and its gallery groups
+  the cards into three print-treatment sections (Photocopy / Photocopy Negatives / Color Banding,
+  collector numbers 1–121 / 122–242 / 243–363) that the card data doesn't distinguish — every
+  printing is black-bordered, full-art, nonfoil, with no `promo_types` — so `subtypes::classify`
+  could only ever file the whole set under "Full Art". The by-treatment view's curated
+  `subtype_overrides.json` was the other candidate seam, but it can only name the six existing
+  sub-types and has no refresh path; the sections are exactly what the `sld` scrape already
+  parses (same `card-grid-header` markup, same collector-number membership), so
+  `drops::GALLERY_SETS` became a registry (`sld`, `slz`; the script's `SETS` mirrors the codes)
+  and `slz` rides the same snapshot, persist, mirror and reseed path as a second per-set table.
+  The SPA's *behaviour* needed nothing — `has_drops` flows from the store, and `groupMode` already
+  lets drops win over derived treatments — but its *vocabulary* did: every group label was the
+  literal word "drop" ("By drop", "Filter drops by name…", a card's "Drop" row), and a Zeta
+  section is a print treatment, not a drop. So the registry carries each set's **noun**
+  (`drop` / `treatment`), published as `drop_noun` on `Set`, `CollectionSet` and `Card`, and the
+  SPA builds every such label from it (`useSetGrouping.dropNoun`, `CardMetaList`) — server-owned,
+  like the format table, rather than a client-side list of which sets are treatment-grouped.
+  The per-set failure policy (`sld_scrape::resolve_set`) is deliberate:
+  `sld` is *primary* (its failure fails the run, as before — the install guard would reject the
+  snapshot anyway), a *secondary* set's failure **keeps its last-good table** — the store's, else
+  the committed seed's (`drops::seed_table`, kept readable beside the swapped store precisely so an
+  upgraded instance, whose persisted snapshot predates the set, still carries it on the very scrape
+  that fails) — rather than omitting it. Omitting was rejected because it flaps: a transient
+  fetch error on one gallery would change the snapshot's content version, then change it back
+  when the set returned — and until this change that version also gated the sealed-contents
+  derivation (`mtgjson::sld::derivation_version`), which reads only `sld`, so the gate now hashes
+  the `sld` table's own `DropTable::content_version()`; a Zeta change can't re-walk
+  `AllPrintings`. An all-or-nothing run was rejected because a permanent markup change on the
+  *secondary* page (Scryfall merging the sections) would freeze `sld`'s refresh behind a daily
+  warning; instead a run that carried a set forward says so in its log line and its
+  `ingest_state` detail (`Scrape::carried_forward`), so a page that stays broken is visible in
+  the bookkeeping. The one remaining stale-forever case — a secondary gallery that never scrapes
+  again — keeps serving sections that still describe the cards (collector numbers don't move),
+  which is the same graceful-staleness posture the whole overlay takes. A **consumer** shows
+  exactly what its mirror serves: an import that lacks a set the seed carries (a mirror on an
+  older build) installs as is and that set is flat until the mirror catches up — the seed is the
+  offline/first-boot fallback, never merged into an import, so the mirror's `ETag` always
+  describes the body it serves. The committed seed
+  gained `slz` via the script's new per-set form (`gen-sld-drops.mjs slz`), which re-scrapes only
+  the named set and keeps the others' entries verbatim — a full regeneration moves `sld`'s 400
+  seeded drops (Scryfall's gallery had 423 by then, newest first) and a few tests pin that seeded
+  order. `mtgjson::sld` (product → drop by title) and `release_alerts` (per-drop heads-ups) still
+  read **only the `sld` table** on purpose: a Zeta section is a treatment, not a product and not a
+  separately-dated release (the set path already sends the Zeta Set's one heads-up).
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that

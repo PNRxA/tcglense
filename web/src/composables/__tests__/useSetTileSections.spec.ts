@@ -24,6 +24,7 @@ function catalogSet(code: string, releasedAt: string | null): CardSet {
     icon_svg_uri: null,
     parent_set_code: null,
     has_drops: false,
+    drop_noun: null,
     has_subtypes: false,
   }
 }

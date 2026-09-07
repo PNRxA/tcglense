@@ -960,8 +960,10 @@ async fn search_smoke_battery_on_pg() {
         "json ->> legality matches the seeded card"
     );
 
-    // Boolean flag `col IS TRUE` — the same seeded card is now the one full-art print.
-    let (status, body) = get(&router, &cards("is:fullart")).await;
+    // Boolean flag `col IS TRUE` — the same seeded card is now the one full-art print
+    // outside the dummy Zeta Set, whose six cards are full-art throughout like the real
+    // printings (its gallery treatments are the by-drop demo), so that set is excluded.
+    let (status, body) = get(&router, &cards("is:fullart -set:slz")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body["total"].as_u64(),

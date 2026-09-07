@@ -20,6 +20,12 @@ drop_name: string | null,
  */
 drop_slug: string | null, 
 /**
+ * What the group named above *is* — `"drop"` for a Secret Lair drop, `"treatment"` for
+ * one of The Zeta Set's print-treatment sections — paired with `drop_name`, so the card
+ * page heads the row truthfully (the set's `drop_noun`).
+ */
+drop_noun: string | null, 
+/**
  * Whether this printing is a Secret Lair **chase / bonus** card — the optional
  * card handed out with a qualifying drop purchase (Scryfall's `sldbonus` promo
  * type). These have no sealed product of their own, so the card page has nothing
