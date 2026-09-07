@@ -6,8 +6,8 @@
 //! Lair release Scryfall filed as its own top-level set) into its three print treatments —
 //! Photocopy / Photocopy Negatives / Color Banding — whose cards are otherwise
 //! indistinguishable in the card data (every one is black-bordered, full-art, nonfoil, with no
-//! promo type). [`GALLERY_SETS`] names every gallery scraped; each is one page, parsed the same
-//! way. `scripts/gen-sld-drops.mjs` scrapes the same pages **offline** to regenerate the committed
+//! promo type). [`drops::GALLERY_SETS`] names every gallery scraped; each is one page, parsed the
+//! same way. `scripts/gen-sld-drops.mjs` scrapes the same pages **offline** to regenerate the committed
 //! fallback (`sld_drops.json`); this is the same scrape ported to Rust so the **mirror origin** can
 //! refresh its live drop tables daily from source without a human re-running the script and
 //! redeploying (see [`super::sld_tasks`]). It emits JSON in the exact shape of `sld_drops.json`, so

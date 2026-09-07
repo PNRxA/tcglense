@@ -1125,12 +1125,14 @@ catalog) is planned but not implemented.
   loaded, and when did it last refresh" queryable.
   (4) The content version hashes
   the drop **data** (each set's ordered drops), *not* the JSON bytes — so the pretty-printed
-  committed seed and the mirror's compact scrape of the *same* drops share a version. It feeds both
-  the mirror `ETag` (a `304` when unchanged) and the sealed-contents derivation version
-  (`sld::derivation_version`, computed live). Hashing the raw bytes instead would make every reboot
-  (which reseeds from the persisted snapshot, or the committed file on first boot) look like a change versus the last-imported compact
-  snapshot and trip a needless full `AllPrintings` rebuild; hashing the data means only a *real* drop
-  change re-derives SLD product contents (even when `AllPrintings.json` is byte-identical). The
+  committed seed and the mirror's compact scrape of the *same* drops share a version. The
+  whole-snapshot hash is the mirror `ETag` (a `304` when unchanged); the sealed-contents derivation
+  version (`sld::derivation_version`, computed live) keys on the **`sld` table's own** hash
+  (`DropTable::content_version`, same scheme, that set alone — see (5)). Hashing the raw bytes
+  instead would make every reboot (which reseeds from the persisted snapshot, or the committed file
+  on first boot) look like a change versus the last-imported compact snapshot and trip a needless
+  full `AllPrintings` rebuild; hashing the data means only a *real* `sld` drop change re-derives
+  SLD product contents (even when `AllPrintings.json` is byte-identical). The
   mirror endpoint also reads the body + version from a single store snapshot, so a concurrent daily
   swap can't pair a stale `ETag` with a fresh body.
   (5) **The scrape is a list of galleries, and they fail independently.** The Zeta Set (`slz`,

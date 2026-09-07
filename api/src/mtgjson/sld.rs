@@ -348,13 +348,21 @@ fn strip_prefixes(base: &str) -> String {
 /// compiled overrides), so a cached value would freeze the version at the first table seen and
 /// never pick up a refresh. Evaluated once per sync tick's version-gate check — negligible.
 pub fn derivation_version() -> String {
+    derivation_version_for(table().as_deref())
+}
+
+/// [`derivation_version`] over an explicit Secret Lair Drop table — the pure core, so the test
+/// can hand it two tables that agree on `sld` and differ elsewhere without touching the global
+/// store. `None` (a snapshot with no `sld` table, which the install guard never admits) hashes
+/// as empty.
+fn derivation_version_for(sld: Option<&DropTable>) -> String {
     let mut hasher = Sha256::new();
     // The Secret Lair Drop table's *own* version, not the whole snapshot's: this derivation
     // reads only `sld` (`table()` above), and the snapshot also carries The Zeta Set's
     // treatment sections, which no product resolves against — hashing the whole snapshot
     // would re-walk the 600 MB `AllPrintings` for a change in a set this never reads.
-    let sld_version = table().map(|t| t.content_version().to_string());
-    hasher.update(sld_version.unwrap_or_default().as_bytes());
+    let sld_version = sld.map(|t| t.content_version()).unwrap_or_default();
+    hasher.update(sld_version.as_bytes());
     for (id, slug) in PRODUCT_DROP_OVERRIDES {
         hasher.update(id.as_bytes());
         hasher.update(b"=");
@@ -583,6 +591,48 @@ mod tests {
     fn derivation_version_is_stable_and_nonempty() {
         assert_eq!(derivation_version(), derivation_version());
         assert_eq!(derivation_version().len(), 16); // 8 bytes hex-encoded
+    }
+
+    #[test]
+    fn derivation_version_moves_only_with_the_sld_table() {
+        // The gate keys on the `sld` table alone: two snapshots that agree on `sld` and differ
+        // on The Zeta Set's sections share a version (a Zeta change must never re-walk
+        // `AllPrintings`), while an `sld` change moves it. Built as local `Tables`, never
+        // installed, so the global store the other tests read is untouched.
+        let build = |sld_numbers: &str, slz_numbers: &str| {
+            drops::Tables::from_json(&format!(
+                r#"{{"sets":[{{"game":"mtg","set":"sld","drops":[{{"slug":"a","title":"A","collector_numbers":[{sld_numbers}]}}]}},
+                             {{"game":"mtg","set":"slz","drops":[{{"slug":"p","title":"P","collector_numbers":[{slz_numbers}]}}]}}]}}"#
+            ))
+            .expect("valid snapshot")
+        };
+        let version =
+            |tables: &drops::Tables| derivation_version_for(tables.get("mtg", "sld").as_deref());
+        let base = build(r#""1""#, r#""1""#);
+        let zeta_changed = build(r#""1""#, r#""1","2""#);
+        let sld_changed = build(r#""1","2""#, r#""1""#);
+        assert_eq!(
+            version(&base),
+            version(&zeta_changed),
+            "a Zeta change is invisible"
+        );
+        assert_ne!(
+            version(&base),
+            version(&sld_changed),
+            "an sld change is not"
+        );
+        assert_eq!(version(&base).len(), 16);
+        // The live gate is exactly the pure core over the live `sld` table.
+        assert_eq!(
+            derivation_version(),
+            derivation_version_for(table().as_deref())
+        );
+        // And the seed's `sld` table — what an offline instance derives from — answers the
+        // same as the store's until a scrape or import swaps the store.
+        assert_eq!(
+            derivation_version(),
+            derivation_version_for(drops::seed_table(super::super::GAME, SET_CODE).as_deref())
+        );
     }
 
     #[test]

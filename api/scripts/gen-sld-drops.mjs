@@ -5,8 +5,8 @@
 // its "drops" (e.g. "Wild in Bloom"), and The Zeta Set (`slz`, a Secret Lair release
 // Scryfall files as its own top-level set) into its three print treatments (Photocopy /
 // Photocopy Negatives / Color Banding), which the card data doesn't distinguish either.
-// `SETS` names every gallery scraped and mirrors `scryfall::sld_scrape::GALLERY_SETS` —
-// keep the two in step.
+// `SETS` names every gallery scraped and mirrors the codes in `scryfall::drops::GALLERY_SETS`
+// (the registry, which also names what each set's sections are called) — keep the two in step.
 //
 // This scrape is ALSO ported to Rust (`scryfall::sld_scrape`) and run at runtime by
 // the mirror origin, which re-scrapes daily and re-serves the fresh snapshot at
@@ -30,8 +30,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const GAME = 'mtg'
-// Mirrors `GALLERY_SETS` in `api/src/scryfall/sld_scrape.rs`; `sld` first (the set the drop
-// store's install guard requires).
+// Mirrors the codes in `GALLERY_SETS` in `api/src/scryfall/drops.rs`; `sld` first (the set the
+// drop store's install guard requires).
 const SETS = ['sld', 'slz']
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'scryfall', 'sld_drops.json')
 
@@ -159,7 +159,9 @@ async function main() {
   const requested = process.argv.slice(2)
   for (const set of requested) {
     if (!SETS.includes(set)) {
-      throw new Error(`unknown set '${set}' — add it to SETS (and to GALLERY_SETS in sld_scrape.rs)`)
+      throw new Error(
+        `unknown set '${set}' — add it to SETS (and to GALLERY_SETS in api/src/scryfall/drops.rs)`,
+      )
     }
   }
   const toScrape = requested.length > 0 ? requested : SETS
