@@ -4,6 +4,12 @@
 //! "Wild in Bloom") on its gallery page, but those curated titles are **not** in
 //! the bulk card API we ingest — they live only in the page's collector-number
 //! groupings. We match each card to its drop by `(game, set_code, collector_number)`.
+//! The same page structure files The Zeta Set (`slz`, a Secret Lair release Scryfall
+//! lists as its own top-level set) under its three print treatments — Photocopy /
+//! Photocopy Negatives / Color Banding — which the card data doesn't distinguish either
+//! (every card is black-bordered, full-art, nonfoil, with no promo type), so that set
+//! rides the same tables: the galleries scraped are [`super::sld_scrape::GALLERY_SETS`],
+//! each its own per-set table here.
 //!
 //! **The drop table is a swappable runtime overlay, seeded by a committed snapshot.**
 //! A committed `sld_drops.json` is embedded at compile time ([`SNAPSHOT_JSON`], still
@@ -25,8 +31,10 @@
 //! The store is a process-global `RwLock<Arc<Tables>>` (not per-`AppState`) because the read
 //! path reaches it from a bare `From<card::Model>` conversion with no state in hand; the swap
 //! is the same brief-lock, clone-an-`Arc` pattern the fingerprint index uses. An install that
-//! doesn't cover the Secret Lair set (a broken scrape returning zero drops) is **rejected**, so
-//! a bad fetch can never wipe the good table — the store keeps whatever it last held.
+//! doesn't cover the Secret Lair Drop set (a broken scrape returning zero drops) is **rejected**,
+//! so a bad fetch can never wipe the good table — the store keeps whatever it last held. That
+//! one set is required; the other gallery sets are optional, and the scrape keeps a secondary
+//! set's last-good table when only its own page fails (see `sld_scrape::resolve_set`).
 //!
 //! A card whose collector number isn't listed (e.g. a drop newer than the loaded snapshot)
 //! simply has no drop, and callers fold it into an "Other" group — so a stale snapshot
@@ -117,6 +125,13 @@ impl DropTable {
         self.drops.iter().find(|d| d.slug == slug)
     }
 
+    /// Every drop in the set's display order. What the gallery scrape re-emits for a
+    /// secondary set whose page failed to scrape (`sld_scrape::resolve_set`), so the
+    /// snapshot keeps that set's last-good drops instead of dropping the set.
+    pub fn drops(&self) -> &[Drop] {
+        &self.drops
+    }
+
     /// Whether the snapshot lists any drops for this set.
     pub fn is_empty(&self) -> bool {
         self.drops.is_empty()
@@ -152,8 +167,10 @@ pub enum SnapshotError {
 
 impl Tables {
     /// Parse + validate a snapshot JSON into per-set tables. Rejects a snapshot that doesn't
-    /// cover the Secret Lair set with a non-empty drop list ([`SnapshotError::MissingSld`]), so
-    /// a broken scrape can't install an empty table over the good one.
+    /// cover the Secret Lair Drop set with a non-empty drop list ([`SnapshotError::MissingSld`]),
+    /// so a broken scrape can't install an empty table over the good one. That is the only
+    /// required set: a snapshot may carry any other gallery set (`slz`) or none — an older
+    /// mirror's snapshot without it still installs, and the set simply isn't drop-grouped.
     pub fn from_json(json: &str) -> Result<Tables, SnapshotError> {
         let snapshot: RawSnapshot = serde_json::from_str(json)?;
         let by_key = build_tables(snapshot);
@@ -193,8 +210,8 @@ impl Tables {
     }
 }
 
-/// The Secret Lair set code (lowercased, as cards/products store it). The set the snapshot
-/// groups; the install guard requires it.
+/// The Secret Lair Drop set code (lowercased, as cards/products store it). The one set the
+/// install guard requires — the primary gallery of `sld_scrape::GALLERY_SETS`.
 const SLD_SET_CODE: &str = "sld";
 
 /// Canonicalise a drop/product title for case- and punctuation-insensitive matching:
@@ -461,6 +478,53 @@ mod tests {
         );
         // A collector number the snapshot doesn't list -> no drop (folds to "Other").
         assert!(drop_for("mtg", "sld", "this-cn-does-not-exist").is_none());
+    }
+
+    #[test]
+    fn snapshot_covers_the_zeta_set_by_treatment_section() {
+        // The Zeta Set rides the same seed: Scryfall's three print-treatment sections, in page
+        // order, keyed by the collector-number ranges its gallery lists them under.
+        let table = table("mtg", "slz").expect("slz is drop-grouped");
+        let titles: Vec<&str> = table.drops().iter().map(|d| d.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Photocopy Cards",
+                "Photocopy Negatives",
+                "Color Banding Cards"
+            ]
+        );
+        assert!(has_drops("mtg", "slz"));
+        for (cn, title, order) in [
+            ("1", "Photocopy Cards", 0),
+            ("121", "Photocopy Cards", 0),
+            ("122", "Photocopy Negatives", 1),
+            ("242", "Photocopy Negatives", 1),
+            ("243", "Color Banding Cards", 2),
+            ("363", "Color Banding Cards", 2),
+        ] {
+            let drop = drop_for("mtg", "slz", cn).unwrap_or_else(|| panic!("{cn} is listed"));
+            assert_eq!(drop.title, title, "collector number {cn}");
+            assert_eq!(drop.order, order, "collector number {cn}");
+        }
+        // The three sections partition the set: 363 numbers, none listed twice.
+        let listed: usize = table
+            .drops()
+            .iter()
+            .map(|d| d.collector_numbers.len())
+            .sum();
+        assert_eq!(listed, 363);
+        assert!(drop_for("mtg", "slz", "364").is_none());
+    }
+
+    #[test]
+    fn a_snapshot_without_the_zeta_set_still_installs() {
+        // Only `sld` is required: an older mirror's snapshot (or a first scrape whose secondary
+        // gallery failed with nothing to carry forward) installs, and `slz` is simply not
+        // drop-grouped by it.
+        let tables = Tables::from_json(&snapshot_with("mtg", "sld")).expect("valid");
+        assert!(tables.get("mtg", "sld").is_some());
+        assert!(tables.get("mtg", "slz").is_none());
     }
 
     /// A base whose drop entry names only the foil-★ variant still resolves to that drop —

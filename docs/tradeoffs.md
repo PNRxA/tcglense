@@ -1132,6 +1132,35 @@ catalog) is planned but not implemented.
   change re-derives SLD product contents (even when `AllPrintings.json` is byte-identical). The
   mirror endpoint also reads the body + version from a single store snapshot, so a concurrent daily
   swap can't pair a stale `ETag` with a fresh body.
+  (5) **The scrape is a list of galleries, and they fail independently.** The Zeta Set (`slz`,
+  2026-09) is a Secret Lair release Scryfall filed as its own top-level set, and its gallery groups
+  the cards into three print-treatment sections (Photocopy / Photocopy Negatives / Color Banding,
+  collector numbers 1–121 / 122–242 / 243–363) that the card data doesn't distinguish — every
+  printing is black-bordered, full-art, nonfoil, with no `promo_types` — so `subtypes::classify`
+  could only ever file the whole set under "Full Art". The by-treatment view's curated
+  `subtype_overrides.json` was the other candidate seam, but it can only name the six existing
+  sub-types and has no refresh path; the sections are exactly what the `sld` scrape already
+  parses (same `card-grid-header` markup, same collector-number membership), so
+  `sld_scrape::GALLERY_SETS` became a list (`sld`, `slz`; the script's `SETS` mirrors it) and
+  `slz` rides the same snapshot, persist, mirror and reseed path as a second per-set table — the
+  SPA needs nothing: `has_drops` flows from the store, and `groupMode` already lets drops win over
+  derived treatments. The per-set failure policy (`sld_scrape::resolve_set`) is deliberate:
+  `sld` is *primary* (its failure fails the run, as before — the install guard would reject the
+  snapshot anyway), a *secondary* set's failure **keeps its last-good table from the store**
+  rather than omitting it. Omitting was rejected because it flaps: the snapshot's content version
+  feeds the sealed-contents derivation gate (`mtgjson::sld::derivation_version`), so a transient
+  fetch error on one gallery would trigger a needless full `AllPrintings` re-walk, then another
+  when the set came back. And an all-or-nothing run was rejected because a permanent markup
+  change on the *secondary* page (Scryfall merging the sections) would freeze `sld`'s refresh
+  behind a daily warning. The one remaining stale-forever case — a secondary gallery that never
+  scrapes again — keeps serving sections that still describe the cards (collector numbers don't
+  move), which is the same graceful-staleness posture the whole overlay takes. The committed seed
+  gained `slz` via the script's new per-set form (`gen-sld-drops.mjs slz`), which re-scrapes only
+  the named set and keeps the others' entries verbatim — a full regeneration moves `sld`'s 400
+  seeded drops (Scryfall's gallery had 423 by then, newest first) and a few tests pin that seeded
+  order. `mtgjson::sld` (product → drop by title) and `release_alerts` (per-drop heads-ups) still
+  read **only the `sld` table** on purpose: a Zeta section is a treatment, not a product and not a
+  separately-dated release (the set path already sends the Zeta Set's one heads-up).
 - **Sealed-product composition / "what's in the box" (MTGJSON):** the same
   `AllPrintings.json` `sealedProduct.contents` that feeds `sealed_contents` also carries the
   product's *packaging* — `sealed` (nested packs/boxes, **with a `count`** and a `uuid` that

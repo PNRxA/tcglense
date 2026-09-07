@@ -258,7 +258,7 @@ Repo-root `scripts/`:
 
 | Script | What it does |
 |--------|--------------|
-| `api/scripts/gen-sld-drops.mjs` | Regenerate `api/src/scryfall/sld_drops.json` — the committed snapshot of Scryfall's curated Secret Lair Drop titles (they aren't in the bulk card API; only the set's gallery page carries them). Parses the page once and commits the result. Node 18+ (global `fetch`), no npm deps: `node api/scripts/gen-sld-drops.mjs` |
+| `api/scripts/gen-sld-drops.mjs` | Regenerate `api/src/scryfall/sld_drops.json` — the committed snapshot of Scryfall's curated Secret Lair section titles (they aren't in the bulk card API; only a set's gallery page carries them): the `sld` drops and The Zeta Set's (`slz`) three print treatments, one gallery per set in the script's `SETS` (mirrors `sld_scrape::GALLERY_SETS`). Node 18+ (global `fetch`), no npm deps: `node api/scripts/gen-sld-drops.mjs` re-scrapes every set; `node api/scripts/gen-sld-drops.mjs slz` re-scrapes only the named set(s) and keeps the others' committed entries verbatim (a full `sld` regen moves hundreds of drops, and a few tests pin its seeded order) |
 
 `web/scripts/`:
 

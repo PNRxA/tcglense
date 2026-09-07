@@ -239,7 +239,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
 | `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` Scryfall-style search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
-| `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated drop titles), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cheapest_prints_usd, cards: Card[] }` and `total` counts drops. `cheapest_prints_usd` is the drop's "cheapest prints" total — for each **distinct** card in the drop (by gameplay identity/`oracle_id`, so a foil-variant printing isn't double-counted), the price of its cheapest available printing *anywhere in the catalog* (the lower of that printing's regular and foil price, so a card is floored at a cheap reprint rather than its Secret Lair printing), summed. A canonical USD decimal string (the SPA renders it in the display currency), or `null` when no card in the drop has a priced printing. Computed with one extra indexed `(game, oracle_id)` lookup scoped to the page's cards. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
+| `GET /api/games/{game}/sets/{code}/drops?q&page&page_size` | a drop-grouped set's cards broken into **Secret Lair drops** (Scryfall's curated gallery sections: `sld`'s drops, and The Zeta Set `slz`'s three print treatments — Photocopy / Photocopy Negatives / Color Banding — which the card data doesn't distinguish), **paginated by drop** — `{ data: DropGroup[], page, page_size, total, has_more }` where `DropGroup = { slug, title, card_count, cheapest_prints_usd, cards: Card[] }` and `total` counts drops. `cheapest_prints_usd` is the drop's "cheapest prints" total — for each **distinct** card in the drop (by gameplay identity/`oracle_id`, so a foil-variant printing isn't double-counted), the price of its cheapest available printing *anywhere in the catalog* (the lower of that printing's regular and foil price, so a card is floored at a cheap reprint rather than its Secret Lair printing), summed. A canonical USD decimal string (the SPA renders it in the display currency), or `null` when no card in the drop has a priced printing. Computed with one extra indexed `(game, oracle_id)` lookup scoped to the page's cards. Drops keep Scryfall's order; within a drop, cards are by collector number. Cards not in the snapshot fall into a trailing `"Other"` group (`slug: null`). `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters cards, dropping now-empty drops |
 | `GET /api/games/{game}/sets/{code}/subtypes?q&page&page_size` | a set's cards grouped by **sub-type** (card treatment: Borderless, Showcase, Extended Art, Full Art, …), **paginated by sub-type** — `{ data: SubtypeGroup[], page, page_size, total, has_more }` where `SubtypeGroup = { slug, title, card_count, cards: Card[] }` and `total` counts sub-types. The sub-type is **derived** from the card's print attributes (see `crate::scryfall::subtypes`); every card classifies, so `Normal` heads the list, then treatments. Unlike `/drops` this never `404`s (any set groups — one `Normal` group if plain; the SPA gates the view on `has_subtypes`); optional `q` filters cards, dropping now-empty sub-types |
 | `GET /api/games/{game}/cards?q&page&page_size&name` | page of `Card` (optional `q` Scryfall-style search; optional `name` = exact-name equality filter, the quick-add "printings of this name" step), by name |
 | `GET /api/games/{game}/cards/preview?q&name&sort&dir&limit` | `SearchGroup<Card>` = `{ data: Card[], has_more }` — the **first `limit` rows** (default 8, max 25) of the same search `/cards` pages through (same `q`/`name`/`sort`/`dir`, same fold, built from the listing's own query so the two can never disagree), **without a `total`**: `has_more` comes from one row of over-fetch, never a `COUNT(*)`. For a surface that shows a handful of cards and never reads the count (the keyword glossary's example panel, whose `total` was a 5 s scan of the whole catalog for a number in a button label); a caller that shows the total, or page two, uses `/cards`. `404` unknown game, `422` malformed `q`/`sort` |
@@ -1584,16 +1584,20 @@ rows in one transaction — the ~3–4 MB MTG index is fetched **once per change
 ordinary self-host runs the scanner while fetching **zero** card images.
 
 The **sld-drops** route is likewise not an upstream proxy: it re-serves this origin's own
-in-memory Secret Lair drop snapshot as JSON (the shape of `scryfall/sld_drops.json`). Those
-curated drop titles aren't in the bulk card API, so the **mirror origin** (`MIRROR_ENABLED`)
-scrapes Scryfall's gallery daily (`scryfall::sld_scrape`) and installs the fresh snapshot into
-its drop store; every **other** instance imports it from this route daily
+in-memory Secret Lair drop snapshot as JSON (the shape of `scryfall/sld_drops.json`, one
+`sets[]` entry per scraped gallery — `sld`'s drops and `slz`'s print-treatment sections). Those
+curated titles aren't in the bulk card API, so the **mirror origin** (`MIRROR_ENABLED`)
+scrapes Scryfall's galleries daily (`scryfall::sld_scrape::GALLERY_SETS`) and installs the fresh
+snapshot into its drop store; every **other** instance imports it from this route daily
 (`scryfall::sld_sync`, on by default via `SLD_DROPS_IMPORT_ENABLED`) rather than scraping
 Scryfall itself. Both fall back to the committed `sld_drops.json` only on first boot (when no
 snapshot has been persisted yet); a restart reseeds from the DB-persisted snapshot
 (`scryfall::sld_persist`), so it serves the last-good drops, not the committed seed. A scrape
-that yields no drops (a markup change) is rejected, so a broken scrape never wipes the good
-table. Version-gated by a strong content `ETag` (a bodyless `304` when unchanged).
+of the primary `sld` gallery that yields no drops (a markup change) is rejected, so a broken
+scrape never wipes the good table; a secondary gallery (`slz`) that fails keeps its last-good
+sections instead. Only `mtg/sld` is required of an imported snapshot — a consumer accepts one
+without `slz` (an older mirror), and that set is then simply not drop-grouped. Version-gated by
+a strong content `ETag` (a bodyless `304` when unchanged).
 
 The **currency** route *is* an upstream proxy passthrough (like the TCGCSV / MTGJSON routes):
 it re-serves the upstream FX provider's daily JSON **verbatim** under the metadata TTL. A default
