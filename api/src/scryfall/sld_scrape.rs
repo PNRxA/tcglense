@@ -32,17 +32,21 @@ use regex::{Captures, Regex};
 use reqwest::header::USER_AGENT;
 use serde::Serialize;
 
-/// The Secret Lair-line sets whose Scryfall gallery groups cards into named sections the bulk
-/// card API doesn't carry — the sets the drop store is populated for. **`sld` first**: it is the
-/// primary set, the one [`super::drops::install_snapshot`] requires, and a failed scrape of it
-/// fails the whole run; every later set is secondary and falls back to its last-good table
-/// (see [`resolve_set`]). Mirrored by `SETS` in `scripts/gen-sld-drops.mjs` (the offline
-/// regeneration of the committed seed) — keep the two lists in step.
-pub const GALLERY_SETS: &[&str] = &["sld", "slz"];
+use crate::scryfall::drops;
+
+/// The galleries scraped, in order — the drop store's registry ([`drops::GALLERY_SETS`]), which
+/// also names what each set's sections are called. **The first is the primary set**: the one
+/// [`drops::install_snapshot`] requires, whose failed scrape fails the whole run; every later
+/// set is secondary and falls back to its last-good table (see [`resolve_set`]). `SETS` in
+/// `scripts/gen-sld-drops.mjs` (the offline regeneration of the committed seed) mirrors the
+/// codes — keep the two in step.
+pub fn gallery_sets() -> impl Iterator<Item = &'static str> {
+    drops::GALLERY_SETS.iter().map(|g| g.code)
+}
 
 /// The one set whose gallery must scrape for a snapshot to be built at all — the same set the
 /// drop store's install guard checks for, so a run that would be rejected there is cut short here.
-const PRIMARY_SET: &str = GALLERY_SETS[0];
+const PRIMARY_SET: &str = drops::GALLERY_SETS[0].code;
 
 /// Game the snapshot is written for (matches the committed `sld_drops.json`).
 const GAME: &str = super::GAME;
@@ -73,24 +77,34 @@ pub enum ScrapeError {
     NoDrops { set: &'static str },
 }
 
-/// Fetch every gallery in [`GALLERY_SETS`] and build the drop snapshot JSON (the shape of
+/// A completed scrape: the snapshot JSON to install, plus which secondary sets it carries
+/// forward unchanged because their own gallery failed — so the caller can say so in its log
+/// line and its `ingest_state` detail rather than record a partially-fresh run as a clean one.
+pub struct Scrape {
+    pub json: String,
+    pub carried_forward: Vec<&'static str>,
+}
+
+/// Fetch every gallery in [`gallery_sets`] and build the drop snapshot JSON (the shape of
 /// `sld_drops.json`). Carries the configured Scryfall `User-Agent` (their API guidelines require a
 /// descriptive one). Errors never panic: a failure on the primary set — network, non-2xx, or a
 /// markup change that yields no drops — is returned and the caller keeps its last-good snapshot; a
-/// failure on a secondary set is logged and that set keeps the table the store currently holds
-/// ([`resolve_set`]).
+/// failure on a secondary set is logged and that set keeps its last-good table
+/// ([`resolve_set`]): the store's, or the committed seed's when the store has none (an
+/// upgraded instance whose persisted snapshot predates the set).
 pub async fn fetch_snapshot_json(
     http: &reqwest::Client,
     user_agent: &str,
-) -> Result<String, ScrapeError> {
-    let mut sets = Vec::with_capacity(GALLERY_SETS.len());
-    for (i, &set) in GALLERY_SETS.iter().enumerate() {
+) -> Result<Scrape, ScrapeError> {
+    let mut sets = Vec::with_capacity(drops::GALLERY_SETS.len());
+    for (i, set) in gallery_sets().enumerate() {
         if i > 0 {
             tokio::time::sleep(REQUEST_GAP).await;
         }
         let scraped = fetch_set(http, user_agent, set).await;
         let last_good = || {
-            crate::scryfall::drops::table(GAME, set)
+            drops::table(GAME, set)
+                .or_else(|| drops::seed_table(GAME, set))
                 .filter(|table| !table.is_empty())
                 .map(|table| table.drops().iter().map(ScrapedDrop::from).collect())
         };
@@ -98,7 +112,15 @@ pub async fn fetch_snapshot_json(
             sets.push(resolved);
         }
     }
-    Ok(serialize_snapshot(&sets))
+    let carried_forward = sets
+        .iter()
+        .filter(|s| s.carried_forward)
+        .map(|s| s.set)
+        .collect();
+    Ok(Scrape {
+        json: serialize_snapshot(&sets),
+        carried_forward,
+    })
 }
 
 /// GET one set's gallery and parse it into its sections.
@@ -125,20 +147,27 @@ async fn fetch_set(
 /// Decide what the snapshot carries for one gallery set given how its scrape went. A successful
 /// scrape is used as is. A failed scrape of the **primary** set fails the run (`Err`) — the drop
 /// store would reject a snapshot without it anyway, and the origin keeps its last-good snapshot. A
-/// failed scrape of a **secondary** set keeps that set's `last_good` table (the drops the store
-/// currently holds, if any) so a transient fetch error or a markup change on one gallery neither
-/// drops the set from the snapshot — which would flap the content version and re-run the
-/// sealed-contents derivation for nothing — nor blocks the primary set's refresh. Only a secondary
-/// set with no last-good table (a first scrape that fails) is omitted, in which case the set simply
-/// isn't drop-grouped until a later scrape succeeds. Pure (the store read is the caller's
-/// closure), so the policy is unit-tested without a network or the global store.
+/// failed scrape of a **secondary** set keeps that set's `last_good` table — the drops the store
+/// currently holds, else the committed seed's (so an upgraded instance whose persisted snapshot
+/// predates the set still carries it on the very scrape that fails) — so a transient fetch error
+/// or a markup change on one gallery neither drops the set from the snapshot — which would flap
+/// the content version — nor blocks the primary set's refresh. The carried-forward set is flagged
+/// so the run is recorded as such. Only a secondary set with no last-good table anywhere is
+/// omitted; the seed covers every registered set (pinned by
+/// `the_committed_seed_covers_every_gallery_set`), so that branch is a defence, not a path.
+/// Pure (the store/seed read is the caller's closure), so the policy is unit-tested without a
+/// network or the global store.
 fn resolve_set(
     set: &'static str,
     scraped: Result<Vec<ScrapedDrop>, ScrapeError>,
     last_good: impl FnOnce() -> Option<Vec<ScrapedDrop>>,
 ) -> Result<Option<ScrapedSet>, ScrapeError> {
     match scraped {
-        Ok(drops) => Ok(Some(ScrapedSet { set, drops })),
+        Ok(drops) => Ok(Some(ScrapedSet {
+            set,
+            drops,
+            carried_forward: false,
+        })),
         Err(err) if set == PRIMARY_SET => Err(err),
         Err(err) => match last_good() {
             Some(drops) => {
@@ -147,7 +176,11 @@ fn resolve_set(
                     error = %err,
                     "secondary Secret Lair gallery scrape failed; keeping its last-good drops"
                 );
-                Ok(Some(ScrapedSet { set, drops }))
+                Ok(Some(ScrapedSet {
+                    set,
+                    drops,
+                    carried_forward: true,
+                }))
             }
             None => {
                 tracing::warn!(
@@ -169,10 +202,10 @@ struct ScrapedDrop {
     collector_numbers: Vec<String>,
 }
 
-impl From<&crate::scryfall::drops::Drop> for ScrapedDrop {
-    /// A drop the store already holds, re-emitted as scraped data — the carry-forward of a
-    /// secondary set whose gallery failed to scrape.
-    fn from(drop: &crate::scryfall::drops::Drop) -> Self {
+impl From<&drops::Drop> for ScrapedDrop {
+    /// A drop the store (or the seed) already holds, re-emitted as scraped data — the
+    /// carry-forward of a secondary set whose gallery failed to scrape.
+    fn from(drop: &drops::Drop) -> Self {
         Self {
             slug: drop.slug.clone(),
             title: drop.title.clone(),
@@ -181,11 +214,14 @@ impl From<&crate::scryfall::drops::Drop> for ScrapedDrop {
     }
 }
 
-/// One gallery set's scraped sections, in the set's display order.
+/// One gallery set's sections, in the set's display order: freshly scraped, or — when
+/// `carried_forward` — a secondary set's last-good drops re-emitted because its own gallery
+/// failed this run.
 #[derive(Debug, Clone, PartialEq)]
 struct ScrapedSet {
     set: &'static str,
     drops: Vec<ScrapedDrop>,
+    carried_forward: bool,
 }
 
 /// Parse one set's gallery HTML into its sections. Split from [`fetch_set`] so the parse is
@@ -351,7 +387,7 @@ fn decode_percent(s: &str) -> String {
 
 /// The snapshot wrapper serialized to JSON (the shape of `sld_drops.json`, whose extra `//`
 /// comment keys the drop-store parser ignores). Deterministic field/collection order (the sets in
-/// [`GALLERY_SETS`] order), so a re-scrape of unchanged drops serves byte-identical JSON — nice for
+/// [`gallery_sets`] order), so a re-scrape of unchanged drops serves byte-identical JSON — nice for
 /// a warm CDN. The drop store's content version hashes the drop *data*, not these bytes (see
 /// `drops::data_content_hash`), so the version stays stable across representations (the compact
 /// scrape vs the pretty committed seed) regardless — that's what prevents a spurious downstream
@@ -456,6 +492,15 @@ mod tests {
         }
     }
 
+    /// A freshly-scraped set (not carried forward).
+    fn fresh(set: &'static str, drops: Vec<ScrapedDrop>) -> ScrapedSet {
+        ScrapedSet {
+            set,
+            drops,
+            carried_forward: false,
+        }
+    }
+
     #[test]
     fn extracts_titles_collector_numbers_and_order() {
         let drops = parse_set(FIXTURE, "sld").expect("parses the gallery");
@@ -507,14 +552,8 @@ mod tests {
         // runtime scrape yields exactly what `install_snapshot` accepts — with every gallery set
         // in `GALLERY_SETS` order, each under the one game.
         let sets = vec![
-            ScrapedSet {
-                set: "sld",
-                drops: parse_set(FIXTURE, "sld").unwrap(),
-            },
-            ScrapedSet {
-                set: "slz",
-                drops: parse_set(ZETA_FIXTURE, "slz").unwrap(),
-            },
+            fresh("sld", parse_set(FIXTURE, "sld").unwrap()),
+            fresh("slz", parse_set(ZETA_FIXTURE, "slz").unwrap()),
         ];
         let json = serialize_snapshot(&sets);
         assert!(
@@ -556,14 +595,8 @@ mod tests {
         // hash), which is what keeps an unchanged re-scrape from bumping the version.
         let snapshot = || {
             serialize_snapshot(&[
-                ScrapedSet {
-                    set: "sld",
-                    drops: parse_set(FIXTURE, "sld").unwrap(),
-                },
-                ScrapedSet {
-                    set: "slz",
-                    drops: parse_set(ZETA_FIXTURE, "slz").unwrap(),
-                },
+                fresh("sld", parse_set(FIXTURE, "sld").unwrap()),
+                fresh("slz", parse_set(ZETA_FIXTURE, "slz").unwrap()),
             ])
         };
         assert_eq!(snapshot(), snapshot());
@@ -594,6 +627,7 @@ mod tests {
             Some(ScrapedSet {
                 set: "slz",
                 drops: last_good,
+                carried_forward: true,
             })
         );
     }
@@ -612,13 +646,13 @@ mod tests {
             panic!("a successful scrape never consults the store")
         })
         .expect("ok");
-        assert_eq!(resolved, Some(ScrapedSet { set: "slz", drops }));
+        assert_eq!(resolved, Some(fresh("slz", drops)));
     }
 
     #[test]
     fn a_carried_forward_drop_round_trips_the_store_row() {
         // The carry-forward re-emits what the store holds, field for field.
-        let stored = crate::scryfall::drops::Drop {
+        let stored = drops::Drop {
             slug: "photocopy-negatives".into(),
             title: "Photocopy Negatives".into(),
             collector_numbers: vec!["122".into(), "123".into()],
@@ -637,29 +671,32 @@ mod tests {
     // ----- The gallery set list -----
 
     #[test]
-    fn gallery_sets_lead_with_the_required_set() {
-        // The primary set is the one the drop store's install guard requires (`mtg/sld`): a
-        // snapshot built without it would be rejected, which is why its failure fails the run.
+    fn the_primary_set_is_the_one_the_install_guard_requires() {
+        // A snapshot built without `mtg/sld` would be rejected by `install_snapshot`, which is
+        // why its failure fails the run before any secondary page is fetched.
         assert_eq!(PRIMARY_SET, "sld");
-        assert_eq!(GALLERY_SETS[0], PRIMARY_SET);
-        // Codes are the lowercase set codes cards store (the join key) and listed once each.
-        let mut seen = HashSet::new();
-        for set in GALLERY_SETS {
-            assert_eq!(*set, set.to_lowercase(), "set codes are lowercase");
-            assert!(seen.insert(*set), "set {set} listed twice");
-        }
+        assert_eq!(gallery_sets().next(), Some(PRIMARY_SET));
         assert_eq!(gallery_url("slz"), "https://scryfall.com/sets/slz");
     }
 
     #[test]
     fn the_committed_seed_covers_every_gallery_set() {
-        // The offline / first-boot fallback must group every set the runtime scrape groups, or a
-        // self-host that never reaches the mirror shows one set by drop and another flat. (The
-        // store's `drops()` accessor is what the carry-forward reads, so exercise it here too.)
-        for set in GALLERY_SETS {
-            let table = crate::scryfall::drops::table(GAME, set)
+        // Both directions of the seed ↔ registry coupling. Forward: the offline / first-boot
+        // fallback must group every set the runtime scrape groups, or a self-host that never
+        // reaches the mirror shows one set by drop and another flat — and the seed is what the
+        // carry-forward falls back to on an upgraded instance. Reverse: a set the seed carries
+        // but the scrape doesn't walk would go stale forever without anyone noticing.
+        let registered: Vec<&str> = gallery_sets().collect();
+        for set in &registered {
+            let table = drops::seed_table(GAME, set)
                 .unwrap_or_else(|| panic!("the committed seed must cover {set}"));
             assert!(!table.drops().is_empty(), "{set} has drops in the seed");
+        }
+        for seeded in drops::seed_set_codes(GAME) {
+            assert!(
+                registered.contains(&seeded.as_str()),
+                "the seed carries {seeded}, which no gallery scrape refreshes — register it"
+            );
         }
     }
 

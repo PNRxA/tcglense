@@ -60,12 +60,25 @@ function decodeEntities(s) {
         body[1] === 'x' || body[1] === 'X'
           ? parseInt(body.slice(2), 16)
           : parseInt(body.slice(1), 10)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole
+      // Mirror the Rust decoder: an unrepresentable code point passes through verbatim
+      // (`String.fromCodePoint` would throw past U+10FFFF).
+      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : whole
     }
     return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, body)
       ? NAMED_ENTITIES[body]
       : whole
   })
+}
+
+// Percent-decode a collector number (Scryfall encodes the foil-star `★` as `%E2%98%85`).
+// Mirrors the Rust `decode_percent`: a malformed `%` sequence is passed through, where
+// `decodeURIComponent` would throw and take the whole regeneration down with it.
+function percentDecode(s) {
+  try {
+    return decodeURIComponent(s)
+  } catch {
+    return s
+  }
 }
 
 function cleanTitle(html) {
@@ -106,7 +119,7 @@ function parseGallery(html, set) {
     const seenHere = new Set()
     const collectorNumbers = []
     for (const m of body.matchAll(cnRe)) {
-      const cn = decodeURIComponent(m[1])
+      const cn = percentDecode(m[1])
       if (seenHere.has(cn)) continue // dedupe variant printings sharing a number
       seenHere.add(cn)
       if (seen.has(cn)) {
@@ -179,6 +192,14 @@ async function main() {
 ${lines}
       ]
     }`)
+  }
+
+  // The drop store refuses a snapshot without the primary set (`mtg/sld`), so never write
+  // one: a per-set run against a missing or stripped file must fail here, not at boot.
+  if (!blocks.some((b) => b.includes(`"set": "${SETS[0]}"`))) {
+    throw new Error(
+      `the seed would lack '${SETS[0]}', which the drop store requires — re-run without arguments (or with ${SETS[0]} among them)`,
+    )
   }
 
   const json = `{

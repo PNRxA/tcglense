@@ -8,6 +8,13 @@ import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 
 const props = defineProps<{ game: string; card: Card }>()
 
+// Sentence-case the group noun for the row heading ("drop" → "Drop"); a card the API predates
+// the field on still reads "Drop".
+const dropHeading = computed(() => {
+  const noun = props.card.drop_noun ?? 'drop'
+  return noun.charAt(0).toUpperCase() + noun.slice(1)
+})
+
 // Power/toughness + loyalty belong to a single-faced card as a whole; a multi-faced
 // card shows them per face elsewhere, so they're suppressed in this summary.
 const isMultiFace = computed(() => props.card.faces.length >= 2)
@@ -26,7 +33,10 @@ const colorIdentityText = computed(() => colorLettersToText(props.card.color_ide
     </dd>
 
     <template v-if="card.drop_name">
-      <dt class="text-muted-foreground">Drop</dt>
+      <!-- The row is headed by what the group *is* — "Drop" for a Secret Lair drop,
+           "Treatment" for one of The Zeta Set's print-treatment sections — off the card's
+           `drop_noun`, so a treatment is never presented as a drop. -->
+      <dt class="text-muted-foreground">{{ dropHeading }}</dt>
       <dd class="flex flex-wrap items-center gap-x-2 gap-y-1">
         <!-- Link the card to its Secret Lair drop (the set's by-drop view, filtered to
              this drop). Falls back to plain text on the rare drop with no slug. -->

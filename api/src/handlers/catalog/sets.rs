@@ -45,6 +45,12 @@ pub struct SetResponse {
     /// (the `.../drops` endpoint). Lets the SPA offer a by-drop view only where
     /// there's drop data to show.
     pub has_drops: bool,
+    /// What one of those groups is called, singular and lowercase — `"drop"` for the Secret
+    /// Lair Drop set, `"treatment"` for The Zeta Set, whose gallery sections are print
+    /// treatments (Photocopy / Photocopy Negatives / Color Banding) — so every label the SPA
+    /// hangs on a group ("By drop", "Filter drops by name…", a card's "Drop" row) reads
+    /// truthfully. `null` whenever `has_drops` is `false`.
+    pub drop_noun: Option<String>,
     /// Whether this set has cards with special treatments (borderless, showcase, …), so
     /// it can be browsed grouped by sub-type (the `.../subtypes` endpoint). Unlike
     /// `has_drops` this is data-derived, so the `From` impl leaves it `false` — the
@@ -55,6 +61,7 @@ pub struct SetResponse {
 impl From<card_set::Model> for SetResponse {
     fn from(m: card_set::Model) -> Self {
         let has_drops = crate::scryfall::drops::has_drops(&m.game, &m.code);
+        let drop_noun = crate::scryfall::drops::section_noun(&m.game, &m.code).map(str::to_string);
         SetResponse {
             code: m.code,
             name: m.name,
@@ -64,6 +71,7 @@ impl From<card_set::Model> for SetResponse {
             icon_svg_uri: m.icon_svg_uri,
             parent_set_code: m.parent_set_code,
             has_drops,
+            drop_noun,
             // Derived from card data, not the set row — filled by the handler.
             has_subtypes: false,
         }
@@ -321,7 +329,8 @@ pub(super) async fn set_cards_query(
 /// List set drops
 ///
 /// `GET /api/games/{game}/sets/{code}/drops` -> a set's cards grouped by Secret
-/// Lair drop (Scryfall's curated drop titles), **paginated by drop**.
+/// Lair drop (Scryfall's curated gallery sections: `sld`'s drops, and The Zeta Set's
+/// print treatments — the set's `drop_noun` says which), **paginated by drop**.
 ///
 /// Only sets that have a drop snapshot (`has_drops`) are grouped this way — any
 /// other set is a `404` here (browse it via `.../cards` instead). Drops keep

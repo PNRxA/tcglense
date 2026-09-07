@@ -1,7 +1,8 @@
 //! Background tasks keeping the Secret Lair drop snapshot fresh.
 //!
 //! Secret Lair drop titles aren't in the bulk card API, so they're scraped from Scryfall's
-//! gallery. The **mirror origin** (`MIRROR_ENABLED`) re-scrapes daily ([`super::sld_scrape`]) and
+//! galleries (one page per set in `drops::GALLERY_SETS` — `sld`'s drops, The Zeta Set's print
+//! treatments). The **mirror origin** (`MIRROR_ENABLED`) re-scrapes daily ([`super::sld_scrape`]) and
 //! installs the fresh snapshot, so its `/api/mirror/scryfall/sld-drops` endpoint serves current
 //! titles; **every other instance** imports that snapshot from the mirror on the same interval
 //! ([`super::sld_sync`]) rather than scraping Scryfall itself. Both fall back to the committed
@@ -145,9 +146,29 @@ pub(crate) fn spawn_sld_scrape(
         }
         loop {
             match sld_scrape::fetch_snapshot_json(&http, &user_agent).await {
-                Ok(json) => match drops::install_snapshot(&json) {
+                Ok(scrape) => match drops::install_snapshot(&scrape.json) {
                     Ok(count) => {
-                        tracing::info!(count, "refreshed Secret Lair drop snapshot from Scryfall");
+                        // A secondary gallery that failed is carried forward unchanged
+                        // (`sld_scrape::resolve_set`); say so here and in the `ingest_state`
+                        // detail, so a page that stays broken is visible in the bookkeeping
+                        // rather than logged once a day and recorded as a clean run.
+                        let detail = if scrape.carried_forward.is_empty() {
+                            tracing::info!(
+                                count,
+                                "refreshed Secret Lair drop snapshot from Scryfall"
+                            );
+                            "scraped from Scryfall".to_string()
+                        } else {
+                            tracing::warn!(
+                                count,
+                                carried_forward = ?scrape.carried_forward,
+                                "refreshed Secret Lair drop snapshot from Scryfall, keeping last-good drops for the galleries that failed"
+                            );
+                            format!(
+                                "scraped from Scryfall; kept last-good drops for {}",
+                                scrape.carried_forward.join(", ")
+                            )
+                        };
                         // Persist the freshly-installed snapshot *before* recording the run — the two
                         // writes hit different tables and aren't transactional, so on a crash between
                         // them we want the snapshot fresh and the run-time stale (the next boot then
@@ -155,7 +176,7 @@ pub(crate) fn spawn_sld_scrape(
                         // would defer while serving the old snapshot).
                         persist_current(&db).await;
                         // No upstream ETag on the gallery scrape — record only the run time.
-                        record_run(&db, None, "complete", "scraped from Scryfall").await;
+                        record_run(&db, None, "complete", &detail).await;
                     }
                     Err(err) => tracing::warn!(
                         error = %err,

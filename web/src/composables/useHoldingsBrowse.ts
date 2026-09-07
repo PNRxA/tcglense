@@ -165,6 +165,7 @@ export function useHoldingsBrowse(
     groupMode,
     grouped,
     groupLabel,
+    dropNoun,
     setsWord,
     scopeBarProps,
     setsPending,
@@ -468,7 +469,7 @@ export function useHoldingsBrowse(
     const n = total.value
     // A grouped view counts its groups (drops or sub-types).
     if (grouped.value) {
-      const unit = bySubtype.value ? 'sub-type' : 'drop'
+      const unit = bySubtype.value ? 'sub-type' : dropNoun.value
       const label = `${n.toLocaleString()} ${n === 1 ? unit : `${unit}s`}`
       return query.value ? `${label} matching “${query.value}”` : label
     }

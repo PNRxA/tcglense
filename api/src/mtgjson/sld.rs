@@ -337,8 +337,9 @@ fn strip_prefixes(base: &str) -> String {
         .to_string()
 }
 
-/// A stable content hash of everything this derivation reads — the *currently loaded* drop
-/// snapshot plus the curated overrides and bonus pools — 64 bits of SHA-256. The ingest folds
+/// A stable content hash of everything this derivation reads — the *currently loaded* `sld`
+/// drop table (that set alone, not the whole snapshot) plus the curated overrides and bonus
+/// pools — 64 bits of SHA-256. The ingest folds
 /// it into its version gate alongside MTGJSON's ETag and the fallback hash, so a fresher drop
 /// snapshot (the mirror's daily scrape / a consumer's daily import) — or editing an override —
 /// re-runs the derivation on the next sync even when `AllPrintings.json` is byte-identical.
@@ -348,7 +349,12 @@ fn strip_prefixes(base: &str) -> String {
 /// never pick up a refresh. Evaluated once per sync tick's version-gate check — negligible.
 pub fn derivation_version() -> String {
     let mut hasher = Sha256::new();
-    hasher.update(drops::content_version().as_bytes());
+    // The Secret Lair Drop table's *own* version, not the whole snapshot's: this derivation
+    // reads only `sld` (`table()` above), and the snapshot also carries The Zeta Set's
+    // treatment sections, which no product resolves against — hashing the whole snapshot
+    // would re-walk the 600 MB `AllPrintings` for a change in a set this never reads.
+    let sld_version = table().map(|t| t.content_version().to_string());
+    hasher.update(sld_version.unwrap_or_default().as_bytes());
     for (id, slug) in PRODUCT_DROP_OVERRIDES {
         hasher.update(id.as_bytes());
         hasher.update(b"=");

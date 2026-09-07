@@ -659,19 +659,27 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   it) and **swapped** daily: the mirror origin (`MIRROR_ENABLED`) scrapes Scryfall's galleries
   (`scryfall::sld_scrape`) and serves it at `/api/mirror/scryfall/sld-drops`; every other instance
   imports it from the mirror (`scryfall::sld_sync`, `SLD_DROPS_IMPORT_ENABLED`, default on) — a
-  self-host **never scrapes Scryfall itself**. **The galleries are a list, not one page**
-  (`sld_scrape::GALLERY_SETS`, mirrored by the script's `SETS`): Scryfall files The Zeta Set
-  (`slz`, the Secret Lair release above) under three print-treatment sections — Photocopy /
-  Photocopy Negatives / Color Banding — that its card data doesn't distinguish (every printing
-  is black-bordered, full-art, nonfoil, no promo type), so the set page showed one "Full Art"
-  group until its gallery joined the scrape; a future Secret Lair set filed the same way is one
-  entry in both lists plus a `gen-sld-drops.mjs <code>` run to seed it. `sld` is the **primary**
-  set — its failure fails the run, and `install_snapshot` **rejects a snapshot missing the
-  `mtg/sld` set** — so a broken scrape can't wipe the good table; a **secondary** set's failure
-  keeps that set's last-good table (`sld_scrape::resolve_set`), never an omission, because
-  dropping the set would flap the content version that gates the sealed-contents derivation.
-  The sealed-contents derivation and the per-drop release heads-ups still read **only `sld`**
-  (`mtgjson::sld`, `release_alerts`): a Zeta section is a treatment, not a product or a
+  self-host **never scrapes Scryfall itself**. **The galleries are a registry, not one page**
+  (`drops::GALLERY_SETS` — set code + the **noun** its sections go by — mirrored by the script's
+  `SETS`): Scryfall files The Zeta Set (`slz`, the Secret Lair release above) under three
+  print-treatment sections — Photocopy / Photocopy Negatives / Color Banding — that its card
+  data doesn't distinguish (every printing is black-bordered, full-art, nonfoil, no promo type),
+  so the set page showed one "Full Art" group until its gallery joined the scrape; a future
+  Secret Lair set filed the same way is one registry entry, one script entry, and a
+  `gen-sld-drops.mjs <code>` run to seed it. **A section is called what the registry says**:
+  `drop_noun` (`drop` / `treatment`) rides `Set`, `CollectionSet` and `Card`, and the SPA builds
+  every group label from it (`useSetGrouping.dropNoun`, `CardMetaList`) — never the literal word
+  "drop", which would present a print treatment as a product. `sld` is the **primary** set — its
+  failure fails the run, and `install_snapshot` **rejects a snapshot missing the `mtg/sld`
+  set** — so a broken scrape can't wipe the good table; a **secondary** set's failure keeps that
+  set's last-good table (`sld_scrape::resolve_set`: the store's, else the committed seed's via
+  `drops::seed_table`, so an upgraded instance whose persisted snapshot predates the set still
+  carries it), never an omission, which would flap the content version — and the run is recorded
+  as carried forward (`Scrape::carried_forward` → the `ingest_state` detail), not as clean. The
+  sealed-contents derivation reads **only `sld`** and its version gate hashes **only that table**
+  (`DropTable::content_version`, not the snapshot's `content_version`, which is the mirror
+  `ETag`'s) — a Zeta change must never re-walk `AllPrintings`; the per-drop release heads-ups
+  read only `sld` too (`release_alerts`): a Zeta section is a treatment, not a product or a
   separately-dated release. Each successful scrape/import is
   **persisted** to the DB (`scryfall::sld_persist`, the `sld_drop_snapshot` singleton table) and the
   store is **reseeded from that persisted snapshot at boot** (in `scryfall::sld_tasks`, before the

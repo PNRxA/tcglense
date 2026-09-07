@@ -11,6 +11,14 @@ export type CardSet = { code: string, name: string, set_type: string | null, rel
  */
 has_drops: boolean, 
 /**
+ * What one of those groups is called, singular and lowercase — `"drop"` for the Secret
+ * Lair Drop set, `"treatment"` for The Zeta Set, whose gallery sections are print
+ * treatments (Photocopy / Photocopy Negatives / Color Banding) — so every label the SPA
+ * hangs on a group ("By drop", "Filter drops by name…", a card's "Drop" row) reads
+ * truthfully. `null` whenever `has_drops` is `false`.
+ */
+drop_noun: string | null, 
+/**
  * Whether this set has cards with special treatments (borderless, showcase, …), so
  * it can be browsed grouped by sub-type (the `.../subtypes` endpoint). Unlike
  * `has_drops` this is data-derived, so the `From` impl leaves it `false` — the

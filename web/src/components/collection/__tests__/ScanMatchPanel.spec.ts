@@ -32,6 +32,7 @@ const baseCard = {
   has_image: false,
   drop_name: null,
   drop_slug: null,
+  drop_noun: null,
   secret_lair_bonus: false,
   secret_lair_spend_incentive: false,
   faces: [],

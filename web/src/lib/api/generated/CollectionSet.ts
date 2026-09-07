@@ -7,6 +7,11 @@
  */
 export type CollectionSet = { code: string, name: string, set_type: string | null, released_at: string | null, card_count: number, icon_svg_uri: string | null, parent_set_code: string | null, has_drops: boolean, 
 /**
+ * The catalog set's `drop_noun` (`"drop"` / `"treatment"`; `null` unless `has_drops`),
+ * so the holdings' by-drop view labels a group the way the catalog's does.
+ */
+drop_noun: string | null, 
+/**
  * Whether the user's owned cards in this set include any special treatment, so the
  * tile can offer the by-sub-type view (mirrors the catalog set's `has_subtypes`).
  */

@@ -235,7 +235,7 @@ plain `{ data: [...] }`.
 |---------------|---------|
 | `GET /api/games` | `{ data: Game[] }` — `Game = { id, name, publisher, data_source }` |
 | `GET /api/games/{game}/status` | import status `{ status, detail, sets_imported, cards_imported, source_updated_at, finished_at }` (`status`: `idle`/`running`/`complete`/`error`) |
-| `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code, has_drops, has_subtypes }`. `has_subtypes` (data-derived) flags a set with special-treatment cards, browsable by sub-type — see the `/subtypes` endpoint below |
+| `GET /api/games/{game}/sets` | `{ data: Set[] }`, newest first — `Set = { code, name, set_type, released_at, card_count, icon_svg_uri, parent_set_code, has_drops, drop_noun, has_subtypes }`. `drop_noun` names what one of a drop-grouped set's groups *is* — `"drop"` for the Secret Lair Drop set, `"treatment"` for The Zeta Set (whose gallery sections are print treatments) — and is `null` whenever `has_drops` is `false`; the SPA builds every group label from it. `has_subtypes` (data-derived) flags a set with special-treatment cards, browsable by sub-type — see the `/subtypes` endpoint below |
 | `GET /api/games/{game}/sets/{code}` | one `Set` |
 | `GET /api/games/{game}/sets/{code}/icon` | the set's SVG icon (cached image proxy) |
 | `GET /api/games/{game}/sets/{code}/cards?q&page&page_size&include_related` | page of `Card` (optional `q` Scryfall-style search), by collector number. `include_related=true` spans the set's whole **group** — its top-level root plus every related sub-set (tokens/promos/decks) — grouped by set (set-code order), each set in collector order |
@@ -263,12 +263,13 @@ plain `{ data: [...] }`.
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
 prices: { usd, usd_foil, eur, tix }, has_image,
-drop_name: string | null, drop_slug: string | null, secret_lair_bonus: boolean,
+drop_name: string | null, drop_slug: string | null, drop_noun: string | null, secret_lair_bonus: boolean,
 secret_lair_spend_incentive: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[],
 legalities: { [format: string]: string } | null }`.
 The `drop_*` fields name the card's Secret Lair drop (for drop-grouped sets only;
-`null` elsewhere) — see the `/sets/{code}/drops` endpoint above. `secret_lair_bonus`
+`null` elsewhere) — see the `/sets/{code}/drops` endpoint above; `drop_noun` is the set's
+(`"drop"` / `"treatment"`), so the card page heads the row with what the group is. `secret_lair_bonus`
 is `true` for a Secret Lair **chase/bonus** card (Scryfall's `sldbonus` promo type) —
 the optional card given with a qualifying drop purchase, which has no sealed product of
 its own, so the SPA marks it and links to its drop rather than a "found in" section.
@@ -859,8 +860,8 @@ older item's history. A holding kind with no captured history has null `as_of` /
 and fourteen empty arrays, independently of the other kind.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
-`card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `has_subtypes` — the latter
-derived from the user's *owned* cards in the set) plus owned aggregates:
+`card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `drop_noun`, `has_subtypes` — the
+last derived from the user's *owned* cards in the set) plus owned aggregates:
 `owned_cards` (distinct owned), `owned_copies` (regular + foil), `owned_value_usd`
 (estimated USD value, same semantics as the summary's `total_value_usd`, scoped to the one
 set, `null` if none priced), and `owned_bulk_value_usd` (the set-scoped bulk slice — value

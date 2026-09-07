@@ -852,6 +852,26 @@ async fn zeta_set_groups_by_its_gallery_sections() {
     // Every printing is full-art, so the by-treatment gate lights up too; the SPA lets the
     // drops win (`groupMode`), which is what puts the sections on the set page.
     assert_eq!(slz["has_subtypes"], json!(true), "{slz:?}");
+    // The sections are print treatments, and the set says so — the SPA labels every group
+    // off this noun, where the Secret Lair Drop set's groups are its drops.
+    assert_eq!(slz["drop_noun"], json!("treatment"), "{slz:?}");
+    let sld = body["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .find(|s| s["code"] == json!("sld"))
+        .expect("the dummy Secret Lair Drop set is seeded")
+        .clone();
+    assert_eq!(sld["drop_noun"], json!("drop"), "{sld:?}");
+    let plain = body["data"]
+        .as_array()
+        .expect("sets")
+        .iter()
+        .find(|s| s["code"] == json!("dmb"))
+        .expect("the dummy base set is seeded")
+        .clone();
+    assert_eq!(plain["has_drops"], json!(false), "{plain:?}");
+    assert_eq!(plain["drop_noun"], serde_json::Value::Null, "{plain:?}");
 
     let (status, _, body) = send(
         &app,
@@ -880,5 +900,6 @@ async fn zeta_set_groups_by_its_gallery_sections() {
     let first = &groups[0]["cards"][0];
     assert_eq!(first["drop_name"], json!("Photocopy Cards"));
     assert_eq!(first["drop_slug"], json!("photocopy-cards"));
+    assert_eq!(first["drop_noun"], json!("treatment"));
     assert_eq!(first["collector_number"], json!("1"));
 }
