@@ -458,6 +458,21 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
+  **Every deck clone goes through one seam** (`decks::copy::insert_deck_with_cards`): the public
+  copy, the owner's own duplicate (`POST /api/decks/{game}/{deck_id}/copy`, issue #674 — `load_deck`
+  first, lands in the source's folder, answers a `Deck` header through `deck_header`) and the precon
+  copy all write through it, so the deck cap, the transaction and the chunked insert are stated
+  once; a deck-sourced clone also reads its sections through `copy::source_sections`. **The deck
+  diff** (`GET …/{deck_id}/diff/{other_id}`, `decks::diff`) is a pure fold over two `DeckDetail`s
+  that **folds by card name** across printings and finishes — the `analysis::fold_by_name`
+  identity the bracket and mana base count by (not the precon copy's `push_folded`, which folds by
+  printing id within a section for the `(deck_id, card_id, section_id)` unique constraint) — or a
+  playset split across two arts reads as a removal plus an addition; a finish-only change is its
+  own kind (`finish`), never hidden and never counted as a card change. Both decks are ownership-checked (either foreign is 404), maybeboards ride the
+  per-section view flagged and stay out of the deck-wide `cards`/`summary`, and the SPA's wording
+  lives in `web/src/lib/deckDiff.ts`; the panel keys its pick on `?compare=` so a comparison is a
+  link (the first pick pushes history, a re-pick replaces it, and a `No comparison` item clears it),
+  and an id the deck list doesn't offer is treated as no pick once the list has loaded.
   **Adding a deck or a precon to the collection** (`POST /api/decks/{game}/{deck_id}/collection`,
   `POST /api/decks/{game}/precons/{slug}/collection`, and someone's public deck at
   `POST /api/u/{handle}/decks/{deck_id}/collection`) is the bridge *back* to the holdings
@@ -598,6 +613,24 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`slci`).
   Session-only channel settings, like price alerts; the two flags ride the `AlertChannels` DTO,
   so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+  **What counts as a release is decided once, in `catalog::releases`** (issue #679) — the set
+  predicate (`announceable_sets`), the `sl`-prefix upgrade (`is_secret_lair_release`) and the
+  per-drop date derivation off `sld` alone (`sld_drops_releasing`) — and **two surfaces read
+  it**: the alert engine above, and the public **release calendar**
+  (`GET /api/games/{game}/releases?from&to`, `handlers/catalog/releases.rs`; the SPA's
+  `/releases/{game}`, a month view). The calendar is the page behind the heads-ups, so it must
+  list exactly what they would notify about — a second filter on either side is the bug. It is
+  a *fact page*: every date is the catalog's own, nothing per-user rides the read (CDN/ETag
+  cached in the public group; the SPA asks for a **month-aligned** window so one URL serves a
+  whole month), a set nests the precons and sealed products of its whole catalog **group**
+  (root + `parent_set_code` children — a Commander precon lives in the `…c` child), a drop's
+  products are attributed through the cards they **contain** (never by name or date — a
+  superdrop releases many drops on one day), and nothing on it words a spoiler or a preview.
+  The nested `Set` is the `/sets` payload dressed the same way (`has_subtypes`, the folded
+  `card_count`), so a set can't publish two counts. The "get a heads-up" button deep-links to
+  `/alerts#release-headsups` (`RELEASE_HEADS_UP_ANCHOR` in `lib/releases.ts`, the id the
+  alert settings' release section carries; the router scrolls a hash on a new page to its
+  element).
 - **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
   caller's own rows, grouped so a second tool adds a path segment rather than a new top-level
   route family (the API mirror of the SPA's `/tools` section, placed the way `/keywords` is).
@@ -703,8 +736,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   the base advertising anything. `DropTable::drop_for` re-tries a miss with a trailing `★` so a
   drop that lists only the star still claims the base. Every published set `card_count` —
   Scryfall's own set-object count, stored verbatim — has the folded rows subtracted through the
-  one `FoldedSetCounts` seam, in all three of its readers (`sets::list_sets`, `sets::get_set`,
-  and the collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
+  one `FoldedSetCounts` seam, in all four of its readers (`sets::list_sets`, `sets::get_set`,
+  the release calendar's nested set in `handlers::catalog::releases`, and the
+  collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
   because a `card_sets` row lagging the cards it counts must publish a stale number, never a
   negative. And a new `cards` column that isn't provider data must be denied in **both** halves
   of `ingest::flush_cards` — the

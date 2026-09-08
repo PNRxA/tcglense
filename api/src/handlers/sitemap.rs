@@ -226,6 +226,14 @@ fn pages_body(base: &str) -> String {
     for game in catalog::GAMES {
         push_url(&mut body, &format!("{base}/tools/{}", game.id), None);
     }
+    // The release calendar (issue #679): the all-games hub and each game's month view are
+    // public, canonical pages whose whole point is being found by a "what's releasing"
+    // search, so both are advertised; the entries themselves link to set / drop / precon /
+    // product pages this sitemap already lists elsewhere.
+    push_url(&mut body, &format!("{base}/releases"), None);
+    for game in catalog::GAMES {
+        push_url(&mut body, &format!("{base}/releases/{}", game.id), None);
+    }
     push_url(&mut body, &format!("{base}/terms"), None);
     push_url(&mut body, &format!("{base}/privacy"), None);
     body
@@ -699,6 +707,22 @@ mod tests {
         }
         // The tools themselves are per-user, so nothing below the index is listed.
         assert!(!body.contains("/tools/mtg/life"));
+    }
+
+    #[test]
+    fn pages_body_covers_the_release_calendar() {
+        // The hub and each game's calendar are public landing pages (no `requiresAuth`, a
+        // canonical URL each); the per-entry links are set / drop / precon / product pages the
+        // other children already list, so nothing below the game level is advertised here.
+        let body = pages_body("https://x.test");
+        assert!(body.contains("<loc>https://x.test/releases</loc>"));
+        for game in catalog::GAMES {
+            assert!(
+                body.contains(&format!("<loc>https://x.test/releases/{}</loc>", game.id)),
+                "missing release calendar for {}",
+                game.id
+            );
+        }
     }
 
     #[test]

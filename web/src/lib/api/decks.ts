@@ -7,12 +7,13 @@ import type {
   CreateDeckRequest,
   Deck,
   DeckDetail,
+  DeckDiff,
   DeckFolder,
   DeckImportRequest,
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
-  NeededCard,
+  NeededCards,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
@@ -36,6 +37,12 @@ export type {
   DeckCardEntry,
   DeckCommander,
   DeckDetail,
+  DeckDiff,
+  DeckDiffChange,
+  DeckDiffEntry,
+  DeckDiffSection,
+  DeckDiffSide,
+  DeckDiffSummary,
   DeckFolder,
   DeckImportFileFormat,
   DeckImportRequest,
@@ -44,6 +51,8 @@ export type {
   DeckVisibility,
   NeededCard,
   NeededCardDeck,
+  NeededCards,
+  NeededTotals,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
@@ -67,14 +76,20 @@ export function getDeck(token: string, game: string, deckId: number): Promise<De
   return request<DeckDetail>(deckBase(game, deckId), { token })
 }
 
-/** Cards the caller's decks collectively need beyond their collection (issue #499).
- * `mode` = `card` (any printing counts) or `printing` (exact missing printing). */
+/** Cards the caller's decks collectively need beyond their collection (issue #499), priced
+ * at the printings the decks hold and at each card's cheapest printing (issue #675).
+ * `mode` = `card` (any printing counts) or `printing` (exact missing printing); `deckId`
+ * scopes the list to one deck — what *it* still needs, as its share of the shortfall
+ * across every deck (a deck that isn't the caller's is a 404). */
 export function getNeededCards(
   token: string,
   game: string,
   mode: NeedMode = 'card',
-): Promise<{ data: NeededCard[] }> {
-  return request<{ data: NeededCard[] }>(`${base(game)}/needed?mode=${mode}`, { token })
+  deckId?: number | null,
+): Promise<NeededCards> {
+  const params = new URLSearchParams({ mode })
+  if (deckId != null) params.set('deck_id', String(deckId))
+  return request<NeededCards>(`${base(game)}/needed?${params}`, { token })
 }
 
 /** The caller's decks containing a card — **any printing** of it (gameplay identity) —
@@ -148,6 +163,27 @@ export function setDeckVisibility(
     body: { public: isPublic },
     token,
   })
+}
+
+/** Duplicate one of the caller's own decks (issue #674) — the same clone `copyPublicDeck`
+ * makes, without publishing first. The copy is named `"<name> (copy)"`, starts private, and
+ * is filed in the source's folder. Returns the new deck's list header; the page navigates to
+ * it and loads the detail there. */
+export function copyDeck(token: string, game: string, deckId: number): Promise<Deck> {
+  return request<Deck>(`${deckBase(game, deckId)}/copy`, { method: 'POST', token })
+}
+
+/** What changed between two of the caller's decks (issue #674): per card — added, removed,
+ * a different copy count, or only a different regular/foil split — deck-wide over the deck
+ * proper and per section matched by name. Folded by card *name*, so a printing swap is not a
+ * change and a playset split across arts is one card. A read: a read-only key may call it. */
+export function getDeckDiff(
+  token: string,
+  game: string,
+  deckId: number,
+  otherId: number,
+): Promise<DeckDiff> {
+  return request<DeckDiff>(`${deckBase(game, deckId)}/diff/${otherId}`, { token })
 }
 
 // ----- Folders -----

@@ -47,8 +47,8 @@ pub use analysis::{
     precon_tokens,
 };
 pub use copy::copy_precon_deck;
-pub(crate) use read::search_precons;
 pub use read::{card_precons, get_precon, list_precon_groups, list_precons, precon_facets};
+pub(crate) use read::{face_cards, search_precons};
 pub use to_collection::add_precon_to_collection;
 
 pub use analysis::{

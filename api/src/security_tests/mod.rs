@@ -48,6 +48,7 @@ mod rate_limit;
 mod readiness;
 mod refresh;
 mod registration;
+mod releases;
 mod request_body;
 mod request_params;
 mod rulings;

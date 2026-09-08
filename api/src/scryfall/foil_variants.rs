@@ -435,9 +435,9 @@ pub(crate) fn not_folded_foil_variant() -> Condition {
 ///
 /// `card_sets.card_count` is the provider's own set-object count, stored verbatim at ingest and
 /// never derived from `cards`, so on a set where the fold hides rows every surface that publishes
-/// it would overstate the grid it links to: the catalog set list, one set's metadata, and the
-/// collection/wish-list (and public-mirror) set tiles, whose completion denominator is dressed
-/// from the same `card_sets` row. All of them adjust through [`FoldedSetCounts::adjust`], so two
+/// it would overstate the grid it links to: the catalog set list, one set's metadata, the
+/// release calendar's nested set, and the collection/wish-list (and public-mirror) set tiles,
+/// whose completion denominator is dressed from the same `card_sets` row. All of them adjust through [`FoldedSetCounts::adjust`], so two
 /// reads of the same set can't disagree about how many cards it holds.
 #[derive(Debug, Default)]
 pub(crate) struct FoldedSetCounts(HashMap<String, i32>);

@@ -669,7 +669,7 @@ async fn set_release_map(
 /// A face card whose catalog row is gone (a re-import) is simply absent, and the tile falls
 /// back to its set icon — the same LEFT-join-then-skip tolerance every other card link in
 /// the app has.
-async fn face_cards(
+pub(crate) async fn face_cards(
     state: &AppState,
     rows: &[precon_deck::Model],
 ) -> Result<HashMap<i32, PreconFaceCard>, AppError> {

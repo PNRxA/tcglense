@@ -96,6 +96,8 @@ describe('resolveItem', () => {
     // The one item whose landing and per-game rows sit under different prefixes: precons are
     // catalog data, but the browser itself lives inside the deck section.
     expect(warmTargets('precons')).toEqual(['/precons', '/decks/mtg/precons', '/decks/pkm/precons'])
+    // The release calendar is the plain shape — a hub plus a row per game under it.
+    expect(warmTargets('releases')).toEqual(['/releases', '/releases/mtg', '/releases/pkm'])
   })
 
   it('drops games with no tools but still warms the hub', () => {
@@ -140,6 +142,7 @@ describe('the consolidation', () => {
       'cards',
       'sealed',
       'precons',
+      'releases',
       'keywords',
     ])
     expect(browse.groups[1]?.items.map((item) => item.id)).toEqual([
