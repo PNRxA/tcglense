@@ -6,13 +6,14 @@ import DeckAddPrintTile from '@/components/decks/DeckAddPrintTile.vue'
 import PrintingPickerGrid from '@/components/printings/PrintingPickerGrid.vue'
 import { useCardNameSuggestions } from '@/composables/useQuickAdd'
 import { usePrintingPicker } from '@/composables/usePrintings'
-import { useSetDeckCardMutation } from '@/composables/useDecks'
-import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
-import { automaticDeckSection } from '@/lib/deckCategories'
+import { useDeckCardAdder } from '@/composables/useDeckCardAdder'
+import type { DeckCardEntry, DeckSection } from '@/lib/api'
 
 // The deck builder's "add cards" box (issue #363): search a card name, pick a printing, and
 // add it to a chosen section — reusing the public card-name/printings reads that power the
-// collection quick-add. Adds are additive (current count + 1) so re-adding a card bumps it.
+// collection quick-add. Adds are additive (current count + 1) so re-adding a card bumps it;
+// the filing, the optimistic counts and the per-tile spinner are `useDeckCardAdder`'s,
+// shared with the suggestions panel so the two add a card identically.
 const props = defineProps<{
   game: string
   deckId: number
@@ -48,101 +49,25 @@ const picker = usePrintingPicker(gameRef, pickedName, {
   collectionFilter: true,
 })
 
-// Automatic is the default: each printing files into its preset type bucket. A user can
-// still pin the add box to any explicit section for functional/custom categorisation.
-const target = ref('auto')
-watch(
-  () => props.sections,
-  (sections) => {
-    if (target.value === 'auto') return
-    if (!sections.some((section) => String(section.id) === target.value)) target.value = 'auto'
-  },
-  { immediate: true },
-)
-
-const setCard = useSetDeckCardMutation()
-
-// Optimistic per-(card, section) count so rapid re-adds (building a playset by clicking the
-// same printing several times) stack instead of all reading `quantity=0` off the deck cache
-// that only refreshes after each write's refetch lands. Cleared once the refetch catches up.
-const optimistic = new Map<string, number>()
-const keyOf = (cardId: string, sectionId: number) => `${cardId}:${sectionId}`
-
-// In-flight adds, keyed the same way, so each tile can spin its own "+" while its write is
-// outstanding (a single shared mutation's `isPending` can't tell the tiles apart). A ref'd
-// Set is reactive for add/delete, so the `isPending(card.id)` prop below ticks on its own.
-const pending = ref(new Set<string>())
-watch(
-  () => props.cards,
-  (cards) => {
-    for (const [k, v] of optimistic) {
-      const [cardId, sec] = k.split(':')
-      const entry = cards.find((c) => c.card.id === cardId && c.section_id === Number(sec))
-      if ((entry?.quantity ?? 0) >= v) optimistic.delete(k)
-    }
-  },
-)
-
-function pickName(name: string) {
-  pickedName.value = name
-}
-
-function currentCounts(cardId: string, sectionId: number): { quantity: number; foil: number } {
-  const entry = props.cards.find((c) => c.card.id === cardId && c.section_id === sectionId)
-  return { quantity: entry?.quantity ?? 0, foil: entry?.foil_quantity ?? 0 }
-}
-
-// Total copies (regular + foil) of a printing already in the current target section — the
-// progress badge on its tile. Reactive off `props.cards` + `targetSectionId`, so it ticks
-// up as the post-add refetch lands.
-function targetSectionId(card: Card): number | null {
-  if (target.value === 'auto') return automaticDeckSection(card, props.sections)?.id ?? null
-  const sectionId = Number(target.value)
-  return Number.isFinite(sectionId) ? sectionId : null
-}
-
-function needsExplicitSection(card: Card): boolean {
-  return target.value === 'auto' && targetSectionId(card) == null
-}
+const {
+  target,
+  needsExplicitSection,
+  inTargetCount,
+  isPending,
+  add: addPrinting,
+} = useDeckCardAdder({
+  game: gameRef,
+  deckId: computed(() => props.deckId),
+  sections: computed(() => props.sections),
+  cards: computed(() => props.cards),
+})
 
 const hasUnclassifiedPrintings = computed(() =>
   picker.printings.value.some((card) => needsExplicitSection(card)),
 )
 
-function inTargetCount(card: Card): number {
-  const sectionId = targetSectionId(card)
-  if (sectionId == null) return 0
-  const { quantity, foil } = currentCounts(card.id, sectionId)
-  return quantity + foil
-}
-
-// Whether an add for this printing (in the current target section) is still in flight.
-function isPending(card: Card): boolean {
-  const sectionId = targetSectionId(card)
-  if (sectionId == null) return false
-  return pending.value.has(keyOf(card.id, sectionId))
-}
-
-async function addPrinting(card: Card) {
-  const sectionId = targetSectionId(card)
-  if (sectionId == null) return
-  const k = keyOf(card.id, sectionId)
-  const server = currentCounts(card.id, sectionId)
-  const next = (optimistic.get(k) ?? server.quantity) + 1
-  optimistic.set(k, next)
-  pending.value.add(k)
-  try {
-    await setCard.mutateAsync({
-      game: props.game,
-      deckId: props.deckId,
-      sectionId,
-      id: card.id,
-      quantity: next,
-      foil_quantity: server.foil,
-    })
-  } finally {
-    pending.value.delete(k)
-  }
+function pickName(name: string) {
+  pickedName.value = name
 }
 
 function reset() {

@@ -41,7 +41,7 @@ const queries = makeHoldingQueries({
   getCounts: getWishlistCounts,
   setEntry: setWishlistEntry,
   withBulkThreshold: false,
-  invalidateValueHistory: false,
+  invalidateCollectionAnalytics: false,
   deferListRefetch: true,
 })
 

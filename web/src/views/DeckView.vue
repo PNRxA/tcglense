@@ -59,6 +59,7 @@ import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckSuggestions from '@/components/decks/DeckSuggestions.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckToFinish from '@/components/decks/DeckToFinish.vue'
 import DeckCombos from '@/components/decks/DeckCombos.vue'
@@ -391,6 +392,17 @@ function copyDeckList() {
       <!-- Where the money is (issue #672): the value per card, the cheapest printing of
         each, and the swaps that would realise the saving. Nothing to price in an empty deck. -->
       <DeckPricing v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
+
+      <!-- Cards you already own that the deck could play (issue #684): in its colours, legal
+        in its format, not in it yet, most popular first. Owner-only — it reads the caller's
+        collection — and hidden for an empty deck, which has no colours to fit. -->
+      <DeckSuggestions
+        v-if="deck.summary.total_cards > 0"
+        :game="game"
+        :deck-id="deck.id"
+        :sections="sections"
+        :cards="allCards"
+      />
 
       <!-- Goldfish a sample hand (issue #596). -->
       <DeckGoldfish :game="game" :deck-id="deck.id" />

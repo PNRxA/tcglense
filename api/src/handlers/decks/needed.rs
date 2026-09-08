@@ -431,7 +431,7 @@ fn fold_totals(data: &[NeededCard]) -> NeededTotals {
 /// same card. Namespaced (`o:` / `n:`) so an oracle id can never collide with a name, and
 /// an empty id counts as none (the cheapest lookup skips those the same way), or every
 /// such card would fold into one `o:` group.
-fn identity_key(oracle_id: Option<&str>, name: &str) -> String {
+pub(crate) fn identity_key(oracle_id: Option<&str>, name: &str) -> String {
     match oracle_id.filter(|id| !id.is_empty()) {
         Some(oracle) => format!("o:{oracle}"),
         None => format!("n:{name}"),

@@ -229,6 +229,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::deck_goldfish,
         crate::handlers::decks::deck_pricing,
         crate::handlers::decks::deck_combos,
+        crate::handlers::decks::deck_suggestions,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
         crate::handlers::tools::life::list_sessions,
         crate::handlers::tools::life::create_session,

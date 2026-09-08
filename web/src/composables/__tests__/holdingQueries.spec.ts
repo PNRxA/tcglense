@@ -19,7 +19,7 @@ function queries(prefix: 'collection' | 'wishlist') {
     getCounts: vi.fn<() => never>(),
     setEntry: vi.fn<() => Promise<CollectionQuantities>>(async () => counts),
     withBulkThreshold: prefix === 'collection',
-    invalidateValueHistory: prefix === 'collection',
+    invalidateCollectionAnalytics: prefix === 'collection',
     deferListRefetch: prefix === 'wishlist',
   })
 }

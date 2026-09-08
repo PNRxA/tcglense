@@ -3,8 +3,11 @@
 //! mirror in [`crate::handlers::sharing::decks`] calls, so a shared deck and its owner's
 //! copy can never disagree about the deck's own analysis.
 
+use std::hash::{Hash, Hasher};
+
 use axum::{Json, extract::State};
 
+use crate::analytics_cache::json_body_response;
 use crate::auth::extractor::AuthUser;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
@@ -12,11 +15,13 @@ use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
 
 use super::super::load_deck;
+use super::suggestions::deck_side;
 use super::{
-    DeckAnalytics, DeckBracketEstimate, DeckCombos, DeckLegality, DeckManaBase, DeckPricing,
-    DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
-    analyse_combos, analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing,
-    analyse_roles, analyse_stats, analyse_tokens, load_analysis, load_analysis_with_cards,
+    DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckCombos, DeckLegality, DeckManaBase,
+    DeckPricing, DeckRoles, DeckSuggestions, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_combos, analyse_goldfish, analyse_legality, analyse_mana,
+    analyse_pricing, analyse_roles, analyse_stats, analyse_suggestions, analyse_tokens,
+    load_analysis, load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -330,4 +335,92 @@ pub async fn deck_pricing(
     let deck = load_deck(&state, user.id, &game, deck_id).await?;
     let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
     Ok(Json(analyse_pricing(&state, &game, &input, &models).await?))
+}
+
+/// Cards you own that this deck could play
+///
+/// `GET /api/decks/{game}/{deck_id}/suggestions` -> the cards in the caller's collection the
+/// deck could play (issue #684): legal in the deck's format, inside its colour identity (the
+/// command zone's when it leads the deck, else the union over the deck proper), not already
+/// in the deck, ranked by EDHREC's **global** popularity and grouped by the role each fills,
+/// with the deck's own count per role beside them. Honest about what it is: global
+/// popularity, not per-commander synergy, and the `caveats` say so. Reads the caller's
+/// collection, so it has **no public mirror**. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/suggestions",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "Owned cards the deck could play, most popular first, overall and per role, with the filters that were applied.", body = DeckSuggestions),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_suggestions(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<axum::response::Response, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
+
+    // Memoised in the analytics cache (issues #413/#365): the answer is a function of the
+    // caller's holdings (the holdings version), the catalog's prices (the price epoch, since
+    // prices ride the cards on the wire), the day, and the deck itself — which those two
+    // counters don't cover, so the deck's format and rows are fingerprinted into the params.
+    // A deck edit therefore misses rather than serving the pre-edit answer, and the whole
+    // collection scan runs once per (deck, holdings, prices, day) rather than per mount.
+    // `None` key = cache degraded, compute as normal.
+    let fingerprint = deck_fingerprint(deck.format.as_deref(), &input);
+    let cache_key = state
+        .analytics_cache
+        .body_key(
+            user.id,
+            &game,
+            "deck-suggestions",
+            &format!("{}:{fingerprint:016x}", deck.id),
+        )
+        .await;
+    let body = state
+        .analytics_cache
+        .get_or_compute(cache_key, || {
+            let (state, game) = (state.clone(), game.clone());
+            // The deck's side of the question — the roles grammar over the deck among it —
+            // is read here, inside the miss, so a cache hit pays only the fingerprint.
+            let side = deck_side(deck.format.as_deref(), &input, &models);
+            async move {
+                let payload = analyse_suggestions(&state, user.id, &game, side).await?;
+                serde_json::to_vec(&payload)
+                    .map_err(|err| AppError::Internal(format!("serialize suggestions: {err}")))
+            }
+        })
+        .await?;
+    Ok(json_body_response(body))
+}
+
+/// A stable digest of everything about the deck the suggestions read depends on: its format
+/// and every row's printing, section, maybeboard flag and counts. Section names matter too
+/// (they decide the zone split), so they ride along.
+fn deck_fingerprint(format: Option<&str>, input: &DeckAnalysisInput) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    format.hash(&mut hasher);
+    for section in &input.sections {
+        (section.id, section.name.as_str(), section.is_maybeboard).hash(&mut hasher);
+    }
+    for entry in &input.entries {
+        (
+            entry.facts.id.as_str(),
+            entry.section_id,
+            entry.quantity,
+            entry.foil_quantity,
+        )
+            .hash(&mut hasher);
+    }
+    hasher.finish()
 }

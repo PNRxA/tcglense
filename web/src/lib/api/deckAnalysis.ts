@@ -8,6 +8,7 @@ import type {
   DeckManaBase,
   DeckPricing,
   DeckRoles,
+  DeckSuggestions,
   DeckTokens,
   GoldfishHand,
 } from './generated'
@@ -62,6 +63,9 @@ export type {
   DeckRuleSeverity,
   DeckRuleViolation,
   DeckStatItem,
+  DeckSuggestionCard,
+  DeckSuggestionRole,
+  DeckSuggestions,
   DeckToken,
   DeckTokenSource,
   DeckTokens,
@@ -242,6 +246,17 @@ export function getPublicDeckRoles(handle: string, deckId: number): Promise<Deck
  * `summary.total_value_usd`; `null` anywhere means unpriced, never `$0.00`. */
 export function getDeckPricing(token: string, game: string, deckId: number): Promise<DeckPricing> {
   return request<DeckPricing>(`${deckBase(game, deckId)}/pricing`, { token })
+}
+
+/** The cards in the caller's collection the deck could play (issue #684): legal in its
+ * format, inside its colour identity, not already in it, most popular first and grouped by
+ * role. Owner-only — it reads the caller's collection, so there is no public mirror. */
+export function getDeckSuggestions(
+  token: string,
+  game: string,
+  deckId: number,
+): Promise<DeckSuggestions> {
+  return request<DeckSuggestions>(`${deckBase(game, deckId)}/suggestions`, { token })
 }
 
 /** The same read for a deck its owner shared. */
