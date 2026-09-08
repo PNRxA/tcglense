@@ -83,8 +83,8 @@ pub async fn import_collection(
 /// Import collection from CSV
 ///
 /// `POST /api/collection/{game}/import/csv?mode=...` -> import a collection from an
-/// uploaded export file. The shape is sniffed from the content: an Archidekt, Moxfield or
-/// Mythic Tools CSV, or — when it matches no CSV header we know — a plain-text card list
+/// uploaded export file. The shape is sniffed from the content: a ManaBox, Archidekt,
+/// Moxfield or Mythic Tools CSV, or — when it matches no CSV header we know — a plain-text card list
 /// (`1 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. The request body is
 /// the raw file (bounded by the route's body limit,
 /// [`MAX_CSV_UPLOAD_BYTES`](super::MAX_CSV_UPLOAD_BYTES)); the reconcile mode is a
@@ -103,7 +103,7 @@ pub async fn import_collection(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
         ("mode" = Option<String>, Query, description = "Reconcile mode: `overwrite` / `replace` / `merge`"),
     ),
-    request_body(content_type = "text/csv", description = "The raw export file: an Archidekt, Moxfield or Mythic Tools collection CSV, or a plain-text card list."),
+    request_body(content_type = "text/csv", description = "The raw export file: a ManaBox, Archidekt, Moxfield or Mythic Tools collection CSV, or a plain-text card list."),
     responses(
         (status = 200, description = "The import ran synchronously; the summary of what was matched and applied.", body = ImportSummary),
         (status = 401, description = "Missing or invalid API key."),
@@ -130,7 +130,7 @@ pub async fn import_collection_csv(
 /// and uploading it.
 ///
 /// The body is the pasted text, and the format is sniffed exactly as for an uploaded file —
-/// a pasted CSV (Mythic Tools, Archidekt, Moxfield) and a pasted card list
+/// a pasted CSV (ManaBox, Mythic Tools, Archidekt, Moxfield) and a pasted card list
 /// (`1 Sol Ring (C21) 263 *F*`, one per line) both work, so the user never has to tell us
 /// which they have. Runs synchronously and returns the [`ImportSummary`], like the upload.
 #[utoipa::path(
@@ -183,9 +183,9 @@ async fn run_file_import(
     require_game(&game)?;
     // Every supported shape identifies Magic printings (Scryfall ids / set + collector
     // number / card names), so gate on the same provider/game support as the URL imports.
-    if !Provider::Archidekt.supports_game(&game)
-        && !Provider::Moxfield.supports_game(&game)
-        && !Provider::MythicTools.supports_game(&game)
+    if !Provider::ALL
+        .iter()
+        .any(|provider| provider.supports_game(&game))
     {
         return Err(AppError::Validation(format!(
             "collection import is not available for '{game}'"

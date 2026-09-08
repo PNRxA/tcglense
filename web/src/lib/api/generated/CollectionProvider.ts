@@ -3,10 +3,10 @@
 /**
  * A collection provider we can import from. One variant per external service.
  *
- * Not every provider is reachable over the network: [`Provider::MythicTools`] is a
- * **file/paste-only** provider (the app has no public collection API), so it exists here
- * purely to label an import and to pick the right parse rules. Everything that fetches
- * gates on [`Provider::network_import_enabled`] first, so those code paths refuse it
- * before a fetch is ever attempted.
+ * Not every provider is reachable over the network: [`Provider::MythicTools`] and
+ * [`Provider::ManaBox`] are **file/paste-only** providers (neither app has a public
+ * collection API), so they exist here purely to label an import and to pick the right
+ * parse rules. Everything that fetches gates on [`Provider::network_import_enabled`]
+ * first, so those code paths refuse them before a fetch is ever attempted.
  */
-export type CollectionProvider = "archidekt" | "moxfield" | "mythictools";
+export type CollectionProvider = "archidekt" | "moxfield" | "mythictools" | "manabox";

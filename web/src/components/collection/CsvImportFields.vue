@@ -26,6 +26,14 @@ function onChange(event: Event) {
     />
     <div class="bg-muted/60 text-muted-foreground space-y-2 rounded-md p-3 text-xs">
       <div>
+        <p class="text-foreground font-medium">Exporting from ManaBox</p>
+        <p class="mt-1">
+          Open your collection (or a folder), choose Export, and pick CSV — the standard export
+          already includes everything we need (Scryfall ID, Foil, Quantity). Condition, language and
+          purchase price aren’t imported yet.
+        </p>
+      </div>
+      <div>
         <p class="text-foreground font-medium">Exporting from Archidekt</p>
         <p class="mt-1">
           Open your collection and choose Export → CSV. You only need these three columns — you can

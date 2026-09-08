@@ -797,8 +797,8 @@ surface.
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
 | `POST /api/collection/{game}/import` | `{ provider, source, mode }` | **`202`** `ImportJob` `{ job_id, status: "queued" }` — enqueues a one-off import (runs async; poll the job below). Validated synchronously: `422` for an unknown provider / unparseable source; `503` if too many imports are queued. `provider` is `"archidekt"` or `"moxfield"`; `source` is a collection URL or bare id; `mode` ∈ `overwrite`/`replace`/`merge` (see below). Always one-off — nothing about the source is remembered |
-| `POST /api/collection/{game}/import/csv?mode=` | raw file body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded collection export, sniffing the shape from the content: **Mythic Tools** (an `Amount` column — checked first, since its export also carries a Scryfall ID; rows take their Scryfall ID when present, else Set Code + Collector Number), **Archidekt** (a Scryfall ID column, plus Finish + Quantity), **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped), or — when no CSV header matches — a **plain-text card list** (`2 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable content / one missing a required column / a body matching no supported format / an empty upload |
-| `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
+| `POST /api/collection/{game}/import/csv?mode=` | raw file body (`text/csv`) | **`200`** `ImportSummary` — import an uploaded collection export, sniffing the shape from the content: **Mythic Tools** (an `Amount` column — checked first, since its export also carries a Scryfall ID; rows take their Scryfall ID when present, else Set Code + Collector Number), **ManaBox** (a `ManaBox ID` column — also checked before Archidekt, since its export carries a Scryfall ID too and spells its finish `Foil`; same id-else-set+number rows, `Quantity` as the count, and a missing `Foil` column is refused), **Archidekt** (a Scryfall ID column, plus Finish + Quantity), **Moxfield** (no card id — Count + Edition + Collector Number + Foil, resolved against the catalog by set + collector number; `Proxy=True` rows are skipped), or — when no CSV header matches — a **plain-text card list** (`2 Sol Ring (C21) 263 *F*`), so a `.txt` export imports here too. Runs **synchronously** (no upstream fetch → no job/rate-limiter): parses, reconciles per `?mode` (`overwrite`/`replace`/`merge`), returns the summary directly (its `provider` reflects the detected shape). Body is bounded by a route body limit (`MAX_CSV_UPLOAD_BYTES`, 16 MB) → `413` if larger; `422` for a bad mode / unreadable content / one missing a required column / a body matching no supported format / an empty upload |
+| `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker; ManaBox, issue #669, is the same case). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
 | `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total, absent until the first page reports it) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
 | `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/`format` |
@@ -907,10 +907,10 @@ one provider's spacing/back-off never stalls another's). If the provider still r
 larger `Retry-After`, capped at 5 min) so all imports for *that provider* pause, then
 retries the same page — giving up (`503`) after a few attempts.
 
-Providers are dispatched by a `Provider` enum (Archidekt + Moxfield + Mythic Tools — the
-last one **file/paste-only**, with no public API to fetch from, so it exists to label an
-import and pick parse rules; everything that fetches gates on `network_import_enabled()`
-first). Each network provider fetches + parses to normalized `(external_card_id, foil, quantity)`
+Providers are dispatched by a `Provider` enum (Archidekt + Moxfield + Mythic Tools +
+ManaBox — the last two **file/paste-only**, with no public API to fetch from, so they exist
+to label an import and pick parse rules; everything that fetches gates on
+`network_import_enabled()` first). Each network provider fetches + parses to normalized `(external_card_id, foil, quantity)`
 holdings; the provider-independent engine aggregates by card (`(uid, foil)` — the same
 printing can span several provider rows), resolves each `external_card_id` to
 `cards.external_id` (for both providers that's the Scryfall id: Archidekt's `card.uid`,
@@ -922,13 +922,23 @@ The **file upload / paste** path (`collection_import::csv_import` + `text_list` 
 `execute_file_import`, behind both `import/csv` and `import/text`) is a second *source* of
 the very same holdings. It sniffs the shape from the content, in order:
 
-* **Mythic Tools** — identified by an `Amount` column (neither other service spells its
+* **Mythic Tools** — identified by an `Amount` column (no other service spells its
   quantity column that way, and its export also carries a Scryfall ID, so this must be
-  checked first). Each row takes its Scryfall ID when present and falls back to
+  checked before Archidekt). Each row takes its Scryfall ID when present and falls back to
   Set Code + Collector Number when not, so one export can yield both keyed shapes. At least
   one card key **and** the `Finish` column are required — the app lets the user choose export
   columns, and a missing finish would file a foil collection as regular copies (the same
   refusal Moxfield's `Foil` column gets, for the same reason).
+* **ManaBox** (issue #669) — identified by its `ManaBox ID` column (the app's own row id;
+  nothing else writes one, and the id itself is never read). Also checked before Archidekt:
+  its export carries a Scryfall ID too, and read as Archidekt it was refused for spelling
+  its finish column `Foil` rather than `Finish` — the first thing the default phone
+  scanner's users hit. Same rows as Mythic Tools (Scryfall ID when present, else
+  Set code + Collector number), `Quantity` as the count, `Foil` (`normal` / `foil` /
+  `etched`) as the finish, **shared parser** (`csv_import::parse_id_or_pair_rows`, told
+  apart only by the provider it reports and the finish column a refusal names). A missing
+  `Foil` or `Quantity` column is refused. `Condition` / `Language` / `Purchase price` are
+  ignored for now (the natural feed for holding lots later, #594).
 * **Archidekt** — a Scryfall ID column (only Scryfall ID / Finish / Quantity are read).
 * **Moxfield** — no card id: Count / Edition / Collector Number / Foil, plus optional Name
   for unmatched labels and Proxy to skip proxies.
@@ -958,7 +968,8 @@ pair lookup.
 Every path is defensive (the `csv` crate handles quoting/escaping, a leading BOM is
 stripped, a non-UTF-8 body is rejected, rows are capped at `MAX_IMPORT_ROWS`, per-field
 length bounds, and the finish is keyed off the shared foil rules — which know each
-service's "not a foil" spelling, `Normal` for Archidekt and `Nonfoil` for Mythic Tools).
+service's "not a foil" spelling, `Normal` for Archidekt, `Nonfoil` for Mythic Tools and
+`normal` for ManaBox).
 All yield `Vec<FetchedHolding>` and then run the exact same
 aggregate/resolve/reconcile/apply engine — but with no upstream fetch, so no rate limiter
 or job, reconciling inline in the request (the handler bounds the body with a route-scoped
@@ -970,7 +981,7 @@ jobs live in-memory in `AppState.imports` (lost on restart; the client just re-i
 **Every import is one-off**: nothing about the source is stored, so there is no saved link
 and no re-sync endpoint — an import states its own provider, source, and mode (the
 incremental "smart" sync and the `collection_sources` table it hung off were removed;
-`m..072` drops the table). All three providers are MTG-only. **Moxfield's live URL import
+`m..072` drops the table). All four providers are MTG-only. **Moxfield's live URL import
 is currently disabled** (`Provider::network_import_enabled()` returns `false` pending an
 approved `MOXFIELD_USER_AGENT`): the handlers reject a Moxfield URL import with a `422`
 pointing at the upload/paste tabs, and the web import dialog greys Moxfield out in the

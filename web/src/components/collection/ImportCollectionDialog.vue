@@ -36,8 +36,8 @@ const PROVIDERS: { value: CollectionProvider; label: string; disabled?: boolean 
 ]
 
 // An example collection URL per provider, as the source input's placeholder. Partial:
-// only providers listed in PROVIDERS above can be selected here, and a paste-only one
-// (Mythic Tools) has no collection URL to show.
+// only providers listed in PROVIDERS above can be selected here, and the paste-only ones
+// (Mythic Tools, ManaBox) have no collection URL to show.
 const PLACEHOLDERS: Partial<Record<CollectionProvider, string>> = {
   archidekt: 'https://archidekt.com/collection/v2/1042487',
   moxfield: 'https://moxfield.com/collection/4xUdq-66IEKK6X53bhUS8Q',
@@ -66,8 +66,9 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
 // about the source is remembered.
 //
 // The paste tab exists because not every service has an API or a browser-friendly export:
-// Mythic Tools (issue #572) is a phone app, and pasting what you copied out of it is much
-// less friction than saving a file and finding it in a file picker.
+// Mythic Tools (issue #572) and ManaBox (issue #669) are phone apps, and pasting what you
+// copied out of them is much less friction than saving a file and finding it in a file
+// picker.
 type SourceType = 'link' | 'csv' | 'text'
 
 const open = ref(false)
@@ -173,12 +174,12 @@ const selectClass =
           with your collection. We fetch it server-side — nothing is uploaded from your device.
         </template>
         <template v-else-if="sourceType === 'csv'">
-          Upload a collection export from Mythic Tools, Archidekt or Moxfield and choose how to
-          reconcile it with your collection. We detect the format automatically.
+          Upload a collection export from ManaBox, Mythic Tools, Archidekt or Moxfield and choose
+          how to reconcile it with your collection. We detect the format automatically.
         </template>
         <template v-else>
-          Paste your collection as text — a card list, or a whole CSV export from Mythic Tools,
-          Archidekt or Moxfield — and choose how to reconcile it. We detect the format
+          Paste your collection as text — a card list, or a whole CSV export from ManaBox, Mythic
+          Tools, Archidekt or Moxfield — and choose how to reconcile it. We detect the format
           automatically.
         </template>
       </DialogDescription>

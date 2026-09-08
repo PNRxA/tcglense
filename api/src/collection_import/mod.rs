@@ -14,7 +14,8 @@
 //!
 //! Not every source is a live fetch. A **file or pasted text** import ([`execute_file_import`])
 //! covers the Moxfield CSV (no card id at all — rows resolve by set code + collector
-//! number), the Mythic Tools CSV, and the plain-text card lists every app can copy out.
+//! number), the Mythic Tools and ManaBox CSVs, and the plain-text card lists every app can
+//! copy out.
 
 pub(crate) mod archidekt;
 mod consolidate;
@@ -74,7 +75,7 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
         Provider::Moxfield => moxfield::parse_collection_id(input),
         // No addressable collections, so nothing can parse to an id. Callers gate on
         // `network_import_enabled` first, so this is a defensive fallthrough.
-        Provider::MythicTools => None,
+        Provider::MythicTools | Provider::ManaBox => None,
     };
     parsed.ok_or_else(|| {
         ImportError::InvalidSource(format!(
@@ -103,7 +104,7 @@ async fn fetch_holdings(
             .await
         }
         Provider::Moxfield => moxfield::fetch(ctx, collection_id).await,
-        Provider::MythicTools => Err(no_live_fetch(provider)),
+        Provider::MythicTools | Provider::ManaBox => Err(no_live_fetch(provider)),
     }
 }
 
@@ -144,8 +145,9 @@ pub async fn execute_import(
 /// sniffing and [`text_list`] for the text grammar):
 ///
 /// 1. an **Archidekt** CSV — rows carry Scryfall ids, already the engine's shape;
-/// 2. a **Moxfield** or **Mythic Tools** CSV — rows identify a printing by set code +
-///    collector number (Mythic Tools rows may carry an id too, and take it when present);
+/// 2. a **Moxfield**, **Mythic Tools** or **ManaBox** CSV — rows identify a printing by
+///    set code + collector number (Mythic Tools and ManaBox rows may carry an id too, and
+///    take it when present);
 /// 3. a **plain-text card list** (`1 Sol Ring (C21) 263 *F*`) — the copy/paste and TXT
 ///    export format shared by Mythic Tools, Moxfield, Archidekt and MTGA.
 ///
@@ -236,9 +238,9 @@ fn parse_text_list(bytes: &[u8]) -> Result<csv_import::ParsedCsv, ImportError> {
 /// The 422 for content that matched no CSV header and held no readable card lines. It
 /// names every format we accept, since at this point we have no idea what the user meant.
 const UNRECOGNISED_FORMAT: &str = "that doesn't look like a collection we can read. Paste a card list (one card per \
-     line, e.g. \"2 Sol Ring (C21) 263\"), or upload a CSV export from Mythic Tools, \
-     Archidekt (Scryfall ID, Finish, Quantity), or Moxfield (Count, Edition, Collector \
-     Number, Foil).";
+     line, e.g. \"2 Sol Ring (C21) 263\"), or upload a CSV export from ManaBox, Mythic \
+     Tools, Archidekt (Scryfall ID, Finish, Quantity), or Moxfield (Count, Edition, \
+     Collector Number, Foil).";
 
 /// Resolve rows identified by `(set code, collector number)` — or, for a plain-text list,
 /// by card name alone — into the engine's normalized holdings.
@@ -695,7 +697,7 @@ mod tests {
         let ImportError::InvalidSource(msg) = err else {
             panic!("expected InvalidSource, got {err:?}");
         };
-        for format in ["Mythic Tools", "Archidekt", "Moxfield"] {
+        for format in ["ManaBox", "Mythic Tools", "Archidekt", "Moxfield"] {
             assert!(msg.contains(format), "names {format}: {msg}");
         }
         assert_eq!(
@@ -739,6 +741,50 @@ mod tests {
         assert_eq!(summary.provider, "mythictools");
         assert_eq!(summary.matched_cards, 2);
     }
+
+    #[tokio::test]
+    async fn a_manabox_csv_imports_by_id_with_its_foil_column_honoured() {
+        let db = migrated_memory_db().await;
+        let user_id = insert_user(&db, "manabox-csv@test.example").await;
+        let by_id = insert_card_at(&db, "f369827d-e4cd-4bc7-8c5e-72882eff0908", "tle", "146").await;
+        let by_pair = insert_card_at(&db, "ext-c21-263", "c21", "263").await;
+
+        // The phone scanner's export (issue #669), header verbatim. It carries a Scryfall
+        // ID, which used to route it down the Archidekt branch and a 422 for the "Finish"
+        // column it spells "Foil". One row has no id and resolves by set + number instead;
+        // the condition / language / price columns are ignored.
+        let csv = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,\
+                   Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,\
+                   Purchase price currency\n\
+                   \"Aang, Air Nomad\",tle,Avatar: The Last Airbender,146,foil,rare,2,79315,\
+                   f369827d-e4cd-4bc7-8c5e-72882eff0908,0.5,false,false,near_mint,en,USD\n\
+                   Sol Ring,c21,Commander 2021,263,normal,uncommon,3,79316,,1.0,false,false,\
+                   near_mint,en,USD\n";
+
+        let summary = execute_file_import(
+            &db,
+            user_id,
+            crate::scryfall::GAME,
+            ReconcileMode::Overwrite,
+            csv.as_bytes(),
+        )
+        .await
+        .expect("manabox import");
+
+        assert_eq!(
+            owned_counts(&db, user_id, by_id).await,
+            Some((0, 2)),
+            "the Foil column was honoured"
+        );
+        assert_eq!(
+            owned_counts(&db, user_id, by_pair).await,
+            Some((3, 0)),
+            "\"normal\" is a regular copy, and the id-less row resolved by set + number"
+        );
+        assert_eq!(summary.provider, "manabox");
+        assert_eq!(summary.matched_cards, 2);
+    }
+
     #[tokio::test]
     async fn adversarial_bare_name_must_not_resolve_to_a_foil_star_variant() {
         let db = migrated_memory_db().await;

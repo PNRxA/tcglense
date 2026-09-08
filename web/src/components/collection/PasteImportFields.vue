@@ -6,7 +6,8 @@ import { Textarea } from '@/components/ui/textarea'
 // The paste tab's field: one plain-text box the user drops their collection into. Added
 // for Mythic Tools (issue #572) — it's a phone app, so copying its export out beats
 // saving a file and hunting for it in a browser's file picker — but the server sniffs the
-// content, so a pasted CSV from any supported service works here too.
+// content, so a pasted CSV from any supported service (ManaBox's included, issue #669)
+// works here too.
 //
 // The parent owns the pasted text (v-model) and the reconcile mode; this is presentation
 // plus the format hint.
@@ -39,6 +40,13 @@ const lineCount = computed(() => text.value.split('\n').filter((line) => line.tr
         <p class="mt-1">
           Open the box, binder, or list you want, choose Export, and pick either the TXT or the CSV
           format — then paste the whole thing here. Both work.
+        </p>
+      </div>
+      <div>
+        <p class="text-foreground font-medium">Exporting from ManaBox</p>
+        <p class="mt-1">
+          Open your collection (or a folder), choose Export, and pick CSV — then open the file and
+          paste its whole contents here, or upload it on the “Upload a file” tab.
         </p>
       </div>
       <div>

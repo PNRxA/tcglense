@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 
 /// A collection provider we can import from. One variant per external service.
 ///
-/// Not every provider is reachable over the network: [`Provider::MythicTools`] is a
-/// **file/paste-only** provider (the app has no public collection API), so it exists here
-/// purely to label an import and to pick the right parse rules. Everything that fetches
-/// gates on [`Provider::network_import_enabled`] first, so those code paths refuse it
-/// before a fetch is ever attempted.
+/// Not every provider is reachable over the network: [`Provider::MythicTools`] and
+/// [`Provider::ManaBox`] are **file/paste-only** providers (neither app has a public
+/// collection API), so they exist here purely to label an import and to pick the right
+/// parse rules. Everything that fetches gates on [`Provider::network_import_enabled`]
+/// first, so those code paths refuse them before a fetch is ever attempted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CollectionProvider"))]
@@ -17,9 +17,21 @@ pub enum Provider {
     Archidekt,
     Moxfield,
     MythicTools,
+    ManaBox,
 }
 
 impl Provider {
+    /// Every provider, for the places that ask a question of all of them at once (the
+    /// file-import handler's per-game gate, the id round-trip test). Adding a variant
+    /// here is what keeps those exhaustive — the `match`es below already won't compile
+    /// without the new arm.
+    pub const ALL: &'static [Provider] = &[
+        Provider::Archidekt,
+        Provider::Moxfield,
+        Provider::MythicTools,
+        Provider::ManaBox,
+    ];
+
     /// The provider's stable string id — as it appears in the API (request bodies and the
     /// import summary's `provider`).
     pub fn as_str(self) -> &'static str {
@@ -27,6 +39,7 @@ impl Provider {
             Provider::Archidekt => "archidekt",
             Provider::Moxfield => "moxfield",
             Provider::MythicTools => "mythictools",
+            Provider::ManaBox => "manabox",
         }
     }
 
@@ -40,6 +53,7 @@ impl Provider {
             "mythictools" | "mythic tools" | "mythic-tools" | "mythic_tools" => {
                 Some(Provider::MythicTools)
             }
+            "manabox" | "mana box" | "mana-box" | "mana_box" => Some(Provider::ManaBox),
             _ => None,
         }
     }
@@ -50,6 +64,7 @@ impl Provider {
             Provider::Archidekt => "Archidekt",
             Provider::Moxfield => "Moxfield",
             Provider::MythicTools => "Mythic Tools",
+            Provider::ManaBox => "ManaBox",
         }
     }
 
@@ -57,9 +72,10 @@ impl Provider {
     /// (their card ids / printings key off Scryfall data).
     pub fn supports_game(self, game: &str) -> bool {
         match self {
-            Provider::Archidekt | Provider::Moxfield | Provider::MythicTools => {
-                game == crate::scryfall::GAME
-            }
+            Provider::Archidekt
+            | Provider::Moxfield
+            | Provider::MythicTools
+            | Provider::ManaBox => game == crate::scryfall::GAME,
         }
     }
 
@@ -76,13 +92,14 @@ impl Provider {
     /// the link-import picker. Re-enable by flipping the arm to `true` once an approved
     /// `MOXFIELD_USER_AGENT` is configured.
     ///
-    /// Mythic Tools is `false` for a different, permanent reason: it's a mobile app with no
-    /// public collection API, so there is nothing to fetch — its collections arrive as an
-    /// uploaded/pasted export (see `collection_import::execute_file_import`).
+    /// Mythic Tools and ManaBox are `false` for a different, permanent reason: both are
+    /// mobile apps with no public collection API, so there is nothing to fetch — their
+    /// collections arrive as an uploaded/pasted export (see
+    /// `collection_import::execute_file_import`).
     pub fn network_import_enabled(self) -> bool {
         match self {
             Provider::Archidekt => true,
-            Provider::Moxfield | Provider::MythicTools => false,
+            Provider::Moxfield | Provider::MythicTools | Provider::ManaBox => false,
         }
     }
 }
@@ -151,11 +168,7 @@ mod tests {
 
     #[test]
     fn provider_ids_round_trip() {
-        for provider in [
-            Provider::Archidekt,
-            Provider::Moxfield,
-            Provider::MythicTools,
-        ] {
+        for &provider in Provider::ALL {
             assert_eq!(Provider::from_id(provider.as_str()), Some(provider));
         }
         assert_eq!(Provider::from_id("MOXFIELD"), Some(Provider::Moxfield));
@@ -164,16 +177,40 @@ mod tests {
             Some(Provider::MythicTools),
             "the spaced spelling a user might type maps to the canonical id"
         );
+        assert_eq!(
+            Provider::from_id("Mana Box"),
+            Some(Provider::ManaBox),
+            "likewise for ManaBox"
+        );
         assert_eq!(Provider::from_id("deckbox"), None);
+    }
+
+    #[test]
+    fn every_provider_is_listed_exactly_once() {
+        // `ALL` is hand-maintained; a variant missing from it would silently drop out of
+        // the file-import gate. The ids are distinct, so a duplicate shows up as a repeat.
+        let mut ids: Vec<&str> = Provider::ALL.iter().map(|p| p.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), Provider::ALL.len(), "no duplicates");
+        for &provider in Provider::ALL {
+            assert!(
+                provider.supports_game(crate::scryfall::GAME),
+                "{} is a Magic provider",
+                provider.label()
+            );
+            assert!(!provider.supports_game("pokemon"));
+        }
     }
 
     #[test]
     fn only_archidekt_has_a_live_network_import() {
         // Moxfield's live URL import is turned off pending an approved User-Agent (its CSV
-        // upload is unaffected — that path never checks this), and Mythic Tools has no
-        // public API at all — it's upload/paste-only.
+        // upload is unaffected — that path never checks this), and Mythic Tools and
+        // ManaBox have no public API at all — they're upload/paste-only.
         assert!(!Provider::Moxfield.network_import_enabled());
         assert!(!Provider::MythicTools.network_import_enabled());
+        assert!(!Provider::ManaBox.network_import_enabled());
         assert!(Provider::Archidekt.network_import_enabled());
     }
 }

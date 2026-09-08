@@ -595,14 +595,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   Moxfield **URL** import is deliberately disabled
   (`Provider::network_import_enabled()` is the switch; CSV is the supported path) —
   a 422 there is not a regression.
-- **Not every `Provider` fetches.** Mythic Tools (issue #572) has no public API, so it's
-  file/paste-only: `network_import_enabled()` is `false` and every fetch/link path gates on
-  that before dispatching. Its collections arrive through `execute_file_import`, which backs
-  **both** `/import/csv` (upload) and `/import/text` (paste) and **sniffs** the format from
-  the content — Mythic Tools CSV (its `Amount` column is the fingerprint, checked before
-  Archidekt's Scryfall ID because its export has both), Archidekt CSV, Moxfield CSV, then a
-  plain-text card list as the fallback. Keep the text list *last* or a real CSV silently
-  degrades into it. That line grammar lives in `collection_import::text_list` and is
+- **Not every `Provider` fetches.** Mythic Tools (issue #572) and ManaBox (issue #669) have
+  no public API, so they're file/paste-only: `network_import_enabled()` is `false` and every
+  fetch/link path gates on that before dispatching. Their collections arrive through
+  `execute_file_import`, which backs **both** `/import/csv` (upload) and `/import/text`
+  (paste) and **sniffs** the format from the content — Mythic Tools CSV (its `Amount` column
+  is the fingerprint), ManaBox CSV (its `ManaBox ID` column), **both checked before
+  Archidekt's Scryfall ID** because both exports carry one too (read as Archidekt, a ManaBox
+  file was refused for spelling its finish column `Foil`, not `Finish`), then Archidekt CSV,
+  Moxfield CSV, then a plain-text card list as the fallback. Keep the text list *last* or a
+  real CSV silently degrades into it. Mythic Tools and ManaBox are one parser
+  (`csv_import::parse_id_or_pair_rows`, a `HybridShape` per app) — a fifth id-else-set+number
+  export is a third `HybridShape`, not a third copy of the loop. That line grammar lives in `collection_import::text_list` and is
   **shared with `deck_import::parser`** — extend the seam, don't fork a second dialect. A
   text line naming no printing resolves to the newest printing of that name
   (`reconcile::resolve_newest_printing_by_name`, also shared with deck import) — which must keep
@@ -610,7 +614,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   shares its base's name and date, wins the id tie-break, and `consolidate` folds it on as foil).
   A line that *did* name a printing must stay unmatched when it doesn't resolve — never fall back
   to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
-  columns are user-selectable), same refusal Moxfield's `Foil` column gets.
+  columns are user-selectable), same refusal Moxfield's `Foil` column gets — and ManaBox's
+  `Foil` column too.
 - **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a fifth
   search.** Each leg reaches its surface through the seam that surface already exposes
   (`catalog::search_cards` over `card_name_search_query`, `catalog::search_products`,

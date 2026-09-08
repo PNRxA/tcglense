@@ -54,8 +54,9 @@ fn parse_csv(provider: Provider, bytes: &[u8]) -> Result<Vec<DeckCardRow>, Impor
         match provider {
             // Mythic Tools exports a box/binder/list rather than boards, so it has no
             // section column of its own; reading the Archidekt spellings is harmless and
-            // picks one up if a converted export happens to carry it.
-            Provider::Archidekt | Provider::MythicTools => CATEGORY_HEADERS,
+            // picks one up if a converted export happens to carry it. ManaBox's deck
+            // export has none either.
+            Provider::Archidekt | Provider::MythicTools | Provider::ManaBox => CATEGORY_HEADERS,
             Provider::Moxfield => BOARD_HEADERS,
         },
     );

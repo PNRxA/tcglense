@@ -9,10 +9,11 @@ import type { CollectionProvider, ImportJob, ImportSummary, ReconcileMode } from
 // nothing is remembered between them. The wire types are generated from the API's Rust
 // DTOs into `./generated` and re-exported here.
 //
-// Not every service has a public API to fetch from. Mythic Tools (issue #572) is a phone
-// app, so its collections arrive as an export the user uploads or — far easier from a
-// phone — pastes: `importCollectionText`. Both that and `importCollectionCsv` post raw
-// content the server sniffs, so neither asks the user to name their format.
+// Not every service has a public API to fetch from. Mythic Tools (issue #572) and ManaBox
+// (issue #669) are phone apps, so their collections arrive as an export the user uploads
+// or — far easier from a phone — pastes: `importCollectionText`. Both that and
+// `importCollectionCsv` post raw content the server sniffs, so neither asks the user to
+// name their format.
 
 export type {
   CollectionProvider,
@@ -27,6 +28,7 @@ export const PROVIDER_LABELS: Record<CollectionProvider, string> = {
   archidekt: 'Archidekt',
   moxfield: 'Moxfield',
   mythictools: 'Mythic Tools',
+  manabox: 'ManaBox',
 }
 
 // The request body stays hand-written: the wire `ImportRequest` accepts any `provider`
@@ -85,8 +87,8 @@ export function getImportJob(token: string, game: string, jobId: number): Promis
 }
 
 /**
- * Import a collection from an uploaded export file — an Archidekt, Moxfield or Mythic
- * Tools CSV, or a plain-text card list; the server detects which from the content. The
+ * Import a collection from an uploaded export file — a ManaBox, Archidekt, Moxfield or
+ * Mythic Tools CSV, or a plain-text card list; the server detects which from the content. The
  * file is sent as the raw request body and reconciled server-side; unlike the URL import
  * it needs no upstream fetch, so it resolves **synchronously** to the
  * {@link ImportSummary} (no job to poll).

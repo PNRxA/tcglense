@@ -263,9 +263,9 @@ pub fn build_router(state: AppState) -> Router {
         // File upload / pasted text: the raw content is the request body, so these routes
         // override axum's default 2 MB body limit with our own (larger, but still bounded)
         // cap. The limit is layered on just these method-routers so no other route's body
-        // ceiling changes. Both accept any supported export shape (Archidekt / Moxfield /
-        // Mythic Tools CSV, or a plain-text card list) — they differ only in how the
-        // content arrives.
+        // ceiling changes. Both accept any supported export shape (ManaBox / Archidekt /
+        // Moxfield / Mythic Tools CSV, or a plain-text card list) — they differ only in how
+        // the content arrives.
         .route(
             "/api/collection/{game}/import/csv",
             post(import_collection_csv).layer(DefaultBodyLimit::max(MAX_CSV_UPLOAD_BYTES)),
