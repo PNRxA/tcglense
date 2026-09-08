@@ -23,9 +23,11 @@
 //! which is why every response says so. (The [`super::open`] simulator, which deals actual
 //! cards, does draw without replacement — a repeated card there would be a visible lie.)
 
+use std::collections::HashSet;
+
 use super::{
-    CardIndex, PackCardOdds, PackEv, ProductEv, ResolvedConfig, ResolvedPack, ResolvedSheet,
-    SlotEv, any_balance_colors, percent, unaccounted_sheets, usd,
+    CardIndex, CardResponses, PackCardOdds, PackEv, ProductEv, ResolvedConfig, ResolvedPack,
+    ResolvedSheet, SlotEv, any_balance_colors, percent, unaccounted_sheets, usd,
 };
 
 /// Biggest contributors kept per slot before the pack- and product-level lists are cut down
@@ -73,20 +75,42 @@ fn rank(a: &Contender, b: &Contender) -> std::cmp::Ordering {
         .then_with(|| a.card_id.cmp(&b.card_id))
 }
 
-/// Dress a contender for the wire. `scale` multiplies the *money* only — the product-level
-/// list reports a whole copy's contribution while still quoting per-pack odds, which is the
-/// unit "one in N packs" is meaningful in. `None` when the card row has gone (it can then
-/// contribute nothing anyway).
-fn odds(
-    index: &CardIndex,
-    sheet: &str,
+/// One line of a `top` list, computed but not yet dressed: everything [`PackCardOdds`]
+/// carries except the card itself, which is a whole `cards` row and is fetched only for the
+/// handful of ids a finished plan names.
+struct PlannedOdds {
+    card_id: i32,
     foil: bool,
-    c: &Contender,
-    scale: f64,
-) -> Option<PackCardOdds> {
-    let card = index.response(c.card_id)?;
-    Some(PackCardOdds {
-        card,
+    sheet: String,
+    expected_per_pack: f64,
+    one_in: f64,
+    price_usd: Option<String>,
+    contribution_usd: String,
+}
+
+impl PlannedOdds {
+    /// Attach the catalog payload. `None` when the card row has gone between the loader's
+    /// two passes — the line is then dropped, as it was when the row went missing before.
+    fn render(self, responses: &CardResponses) -> Option<PackCardOdds> {
+        let card = responses.get(&self.card_id)?.clone();
+        Some(PackCardOdds {
+            card,
+            foil: self.foil,
+            sheet: self.sheet,
+            expected_per_pack: self.expected_per_pack,
+            one_in: self.one_in,
+            price_usd: self.price_usd,
+            contribution_usd: self.contribution_usd,
+        })
+    }
+}
+
+/// Plan a contender's line. `scale` multiplies the *money* only — the product-level list
+/// reports a whole copy's contribution while still quoting per-pack odds, which is the unit
+/// "one in N packs" is meaningful in.
+fn planned(sheet: &str, foil: bool, c: &Contender, scale: f64) -> PlannedOdds {
+    PlannedOdds {
+        card_id: c.card_id,
         foil,
         sheet: sheet.to_string(),
         expected_per_pack: c.expected,
@@ -95,7 +119,109 @@ fn odds(
         one_in: 1.0 / c.expected,
         price_usd: c.price_cents.map(|cents| usd(cents as f64)),
         contribution_usd: usd(c.contribution * scale),
-    })
+    }
+}
+
+/// One sheet's line of a planned pack — [`SlotEv`] with its `top` not yet dressed.
+struct SlotPlan {
+    sheet: String,
+    foil: bool,
+    picks: f64,
+    ev_usd: String,
+    card_count: u32,
+    priced_share: f64,
+    top: Vec<PlannedOdds>,
+}
+
+/// One booster's line of a planned copy — [`PackEv`], undressed.
+struct PackPlan {
+    set_code: String,
+    booster_code: String,
+    name: Option<String>,
+    quantity: u32,
+    cards_per_pack: f64,
+    ev_usd: String,
+    priced_share: f64,
+    slots: Vec<SlotPlan>,
+    top: Vec<PlannedOdds>,
+}
+
+/// A finished expected value that still names its cards by internal id. The handler asks it
+/// which cards it needs ([`EvPlan::card_ids`]), fetches exactly those rows, and renders.
+pub(super) struct EvPlan {
+    ev_usd: String,
+    packs: Vec<PackPlan>,
+    top: Vec<PlannedOdds>,
+    caveats: Vec<String>,
+}
+
+impl EvPlan {
+    /// Every card this plan will put on the wire, deduplicated, in the order it was
+    /// planned. A few dozen ids at most: the `top` lists are capped at 12 per slot, 10 per
+    /// pack and 12 per copy, whatever the sheets underneath hold.
+    pub(super) fn card_ids(&self) -> Vec<i32> {
+        let mut seen: HashSet<i32> = HashSet::new();
+        let mut ids: Vec<i32> = Vec::new();
+        let lines = self.top.iter().chain(self.packs.iter().flat_map(|pack| {
+            pack.top
+                .iter()
+                .chain(pack.slots.iter().flat_map(|slot| slot.top.iter()))
+        }));
+        for line in lines {
+            if seen.insert(line.card_id) {
+                ids.push(line.card_id);
+            }
+        }
+        ids
+    }
+
+    /// Dress the plan with the catalog rows the second pass loaded.
+    pub(super) fn render(self, responses: &CardResponses) -> ProductEv {
+        ProductEv {
+            ev_usd: self.ev_usd,
+            packs: self
+                .packs
+                .into_iter()
+                .map(|pack| PackEv {
+                    set_code: pack.set_code,
+                    booster_code: pack.booster_code,
+                    name: pack.name,
+                    quantity: pack.quantity,
+                    cards_per_pack: pack.cards_per_pack,
+                    ev_usd: pack.ev_usd,
+                    priced_share: pack.priced_share,
+                    slots: pack
+                        .slots
+                        .into_iter()
+                        .map(|slot| SlotEv {
+                            sheet: slot.sheet,
+                            foil: slot.foil,
+                            picks: slot.picks,
+                            ev_usd: slot.ev_usd,
+                            card_count: slot.card_count,
+                            priced_share: slot.priced_share,
+                            top: slot
+                                .top
+                                .into_iter()
+                                .filter_map(|line| line.render(responses))
+                                .collect(),
+                        })
+                        .collect(),
+                    top: pack
+                        .top
+                        .into_iter()
+                        .filter_map(|line| line.render(responses))
+                        .collect(),
+                })
+                .collect(),
+            top: self
+                .top
+                .into_iter()
+                .filter_map(|line| line.render(responses))
+                .collect(),
+            caveats: self.caveats,
+        }
+    }
 }
 
 /// What one sheet contributes to an average pack of this configuration.
@@ -204,7 +330,7 @@ fn accumulate(expected: &mut Vec<(i32, f64)>, card_id: i32, copies: f64) {
 fn evaluate_config(
     config: &ResolvedConfig,
     index: &CardIndex,
-) -> (Vec<SlotEv>, Vec<Candidate>, f64, f64, f64) {
+) -> (Vec<SlotPlan>, Vec<Candidate>, f64, f64, f64) {
     let denominator = config.variant_denominator();
     let probability: Vec<f64> = config
         .variants
@@ -229,7 +355,7 @@ fn evaluate_config(
         }
     }
 
-    let mut slots: Vec<SlotEv> = Vec::new();
+    let mut slots: Vec<SlotPlan> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut cards_per_pack = 0.0;
     let mut ev_cents = 0.0;
@@ -264,7 +390,7 @@ fn evaluate_config(
         ev_cents += totals.ev_cents;
         priced_picks += totals.picks * totals.priced_share;
 
-        slots.push(SlotEv {
+        slots.push(SlotPlan {
             sheet: sheet.name.clone(),
             foil: sheet.foil,
             picks: totals.picks,
@@ -275,7 +401,7 @@ fn evaluate_config(
                 .contenders
                 .iter()
                 .take(SLOT_TOP)
-                .filter_map(|c| odds(index, &sheet.name, sheet.foil, c, 1.0))
+                .map(|c| planned(&sheet.name, sheet.foil, c, 1.0))
                 .collect(),
         });
 
@@ -296,10 +422,12 @@ fn evaluate_config(
     (slots, candidates, cards_per_pack, ev_cents, priced_share)
 }
 
-/// What one copy of the product is worth on average. The caller has already established
-/// that there *are* packs — a product with none has no expected value and answers `null`.
-pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> ProductEv {
-    let mut wire_packs: Vec<PackEv> = Vec::with_capacity(packs.len());
+/// What one copy of the product is worth on average, as a plan that still names its cards
+/// by internal id — the whole computation runs on prices alone, and only the handful of
+/// cards it decides to quote need a catalog row. The caller has already established that
+/// there *are* packs; a product with none has no expected value and answers `null`.
+pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> EvPlan {
+    let mut wire_packs: Vec<PackPlan> = Vec::with_capacity(packs.len());
     let mut copy_candidates: Vec<(f64, Candidate)> = Vec::new();
     let mut total_cents = 0.0;
     let mut copy_picks = 0.0;
@@ -322,10 +450,10 @@ pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> ProductEv {
         let top = ranked
             .iter()
             .take(PACK_TOP)
-            .filter_map(|c| odds(index, &c.sheet, c.foil, &c.contender, 1.0))
+            .map(|c| planned(&c.sheet, c.foil, &c.contender, 1.0))
             .collect();
 
-        wire_packs.push(PackEv {
+        wire_packs.push(PackPlan {
             set_code: pack.config.set_code.clone(),
             booster_code: pack.config.code.clone(),
             name: pack.config.name.clone(),
@@ -353,7 +481,7 @@ pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> ProductEv {
     let top = copy_candidates
         .iter()
         .take(PRODUCT_TOP)
-        .filter_map(|(quantity, c)| odds(index, &c.sheet, c.foil, &c.contender, *quantity))
+        .map(|(quantity, c)| planned(&c.sheet, c.foil, &c.contender, *quantity))
         .collect();
 
     let copy_priced_share = if copy_picks > 0.0 {
@@ -362,7 +490,7 @@ pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> ProductEv {
         0.0
     };
 
-    ProductEv {
+    EvPlan {
         ev_usd: usd(total_cents),
         packs: wire_packs,
         top,
@@ -419,7 +547,15 @@ fn caveats(packs: &[ResolvedPack], any_unpriced: bool, copy_priced_share: f64) -
 mod tests {
     use super::super::test_support::*;
     use super::*;
-    use crate::entities::card;
+
+    /// Compute *and* dress, the way the handler does: the plan names its cards by id, the
+    /// second pass turns those ids into payloads. Every assertion below is on the wire
+    /// shape, so it pins what a client actually receives.
+    fn evaluate_wire(packs: &[ResolvedPack], index: &CardIndex) -> ProductEv {
+        let plan = evaluate(packs, index);
+        let responses = responses(&plan.card_ids());
+        plan.render(&responses)
+    }
 
     /// A configuration small enough to evaluate on paper, and broad enough to exercise every
     /// branch: two variants of different weights, a weighted rare sheet, an unpriced common,
@@ -434,17 +570,17 @@ mod tests {
     /// land    fixed [card 5 @ $0.40, card 6 @ $3.00]
     /// ```
     fn fixture() -> (Vec<ResolvedPack>, CardIndex) {
-        let cards: Vec<card::Model> = vec![
-            priced_card(1, Some("1.00"), None),
-            priced_card(2, None, None),
-            priced_card(3, Some("2.00"), None),
-            priced_card(4, Some("20.00"), None),
-            priced_card(5, Some("0.40"), None),
-            priced_card(6, Some("3.00"), None),
+        let prices = [
+            (1, Some("1.00"), None),
+            (2, None, None),
+            (3, Some("2.00"), None),
+            (4, Some("20.00"), None),
+            (5, Some("0.40"), None),
+            (6, Some("3.00"), None),
             // A foil sheet must read the foil price and never fall back to the regular one:
             // card 8 is priced non-foil and unpriced foil.
-            priced_card(7, Some("1.00"), Some("5.00")),
-            priced_card(8, Some("10.00"), None),
+            (7, Some("1.00"), Some("5.00")),
+            (8, Some("10.00"), None),
         ];
         let mut foil_sheet = sheet("foil", true, 4, &[(7, 3), (8, 1)]);
         foil_sheet.allow_duplicates = true;
@@ -463,13 +599,13 @@ mod tests {
                 land_sheet,
             ],
         );
-        (vec![pack(3, config)], index(cards))
+        (vec![pack(3, config)], index(&prices))
     }
 
     #[test]
     fn a_pack_is_worth_the_sum_of_its_slots_to_the_cent() {
         let (packs, index) = fixture();
-        let ev = evaluate(&packs, &index);
+        let ev = evaluate_wire(&packs, &index);
         let pack = &ev.packs[0];
 
         // p(v0) = 3/4, p(v1) = 1/4.
@@ -498,7 +634,7 @@ mod tests {
     #[test]
     fn cards_per_pack_is_an_expectation_over_the_variants() {
         let (packs, index) = fixture();
-        let pack = &evaluate(&packs, &index).packs[0];
+        let pack = &evaluate_wire(&packs, &index).packs[0];
         // 3/4 x 4 cards + 1/4 x 6 cards.
         assert!((pack.cards_per_pack - 4.5).abs() < 1e-9);
         let picks: Vec<(&str, f64)> = pack
@@ -518,7 +654,7 @@ mod tests {
     #[test]
     fn an_unpriced_card_counts_as_zero_and_shows_up_in_the_priced_share() {
         let (packs, index) = fixture();
-        let pack = &evaluate(&packs, &index).packs[0];
+        let pack = &evaluate_wire(&packs, &index).packs[0];
         let common = &pack.slots[0];
         // Card 2 holds 1 of the sheet's 4 weight and has no price.
         assert!((common.priced_share - 0.75).abs() < 1e-9);
@@ -535,7 +671,7 @@ mod tests {
     #[test]
     fn odds_are_one_in_n_packs_and_never_infinite() {
         let (packs, index) = fixture();
-        let pack = &evaluate(&packs, &index).packs[0];
+        let pack = &evaluate_wire(&packs, &index).packs[0];
         let rare = &pack.slots[1];
         let best = &rare.top[0];
         assert_eq!(best.card.id, "ext-4");
@@ -559,7 +695,7 @@ mod tests {
     #[test]
     fn the_copys_top_scales_money_by_quantity_but_leaves_the_odds_per_pack() {
         let (packs, index) = fixture();
-        let ev = evaluate(&packs, &index);
+        let ev = evaluate_wire(&packs, &index);
         let best = &ev.top[0];
         assert_eq!(best.card.id, "ext-4");
         // Per pack: 0.2 x $20 = $4. Per copy (three packs): $12.
@@ -586,11 +722,8 @@ mod tests {
             1,
             config(vec![variant(1, &[("land", 1)])], vec![land]),
         )];
-        let index = index(vec![
-            priced_card(5, Some("0.40"), None),
-            priced_card(6, Some("3.00"), None),
-        ]);
-        let pack_ev = &evaluate(&packs, &index).packs[0];
+        let index = index(&[(5, Some("0.40"), None), (6, Some("3.00"), None)]);
+        let pack_ev = &evaluate_wire(&packs, &index).packs[0];
         assert_eq!(pack_ev.ev_usd, "0.40", "the second card is never reached");
         assert_eq!(pack_ev.slots[0].top.len(), 1);
         assert_eq!(pack_ev.slots[0].top[0].card.id, "ext-5");
@@ -601,7 +734,7 @@ mod tests {
     #[test]
     fn the_caveats_are_only_the_ones_that_apply() {
         let (packs, index) = fixture();
-        let ev = evaluate(&packs, &index);
+        let ev = evaluate_wire(&packs, &index);
         assert_eq!(ev.caveats.len(), 3, "{:?}", ev.caveats);
         assert!(ev.caveats[0].contains("no single pack is worth this"));
         assert!(ev.caveats[1].contains("independent weighted draw"));
@@ -630,11 +763,8 @@ mod tests {
             1,
             config(vec![variant(1, &[("common", 1)])], vec![common]),
         )];
-        let index = index(vec![
-            priced_card(1, Some("1.00"), None),
-            priced_card(2, Some("1.00"), None),
-        ]);
-        let ev = evaluate(&packs, &index);
+        let index = index(&[(1, Some("1.00"), None), (2, Some("1.00"), None)]);
+        let ev = evaluate_wire(&packs, &index);
         assert!(ev.caveats.iter().any(|c| c.contains("Colour balancing")));
         assert!(
             ev.caveats
@@ -652,14 +782,14 @@ mod tests {
     fn a_configuration_with_nothing_to_roll_is_worth_nothing_rather_than_nan() {
         // No variants at all, and a slot naming a sheet that isn't stored.
         let empty = vec![pack(1, config(vec![], vec![]))];
-        let ev = evaluate(&empty, &index(vec![]));
+        let ev = evaluate_wire(&empty, &index(&[]));
         assert_eq!(ev.ev_usd, "0.00");
         assert_eq!(ev.packs[0].cards_per_pack, 0.0);
         assert_eq!(ev.packs[0].priced_share, 0.0);
         assert!(ev.packs[0].slots.is_empty());
 
         let dangling = vec![pack(1, config(vec![variant(1, &[("nope", 3)])], vec![]))];
-        let ev = evaluate(&dangling, &index(vec![]));
+        let ev = evaluate_wire(&dangling, &index(&[]));
         assert!(
             ev.packs[0].slots.is_empty(),
             "a slot naming a sheet the ingest didn't store is skipped, not guessed at"
@@ -678,11 +808,8 @@ mod tests {
                 vec![sheet("common", false, 0, &[(1, 0), (2, 0)])],
             ),
         )];
-        let index = index(vec![
-            priced_card(1, Some("1.00"), None),
-            priced_card(2, Some("1.00"), None),
-        ]);
-        let ev = evaluate(&packs, &index);
+        let index = index(&[(1, Some("1.00"), None), (2, Some("1.00"), None)]);
+        let ev = evaluate_wire(&packs, &index);
         assert_eq!(ev.ev_usd, "0.00");
         assert!((ev.packs[0].cards_per_pack - 2.0).abs() < 1e-9);
         assert_eq!(ev.packs[0].slots[0].priced_share, 0.0);

@@ -66,7 +66,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 
 use crate::entities::booster_config::Variant;
@@ -338,37 +338,36 @@ pub(super) struct ResolvedPack {
     pub config: ResolvedConfig,
 }
 
-/// The catalog rows every sheet card resolves to, with its prices already parsed to cents
-/// once — a card sits on several sheets and is read once per slot, so parsing the decimal
-/// string per lookup would be the read's hot loop.
+/// The **prices** of every card a product's sheets name, parsed to cents once.
+///
+/// Deliberately not the card *rows*. A request has to price every card on every sheet — a
+/// product opening play and collector boosters names a couple of thousand — but only ever
+/// renders a few dozen of them: at most twelve top contributors per slot, and at most
+/// [`MAX_CARDS_PER_OPENING`] dealt cards. So the loader reads three columns here and fetches
+/// whole rows afterwards, for the ids an engine actually put on the wire ([`ResolvedRead`]).
+/// Parsing the stored decimal per lookup would be the read's hot loop — a card sits on
+/// several sheets and is read once per slot — so it happens once, here.
 pub(super) struct CardIndex {
-    cards: HashMap<i32, IndexedCard>,
-}
-
-struct IndexedCard {
-    model: card::Model,
-    usd: Option<i128>,
-    usd_foil: Option<i128>,
+    prices: HashMap<i32, (Option<i128>, Option<i128>)>,
 }
 
 impl CardIndex {
-    fn new(models: Vec<card::Model>) -> Self {
-        let cards = models
+    /// Build from the `(id, price_usd, price_usd_foil)` tuples the loader's first pass
+    /// selected.
+    fn from_price_rows(rows: Vec<(i32, Option<String>, Option<String>)>) -> Self {
+        let prices = rows
             .into_iter()
-            .map(|model| {
-                let usd = price_cents(model.price_usd.as_deref());
-                let usd_foil = price_cents(model.price_usd_foil.as_deref());
+            .map(|(id, usd, usd_foil)| {
                 (
-                    model.id,
-                    IndexedCard {
-                        model,
-                        usd,
-                        usd_foil,
-                    },
+                    id,
+                    (
+                        price_cents(usd.as_deref()),
+                        price_cents(usd_foil.as_deref()),
+                    ),
                 )
             })
             .collect();
-        Self { cards }
+        Self { prices }
     }
 
     /// The price a sheet values this card at, in cents: the foil price on a foil sheet, the
@@ -376,22 +375,21 @@ impl CardIndex {
     /// foil sheet deals foils, and pricing one at its non-foil price would be a different
     /// card's price.
     pub(super) fn price_cents(&self, id: i32, foil: bool) -> Option<i128> {
-        let entry = self.cards.get(&id)?;
-        if foil { entry.usd_foil } else { entry.usd }
+        let (usd, usd_foil) = self.prices.get(&id)?;
+        if foil { *usd_foil } else { *usd }
     }
 
-    /// The card's wire payload. Cloned: one card can be the top pull of several slots, and
-    /// a `fixed` sheet or an `allow_duplicates` draw can deal the same printing twice.
-    pub(super) fn response(&self, id: i32) -> Option<CardResponse> {
-        self.cards
-            .get(&id)
-            .map(|entry| CardResponse::from(entry.model.clone()))
-    }
-
+    /// Whether the catalog still holds this card. A sheet card that isn't here was dropped
+    /// by a re-import since the sync wrote the sheet; the loader filters those out so
+    /// neither engine can plan a card it will then fail to render.
     fn contains(&self, id: i32) -> bool {
-        self.cards.contains_key(&id)
+        self.prices.contains_key(&id)
     }
 }
+
+/// The catalog payloads for the cards an engine's plan names, keyed by internal id — what
+/// the second pass loads and what a plan is rendered against.
+pub(super) type CardResponses = HashMap<i32, CardResponse>;
 
 // ---------- Shared caveat material ----------
 
@@ -467,9 +465,20 @@ pub(super) fn usd(cents: f64) -> String {
 /// parsing it a second time to build the [`ResolvedSheet`].
 type DecodedSheet = (booster_sheet::Model, Vec<(i32, u32)>);
 
-/// Load everything the two engines need for one product: the boosters one copy opens (in
-/// `sealed_packs` order — configuration id ascending, which is also the opening order), and
-/// every catalog card their sheets name.
+/// What one product's boosters resolve to: the packs one copy opens (in `sealed_packs`
+/// order — configuration id ascending, which is also the opening order) and the prices of
+/// every card their sheets name.
+///
+/// This is the **first** of the read's two passes. The second ([`load_card_responses`])
+/// fetches whole card rows, and only for the ids the engine's plan puts on the wire.
+pub(super) struct ResolvedRead {
+    pub packs: Vec<ResolvedPack>,
+    pub index: CardIndex,
+}
+
+/// Load everything the two engines need to *compute* for one product: the boosters one copy
+/// opens, and the price of every catalog card their sheets name — three columns per card,
+/// never the whole row.
 ///
 /// A sheet card whose row has since vanished is dropped from the sheet **but its weight
 /// stays in `total_weight`**, exactly as the ingest treats a card it couldn't resolve, so a
@@ -479,7 +488,7 @@ async fn load_boosters(
     state: &AppState,
     game: &str,
     product_id: i32,
-) -> Result<(Vec<ResolvedPack>, CardIndex), AppError> {
+) -> Result<ResolvedRead, AppError> {
     let packs = SealedPack::find()
         .filter(sealed_pack::Column::Game.eq(game))
         .filter(sealed_pack::Column::ProductId.eq(product_id))
@@ -487,7 +496,10 @@ async fn load_boosters(
         .all(&state.db)
         .await?;
     if packs.is_empty() {
-        return Ok((Vec::new(), CardIndex::new(Vec::new())));
+        return Ok(ResolvedRead {
+            packs: Vec::new(),
+            index: CardIndex::from_price_rows(Vec::new()),
+        });
     }
 
     let config_ids: Vec<i32> = packs.iter().map(|p| p.config_id).collect();
@@ -522,16 +534,26 @@ async fn load_boosters(
             .push((row, cards));
     }
 
-    let mut models: Vec<card::Model> = Vec::with_capacity(wanted.len());
+    // Prices only, in chunks under the bind limit. `select_only` matters: a `cards` row is
+    // ~70 columns and a big product names thousands of them, so pulling whole rows here to
+    // read two decimal strings was the read's dominant cost — and every one of those rows
+    // was then dropped, since the wire carries a few dozen cards at most.
+    let mut price_rows: Vec<(i32, Option<String>, Option<String>)> =
+        Vec::with_capacity(wanted.len());
     for chunk in wanted.chunks(SHEET_CARDS_IN_CHUNK) {
-        let mut rows = Card::find()
+        let mut rows: Vec<(i32, Option<String>, Option<String>)> = Card::find()
+            .select_only()
+            .column(card::Column::Id)
+            .column(card::Column::PriceUsd)
+            .column(card::Column::PriceUsdFoil)
             .filter(card::Column::Game.eq(game))
             .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .into_tuple()
             .all(&state.db)
             .await?;
-        models.append(&mut rows);
+        price_rows.append(&mut rows);
     }
-    let index = CardIndex::new(models);
+    let index = CardIndex::from_price_rows(price_rows);
 
     let resolved = packs
         .into_iter()
@@ -568,7 +590,35 @@ async fn load_boosters(
         })
         .collect();
 
-    Ok((resolved, index))
+    Ok(ResolvedRead {
+        packs: resolved,
+        index,
+    })
+}
+
+/// The read's **second** pass: the full catalog rows for the cards an engine's plan names,
+/// dressed for the wire. A plan holds a few dozen ids at most, so this is one small chunked
+/// query rather than the thousands of rows the sheets themselves cover.
+///
+/// A card whose row vanished between the two passes simply isn't in the map, and the plan
+/// drops that line — the same tolerance every card link in the catalog takes.
+async fn load_card_responses(
+    state: &AppState,
+    game: &str,
+    ids: &[i32],
+) -> Result<CardResponses, AppError> {
+    let mut responses = CardResponses::with_capacity(ids.len());
+    for chunk in ids.chunks(SHEET_CARDS_IN_CHUNK) {
+        let rows = Card::find()
+            .filter(card::Column::Game.eq(game))
+            .filter(card::Column::Id.is_in(chunk.iter().copied()))
+            .all(&state.db)
+            .await?;
+        for row in rows {
+            responses.insert(row.id, CardResponse::from(row));
+        }
+    }
+    Ok(responses)
 }
 
 // ---------- Handlers ----------
@@ -601,13 +651,17 @@ pub async fn product_ev(
 ) -> Result<Json<DataBody<Option<ProductEv>>>, AppError> {
     require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
-    let (packs, index) = load_boosters(&state, &game, product.id).await?;
-    let data = if packs.is_empty() {
-        None
-    } else {
-        Some(ev::evaluate(&packs, &index))
-    };
-    Ok(Json(DataBody { data }))
+    let read = load_boosters(&state, &game, product.id).await?;
+    if read.packs.is_empty() {
+        return Ok(Json(DataBody { data: None }));
+    }
+    // The maths runs on prices alone and names the handful of cards its `top` lists quote;
+    // only those get their full catalog row fetched.
+    let plan = ev::evaluate(&read.packs, &read.index);
+    let responses = load_card_responses(&state, &game, &plan.card_ids()).await?;
+    Ok(Json(DataBody {
+        data: Some(plan.render(&responses)),
+    }))
 }
 
 /// Open a sealed product
@@ -647,14 +701,17 @@ pub async fn open_product(
 ) -> Result<Response, AppError> {
     require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
-    let (packs, index) = load_boosters(&state, &game, product.id).await?;
+    let read = load_boosters(&state, &game, product.id).await?;
 
     let seedless = params.seed.is_none();
     let seed = params.seed.unwrap_or_else(rand::random::<u32>);
     let copies = params.copies.unwrap_or(1);
-    let opening = open::open_packs(&packs, &index, seed, copies)?;
+    // The draw is decided from the sheets and the seed; the cards it dealt — bounded by
+    // `MAX_CARDS_PER_OPENING`, and a fresh roll on every click — are the only rows fetched.
+    let plan = open::open_packs(&read.packs, &read.index, seed, copies)?;
+    let responses = load_card_responses(&state, &game, &plan.card_ids()).await?;
 
-    let mut response = Json(opening).into_response();
+    let mut response = Json(plan.render(&responses)).into_response();
     if seedless {
         response.headers_mut().insert(
             header::CACHE_CONTROL,
@@ -672,13 +729,26 @@ pub(super) mod test_support {
     use super::*;
     use crate::test_support::card_model;
 
-    /// A card row with a price, so a fixture can state exactly what a pull is worth.
-    pub(super) fn priced_card(id: i32, usd: Option<&str>, usd_foil: Option<&str>) -> card::Model {
-        card::Model {
-            price_usd: usd.map(str::to_string),
-            price_usd_foil: usd_foil.map(str::to_string),
-            ..card_model(id)
-        }
+    /// A price index straight from `(card id, usd, usd_foil)`. The engines read nothing but
+    /// prices, so their tests never need a card row to compute against — which is the whole
+    /// point of the loader's first pass.
+    pub(super) fn index(prices: &[(i32, Option<&str>, Option<&str>)]) -> CardIndex {
+        CardIndex::from_price_rows(
+            prices
+                .iter()
+                .map(|(id, usd, usd_foil)| {
+                    (*id, usd.map(str::to_string), usd_foil.map(str::to_string))
+                })
+                .collect(),
+        )
+    }
+
+    /// The stub payload map a plan is rendered against — one default catalog row per id,
+    /// standing in for the loader's second pass. `Card.id` on the wire is `ext-<id>`.
+    pub(super) fn responses(ids: &[i32]) -> CardResponses {
+        ids.iter()
+            .map(|&id| (id, CardResponse::from(card_model(id))))
+            .collect()
     }
 
     pub(super) fn sheet(
@@ -706,10 +776,6 @@ pub(super) mod test_support {
                 .map(|(name, count)| ((*name).to_string(), *count))
                 .collect(),
         }
-    }
-
-    pub(super) fn index(models: Vec<card::Model>) -> CardIndex {
-        CardIndex::new(models)
     }
 
     pub(super) fn pack(quantity: u32, config: ResolvedConfig) -> ResolvedPack {
@@ -798,10 +864,7 @@ mod tests {
 
     #[test]
     fn a_foil_sheet_prices_the_foil_finish_and_never_falls_back() {
-        let index = index(vec![
-            priced_card(1, Some("2.00"), Some("9.00")),
-            priced_card(2, Some("1.00"), None),
-        ]);
+        let index = index(&[(1, Some("2.00"), Some("9.00")), (2, Some("1.00"), None)]);
         assert_eq!(index.price_cents(1, false), Some(200));
         assert_eq!(index.price_cents(1, true), Some(900));
         // Priced regular, unpriced foil: a foil sheet reports no price rather than

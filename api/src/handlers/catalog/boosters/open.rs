@@ -29,10 +29,103 @@ use crate::error::AppError;
 use crate::handlers::shared::rng::split_mix64;
 use crate::handlers::shared::valuation::{format_cents, price_cents};
 
+use std::collections::HashSet;
+
 use super::{
-    CardIndex, MAX_CARDS_PER_OPENING, MAX_PACKS_PER_OPENING, OpenedCard, OpenedPack, PackOpening,
-    ResolvedConfig, ResolvedPack, any_balance_colors, unaccounted_sheets,
+    CardIndex, CardResponses, MAX_CARDS_PER_OPENING, MAX_PACKS_PER_OPENING, OpenedCard, OpenedPack,
+    PackOpening, ResolvedConfig, ResolvedPack, any_balance_colors, unaccounted_sheets,
 };
+
+/// One dealt card, before its catalog payload is fetched: everything [`OpenedCard`] carries
+/// except the card itself. An opening deals at most [`MAX_CARDS_PER_OPENING`] of these and a
+/// fresh seed on every click, so fetching whole `cards` rows for the sheets it drew *from*
+/// — thousands of them — to render a few dozen would be the cost of every roll.
+struct DealtCard {
+    card_id: i32,
+    foil: bool,
+    sheet: String,
+    price_usd: Option<String>,
+}
+
+impl DealtCard {
+    /// Attach the catalog payload. `None` when the card row has gone between the loader's
+    /// two passes; the card then simply isn't in the pack, as before.
+    fn render(self, responses: &CardResponses) -> Option<OpenedCard> {
+        let card = responses.get(&self.card_id)?.clone();
+        Some(OpenedCard {
+            card,
+            foil: self.foil,
+            sheet: self.sheet,
+            price_usd: self.price_usd,
+        })
+    }
+}
+
+/// One dealt pack — [`OpenedPack`], undressed.
+struct PlannedPack {
+    set_code: String,
+    booster_code: String,
+    name: Option<String>,
+    variant: u32,
+    cards: Vec<DealtCard>,
+    value_usd: String,
+}
+
+/// A finished opening that still names its cards by internal id. The handler asks it which
+/// cards it dealt ([`OpeningPlan::card_ids`]), fetches exactly those rows, and renders.
+pub(super) struct OpeningPlan {
+    seed: u32,
+    copies: u32,
+    packs: Vec<PlannedPack>,
+    value_usd: String,
+    priced_count: u32,
+    unpriced_count: u32,
+    caveats: Vec<String>,
+}
+
+impl OpeningPlan {
+    /// Every distinct card this opening dealt, in the order it was dealt — bounded by
+    /// [`MAX_CARDS_PER_OPENING`], and usually far below it once the duplicates a box deals
+    /// across its packs fold together.
+    pub(super) fn card_ids(&self) -> Vec<i32> {
+        let mut seen: HashSet<i32> = HashSet::new();
+        let mut ids: Vec<i32> = Vec::new();
+        for card in self.packs.iter().flat_map(|pack| pack.cards.iter()) {
+            if seen.insert(card.card_id) {
+                ids.push(card.card_id);
+            }
+        }
+        ids
+    }
+
+    /// Dress the opening with the catalog rows the second pass loaded.
+    pub(super) fn render(self, responses: &CardResponses) -> PackOpening {
+        PackOpening {
+            seed: self.seed,
+            copies: self.copies,
+            packs: self
+                .packs
+                .into_iter()
+                .map(|pack| OpenedPack {
+                    set_code: pack.set_code,
+                    booster_code: pack.booster_code,
+                    name: pack.name,
+                    variant: pack.variant,
+                    cards: pack
+                        .cards
+                        .into_iter()
+                        .filter_map(|card| card.render(responses))
+                        .collect(),
+                    value_usd: pack.value_usd,
+                })
+                .collect(),
+            value_usd: self.value_usd,
+            priced_count: self.priced_count,
+            unpriced_count: self.unpriced_count,
+            caveats: self.caveats,
+        }
+    }
+}
 
 /// The generator state for the pack at ordinal `i` of the whole opening. Deriving it per
 /// pack rather than walking one stream is what makes an opening prefix-stable across
@@ -82,7 +175,7 @@ fn largest_variant(config: &ResolvedConfig) -> u64 {
 }
 
 /// Deal one pack, appending its cards. Returns the index of the variant it rolled.
-fn open_one(config: &ResolvedConfig, index: &CardIndex, state: &mut u64) -> (u32, Vec<OpenedCard>) {
+fn open_one(config: &ResolvedConfig, index: &CardIndex, state: &mut u64) -> (u32, Vec<DealtCard>) {
     let mut cards = Vec::new();
     let denominator = config.variant_denominator();
     if config.variants.is_empty() || denominator == 0 {
@@ -137,20 +230,11 @@ fn open_one(config: &ResolvedConfig, index: &CardIndex, state: &mut u64) -> (u32
     (variant_index.min(u32::MAX as usize) as u32, cards)
 }
 
-/// Append one dealt card, skipping a card whose catalog row has gone (there is nothing to
-/// render, and the loader already dropped those from the sheets — this is belt and braces).
-fn push_card(
-    cards: &mut Vec<OpenedCard>,
-    index: &CardIndex,
-    card_id: i32,
-    foil: bool,
-    sheet: &str,
-) {
-    let Some(card) = index.response(card_id) else {
-        return;
-    };
-    cards.push(OpenedCard {
-        card,
+/// Append one dealt card, priced off the sheet's finish. Its catalog payload is fetched
+/// later, for the ids the finished plan names.
+fn push_card(cards: &mut Vec<DealtCard>, index: &CardIndex, card_id: i32, foil: bool, sheet: &str) {
+    cards.push(DealtCard {
+        card_id,
         foil,
         sheet: sheet.to_string(),
         price_usd: index.price_cents(card_id, foil).map(format_cents),
@@ -169,7 +253,7 @@ pub(super) fn open_packs(
     index: &CardIndex,
     seed: u32,
     copies: u32,
-) -> Result<PackOpening, AppError> {
+) -> Result<OpeningPlan, AppError> {
     if packs.is_empty() {
         return Err(AppError::Validation(
             "this product has no booster data to open".to_string(),
@@ -206,7 +290,7 @@ pub(super) fn open_packs(
         )));
     }
 
-    let mut opened: Vec<OpenedPack> = Vec::new();
+    let mut opened: Vec<PlannedPack> = Vec::new();
     let mut ordinal: u32 = 0;
     let mut value_cents: i128 = 0;
     let mut priced_count: u32 = 0;
@@ -236,7 +320,7 @@ pub(super) fn open_packs(
                 }
                 value_cents += pack_cents;
 
-                opened.push(OpenedPack {
+                opened.push(PlannedPack {
                     set_code: pack.config.set_code.clone(),
                     booster_code: pack.config.code.clone(),
                     name: pack.config.name.clone(),
@@ -249,7 +333,7 @@ pub(super) fn open_packs(
         }
     }
 
-    Ok(PackOpening {
+    Ok(OpeningPlan {
         seed,
         copies,
         packs: opened,
@@ -288,13 +372,28 @@ fn caveats(packs: &[ResolvedPack], unpriced_count: u32) -> Vec<String> {
 mod tests {
     use super::super::test_support::*;
     use super::*;
-    use crate::entities::card;
 
-    /// Eight priced cards, ids 1..=8.
-    fn cards() -> Vec<card::Model> {
-        (1..=8)
-            .map(|id| priced_card(id, Some("1.00"), Some("5.00")))
-            .collect()
+    /// Eight priced cards, ids 1..=8 — prices only, which is all the draw reads.
+    fn priced() -> Vec<(i32, Option<&'static str>, Option<&'static str>)> {
+        (1..=8).map(|id| (id, Some("1.00"), Some("5.00"))).collect()
+    }
+
+    fn cards() -> CardIndex {
+        index(&priced())
+    }
+
+    /// Deal *and* dress, the way the handler does: the plan names the cards it dealt by id,
+    /// the second pass turns those ids into payloads. Every assertion below is on the wire
+    /// shape, so it pins what a client actually receives.
+    fn open_wire(
+        packs: &[ResolvedPack],
+        index: &CardIndex,
+        seed: u32,
+        copies: u32,
+    ) -> Result<PackOpening, AppError> {
+        let plan = open_packs(packs, index, seed, copies)?;
+        let responses = responses(&plan.card_ids());
+        Ok(plan.render(&responses))
     }
 
     /// One booster: a single variant taking three commons off a six-card sheet plus one
@@ -330,9 +429,9 @@ mod tests {
     #[test]
     fn the_same_seed_deals_the_same_cards() {
         let packs = one_booster(4);
-        let index = index(cards());
-        let a = open_packs(&packs, &index, 7, 1).expect("opens");
-        let b = open_packs(&packs, &index, 7, 1).expect("opens");
+        let index = cards();
+        let a = open_wire(&packs, &index, 7, 1).expect("opens");
+        let b = open_wire(&packs, &index, 7, 1).expect("opens");
         assert_eq!(dealt(&a), dealt(&b));
         assert_eq!(a.value_usd, b.value_usd);
         assert_eq!(a.seed, 7);
@@ -341,10 +440,10 @@ mod tests {
     #[test]
     fn different_seeds_deal_different_cards() {
         let packs = one_booster(1);
-        let index = index(cards());
+        let index = cards();
         let runs: std::collections::HashSet<Vec<Vec<String>>> = (1..=20u32)
             .map(|seed| {
-                open_packs(&packs, &index, seed, 1)
+                open_wire(&packs, &index, seed, 1)
                     .expect("opens")
                     .packs
                     .iter()
@@ -361,9 +460,9 @@ mod tests {
     #[test]
     fn opening_more_copies_extends_the_same_run() {
         let packs = one_booster(3);
-        let index = index(cards());
-        let one = open_packs(&packs, &index, 42, 1).expect("opens");
-        let four = open_packs(&packs, &index, 42, 4).expect("opens");
+        let index = cards();
+        let one = open_wire(&packs, &index, 42, 1).expect("opens");
+        let four = open_wire(&packs, &index, 42, 4).expect("opens");
         assert_eq!(one.packs.len(), 3);
         assert_eq!(four.packs.len(), 12);
         assert_eq!(
@@ -376,9 +475,9 @@ mod tests {
     #[test]
     fn a_slot_never_repeats_a_card_unless_the_sheet_allows_it() {
         let packs = one_booster(1);
-        let index = index(cards());
+        let index = cards();
         for seed in 0..50u32 {
-            let opening = open_packs(&packs, &index, seed, 1).expect("opens");
+            let opening = open_wire(&packs, &index, seed, 1).expect("opens");
             let commons: Vec<&str> = opening.packs[0]
                 .cards
                 .iter()
@@ -406,8 +505,8 @@ mod tests {
             1,
             config(vec![variant(1, &[("foil", 4)])], vec![foil]),
         )];
-        let index = index(cards());
-        let opening = open_packs(&packs, &index, 3, 1).expect("opens");
+        let index = cards();
+        let opening = open_wire(&packs, &index, 3, 1).expect("opens");
         assert_eq!(opening.packs[0].cards.len(), 4);
         assert!(
             opening.packs[0].cards.iter().all(|c| c.foil),
@@ -422,7 +521,7 @@ mod tests {
             1,
             config(vec![variant(1, &[("foil", 4)])], vec![once]),
         )];
-        let opening = open_packs(&packs, &index, 3, 1).expect("opens");
+        let opening = open_wire(&packs, &index, 3, 1).expect("opens");
         assert_eq!(
             opening.packs[0].cards.len(),
             2,
@@ -438,9 +537,9 @@ mod tests {
             1,
             config(vec![variant(1, &[("land", 2)])], vec![land]),
         )];
-        let index = index(cards());
+        let index = cards();
         for seed in [0u32, 1, 99, 12345] {
-            let opening = open_packs(&packs, &index, seed, 1).expect("opens");
+            let opening = open_wire(&packs, &index, seed, 1).expect("opens");
             assert_eq!(
                 opening.packs[0]
                     .cards
@@ -467,10 +566,10 @@ mod tests {
                 ],
             ),
         )];
-        let index = index(cards());
+        let index = cards();
         let mut heavy = 0;
         for seed in 0..40u32 {
-            let opening = open_packs(&packs, &index, seed, 1).expect("opens");
+            let opening = open_wire(&packs, &index, seed, 1).expect("opens");
             let variant = opening.packs[0].variant;
             assert!(variant < 2, "a real variant index");
             if variant == 0 {
@@ -485,12 +584,12 @@ mod tests {
 
     #[test]
     fn the_value_is_what_this_run_dealt_and_unpriced_pulls_count_as_zero() {
-        let mut models = cards();
+        let mut prices = priced();
         // Card 3 has no price at all.
-        models[2] = priced_card(3, None, None);
+        prices[2] = (3, None, None);
         let packs = one_booster(1);
-        let index = index(models);
-        let opening = open_packs(&packs, &index, 11, 1).expect("opens");
+        let index = index(&prices);
+        let opening = open_wire(&packs, &index, 11, 1).expect("opens");
         let priced: i128 = opening.packs[0]
             .cards
             .iter()
@@ -517,7 +616,7 @@ mod tests {
     #[test]
     fn a_configuration_with_nothing_to_roll_opens_empty_rather_than_failing() {
         let packs = vec![pack(1, config(vec![], vec![]))];
-        let opening = open_packs(&packs, &index(cards()), 5, 1).expect("opens");
+        let opening = open_wire(&packs, &cards(), 5, 1).expect("opens");
         assert_eq!(opening.packs.len(), 1);
         assert_eq!(opening.packs[0].variant, 0);
         assert!(opening.packs[0].cards.is_empty());
@@ -532,27 +631,27 @@ mod tests {
                 vec![sheet("zero", false, 0, &[(1, 0), (2, 0)])],
             ),
         )];
-        let opening = open_packs(&packs, &index(cards()), 5, 1).expect("opens");
+        let opening = open_wire(&packs, &cards(), 5, 1).expect("opens");
         assert!(opening.packs[0].cards.is_empty());
     }
 
     #[test]
     fn the_bounds_are_refused_before_anything_is_drawn() {
-        let index = index(cards());
+        let index = cards();
 
         // No booster data at all.
-        let err = open_packs(&[], &index, 1, 1).expect_err("no data");
+        let err = open_wire(&[], &index, 1, 1).expect_err("no data");
         assert!(matches!(&err, AppError::Validation(m) if m.contains("no booster data")));
 
         // Zero copies.
         let packs = one_booster(1);
-        let err = open_packs(&packs, &index, 1, 0).expect_err("zero copies");
+        let err = open_wire(&packs, &index, 1, 0).expect_err("zero copies");
         assert!(matches!(&err, AppError::Validation(m) if m.contains("at least 1")));
 
         // A booster box is exactly the pack limit; a case of two isn't.
         let box_of_36 = one_booster(MAX_PACKS_PER_OPENING);
-        assert!(open_packs(&box_of_36, &index, 1, 1).is_ok());
-        let err = open_packs(&box_of_36, &index, 1, 2).expect_err("too many packs");
+        assert!(open_wire(&box_of_36, &index, 1, 1).is_ok());
+        let err = open_wire(&box_of_36, &index, 1, 2).expect_err("too many packs");
         assert!(
             matches!(&err, AppError::Validation(m) if m.contains("packs at once is too many")),
             "{err:?}"
@@ -566,7 +665,7 @@ mod tests {
                 vec![sheet("common", false, 6, &[(1, 1), (2, 1)])],
             ),
         )];
-        let err = open_packs(&fat, &index, 1, 1).expect_err("too many cards");
+        let err = open_wire(&fat, &index, 1, 1).expect_err("too many cards");
         assert!(
             matches!(&err, AppError::Validation(m) if m.contains("the limit is 1200")),
             "{err:?}"
