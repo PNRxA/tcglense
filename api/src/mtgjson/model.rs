@@ -211,7 +211,10 @@ pub struct BoosterVariant {
     /// there is no order to honour — [`super::boosters`] sorts it by sheet name).
     #[serde(default, deserialize_with = "map_entries")]
     pub contents: Vec<(Box<str>, u32)>,
-    #[serde(default)]
+    /// This variant's share of the configuration's total. Read through the same tolerance
+    /// as a card's weight ([`tolerant_total`]): a `null`, float or negative costs this
+    /// variant its weight (a weight-0 variant is dropped downstream), never the document.
+    #[serde(default, deserialize_with = "tolerant_weight")]
     pub weight: u64,
 }
 
@@ -231,9 +234,10 @@ pub struct Sheet {
     /// The sheet is a fixed list — a slot takes its cards **in order**, not at random.
     #[serde(default)]
     pub fixed: bool,
-    /// The denominator a card's weight is a share of. Absent on some configurations, in
-    /// which case the parsed weights are summed instead.
-    #[serde(default, rename = "totalWeight")]
+    /// The denominator a card's weight is a share of. Absent on some configurations — and
+    /// read as absent when stated as `null`, zero, negative or non-finite
+    /// ([`tolerant_total`]) — in which case the parsed weights are summed instead.
+    #[serde(default, rename = "totalWeight", deserialize_with = "tolerant_total")]
     pub total_weight: Option<u64>,
     /// `uuid -> weight`, read as an ordered entry list rather than a map: document-wide the
     /// sheets hold on the order of a million entries, and a `HashMap` was pure table
@@ -319,6 +323,55 @@ impl<'de> Deserialize<'de> for Weight {
         }
         de.deserialize_any(WeightVisitor)
     }
+}
+
+/// A **total** stated by upstream — a variant's weight or a sheet's `totalWeight` — read
+/// with the same tolerance as [`Weight`]: `null`, a float, a negative or a zero must cost
+/// the field its value, not the whole catalog its sync. `None` for anything that isn't a
+/// positive number (the callers fall back: a weight-0 variant is dropped, a sheet with no
+/// total sums its weights), a float truncated to its integer part.
+fn tolerant_total<'de, D>(de: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct TotalVisitor;
+    impl<'de> serde::de::Visitor<'de> for TotalVisitor {
+        type Value = Option<u64>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a total weight")
+        }
+        fn visit_u64<E>(self, value: u64) -> Result<Option<u64>, E> {
+            Ok((value > 0).then_some(value))
+        }
+        fn visit_i64<E>(self, value: i64) -> Result<Option<u64>, E> {
+            Ok(u64::try_from(value).ok().filter(|&v| v > 0))
+        }
+        fn visit_f64<E>(self, value: f64) -> Result<Option<u64>, E> {
+            Ok((value.is_finite() && value >= 1.0).then(|| value.min(u64::MAX as f64) as u64))
+        }
+        fn visit_unit<E>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_none<E>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_some<D2>(self, de: D2) -> Result<Option<u64>, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            de.deserialize_any(TotalVisitor)
+        }
+    }
+    de.deserialize_any(TotalVisitor)
+}
+
+/// [`tolerant_total`] for a field that is a plain `u64` on the struct: anything that isn't
+/// a positive number reads as `0`.
+fn tolerant_weight<'de, D>(de: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(tolerant_total(de)?.unwrap_or(0))
 }
 
 /// A precon decklist: its three boards (each card by `uuid`, with a count + foil flag) plus
@@ -1100,6 +1153,42 @@ mod tests {
         assert_eq!(weights["u-neg"], 0);
         assert_eq!(weights["u-float"], 2);
         assert_eq!(weights["u-huge"], u32::MAX, "an absurd weight saturates");
+    }
+
+    /// The same tolerance for the two totals beside the card weights: a variant's `weight`
+    /// and a sheet's `totalWeight` were the only booster numbers still parsed as strict
+    /// integers, so one upstream `null` or float there would have failed the whole document
+    /// — and every pass that shares its parse.
+    #[test]
+    fn variant_and_sheet_totals_are_tolerant_not_fatal() {
+        let config: BoosterConfig = serde_json::from_str(
+            r#"{
+                "boosters": [
+                    { "contents": { "a": 1 }, "weight": null },
+                    { "contents": { "a": 1 }, "weight": 3.0 },
+                    { "contents": { "a": 1 }, "weight": -2 },
+                    { "contents": { "a": 1 }, "weight": 7 }
+                ],
+                "sheets": {
+                    "f": { "cards": { "u": 1 }, "totalWeight": 3600.0 },
+                    "n": { "cards": { "u": 1 }, "totalWeight": null },
+                    "z": { "cards": { "u": 1 }, "totalWeight": 0 },
+                    "neg": { "cards": { "u": 1 }, "totalWeight": -4 },
+                    "ok": { "cards": { "u": 1 }, "totalWeight": 12 }
+                }
+            }"#,
+        )
+        .expect("odd totals must not fail the document");
+        let weights: Vec<u64> = config.boosters.iter().map(|v| v.weight).collect();
+        assert_eq!(weights, vec![0, 3, 0, 7]);
+        assert_eq!(config.sheets["f"].total_weight, Some(3600));
+        assert_eq!(config.sheets["n"].total_weight, None);
+        assert_eq!(
+            config.sheets["z"].total_weight, None,
+            "a zero total is no total"
+        );
+        assert_eq!(config.sheets["neg"].total_weight, None);
+        assert_eq!(config.sheets["ok"].total_weight, Some(12));
     }
 
     #[test]

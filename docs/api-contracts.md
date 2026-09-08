@@ -757,8 +757,9 @@ the lowercased set code (`blb`) and `booster_code` MTGJSON's booster key (`play`
 an expectation, fractional when the variants differ. `ev_usd` is 2-dp USD for **one** pack.
 `priced_share` is `0..1`, the share of the pack's expected picks that land on a card with a market
 price (everything else counts as $0). `slots` is one entry per sheet the pack draws from, in the
-order the sheets first appear in the configuration's variants (stable, and the order the pack reads
-in); `top` is the pack's ten biggest contributors.
+order the sheets first appear in the configuration's variants (stable — in practice sheet-name
+order, since the ingest sorts an unordered upstream JSON object); `top` is the pack's ten biggest
+contributors.
 
 `SlotEv = { sheet, foil, picks, ev_usd, card_count, priced_share, top: PackCardOdds[] }` is what one
 **sheet** contributes to an average pack. `sheet` is upstream's own sheet name (`common`,

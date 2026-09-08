@@ -193,8 +193,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (public mode = a `handle` prop) and the read-only `PublicProductBrowseView` (a `readonly`
   `ProductGrid`, owner's counts as a static badge).
 - **No number on a sealed product's page is a count of a copy's physical cards** — with two
-  exceptions, both per *pack* and both expectations (the booster bullet below). Nothing the card
-  sections carry is such a datum, so none of them may be worded as containment. Of the
+  exceptions, a per-pack *expectation* and one seeded *simulation*, both qualified on the wire
+  (the booster bullet below). Nothing the card sections carry is such a datum, so none of them
+  may be worded as containment. Of the
   card-section keys only `contains` is a guarantee; `exclusive` is a **subset** of the
   `booster` pull pool (never added to it) and `variable` is a randomized configuration, so a
   total summed across sections is a *pool* size —
@@ -227,8 +228,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   by ProductCards and ProductOverview so the chips can never count a pool the sections hid.
   An inherited `contains` stays visible (hiding a guarantee loses information); the flat
   (`?section`-less) `/cards` list stays whole-product and per-card-deduped for API consumers.
-  **The two exceptions are expectations, and they ride the same seam.** Since #682 the API does
-  hold each booster's own sheet configuration, so `PackEv.cards_per_pack` — the cards an
+  **The two exceptions are an expectation and a simulation, and they ride the same seam.**
+  Since #682 the API does hold each booster's own sheet configuration, so
+  `PackEv.cards_per_pack` — the cards an
   **average** pack deals — and the expected values beside it are genuine per-pack numbers, the
   only ones on the page, and a `PackOpening`'s totals are one seeded roll of the dice. Neither
   may be worded as contents or as a promise, and `productCounts.ts` words both:

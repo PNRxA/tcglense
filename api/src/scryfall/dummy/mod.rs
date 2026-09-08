@@ -236,6 +236,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
     // component name so the parent's booster section reads `inherited`; rows packed in the
     // **unlisted** land pack carry that name so they render as its own named section.
     const PACK_COMPONENT: &str = "Dummy Base Set Play Booster Pack";
+    const COLLECTOR_PACK_COMPONENT: &str = "Dummy Base Set Collector Booster Pack";
     const LAND_PACK_COMPONENT: &str = "Dummy Base Set Land Pack";
     let mut seed: Vec<(String, &'static str, Membership, bool, Option<&'static str>)> = Vec::new();
     // Found in: the reprinted relic + the prerelease promo ship in the base-set bundle;
@@ -258,18 +259,20 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
             None,
         ));
     }
-    // Can be pulled from: base-set boosters. The collector box's and bundle's pools are
-    // inherited through their linked play-booster component (attributed, so their pages
-    // defer to the pack's own); the pack itself and the Universe draft box (no composition
+    // Can be pulled from: base-set boosters. The bundle's pool is inherited through its
+    // linked play-booster component (attributed, so its page defers to the pack's own); the
+    // collector box's is packed in its **unlisted** collector pack (no catalog product of
+    // its own — the same booster `seed_boosters` links the box to), so it renders as that
+    // pack's named section; the play pack itself and the Universe draft box (no composition
     // seeded — nothing to defer to) own their pools directly. The foil-only showcase is a
-    // foil pull, inherited like the rest of the box's pool.
+    // foil pull, packed like the rest of the box's pool.
     for n in 1..=10 {
         seed.push((
             format!("dummy-dmb-{n:04}"),
             "900001",
             Membership::Booster,
             false,
-            Some(PACK_COMPONENT),
+            Some(COLLECTOR_PACK_COMPONENT),
         ));
     }
     for n in 1..=5 {
@@ -302,7 +305,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
         "900001",
         Membership::Booster,
         true,
-        Some(PACK_COMPONENT),
+        Some(COLLECTOR_PACK_COMPONENT),
     ));
     // Packed in the bundle's land pack — a sub-product that is not individually sold, so
     // its cards render as their own named section on the bundle page instead of being
@@ -471,14 +474,16 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
             None,
             None,
         ),
-        // The collector booster box (900001): 12 booster packs (linked to the pack product).
+        // The collector booster box (900001): 12 collector packs — an **unlisted**
+        // sub-product (no catalog row, so no child link), matching the `collector` booster
+        // `seed_boosters` says the box opens; its pool rows are attributed to this name.
         (
             "900001",
             0,
             ComponentKind::Sealed,
-            "Dummy Base Set Play Booster Pack",
+            "Dummy Base Set Collector Booster Pack",
             12,
-            Some("900002"),
+            None,
             None,
         ),
     ];
