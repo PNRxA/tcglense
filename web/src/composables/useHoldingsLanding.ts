@@ -1,11 +1,17 @@
-import { computed, toRef, type Ref } from 'vue'
+import { computed, ref, toRef, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { UseQueryReturnType } from '@tanstack/vue-query'
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { useCurrency } from '@/composables/useCurrency'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
-import type { ApiError, CardSet, CollectionSet, CollectionSummary } from '@/lib/api'
+import type {
+  ApiError,
+  CardSet,
+  CollectionSet,
+  CollectionSummary,
+  HoldingBreakdown,
+} from '@/lib/api'
 import type { CountNoun } from '@/lib/ownership'
 
 /**
@@ -23,6 +29,14 @@ export interface HoldingLandingSurface {
   /** The held-sets hook (`useCollectionSetsQuery` / `useWishlistSetsQuery`) — the sets the
    * user holds cards in, both the default mode's list and the per-set overlay. */
   useHeldSetsQuery: (game: Ref<string>) => UseQueryReturnType<{ data: CollectionSet[] }, ApiError>
+  /** The breakdown hook (`useCollectionBreakdownQuery` / `useWishlistBreakdownQuery`,
+   * issue #680) — where the holding's value sits, for the landing's breakdown panel. The
+   * engine gates it on something being held (it is a whole-holdings scan), so the public
+   * landings, which have no breakdown read, simply leave it out. */
+  useBreakdownQuery?: (
+    game: Ref<string>,
+    opts: { enabled?: Ref<boolean> },
+  ) => UseQueryReturnType<HoldingBreakdown, ApiError>
   /** Route prefix the tiles link under (`/collection`, `/wishlist`, or a public
    * `/u/{handle}`). The engine never reads it — the view threads it into `SetGroupGrid` —
    * so it's a plain string. */
@@ -140,6 +154,21 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
   // Stats are worth showing only once something is held.
   const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
+  // The breakdown panel's query (issue #680), held back until the summary says something is
+  // held — it folds every held card server-side, so an empty holding shouldn't pay for it —
+  // AND until the panel is opened: it rests collapsed, and a collapsed panel fetches
+  // nothing. `breakdownExpanded` is the panel's `v-model:expanded`. Absent for the public
+  // landings.
+  const breakdownExpanded = ref(false)
+  const breakdownEnabled = computed(() => hasStats.value && breakdownExpanded.value)
+  const breakdownQuery = surface.useBreakdownQuery?.(game, { enabled: breakdownEnabled })
+  const breakdown = computed(() => breakdownQuery?.data.value)
+  // The panel's loading/error state, reduced here (like `activePending`/`activeError`) so the
+  // twins bind two booleans rather than unwrapping the query object; a surface with no
+  // breakdown read is simply never pending.
+  const breakdownPending = computed(() => breakdownQuery?.isPending.value ?? false)
+  const breakdownError = computed(() => breakdownQuery?.isError.value ?? false)
+
   return {
     game,
     summary,
@@ -160,5 +189,9 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
     totalValue,
     bulkValue,
     hasStats,
+    breakdown,
+    breakdownPending,
+    breakdownError,
+    breakdownExpanded,
   }
 }

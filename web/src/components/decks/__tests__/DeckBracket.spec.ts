@@ -67,7 +67,11 @@ function makeEstimate(over: Partial<DeckBracketEstimate> = {}): DeckBracketEstim
     description: 'Above precon.',
     ladder: LADDER,
     reasons: ['2 Game Changers — Rhystic Study and Smothering Tithe.'],
-    caveats: ["Two-card infinite combos aren't detected.", 'Bracket 5 (cEDH) describes intent.'],
+    caveats: [
+      "Combos aren't counted here — the deck's combos read lists the ones it can assemble. " +
+        'A deck with a two-card infinite is bracket 4, or bracket 3 if it can only do it late.',
+      'Bracket 5 (cEDH) describes intent.',
+    ],
     categories: [
       {
         signal: 'game_changer',
@@ -237,7 +241,7 @@ describe('DeckBracket', () => {
     const wrapper = await mountExpanded()
 
     expect(wrapper.text()).toContain("What this can't see")
-    expect(wrapper.text()).toContain("Two-card infinite combos aren't detected.")
+    expect(wrapper.text()).toContain("Combos aren't counted here")
   })
 
   it('renders nothing for a deck the ladder does not describe', () => {

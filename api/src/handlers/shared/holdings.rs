@@ -786,6 +786,18 @@ pub(crate) fn narrow_summary_rows<E: EntityTrait, C: ColumnTrait>(
     quantity: C,
     foil_quantity: C,
 ) -> Selector<SelectModel<HoldingSummaryRow>> {
+    select_summary_columns(query, quantity, foil_quantity).into_model::<HoldingSummaryRow>()
+}
+
+/// The column list behind [`narrow_summary_rows`], as a still-open `Select` so a wider
+/// projection can stack its own columns on top: the breakdown's
+/// [`super::breakdown::narrow_breakdown_rows`] nests a [`HoldingSummaryRow`] and adds
+/// the facet columns, and this is what keeps the two projections from drifting.
+pub(crate) fn select_summary_columns<E: EntityTrait, C: ColumnTrait>(
+    query: Select<E>,
+    quantity: C,
+    foil_quantity: C,
+) -> Select<E> {
     query
         .select_only()
         .column_as(quantity, "quantity")
@@ -798,7 +810,6 @@ pub(crate) fn narrow_summary_rows<E: EntityTrait, C: ColumnTrait>(
         .column_as(card::Column::FrameEffects, "frame_effects")
         .column_as(card::Column::BorderColor, "border_color")
         .column_as(card::Column::FullArt, "full_art")
-        .into_model::<HoldingSummaryRow>()
 }
 
 /// Fold already-fetched holdings rows (each left-joined to its card) into the

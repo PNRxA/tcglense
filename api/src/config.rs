@@ -205,6 +205,23 @@ pub struct Config {
     /// `false` to keep only the committed fallback snapshot / opt out of the outbound pull.
     /// **Not** a secret.
     pub sld_drops_import_enabled: bool,
+    /// Whether the card-sync tick also syncs the **Commander Spellbook combo database**
+    /// (issue #683) — the dataset behind the deck page's "Combos" panel and the card page's
+    /// "Combos with". Default `true`. Pulled from the dataset mirror's compact snapshot
+    /// (`/api/mirror/spellbook/combos`) unless `SYNC_FROM_UPSTREAM` is set, in which case
+    /// the upstream bulk export is fetched and parsed directly (the mirror origin's job).
+    /// ETag-gated, so an unchanged day costs one conditional request. Set `false` to opt
+    /// out of the dataset entirely (the combo reads then answer "no combo data").
+    /// **Not** a secret.
+    pub combos_sync_enabled: bool,
+    /// How often the **mirror origin** asks Commander Spellbook for the export, in days
+    /// (`COMBOS_UPSTREAM_INTERVAL_DAYS`, default 30; `0` = every card-sync tick). Their API
+    /// terms ask for sparse traffic and the dataset moves slowly, so the upstream document
+    /// is fetched (conditionally, at that) far less often than the daily tick — a
+    /// completed import younger than this is left alone. Consumers pulling the mirror's
+    /// snapshot are unaffected: that poll costs upstream nothing. A failed import retries
+    /// on the next tick regardless. **Not** a secret.
+    pub combos_upstream_interval_days: u64,
     /// Master switch for the price-alert evaluation background task (issue #525). Default
     /// `true`: the task periodically re-prices every active alert against the live catalog
     /// prices and notifies its owner (Discord / Telegram / optional email) when a
@@ -307,6 +324,11 @@ impl std::fmt::Debug for Config {
                 &self.fingerprint_import_enabled,
             )
             .field("sld_drops_import_enabled", &self.sld_drops_import_enabled)
+            .field("combos_sync_enabled", &self.combos_sync_enabled)
+            .field(
+                "combos_upstream_interval_days",
+                &self.combos_upstream_interval_days,
+            )
             // Alert knobs are not secrets (the per-user webhook/token credentials live in
             // the `alert_channels` table, redacted there, never in Config).
             .field("alerts_enabled", &self.alerts_enabled)
@@ -799,6 +821,13 @@ impl Config {
         // On by default so a self-host's Secret Lair drop titles stay fresh (pulled from the
         // mirror daily); the mirror origin ignores it (it scrapes the source itself).
         let sld_drops_import_enabled = env_bool("SLD_DROPS_IMPORT_ENABLED", true);
+        // On by default so the deck page's combo panel just works on a self-host (a
+        // conditional fetch of the mirror's compact snapshot per sync tick).
+        let combos_sync_enabled = env_bool("COMBOS_SYNC_ENABLED", true);
+        // Sparse on purpose: the source asks for it, and combos change on the order of a
+        // set release, not a day.
+        let combos_upstream_interval_days =
+            env_parse::<u64>("COMBOS_UPSTREAM_INTERVAL_DAYS").unwrap_or(30);
 
         // Price alerts (issue #525): evaluation runs by default; the email channel is
         // off by default (it costs money at scale — the free Discord/Telegram channels
@@ -871,6 +900,8 @@ impl Config {
             fingerprint_max_distance,
             fingerprint_import_enabled,
             sld_drops_import_enabled,
+            combos_sync_enabled,
+            combos_upstream_interval_days,
             alerts_enabled,
             alerts_email_enabled,
             alerts_interval_minutes,

@@ -164,7 +164,7 @@ async fn another_users_deck_is_404_never_403() {
     .await;
 
     for path in [
-        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish",
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "combos",
     ] {
         let (status, _, _) = send(
             &app,
@@ -195,7 +195,7 @@ async fn a_read_only_key_may_analyse() {
     .await;
 
     for path in [
-        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing",
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing", "combos",
     ] {
         let (status, _, body) = send(
             &app,
@@ -455,7 +455,7 @@ async fn a_shared_deck_analyses_identically_and_privately() {
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
     for path in [
-        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing",
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing", "combos",
     ] {
         let (status, headers, _) = send(
             &app,

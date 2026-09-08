@@ -127,8 +127,9 @@ catalog) is planned but not implemented.
   do no matter how many IPs it comes from — the per-user complement to the per-IP
   auth limits above. Three classes (`ratelimit/per_user.rs`'s `UserRoute`): a generous
   `general` bucket (reads/edits/batch lookups, ~300/min); a middle `analytics` bucket
-  (~30/min) for the whole-collection × full-price-history reads and the CSV export —
-  `GET …/collection/{game}/value-history`, `…/movers`, `…/export` — which read
+  (~30/min) for the whole-collection × full-price-history reads, the whole-holdings
+  `breakdown` fold (issue #680, the wish-list twin included) and the CSV export —
+  `GET …/collection/{game}/value-history`, `…/movers`, `…/breakdown`, `…/export` — which read
   whole-collection price data (up to O(cards × captured days) for a wide value-history
   window; the movers/cutoff anchors are per-item point seeks since the 2026-07 rewrite —
   §Price history) and are `no-store` (no CDN shields them), so one account
@@ -708,6 +709,46 @@ catalog) is planned but not implemented.
   the panel never words a token quantity. Reading rules text to recover the multiplicity was
   considered and rejected for the reason the bracket's signals are conservative: a wrong
   packing list is worse than a short one, and "create X" is unbounded in the general case.
+- **Combos are a dataset, not a grammar — and "no data" is not "no combos".** "Does this deck
+  have infinite combos?" (`GET /api/decks/{game}/{deck_id}/combos`, issue #683) cannot be
+  answered from the catalog: a combo is a fact about how *several* cards interact, and nothing
+  in any one card's text names its partners, so unlike the bracket signals and the card roles
+  it is not a clause grammar but a curated database. Commander Spellbook's bulk export is
+  synced into `combos` + `combo_pieces` (keyed by **oracle id**, so any printing matches) and
+  read like the legality object — a provider fact, never inferred. Three consequences:
+  the deck read reports `available: false` when the table is empty (an unsynced or opted-out
+  self-host), because "this deck has no combos" from an empty table would be a confident
+  wrong answer, the same stance `token_parts`' NULL takes below; a **template** piece ("any
+  free sacrifice outlet" — a Scryfall query upstream evaluates and this app can't) always
+  counts as one missing card, so a combo needing one is never reported complete rather than
+  guessed at; and the one-card-short list is filtered to the commander's colour identity,
+  since a deck can't add its way to a colour (upstream's "almost included by adding colours"
+  bucket is deliberately not offered). **The bracket estimate does not read it.** Wizards'
+  current definitions make a two-card infinite a bracket-4 signal, and reading the combo table
+  would move the estimate from a *floor* toward a *verdict* — a change to `bracket.rs`'s stated
+  contract (it never asserts a rung the cards don't rule out, and a false positive costs a
+  player two brackets) that the issue left as its own decision; the bracket's caveat now points
+  at the combos read instead of claiming combos can't be seen. **Licensing and attribution:**
+  Commander Spellbook's API documentation asks for sparse traffic and for credit with a link
+  back; the backend that publishes the export is MIT-licensed. So the mirror origin is the only
+  instance that fetches the ~650 MB export (a self-host imports the origin's compact re-serve,
+  the Secret Lair stance), and it asks for it only every `COMBOS_UPSTREAM_INTERVAL_DAYS` (30) —
+  a conditional daily GET would already be a bodiless `304` most days, but "sparse" is their
+  word and combos change on the order of a set release, so the origin doesn't even
+  revalidate in between; the cost is that a brand-new set's combos reach the panels up to a
+  month late, which the interval knob exists to shorten, every combo on the wire carries its `commanderspellbook.com/combo/{id}`
+  URL, every response carries `source` + `source_url`, and both SPA panels name and link the
+  source. **The combo sync never fails the card-sync tick.** It is the first optional dataset
+  (its own off-switch, reads degrading to `available: false`) whose mirror source legitimately
+  answers `404` — an origin still on a pre-#683 build, or one that opted out — for as long as
+  that holds; feeding it into `refresh_all`'s providers flag would have every self-host behind
+  such an origin never record a completed tick (hourly full retries, no boot deferral, and on a
+  fresh install neither the price backfill nor the fingerprint build spawned). So it is logged,
+  left in `ingest_state` as `error`, and retried next tick — the sld-drops / fingerprint-import
+  stance. The upstream export is one JSON document, not JSONL, so it is read through a purpose-
+  built byte-level splitter (`spellbook::stream`) rather than `serde_json` — parsing 650 MB
+  whole was never an option, and a general streaming JSON parser would be a dependency for a
+  problem that needs only string boundaries and brace depth.
 - **`cards.token_parts` is nullable, and the NULL is load-bearing.** An empty array means "the
   catalog checked this printing and it makes nothing"; NULL means "this row hasn't been
   rewritten since the column arrived". They are different answers, and collapsing them would

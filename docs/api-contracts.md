@@ -258,6 +258,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/cards/{id}/sealed` | `{ data: SealedProductRef[] }` — the **sealed products** this card is found in / can be pulled from, sourced from MTGJSON (see `crate::mtgjson`). See the **Sealed products** section below for `SealedProductRef` / `Product` shapes. `membership` is `"contains"` (definitely in — decks/promos/Secret Lair), `"booster"` (can be pulled from a booster sheet), or `"variable"` (may be in a randomized product) — the "found in / can be in / may be in" split. Ordered `contains` → `booster` → `variable`, then by product name; `[]` if in none |
 | `GET /api/games/{game}/cards/{id}/precons?page&page_size` | `Page<CardPreconRef>` — the **preconstructed decks** containing this card — **any printing** of it (the `/prints` gameplay-identity rule), on any board — newest deck first then name/slug (the precon browse's own order, and paginated like it: a format staple is in hundreds of decks). `CardPreconRef = { precon: PreconDeck, quantity, foil, commander }`: `quantity` sums every copy across boards, printings and finishes; `foil` is `true` only when **every** copy is foil (the `/sealed` foil-only rule); `commander` when a copy sits in the deck's command zone. An empty first page when the card is in none; `404` unknown game/card |
 | `GET /api/games/{game}/cards/{id}/rulings` | `{ data: Ruling[] }` — the card's "Notes and Rules Information", **oldest first**. `Ruling = { source, published_at, comment }`; `source` is who issued it (`"wotc"`/`"scryfall"`), `published_at` a `"YYYY-MM-DD"` string. Keyed by the card's gameplay identity (`oracle_id`), so every printing returns the same list; `[]` when the card has none (or has no `oracle_id`) |
+| `GET /api/games/{game}/cards/{id}/combos` | `CardCombos { combos: CardCombo[], total, source, source_url }` — the Commander Spellbook combos the card is a **piece of**, most-played first, at most 50 (`total` exact); issue #683. Keyed by the card's gameplay identity (`oracle_id`), so every printing returns the same list; every piece carries `card_id`, the catalog's newest printing of it (`null` when the catalog holds none). `[]` / `0` when the card is in no combo — or when no combo data has been synced. `404` unknown game or card |
 | `GET /api/games/{game}/cards/{id}/art-tags` | `{ data: ArtTagEntry[] }` — the Tagger **art tags on this card's artwork**, same `ArtTagEntry` shape as `/art-tags` above, ordered **rarest `count` first** so the specific tags precede the broad ancestors they expanded from. Keyed by `illustration_id`, so every printing of the same painting returns the same list, and the list is hierarchy-expanded exactly like the `art:` filter it mirrors (a `squirrel` artwork also carries `rodent`, `animal`, …) — every tag returned provably matches the card. `[]` when the artwork is untagged or the card has no `illustration_id`. Same first-face limit as `art:` itself: `cards.illustration_id` is the *flattened* artwork id, so a multi-faced card answers for its front face only |
 
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
@@ -864,9 +865,10 @@ card id (the same id the public catalog exposes); the handler resolves it to the
 internal `cards.id` before storage (so a holding survives a catalog re-import). A
 missing token is `401`; an unknown game/card is `404`. These endpoints are **per-user
 rate limited** (issue #168, `ratelimit::user_rate_limit`, keyed by the token's user
-id): a generous `general` quota covers reads/edits/batch lookups, and a tighter
-`import` quota covers the expensive import/CSV endpoints; over-limit is `429` +
-`Retry-After` (and, being per-user, `no-store`).
+id): a generous `general` quota covers reads/edits/batch lookups, a middle `analytics`
+quota covers the whole-collection scans (`value-history`, `movers`, `breakdown`, the
+exports), and a tighter `import` quota covers the expensive import/CSV endpoints;
+over-limit is `429` + `Retry-After` (and, being per-user, `no-store`).
 
 A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
 a card you don't own (setting both counts to zero deletes the row), so the table holds
@@ -951,6 +953,7 @@ surface.
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
 | `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
+| `GET /api/collection/{game}/breakdown?bulk_max_cents` | — | `HoldingBreakdown` — **where the collection's value sits** (issue #680): copies + estimated USD value by rarity, by colour-identity bucket, by card type and by finish, plus the ten most valuable holdings by **held** value (price × copies — not a single copy's price, which is the list's `sort=price`). Cards only (sealed products have none of these facets). The embedded `summary` is `/summary`'s own answer over the same rows, so every bucket is a slice of that total; `bulk_max_cents` sets the cutoff for its bulk slice exactly as it does there. `AuthUser` — a read-only key may call it. Rides the analytics response cache under the collection's holdings version + the price epoch + the UTC date (an edit through any handler invalidates it) and the per-user `analytics` bucket. See `HoldingBreakdown` below |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
 | `GET /api/collection/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
@@ -1041,6 +1044,28 @@ is a candidate only when both endpoints have a price. `all_time` instead compare
 with its own earliest non-null captured price, so a newer catalog item is not excluded by an
 older item's history. A holding kind with no captured history has null `as_of` / `day_as_of`
 and fourteen empty arrays, independently of the other kind.
+
+`HoldingBreakdown = { summary, rarity, color, card_type, finish, top, unpriced_cards }`
+(`api/src/handlers/shared/breakdown.rs`, issue #680): `summary` is a `CollectionSummary`; the
+four facets are `BreakdownBucket[] = { key, cards, copies, value_usd }[]` — distinct held
+cards, held copies, and their estimated USD value (a 2-dp string, `null` when none of them is
+priced) — listing **non-empty buckets only**, each facet a partition of the same rows so its
+values sum to `summary.total_value_usd` and its copies to `summary.total_cards`. Keys:
+`rarity` uses Scryfall's spelling (`common`/`uncommon`/`rare`/`mythic`/`special`/`bonus`,
+`unknown` for a card with none), in that order then alphabetically with `unknown` last;
+`color` is `white`/`blue`/`black`/`red`/`green` for a mono-coloured identity, `multicolor` for
+two or more colours, `colorless` for none, in WUBRG-then-multicolour-then-colourless order;
+`card_type` is the type line's **first card type** past the supertypes, lower-cased
+(`creature`, `land`, … — an artifact creature files under `artifact`; the front face of a
+multi-faced line; `other` when the line names none), most valuable bucket first (then most
+copies, then key); `finish` is `regular` / `foil`, each counting **only that finish's**
+copies (a card held in both is in both). `top: TopHolding[] = { card: Card, quantity,
+foil_quantity, value_usd }[]` ranks by held value — `usd × quantity + usd_foil ×
+foil_quantity` over the finishes the card is priced in — highest first, at most ten, ties by
+internal id; a holding with no priced held finish never ranks and is counted in
+`unpriced_cards` instead (so a small total can be told from an unpriced one). A price counts
+only for a finish that is actually held. The SPA's labels/swatches for the keys are
+`web/src/lib/holdingBreakdown.ts`.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
 `card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `drop_noun`, `has_subtypes` — the
@@ -1224,6 +1249,7 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 |---------------|---------|
 | `GET /api/wishlist/{game}?q&sort&dir&set&include_related&min_copies&max_copies&finish&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope, the **copy-count filter** — read on the wanted counts) |
 | `GET /api/wishlist/{game}/summary?set&include_related` | the collection summary (unique / copies / value of what's wanted) |
+| `GET /api/wishlist/{game}/breakdown` | the collection breakdown (issue #680): what buying the list costs by rarity / colour / type / finish, and the ten most valuable wanted lines by wanted value — the same `HoldingBreakdown` shape and fold over `wishlist_items`; no `bulk_max_cents` on the SPA side (a wish list has no bulk preference), though the param is accepted. Cached under the wish list's **own** holdings version (`analytics_cache::HoldingsSurface::Wishlist`, bumped by every wish-list card write), so a wish-list edit invalidates it and a collection edit doesn't; same `analytics` rate bucket |
 | `GET /api/wishlist/{game}/sets` | the collection per-set aggregates (sets holding wishlisted cards, newest first, counts + value) |
 | `GET /api/wishlist/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
 | `GET /api/wishlist/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
@@ -1342,6 +1368,7 @@ deck ids), matching the public-sharing surface.
 | `GET /api/decks/{game}/{deck_id}/mana` | — | `DeckManaBase` — the deck's **mana base** (issue #670): per colour, the pips its spells demand against the sources its library produces, judged by Frank Karsten's 2022 source counts, with a plain verdict (`"Short 2 black sources: …"`). **Demand** is the deck a player casts from — the shuffled library **plus** the command zone (a commander's own pips count) — and **supply** is the library alone (a commander is never a source for the 99); maybeboards and sideboards are in neither. The zone split borrows both of `rules`' answers, like the deck list's facets: which sections are the zone is `deck_zone`'s, and whether the zone leads this deck's format is `format_leads_with_command_zone`'s — so in a format with no command zone the cards in the seeded `Commander` section supply mana like the rest of the 60. Colours include `C` (an Eldrazi's `{C}` is a real requirement). Hybrid, Phyrexian and `{2/C}` pips ride `hybrid_pips` and are never counted against a colour. `table_size` (40/60/80/99) is the format's stated deck size when it has one (Commander → the 99-card column, however few cards are in it yet), else the nearest to `deck_size`. Always answers — never `null`; an empty deck has an empty `colors`. `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/goldfish` | — | `GoldfishHand` — shuffle the library and deal an opening hand (issue #596). Stateless and seeded: `?seed=` (u32; omitted = a fresh one, echoed back), `?mulligans=` (London — each reshuffles and owes one card to the bottom), `?bottom=<card ids>` (at most one per mulligan, each must be in the hand), `?draws=` (the draw step, clamped to the library), `?opening=` (default 7), `?sections=` as above. The same URL always deals the same cards. The shuffled library is capped at 20,000 cards (a deck row's counts are caller-controlled and the shuffle materialises one slot per copy, so a bigger one is refused rather than allocated). `404` if not the caller's; `422` for a parameter out of range, a library too large to shuffle, or a bottomed card that isn't in hand |
 | `GET /api/decks/{game}/{deck_id}/pricing` | — | `DeckPricing` — **where the deck's money is** (issue #672): every row of the deck **proper** (maybeboard rows are neither listed nor counted) priced as held, most expensive first, each carrying the cheapest priced printing of its card **at that row's own finish split** — what `PUT …/cards/{id}/printing` would land on — and the saving. `total_usd` is the deck detail's `summary.total_value_usd`, not a second fold of it (same rows, same `Valuation` accumulator), `cheapest_total_usd` is that total minus `saving_usd`, and `null` always means **unpriced**, never `"0.00"`. Three bounded queries; nothing goes per copy. This read writes nothing, so a read-only key may call it — the swap it suggests is the existing `WritableUser` printing write, and "swap all" is that same write batched client-side. `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/combos` | — | `DeckCombos` — **the combos in the deck** (issue #683): which Commander Spellbook combos the deck **proper** can assemble (`combos`, fewest pieces first then most-played, capped at 100 with `combo_count` exact) and which it is exactly **one card short** of (`almost`, most-played first, capped at 50 with `almost_count` exact). Read off the synced combo database (`combos` + `combo_pieces`, keyed by **oracle id** — any printing counts), never inferred from rules text. "Held" is decided once: maybeboards out, sideboards and the command zone in; a piece flagged `must_be_commander` counts only from the command zone of a format that leads with one (`rules::deck_zone` + `rules::format_leads_with_command_zone`, the pair the facets borrow — in a 60-card format nothing is ever the commander, so a combo needing one is unreachable there and listed in neither list); a piece wanting more copies than held is short; a **template** ("any free sacrifice outlet", a Scryfall query this app can't run) always counts as one missing card, so a combo with one is never reported complete. `almost` is filtered to the commander's colour identity where the format leads with a command zone (a deck can't add its way to a colour). `available: false` means **no combo data has been synced** (or `COMBOS_SYNC_ENABLED=false`) — an empty list is then "unknown", never "none". `source` / `source_url` carry the attribution Commander Spellbook asks for. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
 | `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |
@@ -1498,7 +1525,6 @@ issue #570's split again), and `cheapest` is `DeckCheapestPrinting = { card, pri
 full `Card` payload so a client can show the printing and hand its `id` straight to
 `PUT …/cards/{id}/printing` (which is why the line carries `section_id`: the same printing in
 two sections is two rows, and the swap addresses one). Five rules make the numbers honest:
-
 * **The total is the deck page's own total.** `total_usd` is `summary.total_value_usd` — the
   same rows folded through the same `Valuation`, not a second computation of it — so the two
   can never disagree, and the lines sum to it.
@@ -1522,6 +1548,21 @@ two sections is two rows, and the swap addresses one). Five rules make the numbe
   whose saving is unknown moves none of the three. `unpriced_count` counts rows with no price
   in either held finish (while it is non-zero, `total_usd` is a floor) and `swappable_count`
   the rows with a saving above zero — what a "swap all" would touch.
+
+`DeckCombos = { combos, combo_count, almost, almost_count, available, source, source_url }` —
+**the combos in the deck** (issue #683). Each `DeckCombo` flattens a `ComboSummary = { id, url,
+identity, mana_needed, mana_value_needed, prerequisites, description, popularity, bracket_tag,
+templates, produces }` — Commander Spellbook's own data for the variant: `id` its variant id,
+`url` its page (`commanderspellbook.com/combo/{id}`), `identity` WUBRG letters, `produces` the
+results by name (standalone + contextual features; every feature when a combo names only
+helpers), `templates` the wildcard requirements — and adds `pieces` (`DeckComboPiece[] =
+{ oracle_id, name, quantity, must_be_commander, card_id, in_deck }`, in the combo's own order;
+`card_id` is the deck's own printing when held — the lowest-sorting one — else the catalog's
+newest, or `null`) and `missing` (`DeckComboMissing[] = { name, kind, card_id }`, `kind` one of
+`card` / `template` / `commander`; empty for a combo the deck can assemble). The same
+`ComboSummary` fronts the card page's `CardCombos = { combos: CardCombo[], total, source,
+source_url }`, where `CardCombo` carries `pieces: ComboPiece[] = { oracle_id, name, quantity,
+must_be_commander, card_id }` (no deck to be relative to).
 
 `lines` is sorted most expensive first, unpriced rows last, then by name/id/section, so a
 top-N panel is a prefix rather than a client-side sort. Candidates come from the shared
@@ -1627,6 +1668,7 @@ owner handle (no email/PII).
 | `GET /api/u/{handle}/decks/{deck_id}/legality` | `{ data: DeckLegality \| null }` — the public mirror of the owner's legality read. `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/bracket` | `{ data: DeckBracketEstimate \| null }` — the public mirror of the owner's bracket read, through the same `analyse_bracket` core. `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/tokens` | `DeckTokens` — the public mirror of the owner's token read, through the same `analyse_tokens` core. `404` if private/absent |
+| `GET /api/u/{handle}/decks/{deck_id}/combos` | `DeckCombos` — the public mirror of the owner's combo read, through the same `analyse_combos` core (issue #683). `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/mana` | `DeckManaBase` — the public mirror of the owner's mana-base read, through the same `analyse_mana` core. `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/roles` | `DeckRoles` — the public mirror of the owner's card-roles read, through the same `analyse_roles` core. `404` if private/absent |
 | `GET /api/u/{handle}/decks/{deck_id}/goldfish` | `GoldfishHand` — the public mirror of the goldfish read, same query parameters; one seed deals one hand whoever asks. Shared-cacheable **only when `seed` is given** — without it the server mints a random one, so the response is not a function of its URL and is returned `no-store` rather than letting a CDN pin one visitor's roll for the whole TTL. `404` if private/absent |
@@ -1665,7 +1707,7 @@ row is gone is LEFT-joined away — the same tolerance `deck_cards` has.
 | `GET /api/games/{game}/precons/groups?group&page&page_size&q&set&type&sort` | `Page<PreconGroup>` — the same decks bucketed and **paginated by group**, so a group is never split across a boundary (the precon mirror of `/sets/{code}/drops`). `group=set` (default) buckets by the publishing set, newest **set** first — a set's date is the catalog's, not its decks', so a Secret Lair deck released years after the `sld` set still sits with `sld`. `group=type` buckets by deck category, **biggest first** (the facets dropdown's own order), which is what makes a 70-deck set readable — Marvel ships 51 Jumpstart themes beside 12 Box Sets, and 136 of 295 sets span more than one type. `sort=name` orders either grouping by heading; `sort=price` orders the decks **inside** each group (the groups keep their natural order — a group has no price of its own to claim). `PreconGroup = { slug, title, released_at, set_code, deck_count, decks }` — the drop/sub-type group shape, so one client component renders either. Shares the flat list's filter builder, so a filter selects exactly the same decks in every view (a test pins that; only the order may differ) |
 | `GET /api/games/{game}/precons/facets` | `{ data: PreconFacets }` — `{ types: { type, count }[]` (most decks first)`, sets: { code, name, count, released_at }[]` (newest first)`, total }`. Published rather than hardcoded: upstream adds deck categories over time. `facets` is a static segment, so it wins over `/{slug}` in axum |
 | `GET /api/games/{game}/precons/{slug}` | `PreconDeckDetail` — the header (flattened) plus `summary` (the deck proper), `sideboard_summary`, `cards: PreconCardEntry[] = { card, board, quantity, foil }` in board order (command zone → deck → sideboard, upstream's order within each), and `product` — the sealed product it ships in, when the catalog holds it. Returned whole; a precon is bounded. `404` for an unknown game or slug |
-| `GET /api/games/{game}/precons/{slug}/{stats,legality,bracket,tokens,mana,roles,goldfish}` | The seven deck-analysis reads, over the published decklist and through the identical `analyse_*` cores the deck surface uses — so a precon and the deck you get from "Copy to my decks" can never disagree. Payloads and query parameters are the deck rows' above, with three precon-specific answers: `legality` is `null` for the ~9 in 10 precons whose deck *type* states no format, `mana` is judged against the deck size that format states (a Commander precon against the 99-card column) else the size the list is, and a seedless `goldfish` answers `no-store` (a random seed makes the response not a function of its URL, and these sit in the CDN-cached catalog group). Sections are synthesised per board (`0` Command zone / `1` Deck / `2` Sideboard), mirrored in `web/src/lib/precons.ts`. `404` for an unknown game or slug |
+| `GET /api/games/{game}/precons/{slug}/{stats,legality,bracket,tokens,mana,roles,goldfish,combos}` | The eight deck-analysis reads, over the published decklist and through the identical `analyse_*` cores the deck surface uses — so a precon and the deck you get from "Copy to my decks" can never disagree. Payloads and query parameters are the deck rows' above, with three precon-specific answers: `legality` is `null` for the ~9 in 10 precons whose deck *type* states no format, `mana` is judged against the deck size that format states (a Commander precon against the 99-card column) else the size the list is, and a seedless `goldfish` answers `no-store` (a random seed makes the response not a function of its URL, and these sit in the CDN-cached catalog group). Sections are synthesised per board (`0` Command zone / `1` Deck / `2` Sideboard), mirrored in `web/src/lib/precons.ts`. `404` for an unknown game or slug |
 | `POST /api/decks/{game}/precons/{slug}/copy` | `DeckDetail` — copy the precon into the caller's own decks (`WritableUser`, so a read-only key is **403**), returning the new deck. The copy is private and loose, named after the precon, and takes a format **only when the deck type states one** (`Commander Deck` → `commander`; a Secret Lair drop or a theme deck gets none, since a wrong guess would have the deck page judge it against rules it was never built for). `404` unknown game/slug; `422` at the per-game deck cap, or when nothing in the list is still in the catalog |
 | `POST /api/decks/{game}/precons/{slug}/collection` | `CollectionAddSummary` — add every card the precon ships — command zone, deck and sideboard, in the finishes the list states — to the caller's collection, **on top of** what they own ("I bought this precon"). The deck route's twin: the same `merge_holdings` write through the same `handlers/decks/to_collection.rs` seam, so a printing listed in both finishes (two rows by design) lands as **one** holding carrying both counts. Additive and not idempotent, like the deck route, and in the same per-user `Import` bucket. `WritableUser`; `404` unknown game/slug; `422` when none of its cards is still in the catalog |
 
@@ -1875,6 +1917,7 @@ a risk: an unpublished day is a `404`, which `public_cache_layer` marks `no-stor
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
 | `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated), **as served** — i.e. still gzipped |
 | `GET /api/mirror/scryfall/sld-drops` | the current Secret Lair drop snapshot (curated titles + collector numbers) as JSON, served from this origin's in-memory drop store (a strong content `ETag`, so an unchanged snapshot is a `304`) |
+| `GET /api/mirror/spellbook/combos` | the combo database (issue #683) as this origin holds it: every stored combo as one gzipped JSONL line of `spellbook::model::ComboRecord`, streamed from the tables; strong `ETag` (derived from the upstream export's tag the origin last imported — kept through a later running/errored import, so the tables still held keep serving; a content hash when upstream sent no tag) → `304`; **`404` until the origin has completed an import**; a rebuild landing under an in-flight stream errors that transfer rather than ending it short |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |
@@ -1904,6 +1947,19 @@ a consumer with the current index gets a bodyless `304`. A self-host with
 it against its own `FINGERPRINT_ALGO_VERSION`, and replaces its local `card_fingerprint`
 rows in one transaction — the ~3–4 MB MTG index is fetched **once per change**, so every
 ordinary self-host runs the scanner while fetching **zero** card images.
+
+The **spellbook/combos** route is the third origin-only re-serve (issue #683): Commander
+Spellbook's bulk export is one ~650 MB JSON document (~28 MB gzipped) and the source asks for
+sparse traffic, so only the mirror origin (`SYNC_FROM_UPSTREAM=true`) fetches and parses it
+(`spellbook::ingest`, streamed through the `spellbook::stream` splitter — never buffered
+whole) and every other instance imports this route's compact snapshot instead
+(`COMBOS_SYNC_ENABLED`, default on, on the card-sync tick). The snapshot is the tables
+streamed as gzipped JSONL — one gzip member per chunk, ids resolved first and each chunk's
+connection released before the send, the card export's two-phase drain — behind a strong
+`ETag` derived from the upstream document's own tag (what the origin's last **completed**
+import recorded in `ingest_state`), so a consumer's conditional pull is a `304` on an
+unchanged day and the tag survives origin restarts. It answers `404` until an import has
+completed, so a consumer can never import an empty or unvouched snapshot and version-lock it.
 
 The **sld-drops** route is likewise not an upstream proxy: it re-serves this origin's own
 in-memory Secret Lair drop snapshot as JSON (the shape of `scryfall/sld_drops.json`, one

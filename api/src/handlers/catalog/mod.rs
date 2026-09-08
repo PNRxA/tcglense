@@ -34,6 +34,7 @@ use crate::scryfall::search::{cust_vals, escape_like};
 mod art_tags;
 mod boosters;
 mod cards;
+mod combos;
 mod export;
 mod image;
 mod keywords;
@@ -54,6 +55,7 @@ pub use boosters::{open_product, product_ev};
 pub(crate) use cards::MAX_PREVIEW_ROWS;
 pub(crate) use cards::search_cards;
 pub use cards::{card_names, card_prints, get_card, list_cards, preview_cards};
+pub use combos::card_combos;
 pub use export::{export_cards, export_set_cards};
 pub use image::card_image;
 pub use keywords::list_keywords;
@@ -79,6 +81,7 @@ pub use boosters::{__path_open_product, __path_product_ev};
 pub use cards::{
     __path_card_names, __path_card_prints, __path_get_card, __path_list_cards, __path_preview_cards,
 };
+pub use combos::__path_card_combos;
 pub use export::{__path_export_cards, __path_export_set_cards};
 pub use keywords::__path_list_keywords;
 pub use prices::__path_card_prices;

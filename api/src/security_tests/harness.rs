@@ -81,7 +81,7 @@ impl std::ops::Deref for TestApp {
 
 /// Wrap a state in the real router, swapping the emailer for a capturing sink
 /// so tests can read what would have been sent.
-fn test_app_over(mut state: AppState) -> TestApp {
+pub(super) fn test_app_over(mut state: AppState) -> TestApp {
     let mailbox = Mailbox::default();
     state.email = Arc::new(Emailer::Capture(mailbox.clone()));
     TestApp {

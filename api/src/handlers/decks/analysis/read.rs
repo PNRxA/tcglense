@@ -13,10 +13,10 @@ use crate::state::AppState;
 
 use super::super::load_deck;
 use super::{
-    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckManaBase, DeckPricing, DeckRoles,
-    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
-    analyse_legality, analyse_mana, analyse_pricing, analyse_roles, analyse_stats, analyse_tokens,
-    load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckCombos, DeckLegality, DeckManaBase, DeckPricing,
+    DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
+    analyse_combos, analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing,
+    analyse_roles, analyse_stats, analyse_tokens, load_analysis, load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -258,6 +258,44 @@ pub async fn deck_goldfish(
     let deck = load_deck(&state, user.id, &game, deck_id).await?;
     let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
     Ok(Json(analyse_goldfish(&input, &models, &params)?))
+}
+
+/// Combos in a deck
+///
+/// `GET /api/decks/{game}/{deck_id}/combos` -> the Commander Spellbook combos the deck
+/// proper can assemble (fewest pieces first, then most-played) and the ones it is exactly
+/// one card away from (most-played first, within the commander's colour identity where the
+/// format has one), issue #683. Pieces match by gameplay identity, so any printing counts;
+/// a piece that must be the commander counts only from the command zone; a template ("any
+/// sac outlet") always counts as one missing card. `available: false` means no combo data
+/// has been synced — then an empty list is "unknown", not "none". `404` if the deck isn't
+/// the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/combos",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The combos the deck can assemble, and the ones it is one card short of.", body = DeckCombos),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_combos(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckCombos>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(
+        analyse_combos(&state, &game, deck.format.as_deref(), &input).await?,
+    ))
 }
 
 /// Deck pricing breakdown

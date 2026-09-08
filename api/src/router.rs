@@ -34,55 +34,58 @@ use crate::{
             public_holdings_cache_layer,
         },
         catalog::{
-            card_art_tags, card_image, card_names, card_prices, card_prints, card_rulings,
-            card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
-            ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
-            list_releases, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
-            open_product, preview_cards, product_card_sections, product_cards, product_containers,
-            product_contents, product_ev, product_facets, product_image, product_prices,
-            scan_cards, set_icon,
+            card_art_tags, card_combos, card_image, card_names, card_prices, card_prints,
+            card_rulings, card_sealed, export_cards, export_set_cards, get_card, get_product,
+            get_set, ingest_status, list_art_tags, list_cards, list_games, list_keywords,
+            list_products, list_releases, list_set_cards, list_set_drops, list_set_subtypes,
+            list_sets, open_product, preview_cards, product_card_sections, product_cards,
+            product_containers, product_contents, product_ev, product_facets, product_image,
+            product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
-            collection_product_summary, collection_set_drops, collection_set_subtypes,
-            collection_sets, collection_summary, collection_value_history, export_collection,
-            export_collection_cards, get_collection_entry, get_collection_product_entry,
-            get_import_job, import_collection, import_collection_csv, import_collection_text,
-            list_collection, list_collection_product_sets, list_collection_products, owned_counts,
-            set_collection_entry, set_collection_product_entry,
+            MAX_CSV_UPLOAD_BYTES, collection_breakdown, collection_movers,
+            collection_product_counts, collection_product_summary, collection_set_drops,
+            collection_set_subtypes, collection_sets, collection_summary, collection_value_history,
+            export_collection, export_collection_cards, get_collection_entry,
+            get_collection_product_entry, get_import_job, import_collection, import_collection_csv,
+            import_collection_text, list_collection, list_collection_product_sets,
+            list_collection_products, owned_counts, set_collection_entry,
+            set_collection_product_entry,
         },
         config::public_config,
         currency::currency_rates,
         decks::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
             change_deck_card_printing, copy_deck, copy_public_deck, create_deck, create_folder,
-            create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing,
-            deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck, delete_folder,
-            delete_section, diff_deck, export_deck, get_deck, import_deck, list_deck_formats,
-            list_decks, list_folders, move_deck_card, move_deck_to_folder, needed_buy_list,
-            needed_cards, reorder_sections, set_deck_card, set_deck_visibility, update_deck,
-            update_folder, update_section,
+            create_section, deck_bracket, deck_combos, deck_goldfish, deck_legality, deck_mana,
+            deck_pricing, deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck,
+            delete_folder, delete_section, diff_deck, export_deck, get_deck, import_deck,
+            list_deck_formats, list_decks, list_folders, move_deck_card, move_deck_to_folder,
+            needed_buy_list, needed_cards, reorder_sections, set_deck_card, set_deck_visibility,
+            update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
             currency_proxy, fingerprint_index, mtgjson_all_printings, scryfall_bulk_data,
-            scryfall_file, scryfall_sets, scryfall_sld_drops, tcgcsv_proxy,
+            scryfall_file, scryfall_sets, scryfall_sld_drops, spellbook_combos, tcgcsv_proxy,
         },
         openapi::openapi_json,
         precons::{
             add_precon_to_collection, card_precons, copy_precon_deck, get_precon,
-            list_precon_groups, list_precons, precon_bracket, precon_facets, precon_goldfish,
-            precon_legality, precon_mana, precon_roles, precon_stats, precon_tokens,
+            list_precon_groups, list_precons, precon_bracket, precon_combos, precon_facets,
+            precon_goldfish, precon_legality, precon_mana, precon_roles, precon_stats,
+            precon_tokens,
         },
         search::universal_search,
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
-            public_deck_goldfish, public_deck_legality, public_deck_mana, public_deck_pricing,
-            public_deck_roles, public_deck_stats, public_deck_tokens, public_decks, public_list,
-            public_owned_counts, public_product_sets, public_product_summary, public_products,
-            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
-            public_wishlist_list, public_wishlist_owned_counts, public_wishlist_product_sets,
+            public_deck_combos, public_deck_goldfish, public_deck_legality, public_deck_mana,
+            public_deck_pricing, public_deck_roles, public_deck_stats, public_deck_tokens,
+            public_decks, public_list, public_owned_counts, public_product_sets,
+            public_product_summary, public_products, public_profile, public_set_drops,
+            public_set_subtypes, public_sets, public_summary, public_wishlist_list,
+            public_wishlist_owned_counts, public_wishlist_product_sets,
             public_wishlist_product_summary, public_wishlist_products, public_wishlist_set_drops,
             public_wishlist_set_subtypes, public_wishlist_sets, public_wishlist_summary,
             set_collection_visibility, set_wishlist_visibility,
@@ -96,7 +99,7 @@ use crate::{
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
-            set_wishlist_product_entry, wishlist_buy_list, wishlist_counts,
+            set_wishlist_product_entry, wishlist_breakdown, wishlist_buy_list, wishlist_counts,
             wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
             wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
@@ -230,6 +233,12 @@ pub fn build_router(state: AppState) -> Router {
         // The biggest 1d / 7d / 30d / 1y / 2y / 3y / all-time gain & loss movements across
         // the user's owned cards (per-unit price change × copies held).
         .route("/api/collection/{game}/movers", get(collection_movers))
+        // Where the collection's value sits — by rarity / colour / type / finish + the top
+        // holdings by held value (issue #680); the third analytics-cached scan.
+        .route(
+            "/api/collection/{game}/breakdown",
+            get(collection_breakdown),
+        )
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))
@@ -324,6 +333,8 @@ pub fn build_router(state: AppState) -> Router {
             get(get_wishlist_visibility).put(set_wishlist_visibility),
         )
         .route("/api/wishlist/{game}/summary", get(wishlist_summary))
+        // The collection breakdown's twin (issue #680): what buying the list costs, sliced.
+        .route("/api/wishlist/{game}/breakdown", get(wishlist_breakdown))
         .route("/api/wishlist/{game}/sets", get(wishlist_sets))
         .route(
             "/api/wishlist/{game}/sets/{code}/drops",
@@ -461,6 +472,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/decks/{game}/{deck_id}/roles", get(deck_roles))
         .route("/api/decks/{game}/{deck_id}/goldfish", get(deck_goldfish))
         .route("/api/decks/{game}/{deck_id}/pricing", get(deck_pricing))
+        // Combos (issue #683): the Commander Spellbook combos the deck can assemble, and the
+        // ones it is a card short of — the same read shape as the eight above.
+        .route("/api/decks/{game}/{deck_id}/combos", get(deck_combos))
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",
@@ -666,6 +680,9 @@ pub fn build_router(state: AppState) -> Router {
         // The card's rulings ("Notes and Rules Information", issue #522), keyed by
         // oracle_id. A static-suffix sibling of `/prices` + `/prints` + `/sealed`.
         .route("/api/games/{game}/cards/{id}/rulings", get(card_rulings))
+        // The card's combos (issue #683): which Commander Spellbook combos it is a piece
+        // of, keyed by oracle_id like the rulings, so every printing answers the same.
+        .route("/api/games/{game}/cards/{id}/combos", get(card_combos))
         // The Tagger art tags on this card's artwork (the card page's "Artwork tags"
         // panel), keyed by illustration_id. Another static-suffix sibling; the
         // vocabulary-wide lookup stays at `/api/games/{game}/art-tags` above.
@@ -707,6 +724,10 @@ pub fn build_router(state: AppState) -> Router {
             get(precon_tokens),
         )
         .route("/api/games/{game}/precons/{slug}/mana", get(precon_mana))
+        .route(
+            "/api/games/{game}/precons/{slug}/combos",
+            get(precon_combos),
+        )
         .route("/api/games/{game}/precons/{slug}/roles", get(precon_roles))
         .route(
             "/api/games/{game}/precons/{slug}/goldfish",
@@ -874,6 +895,10 @@ pub fn build_router(state: AppState) -> Router {
             get(public_deck_mana),
         )
         .route(
+            "/api/u/{handle}/decks/{deck_id}/combos",
+            get(public_deck_combos),
+        )
+        .route(
             "/api/u/{handle}/decks/{deck_id}/roles",
             get(public_deck_roles),
         )
@@ -942,6 +967,10 @@ pub fn build_router(state: AppState) -> Router {
             // daily Scryfall gallery scrape), so other instances import the fresh titles daily
             // instead of each scraping Scryfall (those titles aren't in the bulk card API).
             .route("/api/mirror/scryfall/sld-drops", get(scryfall_sld_drops))
+            // The combo database's compact re-serve (issue #683): the origin's tables as
+            // gzipped JSONL, ETag-gated, so every other instance imports it from here
+            // instead of fetching Commander Spellbook's 650 MB export itself.
+            .route("/api/mirror/spellbook/combos", get(spellbook_combos))
             .route(
                 "/api/mirror/mtgjson/AllPrintings.json.gz",
                 get(mtgjson_all_printings),

@@ -732,3 +732,82 @@ async fn buy_list_carries_the_wanted_rows_with_tcgplayer_ids_and_honours_the_fil
     assert_eq!(body["cards"], json!([]));
     assert_eq!(body["total_cards"], 0);
 }
+
+// ---------- Wish-list breakdown (issue #680) ----------
+
+/// The wish-list breakdown is the collection breakdown's twin over `wishlist_items`: it
+/// reads the wanted rows only (never the collection's), its embedded summary is the
+/// wish-list summary's own answer, and its cache is keyed by the wish list's **own**
+/// holdings version — a wish-list edit invalidates it, a collection edit does not.
+#[tokio::test]
+async fn breakdown_reads_the_wish_list_and_invalidates_on_a_wish_list_edit() {
+    let app = test_app_with_catalog().await;
+
+    let (status, headers, _) = send(&app, get("/api/wishlist/mtg/breakdown")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (token, _) = register(&app, "wl-breakdown@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 2).await;
+
+    // A card in the collection is not a wanted card: the wish-list breakdown stays empty.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/collection/mtg/cards/{}", ids[0]),
+            &token,
+            json!({ "quantity": 3, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let (status, _, empty) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/breakdown", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty:?}");
+    assert_eq!(empty["summary"]["unique_cards"], 0);
+    assert_eq!(empty["top"], json!([]));
+
+    // Want two cards; the breakdown now mirrors the wish-list summary.
+    want_card(&app, &token, &ids[0], 2).await;
+    want_card(&app, &token, &ids[1], 1).await;
+    let (status, _, breakdown) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/breakdown", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{breakdown:?}");
+    let (status, _, summary) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/summary", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(breakdown["summary"], summary);
+    assert_eq!(breakdown["summary"]["unique_cards"], 2);
+    assert_eq!(breakdown["summary"]["total_cards"], 3);
+    let copies: i64 = breakdown["rarity"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["copies"].as_i64().unwrap())
+        .sum();
+    assert_eq!(copies, 3);
+
+    // A wish-list edit through the handler invalidates the cached body...
+    want_card(&app, &token, &ids[1], 5).await;
+    let (status, _, after) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/breakdown", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["summary"]["total_cards"], 7);
+
+    // ...and removing a wanted card (both counts zero) does too.
+    want_card(&app, &token, &ids[0], 0).await;
+    let (status, _, removed) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/breakdown", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(removed["summary"]["unique_cards"], 1);
+    assert_eq!(removed["summary"]["total_cards"], 5);
+
+    // Unknown game -> 404, like every wish-list read.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/nope/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

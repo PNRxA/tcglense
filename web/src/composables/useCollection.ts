@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import {
   getCollection,
+  getCollectionBreakdown,
   getCollectionEntry,
   getCollectionMovers,
   getCollectionOwned,
@@ -39,6 +40,7 @@ const queries = makeHoldingQueries({
   getSetSubtypes: getCollectionSetSubtypes,
   getSummary: getCollectionSummary,
   getSets: getCollectionSets,
+  getBreakdown: getCollectionBreakdown,
   getEntry: getCollectionEntry,
   getCounts: getCollectionOwned,
   setEntry: setCollectionEntry,
@@ -72,6 +74,10 @@ export const useCollectionSummaryQuery = queries.useSummaryQuery
 
 /** The sets the user owns cards in (newest first) — the per-set collection landing. */
 export const useCollectionSetsQuery = queries.useSetsQuery
+
+/** Where the collection's value sits — by rarity, colour, card type and finish, plus the
+ * top holdings by held value (issue #680). Carries the bulk-threshold preference. */
+export const useCollectionBreakdownQuery = queries.useBreakdownQuery
 
 /** How many copies of one card the signed-in user owns — for the card-detail controls. */
 export const useCollectionEntryQuery = queries.useEntryQuery
@@ -111,12 +117,19 @@ export const useSetCollectionProductEntryMutation = productQueries.useSetEntryMu
  * cached, keyed by window), so switching to a new window pays one request while switching back
  * to an already-viewed one is instant off the client cache; the Singles/Sealed switch stays a
  * pure client-side toggle since both kinds are returned for each window. */
-export function useCollectionMoversQuery(game: Ref<string>, window: Ref<MoverWindow>) {
+export function useCollectionMoversQuery(
+  game: Ref<string>,
+  window: Ref<MoverWindow>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
   const options = {
     // `window` is a ref inside the key (not `.value`) so a change refetches — see the footgun
     // note in `lib/queries.ts`.
     queryKey: ['collection-movers', game, window],
     queryFn: (token: string) => getCollectionMovers(token, game.value, window.value),
+    // The panel rests collapsed; it hands its open state in so a collapsed panel never
+    // fetches.
+    enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionMovers>(options)
 }

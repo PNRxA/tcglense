@@ -26,6 +26,7 @@ mod ratelimit;
 mod release_alerts;
 mod router;
 mod scryfall;
+mod spellbook;
 mod state;
 mod tasks;
 mod tcgcsv;

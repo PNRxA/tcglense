@@ -53,6 +53,7 @@ async fn mirror_routes_are_absent_by_default() {
         "/api/mirror/scryfall/sets",
         "/api/mirror/scryfall/file/default_cards",
         "/api/mirror/scryfall/sld-drops",
+        "/api/mirror/spellbook/combos",
         "/api/mirror/mtgjson/AllPrintings.json.gz",
         "/api/mirror/tcgcsv/last-updated.txt",
         "/api/mirror/fingerprints/mtg",

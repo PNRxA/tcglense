@@ -13,6 +13,8 @@ pub mod cli_auth_code;
 pub mod collection_item;
 pub mod collection_product_item;
 pub mod collection_visibility;
+pub mod combo;
+pub mod combo_piece;
 pub mod deck;
 pub mod deck_card;
 pub mod deck_folder;

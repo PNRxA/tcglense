@@ -185,7 +185,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   CDN-cached catalog listing and must not learn per-user state (`is:foil` matches the
   catalog's finishes, not the user's). Landing in the seam is what lets the `.txt` export and
   the grouped views inherit it, and the SPA mirrors the one URL grammar for it in
-  `lib/holdingsFilter.ts`. Both surfaces
+  `lib/holdingsFilter.ts`. **The breakdown** (`GET /api/{collection,wishlist}/{game}/breakdown`,
+  issue #680 — value by rarity / colour / type / finish + the top holdings by *held* value) is
+  the twins' third analytics read and lives in the seam too: `handlers/shared/breakdown.rs`
+  folds a `BreakdownRow` (the `SummaryRow` widened by four facet columns, projected through
+  `narrow_breakdown_rows` on top of the summary's own column list) and embeds
+  `summarize_holdings` over the same rows, so its `summary` **is** the header's; each twin
+  contributes only its entity query. It rides `analytics_cache` like value history and movers,
+  but keyed per **surface** (`HoldingsSurface::{Collection,Wishlist}`) — every wish-list card
+  write must `bump_surface_holdings(Wishlist, …)`, or the cached wish-list breakdown outlives
+  the edit — and the per-user `analytics` bucket. The type bucket reads the type line's *first
+  card type* through `shared::type_line::primary_type` (the same supertype table the Archidekt
+  CSV export splits on). Both surfaces
   also hold sealed products in independent `collection_product_items` /
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
@@ -465,6 +476,25 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
+  **Combos are a dataset, not a grammar** (`/combos`, issue #683 — the ninth analysis read, three
+  route mirrors like the rest): which cards go infinite together is a fact about *several* cards,
+  so it is read off the synced Commander Spellbook database (`combos` + `combo_pieces`, keyed by
+  **oracle id** — `CardFacts::oracle_id`, any printing matches), never a grammar over rules text.
+  The provider is `spellbook/` and **only the mirror origin fetches upstream** (a ~650 MB JSON
+  document, streamed through `spellbook::stream`'s splitter, never buffered); every other
+  instance imports the origin's compact gzipped-JSONL re-serve (`/api/mirror/spellbook/combos`,
+  `COMBOS_SYNC_ENABLED`); the origin itself asks upstream only every
+  `COMBOS_UPSTREAM_INTERVAL_DAYS` (30 — their terms say sparse), a failed run retrying sooner — the Secret Lair stance, and like those two it is **never fatal to the
+  sync tick** (the mirror answers 404 until its origin has imported once). Both paths write
+  through the one `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
+  maybeboards out, sideboard + command zone in; a `must_be_commander` piece counts only from the
+  command zone of a format that leads with one (the same two `rules` answers the facets borrow — in a format without one such a combo is unreachable and never listed);
+  a **template** ("any sac outlet") is always one missing card, so such a combo is never
+  "complete"; `almost` (one card short) is filtered to the commander's colours. `available: false`
+  is "no data synced", never "no combos" — the `token_parts` NULL stance. The bracket estimate
+  deliberately does **not** read the table (its floor-not-verdict contract, `docs/tradeoffs.md`).
+  Attribution is a term of use: every combo carries its `url`, every response its `source` +
+  `source_url`, and the SPA panels name and link Commander Spellbook.
   **Every deck clone goes through one seam** (`decks::copy::insert_deck_with_cards`): the public
   copy, the owner's own duplicate (`POST /api/decks/{game}/{deck_id}/copy`, issue #674 — `load_deck`
   first, lands in the source's folder, answers a `Deck` header through `deck_header`) and the precon
@@ -684,7 +714,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   have applied, so re-sending could double the loss.
 - **External ids are per-printing provider data, and a bulk-buy link is rows, not a URL**
   (issues #686/#292). `cards` holds Scryfall's `tcgplayer_id`/`tcgplayer_etched_id` (the TCGCSV
-  join key) and, since `m..082`, `multiverse_ids` (comma-joined, one per face), `mtgo_id`,
+  join key) and, since `m..083`, `multiverse_ids` (comma-joined, one per face), `mtgo_id`,
   `mtgo_foil_id`, `arena_id`, `cardmarket_id` — all provider columns, so `flush_cards`' deny-lists
   stay untouched and a NULL means "no mapping" (an Arena id exists only for an Arena printing).
   They ride **`CardDetailResponse` only**, never the shared `Card`, and are never unioned from a

@@ -21,8 +21,9 @@ pub mod visibility;
 pub mod wishlist_visibility;
 
 pub use decks::{
-    public_deck, public_deck_bracket, public_deck_goldfish, public_deck_legality, public_deck_mana,
-    public_deck_pricing, public_deck_roles, public_deck_stats, public_deck_tokens, public_decks,
+    public_deck, public_deck_bracket, public_deck_combos, public_deck_goldfish,
+    public_deck_legality, public_deck_mana, public_deck_pricing, public_deck_roles,
+    public_deck_stats, public_deck_tokens, public_decks,
 };
 pub use public::{
     public_list, public_owned_counts, public_product_sets, public_product_summary, public_products,
@@ -37,10 +38,10 @@ pub use wishlist_visibility::{get_wishlist_visibility, set_wishlist_visibility};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::sharing::__path_<fn>`.
 pub use decks::{
-    __path_public_deck, __path_public_deck_bracket, __path_public_deck_goldfish,
-    __path_public_deck_legality, __path_public_deck_mana, __path_public_deck_pricing,
-    __path_public_deck_roles, __path_public_deck_stats, __path_public_deck_tokens,
-    __path_public_decks,
+    __path_public_deck, __path_public_deck_bracket, __path_public_deck_combos,
+    __path_public_deck_goldfish, __path_public_deck_legality, __path_public_deck_mana,
+    __path_public_deck_pricing, __path_public_deck_roles, __path_public_deck_stats,
+    __path_public_deck_tokens, __path_public_decks,
 };
 pub use public::{
     __path_public_list, __path_public_owned_counts, __path_public_product_sets,

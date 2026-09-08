@@ -9,10 +9,13 @@
 //! a user's own edits and the daily price capture their responses cannot change —
 //! so they cache perfectly under two version counters:
 //!
-//! * `holdings version` — per `(user, game)`, bumped by every collection holdings
-//!   mutation (card count writes, sealed-product count writes, import/sync
-//!   reconciles). Bumping changes the body key, so stale entries orphan and age
-//!   out via TTL rather than needing deletion.
+//! * `holdings version` — per `(surface, user, game)`, bumped by every holdings
+//!   mutation on that surface (card count writes, sealed-product count writes,
+//!   import/sync reconciles). The collection and the wish list are separate
+//!   counters ([`HoldingsSurface`]): the wish-list breakdown (issue #680) rides
+//!   this cache too, and a wish-list edit must orphan *its* bodies without
+//!   throwing away the collection's. Bumping changes the body key, so stale
+//!   entries orphan and age out via TTL rather than needing deletion.
 //! * `price epoch` — per game, bumped when the background sync finishes a tick
 //!   (price refresh + daily snapshot), when the historic backfill completes, and
 //!   when foil enrichment finishes — i.e. whenever price/history rows may have
@@ -103,6 +106,28 @@ enum Backend {
 /// error, which they treat as "retry".
 type InflightMap = Mutex<HashMap<String, watch::Sender<Option<Vec<u8>>>>>;
 
+/// Which per-user holdings surface a cached analytics body reads. The collection and
+/// the wish list are independent tables with independent writes, so each carries its
+/// own holdings-version counter: a wish-list edit orphans the wish-list breakdown and
+/// nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldingsSurface {
+    Collection,
+    Wishlist,
+}
+
+impl HoldingsSurface {
+    /// The version-counter key for `(surface, user, game)`. The collection keeps the
+    /// original `holdver` spelling so a deploy carrying this change doesn't orphan every
+    /// cached collection body at once.
+    fn version_key(self, user_id: i32, game: &str) -> String {
+        match self {
+            Self::Collection => format!("an:holdver:{user_id}:{game}"),
+            Self::Wishlist => format!("an:wishver:{user_id}:{game}"),
+        }
+    }
+}
+
 /// The analytics response cache handle held in [`crate::state::AppState`]. All
 /// methods are infallible at the call site: a degraded backend reads as a miss
 /// and writes as a no-op (logged at debug), never an error.
@@ -146,17 +171,14 @@ impl AnalyticsCache {
         }
     }
 
-    fn holdings_key(user_id: i32, game: &str) -> String {
-        format!("an:holdver:{user_id}:{game}")
-    }
-
     fn prices_key(game: &str) -> String {
         format!("an:pricever:{game}")
     }
 
-    /// Compose the body key for one analytics request, embedding both version
-    /// counters and the current UTC date. `None` means the backend is degraded —
-    /// the caller must skip the cache (both get and put) for this request.
+    /// Compose the body key for one **collection** analytics request, embedding both
+    /// version counters and the current UTC date. `None` means the backend is degraded —
+    /// the caller must skip the cache (both get and put) for this request. The
+    /// surface-explicit form is [`Self::surface_body_key`].
     pub async fn body_key(
         &self,
         user_id: i32,
@@ -164,21 +186,45 @@ impl AnalyticsCache {
         endpoint: &str,
         params: &str,
     ) -> Option<String> {
-        let (holdings, prices) = self.versions(user_id, game).await?;
+        self.surface_body_key(HoldingsSurface::Collection, user_id, game, endpoint, params)
+            .await
+    }
+
+    /// [`Self::body_key`] for a chosen holdings surface — the wish-list twin of a
+    /// cached read keys on the wish list's own holdings counter. The surface is part
+    /// of the key text too, so the two twins of one endpoint can never share a body.
+    pub async fn surface_body_key(
+        &self,
+        surface: HoldingsSurface,
+        user_id: i32,
+        game: &str,
+        endpoint: &str,
+        params: &str,
+    ) -> Option<String> {
+        let (holdings, prices) = self.versions(surface, user_id, game).await?;
         let day = Utc::now().date_naive();
+        let surface_tag = match surface {
+            HoldingsSurface::Collection => "",
+            HoldingsSurface::Wishlist => "wishlist:",
+        };
         Some(format!(
-            "an:body:{user_id}:{game}:{endpoint}:{params}:{holdings}:{prices}:{day}"
+            "an:body:{surface_tag}{user_id}:{game}:{endpoint}:{params}:{holdings}:{prices}:{day}"
         ))
     }
 
-    /// Both version counters for `(user, game)`, or `None` when the backend is
+    /// Both version counters for `(surface, user, game)`, or `None` when the backend is
     /// degraded (never default a failed read — see the module docs).
-    async fn versions(&self, user_id: i32, game: &str) -> Option<(i64, i64)> {
+    async fn versions(
+        &self,
+        surface: HoldingsSurface,
+        user_id: i32,
+        game: &str,
+    ) -> Option<(i64, i64)> {
         match &self.backend {
             Backend::Redis(conn) => {
                 let mut conn = conn.clone();
                 let result: Result<(Option<i64>, Option<i64>), _> = redis::cmd("MGET")
-                    .arg(Self::holdings_key(user_id, game))
+                    .arg(surface.version_key(user_id, game))
                     .arg(Self::prices_key(game))
                     .query_async(&mut conn)
                     .await;
@@ -193,7 +239,7 @@ impl AnalyticsCache {
             Backend::Memory(memory) => {
                 let versions = memory.versions.lock().expect("analytics versions mutex");
                 let holdings = versions
-                    .get(&Self::holdings_key(user_id, game))
+                    .get(&surface.version_key(user_id, game))
                     .copied()
                     .unwrap_or(0);
                 let prices = versions.get(&Self::prices_key(game)).copied().unwrap_or(0);
@@ -202,10 +248,20 @@ impl AnalyticsCache {
         }
     }
 
-    /// Record that `(user, game)`'s holdings changed — every cached analytics body
-    /// for them orphans immediately. Best-effort: called after successful writes.
+    /// Record that `(user, game)`'s **collection** holdings changed — every cached
+    /// collection analytics body for them orphans immediately. Best-effort: called
+    /// after successful writes. The surface-explicit form is
+    /// [`Self::bump_surface_holdings`].
     pub async fn bump_holdings(&self, user_id: i32, game: &str) {
-        self.bump(Self::holdings_key(user_id, game)).await;
+        self.bump_surface_holdings(HoldingsSurface::Collection, user_id, game)
+            .await;
+    }
+
+    /// [`Self::bump_holdings`] for a chosen surface — every wish-list write calls this
+    /// with [`HoldingsSurface::Wishlist`] so the cached wish-list breakdown can't
+    /// outlive the edit that changed it.
+    pub async fn bump_surface_holdings(&self, surface: HoldingsSurface, user_id: i32, game: &str) {
+        self.bump(surface.version_key(user_id, game)).await;
     }
 
     /// Record that the game's price/history data changed (sync tick, backfill,
@@ -453,6 +509,77 @@ mod tests {
             .await
             .expect("key");
         assert_ne!(full, windowed);
+    }
+
+    #[tokio::test]
+    async fn surfaces_version_independently() {
+        // The wish-list twin of an endpoint keys on its own counter (issue #680): a
+        // wish-list edit orphans the wish-list body and leaves the collection's alone,
+        // and vice versa — and the two surfaces never share a key text either.
+        let cache = memory_cache();
+        let collection = cache
+            .surface_body_key(HoldingsSurface::Collection, 7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        let wishlist = cache
+            .surface_body_key(HoldingsSurface::Wishlist, 7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        assert_ne!(collection, wishlist);
+
+        cache
+            .bump_surface_holdings(HoldingsSurface::Wishlist, 7, "mtg")
+            .await;
+        let collection_after = cache
+            .surface_body_key(HoldingsSurface::Collection, 7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        let wishlist_after = cache
+            .surface_body_key(HoldingsSurface::Wishlist, 7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        assert_eq!(collection, collection_after);
+        assert_ne!(wishlist, wishlist_after);
+
+        // The collection-flavoured conveniences are the Collection surface.
+        cache.bump_holdings(7, "mtg").await;
+        let plain = cache
+            .body_key(7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        let explicit = cache
+            .surface_body_key(HoldingsSurface::Collection, 7, "mtg", "breakdown", "")
+            .await
+            .expect("key");
+        assert_eq!(plain, explicit);
+        assert_ne!(plain, collection_after);
+        // The params segment is part of the key on either surface, so a breakdown at one
+        // bulk threshold can never serve another's.
+        assert_ne!(
+            cache
+                .surface_body_key(HoldingsSurface::Wishlist, 7, "mtg", "breakdown", "bulk100")
+                .await
+                .expect("key"),
+            cache
+                .surface_body_key(
+                    HoldingsSurface::Wishlist,
+                    7,
+                    "mtg",
+                    "breakdown",
+                    "bulk1000000"
+                )
+                .await
+                .expect("key")
+        );
+        // A price bump moves both surfaces.
+        cache.bump_prices("mtg").await;
+        assert_ne!(
+            wishlist_after,
+            cache
+                .surface_body_key(HoldingsSurface::Wishlist, 7, "mtg", "breakdown", "")
+                .await
+                .expect("key")
+        );
     }
 
     #[tokio::test]

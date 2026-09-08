@@ -20,10 +20,11 @@
 //!
 //! The handlers are split across submodules by concern — [`read`] (list / summary /
 //! wanted-count reads), [`sets`] (per-set landing + by-drop), [`write`] (the
-//! wanted-count upsert), [`products`] (the sealed-product wants), [`export`] (the `.txt`
-//! search export) and [`buy_list`] (the shopping-list rows behind "Buy all", issue #292 —
-//! the one read with no collection twin: you don't buy what you own) — mirroring
-//! `handlers::collection` minus its import/sync (a wish list has nothing to import). The
+//! wanted-count upsert), [`products`] (the sealed-product wants), [`breakdown`] (the
+//! collection breakdown's twin, issue #680), [`export`] (the `.txt` search export) and
+//! [`buy_list`] (the shopping-list rows behind "Buy all", issue #292 — the one read with no
+//! collection twin: you don't buy what you own) — mirroring `handlers::collection` minus its
+//! import/sync (a wish list has nothing to import) and its price-history analytics. The
 //! card wire DTOs and params are the collection's own, reused from
 //! [`crate::handlers::shared::holdings`] so the wish list needs no new generated TS
 //! types; on this side of the API their "owned" fields simply read as "wanted". Sealed
@@ -39,6 +40,7 @@ use crate::entities::wishlist_item;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod breakdown;
 mod buy_list;
 mod export;
 mod products;
@@ -49,6 +51,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+pub use breakdown::wishlist_breakdown;
 pub use buy_list::wishlist_buy_list;
 pub use export::export_wishlist_cards;
 pub use products::{
@@ -70,6 +73,7 @@ pub(crate) use sets::{wanted_drop_page, wanted_sets, wanted_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
+pub use breakdown::__path_wishlist_breakdown;
 pub use buy_list::__path_wishlist_buy_list;
 pub use export::__path_export_wishlist_cards;
 pub use products::{
