@@ -375,8 +375,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   sealed sync (`mtgjson::precons` — the same fetch, the same parse, and the same
   `model::Indexes` the membership + composition passes use; a fourth copy of any of the three
   would re-walk a 600 MB document for data that already arrived). So the three reads are
-  anonymous and live in the router's **`public`** group beside `products`, and the one write —
-  copying one into your decks — is authed under `/api/decks/{game}/precons/{slug}/copy`.
+  anonymous and live in the router's **`public`** group beside `products`, and the writes —
+  copying one into your decks, and adding its cards to your collection — are authed under
+  `/api/decks/{game}/precons/{slug}/{copy,collection}`.
   The tables are **rebuilt wholesale** every sync, so a row id is not stable and never reaches
   the wire: **`slug` is the identity**, derived deterministically (sets walked in sorted order,
   numeric suffix on collision) — a change to how it's derived needs a `DERIVATION_VERSION` bump,

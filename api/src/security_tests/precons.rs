@@ -6,6 +6,7 @@
 //! small all-foil deck with no command zone, a starter deck with a sideboard, and two Jumpstart
 //! themes), so the reads answer in the real wire shapes and the copy lands real cards.
 
+use super::decks::create_key;
 use super::harness::*;
 
 const PW: &str = "correct-horse-battery-staple";
@@ -1095,7 +1096,8 @@ async fn adding_a_precon_to_the_collection_records_every_board_by_finish() {
 }
 
 /// The both-finish printing is the load-bearing case: MTGJSON lists it as two rows, and the
-/// collection must hold it as one row with both counts — never two rows, never one finish.
+/// collection must hold it as one row with both counts — never two rows, never one finish —
+/// added ON TOP of the copies already owned, in both finishes.
 #[tokio::test]
 async fn a_printing_in_both_finishes_lands_as_one_holding_with_both_counts() {
     let app = test_app_with_catalog().await;
@@ -1112,6 +1114,20 @@ async fn a_printing_in_both_finishes_lands_as_one_holding_with_both_counts() {
         "the seeded precon lists this printing in both finishes: {expected:?}"
     );
 
+    // Already owned before the box arrives: 5 regular + 2 foil. The add must never lower
+    // either — an absolute write of the list's counts would.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/cards/dummy-dmb-0001",
+            &access,
+            json!({ "quantity": 5, "foil_quantity": 2 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+
     let (status, _, _) = send(
         &app,
         json_with_bearer(
@@ -1125,7 +1141,8 @@ async fn a_printing_in_both_finishes_lands_as_one_holding_with_both_counts() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         owned(&app, &access, "dummy-dmb-0001").await,
-        (regular, foil)
+        (regular + 5, foil + 2),
+        "the list's counts on top of the owned ones, per finish"
     );
 }
 
@@ -1139,8 +1156,15 @@ async fn adding_a_precon_to_the_collection_requires_authentication_and_a_real_pr
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(cache_control(&headers), Some("no-store"));
 
-    // An unknown slug -> 404, and nothing lands.
+    // A read-only API key is a valid credential but the wrong scope -> 403: the precon is
+    // public to read, but this writes the key owner's collection.
     let (access, _) = register(&app, "precon-buyer-miss@example.com", PW).await;
+    let ro = create_key(&app, &access, "read").await;
+    let (status, headers, _) = send(&app, json_with_bearer("POST", &uri, &ro, json!({}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // An unknown slug -> 404, and nothing lands.
     let (status, headers, _) = send(
         &app,
         json_with_bearer(

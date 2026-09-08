@@ -9,8 +9,9 @@
 //! in the authed deck group, and a precon is addressed by its **slug**, never its id (the
 //! tables are rebuilt wholesale on every sync, so ids are re-minted; see the ingest note).
 //!
-//! The one write, [`copy`], is the bridge back to the user's own surface: it turns a precon
-//! into a real deck of theirs. It's the *same* operation
+//! The writes are the bridges back to the user's own surfaces. [`copy`] turns a precon into
+//! a real deck of theirs; [`to_collection`] puts every card it ships into their collection
+//! (through `decks::to_collection`'s seam — see that module). The copy It's the *same* operation
 //! [`decks::copy`](crate::handlers::decks) performs on a shared public deck — both hold
 //! internal card ids already — so both go through that module's `insert_deck_with_cards`
 //! seam and only differ in where the sections come from.

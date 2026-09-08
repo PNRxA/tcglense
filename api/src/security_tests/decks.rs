@@ -45,7 +45,7 @@ async fn create_deck(app: &TestApp, token: &str, name: &str) -> Value {
 }
 
 /// Mint a scoped API key for a signed-in user.
-async fn create_key(app: &TestApp, access: &str, scope: &str) -> String {
+pub(super) async fn create_key(app: &TestApp, access: &str, scope: &str) -> String {
     let (status, _, body) = send(
         app,
         json_with_bearer(
@@ -2405,13 +2405,30 @@ async fn adding_a_deck_to_the_collection_sums_on_top_of_what_is_owned() {
         .as_i64()
         .expect("the seeded maybeboard");
     let sideboard = add_section(&app, &alice, deck_id, "Sideboard").await;
+    // The maybeboard is a FLAG, not a name (issue #570): rename the flagged section to
+    // something that doesn't sound like one, and add an unflagged section that does — a
+    // name-based skip would get both wrong, in opposite directions.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/sections/{maybeboard}"),
+            &alice,
+            json!({ "name": "Cut candidates" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rename maybeboard failed: {body:?}");
+    let considering = add_section(&app, &alice, deck_id, "Considering").await;
     // A: 3 regular + 1 foil. B: 2 in the deck proper and 1 more in the sideboard (a real
-    // card in the box). C: only under consideration.
+    // card in the box). C: 4 under consideration in the (renamed) maybeboard, and 1 in the
+    // unflagged "Considering" section, which IS part of the deck.
     for (card, qty, foil, section) in [
         (&cards[0], 3, 1, creatures),
         (&cards[1], 2, 0, creatures),
         (&cards[1], 1, 0, sideboard),
         (&cards[2], 4, 0, maybeboard),
+        (&cards[2], 1, 0, considering),
     ] {
         let (status, _, body) = send(
             &app,
@@ -2436,19 +2453,23 @@ async fn adding_a_deck_to_the_collection_sums_on_top_of_what_is_owned() {
     );
     // A per-user write: never shared-cached.
     assert_eq!(cache_control(&headers), Some("no-store"));
-    assert_eq!(summary["cards"], 2, "two printings outside the maybeboard");
     assert_eq!(
-        summary["regular_copies"], 6,
-        "3 + 2 + 1 (the sideboard copy counts)"
+        summary["cards"], 3,
+        "three printings outside the maybeboard"
+    );
+    assert_eq!(
+        summary["regular_copies"], 7,
+        "3 + 2 + 1 (the sideboard copy counts) + 1 (the unflagged section counts)"
     );
     assert_eq!(summary["foil_copies"], 1);
     assert_eq!(summary["skipped_cards"], 0);
 
-    // Added on top of the two she owned; B's two sections folded into one holding; the
-    // maybeboard card was never bought.
+    // Added on top of the two she owned; B's two sections folded into one holding; C's four
+    // copies under the flagged (renamed) maybeboard were never bought — only the one in the
+    // unflagged section that merely sounds like a maybeboard.
     assert_eq!(owned(&app, &alice, &cards[0]).await, (5, 1));
     assert_eq!(owned(&app, &alice, &cards[1]).await, (3, 0));
-    assert_eq!(owned(&app, &alice, &cards[2]).await, (0, 0));
+    assert_eq!(owned(&app, &alice, &cards[2]).await, (1, 0));
 
     // The deck itself is untouched — this is a read of it, not an edit.
     let (status, _, after) = send(
@@ -2457,14 +2478,14 @@ async fn adding_a_deck_to_the_collection_sums_on_top_of_what_is_owned() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(after["cards"].as_array().expect("cards").len(), 4);
+    assert_eq!(after["cards"].as_array().expect("cards").len(), 5);
 
     // Not idempotent, on purpose: a second copy of the deck is a second copy of every card.
     let (status, _, again) = send(&app, json_with_bearer("POST", &uri, &alice, json!({}))).await;
     assert_eq!(status, StatusCode::OK, "second add failed: {again:?}");
     assert_eq!(owned(&app, &alice, &cards[0]).await, (8, 2));
     assert_eq!(owned(&app, &alice, &cards[1]).await, (6, 0));
-    assert_eq!(owned(&app, &alice, &cards[2]).await, (0, 0));
+    assert_eq!(owned(&app, &alice, &cards[2]).await, (2, 0));
 }
 
 /// The write is gated like every other deck write: a credential that can write, on a deck

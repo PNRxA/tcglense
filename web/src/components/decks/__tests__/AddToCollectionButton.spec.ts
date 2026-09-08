@@ -124,6 +124,28 @@ describe('AddToCollectionButton', () => {
     expect(wrapper.find('[data-testid="confirm-add"]').exists()).toBe(true)
   })
 
+  // The write is not idempotent, so this guard is the difference between one copy and two
+  // for a user who double-clicks on a slow connection.
+  it('sends one request when confirm is clicked again while the first is in flight', async () => {
+    let finish!: (added: CollectionAddSummary) => void
+    submit.mockReturnValueOnce(
+      new Promise<CollectionAddSummary>((resolve) => {
+        finish = resolve
+      }),
+    )
+    const wrapper = mountButton()
+
+    await confirmButton(wrapper).trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    expect(submit).toHaveBeenCalledOnce()
+    expect(confirmButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(confirmButton(wrapper).text()).toContain('Adding…')
+
+    finish({ cards: 1, regular_copies: 1, foil_copies: 0, skipped_cards: 0 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Added to your collection')
+  })
+
   it('leaves the foil clause out when nothing foil was added', async () => {
     submit.mockResolvedValueOnce({ cards: 2, regular_copies: 6, foil_copies: 0, skipped_cards: 0 })
     const wrapper = mountButton()

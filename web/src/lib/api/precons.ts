@@ -16,9 +16,10 @@ import type {
 // decks, Jumpstart themes, intro packs — derived from MTGJSON during the sealed sync. A Secret
 // Lair drop is a product's contents, not a deck, so it is excluded at derivation.
 // They're *catalog* data, not the user's, so the list/facets/detail reads take no token and
-// live beside `products` rather than `decks`. The one write — copying a precon into your own
-// decks — is authed and returns a normal `DeckDetail`, so the caller navigates to the deck
-// page it just created exactly as the public-deck copy does.
+// live beside `products` rather than `decks`. The two writes are authed: copying a precon into
+// your own decks returns a normal `DeckDetail`, so the caller navigates to the deck page it
+// just created exactly as the public-deck copy does, and adding its cards to your collection
+// returns what landed, like the deck's own add.
 //
 // A precon is addressed by its **slug** (`turtle-power-tmc`), never an id: the tables are
 // rebuilt wholesale on every sync, so ids are re-minted while a slug is stable.
