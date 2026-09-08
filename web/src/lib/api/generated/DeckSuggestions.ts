@@ -20,7 +20,9 @@ format_key: string | null, format_label: string | null,
  */
 color_identity: Array<string> | null, 
 /**
- * The command-zone cards whose identity that is; empty when the colours are a union.
+ * The command-zone cards whose identity that is (at most four named — a real zone holds
+ * one or two; the colours still fold over every card in it); empty when the colours are
+ * a union.
  */
 commanders: Array<DeckCommander>, 
 /**
@@ -33,9 +35,14 @@ candidate_count: number,
  */
 scanned_count: number, 
 /**
- * The most popular candidates overall, capped.
+ * Every card `top` or a role names, most popular first, each **once** — the pool the
+ * id lists below index into, so a card filling three roles rides the wire one time.
  */
-top: Array<DeckSuggestionCard>, 
+cards: Array<DeckSuggestionCard>, 
+/**
+ * The most popular candidates overall, by external card id into `cards`, capped.
+ */
+top: Array<string>, 
 /**
  * Every role, in the roles read's order, whether or not any candidate fills it.
  */

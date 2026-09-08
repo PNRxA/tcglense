@@ -408,7 +408,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
-  **Suggestions are the seventh analysis read and the one with no public mirror** (`/suggestions`,
+  **Suggestions are the analysis read with no public mirror** (`/suggestions`,
   issue #684): the cards the caller already owns that the deck could play — collection ∩ colour
   identity ∩ format legality ∩ not already in the deck — ranked by `cards.edhrec_rank` and grouped
   by role. It **reads the caller's collection**, so it is never mirrored under `/api/u/{handle}`
@@ -425,7 +425,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   wire (`color_identity`/`format_key` null) and in `caveats`, never implied. **Bounded two ways:**
   the collection scan selects the narrow columns only and folds by identity, then only the
   `SCAN_CAP` most popular survivors are loaded in full for the role grammar — `candidate_count`
-  stays exact, `scanned_count` says how many were classified. The body is memoised in
+  stays exact, `scanned_count` says how many were classified, and every list on the wire is
+  **ids into one `cards` pool** (a card filling three roles is serialised once; nine lists of
+  full `Card`s was a body the analytics cache's memory bound couldn't hold). The body is memoised in
   `analytics_cache` under the holdings version, the price epoch and the day like value history,
   **plus a fingerprint of the deck's format + rows** (`read::deck_fingerprint`), because those two
   counters don't cover a deck edit; client-side it must be invalidated by **both** deck writes

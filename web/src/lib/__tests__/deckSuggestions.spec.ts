@@ -15,6 +15,7 @@ function base(over: Partial<DeckSuggestions> = {}): DeckSuggestions {
     commanders: [{ card_id: 'a', name: 'Aminatou' }],
     candidate_count: 14,
     scanned_count: 14,
+    cards: [],
     top: [],
     roles: [],
     unclassified_count: 0,

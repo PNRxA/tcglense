@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { useSetDeckCardMutation } from '@/composables/useDecks'
 import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
 import { automaticDeckSection } from '@/lib/deckCategories'
@@ -15,7 +15,9 @@ import { automaticDeckSection } from '@/lib/deckCategories'
 //   functional categorisation. A pinned section that stops existing snaps back to `'auto'`.
 // * **Optimistic per-(card, section) counts** so clicking the same printing four times builds
 //   a playset instead of writing `1` four times off a deck cache that only refreshes after
-//   each write's refetch lands; an entry is dropped once the deck has caught up with it.
+//   each write's refetch lands; an entry is dropped once the deck has caught up with it, and
+//   **rolled back when the write rejects**, so a retry adds one copy and not the one the
+//   server never received plus another.
 // * **In-flight adds** are a reactive `Set` keyed the same way, so each tile or row spins
 //   its own "+" while its own write is outstanding — a shared mutation's `isPending` can't
 //   tell them apart.
@@ -92,7 +94,8 @@ export function useDeckCardAdder(input: DeckCardAdderInput) {
     if (sectionId == null) return
     const k = keyOf(card.id, sectionId)
     const server = currentCounts(card.id, sectionId)
-    const next = (optimistic.get(k) ?? server.quantity) + 1
+    const previous = optimistic.get(k)
+    const next = (previous ?? server.quantity) + 1
     optimistic.set(k, next)
     pending.value.add(k)
     try {
@@ -104,6 +107,12 @@ export function useDeckCardAdder(input: DeckCardAdderInput) {
         quantity: next,
         foil_quantity: server.foil,
       })
+    } catch (error) {
+      // The server never took this count: forget it, so the next attempt starts from what
+      // the deck actually holds rather than stacking on a write that failed.
+      if (previous === undefined) optimistic.delete(k)
+      else optimistic.set(k, previous)
+      throw error
     } finally {
       pending.value.delete(k)
     }
@@ -112,8 +121,6 @@ export function useDeckCardAdder(input: DeckCardAdderInput) {
   return {
     /** `'auto'` or a section id as a string — what a `<select>` binds to. */
     target,
-    sectionOptions: computed(() => input.sections.value),
-    targetSectionId,
     needsExplicitSection,
     inTargetCount,
     isPending,

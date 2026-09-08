@@ -95,22 +95,33 @@ function suggestion(
   }
 }
 
-function payload(top: DeckSuggestionCard[], over: Partial<DeckSuggestionsPayload> = {}) {
+/** A payload whose pool is `cards`, with `top` naming all of them and each role naming the
+ * pool's cards that fill it — the shape the server sends (ids into one pool). */
+function payload(cards: DeckSuggestionCard[], over: Partial<DeckSuggestionsPayload> = {}) {
   const role = (
     key: DeckSuggestionsPayload['roles'][number]['role'],
     label: string,
     inDeck: number,
-    cards: DeckSuggestionCard[],
-    count = cards.length,
-  ) => ({ role: key, label, description: `${label} does things.`, in_deck: inDeck, count, cards })
+    matched: DeckSuggestionCard[],
+    count = matched.length,
+  ) => ({
+    role: key,
+    label,
+    description: `${label} does things.`,
+    in_deck: inDeck,
+    count,
+    card_ids: matched.map((c) => c.card.id),
+  })
+  const top = cards
   return {
     format_key: 'commander',
     format_label: 'Commander',
     color_identity: ['W', 'U'],
     commanders: [{ card_id: 'cmd', name: 'Aminatou' }],
-    candidate_count: top.length,
-    scanned_count: top.length,
-    top,
+    candidate_count: cards.length,
+    scanned_count: cards.length,
+    cards,
+    top: cards.map((c) => c.card.id),
     roles: [
       role('ramp', 'Ramp', 8, []),
       role(
@@ -208,7 +219,9 @@ describe('DeckSuggestions', () => {
     )
     query.data = payload(many, {
       roles: payload(many).roles.map((g) =>
-        g.role === 'ramp' ? { ...g, cards: many.slice(0, 2), count: many.length } : g,
+        g.role === 'ramp'
+          ? { ...g, card_ids: many.slice(0, 2).map((c) => c.card.id), count: many.length }
+          : g,
       ),
     })
     const wrapper = mountPanel()
@@ -232,6 +245,24 @@ describe('DeckSuggestions', () => {
     expect(text).toContain('any colour')
     expect(text).toContain('any format')
     expect(text).not.toContain("'s colours")
+
+    // …and the empty state words only the filters that were applied.
+    query.data = payload([], { format_key: null, format_label: null, color_identity: null })
+    expect(mountPanel().get('[data-testid="empty"]').text()).toBe(
+      'Nothing you own fits this deck yet — every ranked card in your collection is already in it.',
+    )
+    query.data = payload([])
+    expect(mountPanel().get('[data-testid="empty"]').text()).toContain(
+      'already in it, off-colour or not legal in Commander',
+    )
+  })
+
+  it('skips an id the pool does not hold rather than rendering a blank row', () => {
+    query.data = payload([suggestion('a')], { top: ['ghost', 'a'] })
+    const wrapper = mountPanel()
+    const rows = wrapper.findAll('[data-testid="suggestion-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.text()).toContain('Card a')
   })
 
   it('adds a card through the deck card write, filed by type, one more than the deck holds', async () => {
@@ -278,8 +309,11 @@ describe('DeckSuggestions', () => {
     const rows = wrapper.findAll('[data-testid="suggestion-row"]')
     const battleAdd = rows[0]!.get('button[aria-label^="Choose a section"]')
     expect(battleAdd.attributes('disabled')).toBeDefined()
+    // The reason is on screen, not only in the disabled button's label.
+    expect(wrapper.get('[data-testid="needs-section"]').text()).toContain('Choose a section')
 
     await wrapper.get('select').setValue('9')
+    expect(wrapper.find('[data-testid="needs-section"]').exists()).toBe(false)
     await rows[0]!.get('button[aria-label^="Add"]').trigger('click')
     await flushPromises()
     expect(mocks.setCard).toHaveBeenCalledWith(

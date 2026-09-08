@@ -1297,12 +1297,13 @@ async fn suggestions_are_owned_in_colour_legal_and_not_in_the_deck() {
     assert_eq!(body["commanders"][0]["card_id"], "dummy-dmb-0006");
     assert_eq!(body["candidate_count"], 1, "{body:?}");
     assert_eq!(body["scanned_count"], 1);
-    let top = body["top"].as_array().expect("top");
-    assert_eq!(top.len(), 1);
-    assert_eq!(top[0]["card"]["id"], "dummy-dmb-0001");
-    assert_eq!(top[0]["edhrec_rank"], 42);
-    assert_eq!(top[0]["owned"], 3, "regular + foil across the collection");
-    assert_eq!(top[0]["roles"], json!(["ramp"]));
+    assert_eq!(body["top"], json!(["dummy-dmb-0001"]));
+    let cards = body["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 1, "the pool holds every named card once");
+    assert_eq!(cards[0]["card"]["id"], "dummy-dmb-0001");
+    assert_eq!(cards[0]["edhrec_rank"], 42);
+    assert_eq!(cards[0]["owned"], 3, "regular + foil across the collection");
+    assert_eq!(cards[0]["roles"], json!(["ramp"]));
     let roles = body["roles"].as_array().expect("roles");
     assert_eq!(roles.len(), 8, "every role is always reported");
     let group = |role: &str| -> &serde_json::Value {
@@ -1313,7 +1314,7 @@ async fn suggestions_are_owned_in_colour_legal_and_not_in_the_deck() {
     };
     assert_eq!(group("ramp")["count"], 1);
     assert_eq!(group("ramp")["in_deck"], 0);
-    assert_eq!(group("ramp")["cards"][0]["card"]["id"], "dummy-dmb-0001");
+    assert_eq!(group("ramp")["card_ids"], json!(["dummy-dmb-0001"]));
     assert_eq!(group("removal")["count"], 0);
     assert_eq!(
         group("removal")["in_deck"],
@@ -1360,15 +1361,16 @@ async fn suggestions_are_owned_in_colour_legal_and_not_in_the_deck() {
             .is_empty()
     );
     assert_eq!(body["candidate_count"], 1, "{body:?}");
-    assert_eq!(body["top"][0]["card"]["id"], "dummy-dmb-0002");
-    assert_eq!(body["top"][0]["owned"], 1);
-    assert_eq!(body["top"][0]["roles"], json!(["counterspell"]));
+    assert_eq!(body["top"], json!(["dummy-dmb-0002"]));
+    assert_eq!(body["cards"][0]["card"]["id"], "dummy-dmb-0002");
+    assert_eq!(body["cards"][0]["owned"], 1);
+    assert_eq!(body["cards"][0]["roles"], json!(["counterspell"]));
 
     own_card(&app, &access, "dummy-dmb-0002", 4, 0).await;
     let (status, _, body) = send(&app, get_with_bearer(&flat_path, &access)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        body["top"][0]["owned"], 4,
+        body["cards"][0]["owned"], 4,
         "the collection edit is seen: {body:?}"
     );
 
@@ -1384,16 +1386,21 @@ async fn suggestions_are_owned_in_colour_legal_and_not_in_the_deck() {
     assert!(body["format_key"].is_null());
     assert!(body["color_identity"].is_null());
     assert_eq!(body["candidate_count"], 3, "{body:?}");
-    let ids: Vec<&str> = body["top"]
+    assert_eq!(
+        body["top"],
+        json!(["dummy-dmb-0001", "dummy-dmb-0003", "dummy-dmb-0002"]),
+        "most popular first"
+    );
+    let pool: Vec<&str> = body["cards"]
         .as_array()
-        .expect("top")
+        .expect("cards")
         .iter()
         .map(|c| c["card"]["id"].as_str().expect("id"))
         .collect();
     assert_eq!(
-        ids,
+        pool,
         ["dummy-dmb-0001", "dummy-dmb-0003", "dummy-dmb-0002"],
-        "most popular first"
+        "the pool is rank-ordered and holds each named card once"
     );
     let caveats = body["caveats"].as_array().expect("caveats");
     assert!(

@@ -11,7 +11,12 @@ import { useDeckCardAdder } from '@/composables/useDeckCardAdder'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import type { DeckCardEntry, DeckSection, DeckSuggestionCard } from '@/lib/api'
 import { printingLabel } from '@/lib/deckPricing'
-import { rankLabel, suggestionsSummary, TOP_SUGGESTED } from '@/lib/deckSuggestions'
+import {
+  formatFilterLabel,
+  rankLabel,
+  suggestionsSummary,
+  TOP_SUGGESTED,
+} from '@/lib/deckSuggestions'
 
 // **From your collection** (issue #684): the cards you already own that this deck could
 // play — legal in its format, inside its colour identity, not already in it — most popular
@@ -45,7 +50,37 @@ const suggestions = computed(() => query.data.value)
 const pending = computed(() => query.isPending.value)
 const updating = computed(() => query.isFetching.value && !pending.value)
 
-const top = computed(() => suggestions.value?.top.slice(0, TOP_SUGGESTED) ?? [])
+// Every list on the wire is ids into one pool (a card filling three roles is sent once), so
+// the rows are resolved through it; an id the pool doesn't hold is skipped rather than shown
+// blank.
+const byId = computed(
+  () => new Map((suggestions.value?.cards ?? []).map((card) => [card.card.id, card])),
+)
+function resolve(ids: string[]): DeckSuggestionCard[] {
+  return ids.flatMap((id) => {
+    const card = byId.value.get(id)
+    return card ? [card] : []
+  })
+}
+const top = computed(() => resolve(suggestions.value?.top ?? []).slice(0, TOP_SUGGESTED))
+/** Any listed card the automatic filing has no safe section for — the on-screen reason a
+ * disabled Add is disabled, the same hint the add-cards box shows. */
+const anyNeedsSection = computed(
+  () =>
+    adder.target.value === 'auto' &&
+    (suggestions.value?.cards ?? []).some((card) => adder.needsExplicitSection(card.card)),
+)
+/** Why nothing fits, worded only for the filters the server actually applied. */
+const emptyReason = computed(() => {
+  const s = suggestions.value
+  if (!s) return ''
+  const reasons = ['already in it']
+  if (s.color_identity != null) reasons.push('off-colour')
+  if (s.format_key != null) reasons.push(`not ${formatFilterLabel(s)}`)
+  const last = reasons[reasons.length - 1]
+  const list = reasons.length === 1 ? last : `${reasons.slice(0, -1).join(', ')} or ${last}`
+  return `Nothing you own fits this deck yet — every ranked card in your collection is ${list}.`
+})
 const labelByRole = computed(
   () => new Map((suggestions.value?.roles ?? []).map((group) => [group.role, group.label])),
 )
@@ -187,6 +222,7 @@ function addLabel(card: DeckSuggestionCard): string {
               size="sm"
               class="h-7 px-2 text-xs"
               :aria-label="addLabel(card)"
+              :title="addLabel(card)"
               :disabled="adder.needsExplicitSection(card.card) || adder.isPending(card.card)"
               @click="add(card)"
             >
@@ -195,9 +231,14 @@ function addLabel(card: DeckSuggestionCard): string {
             </Button>
           </li>
         </ul>
-        <p v-else class="text-muted-foreground text-sm">
-          Nothing you own fits this deck yet — every ranked card in your collection that would is
-          either already in it, off-colour, or not legal in its format.
+        <p v-else class="text-muted-foreground text-sm" data-testid="empty">{{ emptyReason }}</p>
+        <p
+          v-if="anyNeedsSection"
+          class="text-muted-foreground text-xs"
+          role="status"
+          data-testid="needs-section"
+        >
+          Some card types have no safe automatic category. Choose a section above to add them.
         </p>
 
         <p class="text-muted-foreground text-xs" data-testid="rank-caveat">{{ rankCaveat }}</p>
@@ -218,9 +259,9 @@ function addLabel(card: DeckSuggestionCard): string {
                 </span>
               </h3>
               <p class="text-muted-foreground mt-1 text-xs">{{ group.description }}</p>
-              <ul v-if="group.cards.length" class="mt-2 divide-y">
+              <ul v-if="group.card_ids.length" class="mt-2 divide-y">
                 <li
-                  v-for="card in group.cards"
+                  v-for="card in resolve(group.card_ids)"
                   :key="card.card.id"
                   class="flex items-center justify-between gap-2 py-1 text-sm"
                 >
@@ -242,6 +283,7 @@ function addLabel(card: DeckSuggestionCard): string {
                     size="sm"
                     class="h-7 px-2 text-xs"
                     :aria-label="addLabel(card)"
+                    :title="addLabel(card)"
                     :disabled="adder.needsExplicitSection(card.card) || adder.isPending(card.card)"
                     @click="add(card)"
                   >
@@ -250,8 +292,11 @@ function addLabel(card: DeckSuggestionCard): string {
                   </Button>
                 </li>
               </ul>
-              <p v-if="group.count > group.cards.length" class="text-muted-foreground mt-1 text-xs">
-                …and {{ group.count - group.cards.length }} more
+              <p
+                v-if="group.count > group.card_ids.length"
+                class="text-muted-foreground mt-1 text-xs"
+              >
+                …and {{ group.count - group.card_ids.length }} more
               </p>
             </section>
           </div>

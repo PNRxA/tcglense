@@ -40,7 +40,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
 use serde::Serialize;
 
 use crate::entities::card;
@@ -64,8 +64,13 @@ use super::{CardFacts, DeckAnalysisInput, fold_by_name};
 /// `candidate_count` stays exact.
 pub(crate) const SCAN_CAP: usize = 500;
 
-/// Cards listed per role, and in the overall `top` list.
-const MAX_LISTED_CARDS: usize = 24;
+/// Candidates named in the overall `top` list.
+const MAX_LISTED_TOP: usize = 24;
+
+/// Candidates named per role. Every list is **ids into one shared pool** (`cards`), so a
+/// card filling three roles is serialised once — a full `CardResponse` duplicated across
+/// nine lists was the body that broke the analytics cache's memory bound.
+const MAX_LISTED_PER_ROLE: usize = 12;
 
 /// Commanders named on the wire, for the "in Atraxa's colours" line. A real command zone
 /// holds one or two; the colours still fold over every card in it.
@@ -105,8 +110,9 @@ pub struct DeckSuggestionRole {
     pub in_deck: i64,
     /// Scanned candidates filling this role.
     pub count: i64,
-    /// Those candidates, most popular first, capped (`count` stays exact).
-    pub cards: Vec<DeckSuggestionCard>,
+    /// Those candidates by external card id into `DeckSuggestions::cards`, most popular
+    /// first, capped (`count` stays exact).
+    pub card_ids: Vec<String>,
 }
 
 /// Everything `GET /api/decks/{game}/{deck_id}/suggestions` answers.
@@ -122,15 +128,20 @@ pub struct DeckSuggestions {
     /// when the deck has no card to read a colour off — then no colour filter applied. An
     /// empty list is a colourless deck, which only colourless cards fit.
     pub color_identity: Option<Vec<String>>,
-    /// The command-zone cards whose identity that is; empty when the colours are a union.
+    /// The command-zone cards whose identity that is (at most four named — a real zone holds
+    /// one or two; the colours still fold over every card in it); empty when the colours are
+    /// a union.
     pub commanders: Vec<DeckCommanderResponse>,
     /// Owned cards (by gameplay identity) that passed every filter — exact.
     pub candidate_count: i64,
     /// How many of those, most popular first, were loaded and classified. Equal to
     /// `candidate_count` unless it exceeded the scan cap.
     pub scanned_count: i64,
-    /// The most popular candidates overall, capped.
-    pub top: Vec<DeckSuggestionCard>,
+    /// Every card `top` or a role names, most popular first, each **once** — the pool the
+    /// id lists below index into, so a card filling three roles rides the wire one time.
+    pub cards: Vec<DeckSuggestionCard>,
+    /// The most popular candidates overall, by external card id into `cards`, capped.
+    pub top: Vec<String>,
     /// Every role, in the roles read's order, whether or not any candidate fills it.
     pub roles: Vec<DeckSuggestionRole>,
     /// Scanned candidates filling no role — most creatures and every land — so the role
@@ -215,16 +226,20 @@ fn playable_in(facts: &CardFacts, format_key: &str) -> bool {
 struct OwnedCandidate {
     /// Lowest catalog id among the held printings — the one loaded for the wire.
     card_id: i32,
-    edhrec_rank: i32,
+    /// `None` until a ranked printing is seen; a card that never gets one is dropped.
+    edhrec_rank: Option<i32>,
     owned: i64,
     color_identity: Vec<String>,
     legalities: Option<String>,
 }
 
 /// The narrow scan of the caller's collection, folded by gameplay identity, most popular
-/// first. Only ranked cards are read — an unranked card has no popularity claim to make —
-/// and the rank, colours and legality object are oracle-level facts, so whichever held
-/// printing is read first speaks for the card.
+/// first. A card needs a rank on **some** held printing to be a candidate — an unranked card
+/// has no popularity claim to make — but every held printing counts towards `owned`, since a
+/// reprint imported before the rank column existed is still a copy of the same card. The
+/// rank, colours and legality object are oracle-level facts, so the first ranked printing read
+/// speaks for the card. No SQL ordering: the fold below has to re-sort after merging
+/// printings, so asking the database to sort the whole join first was dead work.
 async fn owned_candidates(
     state: &AppState,
     user_id: i32,
@@ -236,7 +251,7 @@ async fn owned_candidates(
         String,
         Option<String>,
         Option<String>,
-        i32,
+        Option<i32>,
         i32,
         i32,
     )> = CollectionItem::find()
@@ -252,9 +267,6 @@ async fn owned_candidates(
         .inner_join(Card)
         .filter(collection_item::Column::UserId.eq(user_id))
         .filter(collection_item::Column::Game.eq(game))
-        .filter(card::Column::EdhrecRank.is_not_null())
-        .order_by_asc(card::Column::EdhrecRank)
-        .order_by_asc(collection_item::Column::CardId)
         .into_tuple()
         .all(&state.db)
         .await?;
@@ -270,7 +282,10 @@ async fn owned_candidates(
         match folded.get_mut(&key) {
             Some(existing) => {
                 existing.owned = existing.owned.saturating_add(copies);
-                existing.edhrec_rank = existing.edhrec_rank.min(rank);
+                existing.edhrec_rank = match (existing.edhrec_rank, rank) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
                 if card_id < existing.card_id {
                     existing.card_id = card_id;
                 }
@@ -293,9 +308,10 @@ async fn owned_candidates(
     let mut candidates: Vec<(String, OwnedCandidate)> = order
         .into_iter()
         .filter_map(|key| folded.remove(&key).map(|candidate| (key, candidate)))
+        .filter(|(_, candidate)| candidate.edhrec_rank.is_some())
         .collect();
-    // Rows arrive rank-ordered, but a fold can lower an identity's rank or id below a
-    // neighbour's; re-sort so the window the scan cap cuts is exactly "the most popular".
+    // Most popular first, then by id, so the window the scan cap cuts is exactly "the most
+    // popular" and the same collection answers identically across requests.
     candidates.sort_by_key(|(_, c)| (c.edhrec_rank, c.card_id));
     Ok(candidates)
 }
@@ -343,7 +359,6 @@ fn caveats(
 
 /// Everything the deck contributes to the answer, computed once from the loaded deck so
 /// the handler can fingerprint it for the cache and the fold can read it.
-#[derive(Clone)]
 pub(crate) struct DeckSide {
     pub format_key: Option<&'static str>,
     pub color_identity: Option<Vec<String>>,
@@ -426,7 +441,6 @@ pub(crate) async fn analyse_suggestions(
 
     // The most popular survivors, loaded in full for the role grammar and the wire.
     let scanned: Vec<OwnedCandidate> = survivors.into_iter().take(SCAN_CAP).collect();
-    let scanned_count = scanned.len() as i64;
     let mut models: HashMap<i32, card::Model> = HashMap::new();
     let wanted: Vec<i32> = scanned.iter().map(|c| c.card_id).collect();
     for chunk in wanted.chunks(RESOLVE_CHUNK) {
@@ -439,26 +453,37 @@ pub(crate) async fn analyse_suggestions(
         }
     }
 
-    let mut cards: Vec<DeckSuggestionCard> = Vec::with_capacity(scanned.len());
+    let mut classified: Vec<DeckSuggestionCard> = Vec::with_capacity(scanned.len());
     for candidate in scanned {
         // A row gone between the two queries (a re-import mid-request) is skipped, as every
-        // deck reader skips a card whose catalog row is gone.
+        // deck reader skips a card whose catalog row is gone — and is not counted as scanned.
         let Some(model) = models.remove(&candidate.card_id) else {
             continue;
         };
+        let Some(edhrec_rank) = candidate.edhrec_rank else {
+            continue; // unreachable: the scan keeps only ranked cards
+        };
         let roles = roles_of(&CardFacts::from(&model));
-        cards.push(DeckSuggestionCard {
+        classified.push(DeckSuggestionCard {
             card: CardResponse::from(model),
-            edhrec_rank: candidate.edhrec_rank,
+            edhrec_rank,
             owned: candidate.owned,
             roles,
         });
     }
+    let scanned_count = classified.len() as i64;
 
+    // The id lists, and the one pool they index into: a card named by `top` and by three
+    // roles is serialised once. `classified` is rank-ordered, so every list is too.
+    let top: Vec<String> = classified
+        .iter()
+        .take(MAX_LISTED_TOP)
+        .map(|card| card.card.id.clone())
+        .collect();
     let roles: Vec<DeckSuggestionRole> = ROLES
         .iter()
         .map(|(role, label, description)| {
-            let matched: Vec<&DeckSuggestionCard> = cards
+            let matched: Vec<&DeckSuggestionCard> = classified
                 .iter()
                 .filter(|card| card.roles.contains(role))
                 .collect();
@@ -468,16 +493,28 @@ pub(crate) async fn analyse_suggestions(
                 description: (*description).to_string(),
                 in_deck: deck.in_deck_by_role.get(role).copied().unwrap_or(0),
                 count: matched.len() as i64,
-                cards: matched
+                card_ids: matched
                     .iter()
-                    .take(MAX_LISTED_CARDS)
-                    .map(|card| (*card).clone())
+                    .take(MAX_LISTED_PER_ROLE)
+                    .map(|card| card.card.id.clone())
                     .collect(),
             }
         })
         .collect();
-    let unclassified_count = cards.iter().filter(|card| card.roles.is_empty()).count() as i64;
-    let top: Vec<DeckSuggestionCard> = cards.iter().take(MAX_LISTED_CARDS).cloned().collect();
+    let unclassified_count = classified
+        .iter()
+        .filter(|card| card.roles.is_empty())
+        .count() as i64;
+    let named: HashSet<&str> = top
+        .iter()
+        .chain(roles.iter().flat_map(|group| group.card_ids.iter()))
+        .map(String::as_str)
+        .collect();
+    let cards: Vec<DeckSuggestionCard> = classified
+        .iter()
+        .filter(|card| named.contains(card.card.id.as_str()))
+        .cloned()
+        .collect();
 
     let caveats = caveats(
         deck.format_key,
@@ -492,6 +529,7 @@ pub(crate) async fn analyse_suggestions(
         commanders: deck.commanders,
         candidate_count,
         scanned_count,
+        cards,
         top,
         roles,
         unclassified_count,

@@ -349,12 +349,13 @@ pub async fn deck_suggestions(
             &format!("{}:{fingerprint:016x}", deck.id),
         )
         .await;
-    let side = deck_side(deck.format.as_deref(), &input, &models);
     let body = state
         .analytics_cache
         .get_or_compute(cache_key, || {
             let (state, game) = (state.clone(), game.clone());
-            let side = side.clone();
+            // The deck's side of the question — the roles grammar over the deck among it —
+            // is read here, inside the miss, so a cache hit pays only the fingerprint.
+            let side = deck_side(deck.format.as_deref(), &input, &models);
             async move {
                 let payload = analyse_suggestions(&state, user.id, &game, side).await?;
                 serde_json::to_vec(&payload)
