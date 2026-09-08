@@ -110,7 +110,7 @@ impl UserRoute {
             // above, so the same tighter bucket rather than the generous General one.
             if matches!(
                 tail.rsplit('/').next(),
-                Some("stats" | "legality" | "bracket" | "tokens" | "roles" | "goldfish")
+                Some("stats" | "legality" | "bracket" | "tokens" | "mana" | "roles" | "goldfish")
             ) {
                 return Self::Analytics;
             }
@@ -452,6 +452,7 @@ mod tests {
             "/api/decks/mtg/7/legality",
             "/api/decks/mtg/7/bracket",
             "/api/decks/mtg/7/tokens",
+            "/api/decks/mtg/7/mana",
             "/api/decks/mtg/7/roles",
             "/api/decks/mtg/7/goldfish",
         ] {

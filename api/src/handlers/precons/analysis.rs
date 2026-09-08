@@ -44,8 +44,9 @@ use crate::extract::{Path, Query};
 use crate::handlers::decks::DeckSectionResponse;
 use crate::handlers::decks::{
     AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
-    DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
-    analyse_goldfish, analyse_legality, analyse_roles, analyse_stats, analyse_tokens,
+    DeckManaBase, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana, analyse_roles,
+    analyse_stats, analyse_tokens,
 };
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
@@ -293,6 +294,33 @@ pub async fn precon_tokens(
 ) -> Result<Json<DeckTokens>, AppError> {
     let (_, input, _) = load(&state, &game, &slug).await?;
     Ok(Json(analyse_tokens(&state, &game, &input).await?))
+}
+
+/// Preconstructed deck mana base
+///
+/// `GET /api/games/{game}/precons/{slug}/mana` -> the published decklist's colour requirements
+/// against its sources, through the same core a deck page uses — judged against the deck
+/// size its type states (a Commander precon against the 99-card column), else the size it is.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/precons/{slug}/mana",
+    tag = "Preconstructed decks",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("slug" = String, Path, description = "Precon slug, e.g. `turtle-power-tmc`"),
+    ),
+    responses(
+        (status = 200, description = "Per-colour pips, sources, Karsten's threshold and the verdict.", body = DeckManaBase),
+        (status = 404, description = "Unknown game or precon."),
+    ),
+)]
+pub async fn precon_mana(
+    State(state): State<AppState>,
+    Path((game, slug)): Path<(String, String)>,
+) -> Result<Json<DeckManaBase>, AppError> {
+    let (precon, input, _) = load(&state, &game, &slug).await?;
+    let format = precon_format(&precon.deck_type);
+    Ok(Json(analyse_mana(format.as_deref(), &input)))
 }
 
 /// Preconstructed deck sample hand

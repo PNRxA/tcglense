@@ -43,7 +43,8 @@ mod read;
 mod to_collection;
 
 pub use analysis::{
-    precon_bracket, precon_goldfish, precon_legality, precon_roles, precon_stats, precon_tokens,
+    precon_bracket, precon_goldfish, precon_legality, precon_mana, precon_roles, precon_stats,
+    precon_tokens,
 };
 pub use copy::copy_precon_deck;
 pub(crate) use read::search_precons;
@@ -51,8 +52,8 @@ pub use read::{card_precons, get_precon, list_precon_groups, list_precons, preco
 pub use to_collection::add_precon_to_collection;
 
 pub use analysis::{
-    __path_precon_bracket, __path_precon_goldfish, __path_precon_legality, __path_precon_roles,
-    __path_precon_stats, __path_precon_tokens,
+    __path_precon_bracket, __path_precon_goldfish, __path_precon_legality, __path_precon_mana,
+    __path_precon_roles, __path_precon_stats, __path_precon_tokens,
 };
 pub use copy::__path_copy_precon_deck;
 pub use read::{

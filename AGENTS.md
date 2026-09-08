@@ -256,11 +256,31 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   a third derived field belongs there, not at a call site.
   **Deck analysis is server-side** (issue #596): composition + draw odds
   (`/stats`), the legality verdict (`/legality`), the estimated Commander bracket
-  (`/bracket`), the tokens the deck makes (`/tokens`), and a seeded sample hand
+  (`/bracket`), the tokens the deck makes (`/tokens`), the mana base (`/mana`, issue #670),
+  and a seeded sample hand
   (`/goldfish`) all live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
   mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a
-  shared deck and its owner's copy can never disagree. All five are **`GET`s taking
+  shared deck and its owner's copy can never disagree. All six are **`GET`s taking
   `AuthUser`** — they write nothing, so a read-only key must be able to call them.
+  **The mana base is a citation, not a model** (`analysis::mana`): the sources-needed numbers
+  are Frank Karsten's 2022 summary table held as a data constant with its source (a test pins
+  every number), applied with his **one** stated rule of thumb (gold cards +1) plus three
+  simplifications that are this module's own and are named as such in every response's
+  caveats — hybrid/Phyrexian/twobrid pips reported but never counted against a colour (which
+  is *narrower* than Karsten, who asks for the table number in *combined* sources across a
+  hybrid's colours; that union requirement is not computed), a cost past its pip group's last
+  row judged as that row (an over-estimate, flagged `clamped`), and an X-cost spell listed but
+  never decisive (his advice for one is "the lands you expect to tap", a fact only the player
+  has) — and nothing else, never re-simulated. Demand is the library **plus** the command zone
+  and supply the library alone (a commander's pips count; its section is never a source);
+  which sections are the zone is `rules::deck_zone`'s answer and whether it leads the format
+  is `rules::format_leads_with_command_zone`'s, the pair the facets borrow — in a format with
+  no command zone the seeded `Commander` section supplies mana like the rest of the 60. Two
+  couplings: `cards.produced_mana` stores "produces nothing" as `""` (`scryfall::map`,
+  backfilled by `m..079` without touching `updated_at`) so a NULL can mean "not checked yet" —
+  the `token_parts` stance — and the `produces:` search leaf's colourless branch reads both
+  spellings; and `CardFacts::mana_cost` falls back to the first face's cost, read off the
+  front half of a split card only.
   **Tokens are a provider fact, not a grammar** (`analysis::tokens`): what a card makes is
   read off `cards.token_parts` — Scryfall's `all_parts`, filtered at ingest to `token`
   components plus emblems (which upstream files as `combo_piece`, told apart by the printed
@@ -620,6 +640,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   of `ingest::flush_cards` — the
   `update_columns` list *and* `upsert_changed_guard` — or every sync wipes it and mass-bumps
   `updated_at`, the cursor the price-alert narrowing reads.
+- **The shared `Card` DTO is not where per-printing detail goes.** `CardResponse` rides
+  every listing (a catalog page is up to 200 rows, CDN/ETag-cached, and the deck/holdings
+  payloads carry hundreds more), so print + collector columns — artist, flavour text,
+  finishes, frame/border/stamp/promo types, Reserved List, produced mana, a Battle's
+  defense, the EDHREC/Penny ranks — live on `CardDetailResponse` (ts `CardDetail`, issue
+  #673), which `#[serde(flatten)]`s `Card` and is returned by the **single-card route
+  alone**, so a client typed against `Card` keeps working. Each field is the column as
+  stored — except that `finishes` + `promo_types` **union in a folded foil-★ star's**
+  (`CardDetailResponse::with_folded_variants`, fed by a `folded_onto_id` probe in
+  `get_card`): the base's stored `finishes` must stay `nonfoil`-exactly (the pairing rule),
+  yet its page is the only page the folded star has and carries the star's foil price, so
+  the stored column alone would say "Regular only" beside a foil price. A NULL provider
+  boolean reads as `false`, a NULL comma-joined column as `[]`.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard). Every
   collection import is **one-off** — there is no saved link and no re-sync (the
   `collection_sources` table and the incremental "smart" sync went with them, `m..072`),

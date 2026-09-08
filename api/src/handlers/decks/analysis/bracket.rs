@@ -410,8 +410,8 @@ pub(crate) fn analyse_bracket(
 
 #[cfg(test)]
 mod tests {
+    use super::super::AnalysisEntry;
     use super::*;
-    use crate::handlers::decks::analysis::AnalysisEntry;
     use crate::handlers::decks::analysis::test_fixtures::{deck, entry, section};
 
     const MAIN: i32 = 1;

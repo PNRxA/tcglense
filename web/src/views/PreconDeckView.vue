@@ -17,6 +17,7 @@ import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
+import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTokens from '@/components/decks/DeckTokens.vue'
@@ -364,6 +365,7 @@ usePageMeta({
         :failed="rolesQuery.isLoadingError.value"
         :stale="rolesQuery.isRefetchError.value"
       />
+      <DeckMana v-if="entries.length > 0" :game="game" :precon-slug="slug" class="mb-4" />
       <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
 
       <!-- Card list controls, the same set the deck pages carry. -->

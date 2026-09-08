@@ -4,6 +4,7 @@ import type {
   DeckBracketEstimate,
   DeckFormat,
   DeckLegality,
+  DeckManaBase,
   DeckRoles,
   DeckTokens,
   GoldfishHand,
@@ -37,6 +38,11 @@ export type {
   DeckIssueStatus,
   DeckLegality,
   DeckLegalityIssue,
+  DeckManaBase,
+  DeckManaColor,
+  DeckManaDemandCard,
+  DeckManaSource,
+  DeckManaStatus,
   DeckRole,
   DeckRoleCard,
   DeckRoleGroup,
@@ -203,6 +209,20 @@ export function getPublicDeckRoles(handle: string, deckId: number): Promise<Deck
   return request<DeckRoles>(`${publicBase(handle, deckId)}/roles`)
 }
 
+// ----- Mana base -----
+
+/** The deck's colour pips against its sources, judged by Karsten's source counts (issue
+ * #670): per colour, what the spells demand, what the library produces, the number a deck
+ * this size needs for its hungriest spell, and a plain verdict. */
+export function getDeckMana(token: string, game: string, deckId: number): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${deckBase(game, deckId)}/mana`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckMana(handle: string, deckId: number): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${publicBase(handle, deckId)}/mana`)
+}
+
 // ----- Goldfish -----
 
 /** Deal a sample hand from a deck's library. */
@@ -275,6 +295,11 @@ export function getPreconTokens(game: string, slug: string): Promise<DeckTokens>
 /** The roles a published decklist's cards fill. */
 export function getPreconRoles(game: string, slug: string): Promise<DeckRoles> {
   return request<DeckRoles>(`${preconBase(game, slug)}/roles`)
+}
+
+/** A published decklist's mana base — judged against the deck size its type states. */
+export function getPreconMana(game: string, slug: string): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${preconBase(game, slug)}/mana`)
 }
 
 /** A seeded sample hand from a published decklist. */

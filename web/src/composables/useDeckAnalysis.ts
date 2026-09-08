@@ -5,18 +5,21 @@ import {
   getPreconBracket,
   getPreconGoldfish,
   getPreconLegality,
+  getPreconMana,
   getPreconRoles,
   getPreconStats,
   getPreconTokens,
   getDeckBracket,
   getDeckGoldfish,
   getDeckLegality,
+  getDeckMana,
   getDeckRoles,
   getDeckStats,
   getDeckTokens,
   getPublicDeckBracket,
   getPublicDeckGoldfish,
   getPublicDeckLegality,
+  getPublicDeckMana,
   getPublicDeckRoles,
   getPublicDeckStats,
   getPublicDeckTokens,
@@ -28,6 +31,7 @@ import type {
   DeckAnalytics,
   DeckBracketEstimate,
   DeckLegality,
+  DeckManaBase,
   DeckRoles,
   DeckTokens,
   GoldfishHand,
@@ -118,6 +122,17 @@ export function useDeckRolesQuery(game: Ref<string>, deckId: Ref<number>, enable
     placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckRoles>(options)
+}
+
+/** A deck's mana base: pips demanded against sources present, per colour. */
+export function useDeckManaQuery(game: Ref<string>, deckId: Ref<number>, enabled?: Ref<boolean>) {
+  const options = {
+    queryKey: ['deck-mana', game, deckId],
+    queryFn: (token: string) => getDeckMana(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckManaBase>(options)
 }
 
 /** A goldfished hand. */
@@ -214,6 +229,21 @@ export function usePublicDeckRolesQuery(
   })
 }
 
+/** A public deck's mana base. */
+export function usePublicDeckManaQuery(
+  handle: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckManaBase, ApiError>({
+    queryKey: ['public-deck-mana', handle, deckId],
+    queryFn: () => getPublicDeckMana(handle.value, deckId.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** A hand goldfished from a public deck — the same seed deals the same cards as it would
  * for the owner. */
 export function usePublicDeckGoldfishQuery(
@@ -242,7 +272,8 @@ export function usePublicDeckGoldfishQuery(
  * The goldfish goes too: its cards come from the library, so a card added or removed makes
  * every previously dealt hand for that deck a hand of a deck that no longer exists. So does
  * the bracket: adding one Game Changer is exactly the edit that moves it — and so do the
- * tokens, since the card just added may be the only one that made one. So do the roles: an
+ * tokens, since the card just added may be the only one that made one, and the mana base,
+ * since a land swapped is exactly the edit that changes a source count. So do the roles: an
  * edit is exactly what changes what the deck ramps, draws and removes with — and the card
  * list's role filter reads `card_roles`, so a stale one would narrow to cards the deck no
  * longer holds.
@@ -255,6 +286,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game],
           ['deck-bracket', game],
           ['deck-tokens', game],
+          ['deck-mana', game],
           ['deck-roles', game],
           ['deck-goldfish', game],
         ]
@@ -263,6 +295,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game, deckId],
           ['deck-bracket', game, deckId],
           ['deck-tokens', game, deckId],
+          ['deck-mana', game, deckId],
           ['deck-roles', game, deckId],
           ['deck-goldfish', game, deckId],
         ]
@@ -340,6 +373,17 @@ export function usePreconRolesQuery(game: Ref<string>, slug: Ref<string>, enable
   return useQuery<DeckRoles, ApiError>({
     queryKey: ['precon-roles', game, slug],
     queryFn: () => getPreconRoles(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** A published decklist's mana base. */
+export function usePreconManaQuery(game: Ref<string>, slug: Ref<string>, enabled?: Ref<boolean>) {
+  return useQuery<DeckManaBase, ApiError>({
+    queryKey: ['precon-mana', game, slug],
+    queryFn: () => getPreconMana(game.value, slug.value),
     enabled,
     retry: false,
     staleTime: PRICED_CATALOG_STALE_MS,

@@ -253,6 +253,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/roles")),
     )
     .await;
+    let (_, _, precon_mana) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/mana")),
+    )
+    .await;
 
     // Now copy it and ask the deck the same three questions.
     let (_, _, deck) = send(
@@ -284,6 +289,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
     let (_, _, deck_roles) = send(
         &app,
         get_with_bearer(&format!("/api/decks/mtg/{deck_id}/roles"), &access),
+    )
+    .await;
+    let (_, _, deck_mana) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/mana"), &access),
     )
     .await;
 
@@ -362,6 +372,35 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         precon_stats["deck"]["total_copies"], deck_stats["deck"]["total_copies"],
         "precon {:?} vs copy {:?}",
         precon_stats["deck"], deck_stats["deck"]
+    );
+
+    // The mana base (issue #670) splits demand and supply on the same zone rule, and the copy
+    // states the deck type's format — so both are judged against the 99-card column with the
+    // same pips. Compared per colour by the numbers, not by the card lists, for the same
+    // representative-printing reason the legality issues are compared by name above.
+    assert_eq!(precon_mana["table_size"], 99, "{precon_mana:?}");
+    assert_eq!(precon_mana["table_size"], deck_mana["table_size"]);
+    assert_eq!(precon_mana["deck_size"], deck_mana["deck_size"]);
+    let ledger = |v: &serde_json::Value| -> Vec<(String, i64, i64, Option<i64>, String)> {
+        v["colors"]
+            .as_array()
+            .expect("colors")
+            .iter()
+            .map(|c| {
+                (
+                    c["color"].as_str().unwrap_or_default().to_string(),
+                    c["pips"].as_i64().unwrap_or_default(),
+                    c["sources"].as_i64().unwrap_or_default(),
+                    c["sources_needed"].as_i64(),
+                    c["status"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(ledger(&precon_mana), ledger(&deck_mana));
+    assert!(
+        !ledger(&precon_mana).is_empty(),
+        "the seeded precon has coloured costs, so there is a ledger to compare"
     );
 }
 

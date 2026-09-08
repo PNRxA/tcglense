@@ -76,6 +76,14 @@ const ORACLE_TEXTS: &[&str] = &[
     "When this creature enters, exile target creature an opponent controls.",
 ];
 
+/// The illustrators the seed credits (display name + Scryfall-style artist id). Two of
+/// them, alternating deterministically per card, so the card page's artist link
+/// (issue #673) filters the catalog to a *subset* rather than returning everything.
+const ARTISTS: &[(&str, &str)] = &[
+    ("Dummy Ashgrove", "dummy-artist-0001"),
+    ("Dummy Corvid", "dummy-artist-0002"),
+];
+
 /// Static definition of a seeded set; `card_count` is derived from [`dummy_cards`].
 struct SetDef {
     code: &'static str,
@@ -279,6 +287,11 @@ impl SeedCard {
         // relies on it) yet varied enough to hit every legality status somewhere.
         let legality_seed: usize = self.external_id.bytes().map(usize::from).sum();
         let legalities = dummy_legalities(self.rarity, self.type_line.as_deref(), legality_seed);
+        // Print details (issue #673): every printing names an illustrator, the finishes it
+        // was printed in and its frame, so the card page's print-details block always has
+        // something to render offline. Seeded off the same stable byte sum as the
+        // legalities, so the artist split is deterministic run to run.
+        let (artist, artist_id) = ARTISTS[legality_seed % ARTISTS.len()];
         ScryfallCard {
             id: self.external_id,
             oracle_id: self.oracle_id,
@@ -306,6 +319,12 @@ impl SeedCard {
             card_faces: self.card_faces,
             prices: Some(self.prices),
             legalities: Some(legalities),
+            artist: Some(artist.to_string()),
+            artist_ids: Some(vec![artist_id.to_string()]),
+            // Both finishes by default; the handful of exceptions (a nonfoil-only promo, a
+            // foil-only card, an etched reprint) are stamped in [`dummy_cards`].
+            finishes: Some(vec!["nonfoil".to_string(), "foil".to_string()]),
+            frame: Some("2015".to_string()),
             // Parity fields the dummy catalog doesn't fabricate default to None/absent.
             ..Default::default()
         }
@@ -372,6 +391,10 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
                 toughness: None,
                 loyalty: None,
                 image_uris: None,
+                // Flavour text on *both* faces: the ingest joins them with `\n//\n` (like
+                // oracle text), so the seed exercises the multi-faced flavour column the
+                // card page renders (issue #673).
+                flavor_text: Some("By day it counts the hours.".to_string()),
                 ..Default::default()
             },
             CardFace {
@@ -383,6 +406,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
                 toughness: None,
                 loyalty: None,
                 image_uris: None,
+                flavor_text: Some("By night it counts nothing at all.".to_string()),
                 ..Default::default()
             },
         ]),
@@ -451,7 +475,53 @@ fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
     // the by-treatment view (issue #282): the base set groups into Normal + Showcase +
     // Borderless (the promo below).
     card.frame_effects = Some(vec!["showcase".to_string()]);
+    // Sold only as a foil, so its finish list says so too (issue #673): one seeded card
+    // whose finishes are not the default nonfoil+foil pair.
+    card.finishes = Some(vec!["foil".to_string()]);
     card
+}
+
+/// A Battle — the one card type with a printed **defense** box (issue #673), and the only
+/// shape of card whose detail page has a defense row to render.
+///
+/// Modelled the way Scryfall models a real Siege: a two-faced object whose **front** face
+/// carries the defense (the ingest folds that face value up into the top-level `defense`
+/// column the card page reads), with the back face the creature it flips into.
+fn battle_card(set: &SetDef, n: i32) -> ScryfallCard {
+    SeedCard {
+        external_id: card_id(set.code, n),
+        oracle_id: None,
+        name: "Dummy Siege // Dummy Aftermath".to_string(),
+        set_code: set.code,
+        set_name: set.name,
+        released: set.released,
+        collector_number: n.to_string(),
+        rarity: "rare",
+        layout: "battle",
+        // Like a transform card, the cost is per-face.
+        mana_cost: None,
+        cmc: Some(4.0),
+        type_line: Some("Battle — Siege // Creature — Angel".to_string()),
+        oracle_text: None,
+        colors: vec!["W".to_string()],
+        prices: dummy_prices(n),
+        card_faces: Some(vec![
+            CardFace {
+                name: Some("Dummy Siege".to_string()),
+                mana_cost: Some("{3}{W}".to_string()),
+                type_line: Some("Battle — Siege".to_string()),
+                defense: Some("5".to_string()),
+                ..Default::default()
+            },
+            CardFace {
+                name: Some("Dummy Aftermath".to_string()),
+                mana_cost: Some(String::new()),
+                type_line: Some("Creature — Angel".to_string()),
+                ..Default::default()
+            },
+        ]),
+    }
+    .into_scryfall()
 }
 
 /// A token printing (no mana cost, no market price) for the token child set.
@@ -529,6 +599,10 @@ fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
     // Both printings reuse the same painting, so the art-tag seed can prove `art:`
     // matches by artwork (illustration), not by printing.
     card.illustration_id = Some(REPRINT_ILLUSTRATION_ID.to_string());
+    // A mana rock: the seed has no land, so this artifact is what carries `produced_mana`
+    // for the card page's "produces" row (issue #673).
+    card.produced_mana = Some(vec!["C".to_string()]);
+    card.flavor_text = Some("Every age digs it up and calls it new.".to_string());
     card
 }
 
@@ -626,33 +700,63 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     // Base #1 gets its own artwork identity so the art-tag seed has a second,
     // unrelated illustration to tag (`seed_art_tags`).
     cards[0].illustration_id = Some(BASE_ONE_ILLUSTRATION_ID.to_string());
+    // Print details on a deterministic handful of the base set's cards (issue #673): the
+    // card page renders flavour text, the Reserved List badge, the popularity ranks and the
+    // story-spotlight mark off columns no listing carries, so the offline catalog needs
+    // both kinds of card — one that has them and one that doesn't.
+    cards[0].flavor_text = Some("Dawn breaks over the wall, and the wall holds.".to_string());
+    cards[1].flavor_text = Some("Nothing that flies is ever truly lost.".to_string());
+    cards[2].flavor_text = Some("Older than the vault it guards.".to_string());
+    // A Reserved List stand-in: never to be reprinted, the badge `is:reserved` searches.
+    cards[2].reserved = Some(true);
+    // Ranked on EDHREC / in Penny Dreadful; every other card stays unranked, so the page
+    // has both states offline.
+    cards[0].edhrec_rank = Some(42);
+    cards[0].penny_rank = Some(310);
+    cards[1].edhrec_rank = Some(1204);
+    cards[2].edhrec_rank = Some(87);
+    cards[2].penny_rank = Some(15);
+    // The one story-spotlight card (the planeswalker-symbol frame stamp).
+    cards[3].story_spotlight = Some(true);
+
     cards.push(transform_card(&BASE_SET, BASE_NUMBERED + 1));
-    cards.push(special_card(
-        &BASE_SET,
-        BASE_NUMBERED + 2,
-        "★",
-        "Dummy Starlit Promo",
-    ));
-    cards.push(special_card(
-        &BASE_SET,
-        BASE_NUMBERED + 3,
-        "P1",
-        "Dummy Prerelease Promo",
-    ));
+    // The ★ promo is also the seed's textless, nonfoil-only printing.
+    let mut starlit = special_card(&BASE_SET, BASE_NUMBERED + 2, "★", "Dummy Starlit Promo");
+    starlit.textless = Some(true);
+    starlit.finishes = Some(vec!["nonfoil".to_string()]);
+    cards.push(starlit);
+    // The prerelease promo carries the promo facts: the promo flag + its promo type, and
+    // the seed's one security stamp and watermark.
+    let mut prerelease = special_card(&BASE_SET, BASE_NUMBERED + 3, "P1", "Dummy Prerelease Promo");
+    prerelease.promo = Some(true);
+    prerelease.promo_types = Some(vec!["prerelease".to_string()]);
+    prerelease.security_stamp = Some("oval".to_string());
+    prerelease.watermark = Some("dummyguild".to_string());
+    cards.push(prerelease);
     // A foil-only card (no regular USD price) to exercise the foil-price fallback
     // in the browse views' display and price sort.
     cards.push(foil_only_card(&BASE_SET, BASE_NUMBERED + 4));
     // First printing of a reprinted card (its sibling is in the Universe set below),
     // so the card-detail "other printings" list has something to show offline.
     cards.push(reprint_card(&BASE_SET, BASE_NUMBERED + 5));
+    // A Battle: the only card shape with a printed defense box, so the card page's defense
+    // row has something to render offline (issue #673).
+    cards.push(battle_card(&BASE_SET, BASE_NUMBERED + 6));
 
     // A second standalone set (a single page).
     for n in 1..=12 {
         cards.push(numbered_card(&UNIVERSE_SET, n));
     }
     // Second printing of the reprinted card, in a different set with a later
-    // release date — the newest printing, so it sorts first under the other.
-    cards.push(reprint_card(&UNIVERSE_SET, 13));
+    // release date — the newest printing, so it sorts first under the other. It also came
+    // in an etched finish, so one seeded card carries the third finish.
+    let mut newest_reprint = reprint_card(&UNIVERSE_SET, 13);
+    newest_reprint.finishes = Some(vec![
+        "nonfoil".to_string(),
+        "foil".to_string(),
+        "etched".to_string(),
+    ]);
+    cards.push(newest_reprint);
 
     // A token child set hanging off the base set (exercises set grouping).
     for n in 1..=DUMMY_TOKENS {
@@ -935,6 +1039,75 @@ mod tests {
                 ("Photocopy Negatives", 2)
             ]
         );
+    }
+
+    #[test]
+    fn seeds_the_print_details_the_card_page_renders() {
+        // The card page's print-details block (issue #673) reads columns no listing
+        // carries, so the offline catalog has to seed them — and seed *variety*, or the
+        // page never shows an unset one.
+        let cards = dummy_cards();
+        // Every card names an illustrator, in more than one name, so the artist link
+        // filters to a subset.
+        assert!(
+            cards
+                .iter()
+                .all(|c| c.artist.is_some() && c.frame.is_some())
+        );
+        let artists: HashSet<&str> = cards.iter().filter_map(|c| c.artist.as_deref()).collect();
+        assert!(artists.len() >= 2, "expected more than one seeded artist");
+        // Finishes: the default pair, plus a nonfoil-only, a foil-only and an etched card.
+        let finishes: HashSet<Vec<String>> =
+            cards.iter().filter_map(|c| c.finishes.clone()).collect();
+        for expected in [
+            vec!["nonfoil".to_string()],
+            vec!["foil".to_string()],
+            vec![
+                "nonfoil".to_string(),
+                "foil".to_string(),
+                "etched".to_string(),
+            ],
+        ] {
+            assert!(
+                finishes.contains(&expected),
+                "expected a {expected:?} printing"
+            );
+        }
+        // One Reserved List card, one story spotlight, one promo, one textless, one
+        // watermark + security stamp, and some ranked cards.
+        assert_eq!(cards.iter().filter(|c| c.reserved == Some(true)).count(), 1);
+        assert!(cards.iter().any(|c| c.story_spotlight == Some(true)));
+        assert!(cards.iter().any(|c| c.textless == Some(true)));
+        assert!(
+            cards
+                .iter()
+                .any(|c| c.promo == Some(true) && c.promo_types.is_some())
+        );
+        assert!(
+            cards
+                .iter()
+                .any(|c| c.watermark.is_some() && c.security_stamp.is_some())
+        );
+        assert!(cards.iter().any(|c| c.edhrec_rank.is_some()));
+        assert!(cards.iter().any(|c| c.penny_rank.is_some()));
+        assert!(cards.iter().any(|c| c.produced_mana.is_some()));
+        // Flavour text on some cards but not all (both states must be reachable).
+        assert!(cards.iter().any(|c| c.flavor_text.is_some()));
+        assert!(cards.iter().any(|c| c.flavor_text.is_none()));
+    }
+
+    #[test]
+    fn has_a_battle_with_a_defense_on_its_front_face() {
+        // A Battle is the one card shape with a printed defense box; Scryfall carries it on
+        // the front face, and the ingest folds it up into the top-level column.
+        let cards = dummy_cards();
+        let battle = cards
+            .iter()
+            .find(|c| c.layout.as_deref() == Some("battle"))
+            .expect("a battle is seeded");
+        let faces = battle.card_faces.as_ref().expect("a battle is two-faced");
+        assert_eq!(faces[0].defense.as_deref(), Some("5"));
+        assert!(faces[1].defense.is_none());
     }
 
     #[test]
