@@ -52,12 +52,6 @@ impl Model {
     pub fn cards(&self) -> Vec<(i32, u32)> {
         decode_cards(&self.cards)
     }
-
-    /// Σ of the stored weights — the share of `total_weight` this instance can actually
-    /// deal or price.
-    pub fn stored_weight(&self) -> u64 {
-        self.cards().iter().map(|&(_, w)| u64::from(w)).sum()
-    }
 }
 
 /// Parse a `cards` column; see [`Model::cards`] for the failure stance.

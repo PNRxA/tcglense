@@ -236,6 +236,11 @@ fn clamp_i64(weight: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Σ of a stored sheet's card weights — the share of `total_weight` the row can deal.
+    fn stored_weight(sheet: &booster_sheet::Model) -> u64 {
+        sheet.cards().iter().map(|&(_, w)| u64::from(w)).sum()
+    }
     use crate::entities::prelude::{Card, Product};
     use crate::mtgjson::boosters::{RawSheet, RawVariant};
     use crate::test_support::{insert_card, insert_product, migrated_memory_db};
@@ -410,7 +415,7 @@ mod tests {
             sheets[0].total_weight, 12,
             "the dropped card's weight stays in the denominator"
         );
-        assert_eq!(sheets[0].stored_weight(), 3);
+        assert_eq!(stored_weight(&sheets[0]), 3);
         assert!(sheets[1].foil);
         assert_eq!(
             sheets[1].cards(),
@@ -451,7 +456,7 @@ mod tests {
             .expect("a sheet");
         assert_eq!(sheet.cards, "[]");
         assert_eq!(sheet.total_weight, 5);
-        assert_eq!(sheet.stored_weight(), 0);
+        assert_eq!(stored_weight(&sheet), 0);
     }
 
     /// A rebuild **replaces**: a configuration upstream dropped leaves with its sheets and

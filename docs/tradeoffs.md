@@ -1020,6 +1020,42 @@ catalog) is planned but not implemented.
   hiding exists to prevent — so a bundle's pool now renders whole and the call-out lives only
   on the wrapped boosters' own pages (issue #646 follow-up).
 
+  **Booster odds — the weights the walk used to throw away (issue #682).** The membership
+  pass reads a set's `booster` map only for the *set* of cards a pack can yield, discarding
+  every slot weight, variant and sheet flag; `mtgjson::boosters` walks the same parse tree
+  and the same `Indexes` to keep them (two more of `refresh_inner`'s five pure passes — the
+  pack links, then the configurations they name), and `mtgjson::ingest::boosters`
+  writes them into `booster_configs` / `booster_sheets` / `sealed_packs` in the sealed sync's
+  own transaction (so a reader never sees a half-rebuilt table). Decisions, and what they
+  cost: **(a) The weights now ride the parse.** `Sheet.cards` went from a list of `uuid`s to
+  an ordered list of `(uuid, weight)` — still a `Vec`, never a `HashMap`, for the reason it
+  never was one: the document holds on the order of a million sheet entries, so a table's
+  per-entry overhead is real money on a sync that has to fit the 1 GB App Platform instance.
+  Carrying the `u32` beside each id costs single-digit megabytes there, and the raw booster
+  data is dropped the moment `rebuild` has consumed it, before the commit. **(b) Only
+  configurations a catalog product actually opens are stored.** Both reads are product-keyed,
+  so the pack walk runs *first* and its `(set, code)` pairs are the only configurations built
+  — a set's unreferenced boosters would be rows nothing can reach. **(c) Quantities are
+  flattened at ingest, not at read time.** `contents.pack` references count once each and a
+  `contents.sealed` reference recurses with the running quantity multiplied by its `count`,
+  so a booster box becomes one row of quantity 36 and a case of six boxes 216. The cycle
+  guard is a **path stack** (entered on the way down, released on the way back up) rather
+  than the membership walk's branch-global `visited` set — for a *membership* a second
+  reference to the same pack adds nothing, but two sibling references are two real packs and
+  must both count — and the product's own `uuid` seeds that stack, so a product referencing
+  itself is a cycle like any other. Across *entries*, though, the fold takes the **maximum**,
+  not the sum: two `sealedProduct` entries sharing one `tcgplayerProductId` describe the same
+  physical product twice, and summing them would sell a 36-pack box as 72. **(d) A weight is
+  parsed tolerantly.** A `null` or a negative costs that entry its weight, a float is
+  truncated, and a value past `u32::MAX` saturates — rather than any of them costing the
+  whole catalog its sync, the same lesson the upstream `download_uri` rename taught (a
+  required field in a ~600 MB document parsed all-or-nothing is a single point of failure),
+  applied here to a field that occurs a million times.
+  **(e) It is derived data, so it is version-gated like the rest:** `DERIVATION_VERSION`
+  became `booster-pool-2+precon-2+packs-1`, and any change to how a pack's quantity is
+  flattened, a variant kept, or a sheet weighted needs another bump — the sync is otherwise
+  ETag-gated, so a pure code change takes effect no other way.
+
   Trade-offs: (1) `AllPrintings`
   is one ~600 MB document; we stream the ~160 MB gzip straight through decode + parse
   (the compressed body is never resident) and retain only trimmed structs, but a rebuild
@@ -1249,6 +1285,95 @@ catalog) is planned but not implemented.
   "gzip", "stream", "json"]` to use rustls (matching SeaORM's `runtime-tokio-rustls`)
   and to stream + auto-decompress the gzip bulk file. No overall request timeout on
   the client (the bulk download streams for a while); a `read_timeout` guards stalls.
+
+## Booster EV & pack opener (issue #682)
+
+Two public reads over the booster sheet/slot tables the sealed sync now keeps:
+`GET …/products/{id}/ev` (what an average copy is worth at today's prices) and
+`GET …/products/{id}/open?seed&copies` (one seeded simulation of opening it). Handlers in
+`api/src/handlers/catalog/boosters/`, wire shapes in `docs/api-contracts.md`. The
+interesting decisions are the ones *not* taken:
+
+- **A normalised `booster_sheet_cards` table — rejected.** A sheet's cards ride a JSON
+  `[[card_id, weight], …]` column on the sheet row instead. Normalised, MTG's stored
+  configurations would be on the order of a million rows that **nothing queries by card**:
+  both reads are product-keyed and always want a whole sheet, so every query would be
+  "give me these sheets' rows" — which is exactly what one column already is. Precedent:
+  `cards.token_parts` and the `sld_drop_snapshot` singleton. The cost is that a future
+  per-*card* read ("which packs can pull this, at what odds?") can't index into it; it
+  would scan the card's set's configurations — a dozen rows — which is cheap enough that
+  it doesn't justify the other million.
+- **Exact without-replacement odds in the EV — rejected.** Each pick is treated as an
+  independent weighted draw from its sheet, even where the real sheet is drawn without
+  replacement. On a sheet of any real size the difference is invisible; on a tiny one it
+  isn't, so rather than model it, **every response that has such a sheet says so** in its
+  caveats. The *opener* is the opposite call: it deals actual cards, where the same
+  printing twice in one slot would be a visible lie, so it genuinely draws without
+  replacement unless upstream marked the sheet `allowDuplicates`.
+- **Simulating upstream's colour balancing — rejected.** MTGJSON records that a common
+  sheet is colour-balanced (`balanceColors`) but not *how*: the algorithm isn't in the
+  data. So the flag is stored, neither read pretends to it, and every response that touches
+  such a sheet carries "Colour balancing of common slots isn't simulated." Recorded, not
+  simulated — the same stance `token_parts` takes on what a card makes.
+- **Re-normalising over the cards we hold — rejected.** A sheet's `total_weight` is
+  upstream's, counted **before** dropping the cards our catalog couldn't resolve, and the
+  probabilities divide by that. Re-normalising over what survived would silently inflate
+  every remaining card's odds — the failure mode where missing data makes the answer look
+  *better*. Instead the gap is reported: `priced_share` counts it against the sheet exactly
+  as an unpriced card counts, and a caveat names the worst sheets with the share of their
+  weight it can't account for (worst first, three named, the rest counted). The read
+  applies the same rule to a card whose row vanished *after* the sync wrote the sheet. The
+  one asymmetry is the opener's: it cannot deal a card it doesn't have, so its draw runs
+  over the stored weights — the single place a simulated pack differs from a real one, and
+  the same caveat says so wherever it applies. (Related: a **foil** sheet prices at the card's foil price and
+  never falls back to the regular one. An unpriced foil is unpriced; quoting the non-foil
+  price there would be a different card's price.)
+- **Storing openings server-side — rejected.** No session table, no expiry, nothing to
+  clean up: an opening is a pure function of `(product, seed, copies)` and all three ride
+  in the URL, exactly like the deck goldfish, so a surprising box is shareable as a link
+  and replayable forever. Three consequences are load-bearing. (1) A **seedless** request
+  mints a random seed, which makes the response not a function of its URL — and this route
+  sits in the public catalog cache group (`s-maxage=3600` plus a day of
+  `stale-while-revalidate`), where a shared cache would pin one anonymous visitor's box as
+  *the* box for the best part of a day. So it answers `no-store`, the goldfish's rule and
+  the goldfish's reason; with a seed it is ordinary cacheable catalog. (2) The generator is
+  a **shared seam** (`handlers/shared/rng.rs`), extracted from the goldfish verbatim rather
+  than copied: a seed is a wire contract, `rand`'s generators explicitly do not promise a
+  stable stream across versions, and a second copy of SplitMix64 could drift from the first
+  — so there is one, with a test pinning the reference stream (every shared hand and every
+  shared opening ever minted depends on those exact constants). (3) Each pack derives its
+  own state from `(seed, its ordinal in the whole opening)` instead of walking one stream
+  pack after pack, which makes an opening **prefix-stable across `copies`**: pack *n* is
+  the same pack whether you asked for one copy or six, so raising the count extends the run
+  rather than rerolling it, and `?pack=&copies=` in a shared URL means one thing.
+- **An expected value for a `variable` pack — rejected; it is `null`.**
+  `contents.variable` is upstream's "one of these, at random", so averaging over a
+  configuration the buyer may not receive would be inventing a number. The pack walk
+  doesn't follow `variable` at all, so such a product simply has no `sealed_packs` row and
+  both reads treat it as having no booster data — as they do a product MTGJSON doesn't
+  describe, or one that opens nothing. `/ev` answers `{ "data": null }` rather than a
+  `404`: nothing to say is not a failure, and an error banner on every commander deck in
+  the catalog is a worse outcome than a hidden panel. `/open` answers `422`, because there
+  the caller asked for something that can't be done.
+- **Two bounds, because the pack count alone isn't one.** An opening is capped at 36 packs
+  (`MAX_PACKS_PER_OPENING`) — one sealed booster box, so the biggest thing anyone actually
+  opens fits exactly, while a case of six boxes doesn't, on purpose: 216 packs is a
+  payload, not a read. But a pack's *size* is ingested data too — a variant's slot counts
+  and a product's `quantity` both come from upstream — so `MAX_CARDS_PER_OPENING` (1200) is
+  checked separately, computed off each pack's fattest variant **before** anything is
+  drawn. Both refuse with a `422`; neither can be turned into an unbounded response by a
+  query string.
+- **The read loads cards twice, deliberately.** A product opening play *and* collector
+  boosters names a couple of thousand distinct cards across its sheets, and a `cards` row
+  is ~70 columns — but the wire carries a few dozen (`top` lists capped at 3 per slot, 10
+  per pack, 12 per copy; an opening bounded at 1200 cards and usually far fewer once the
+  duplicates a box deals fold together). So the first pass selects only
+  `(id, price_usd, price_usd_foil)` for every sheet card and parses each to cents once
+  (a card sits on several sheets and is read once per slot, so parsing per lookup was the
+  hot loop), the engines compute on prices alone and *name* the ids they will quote, and
+  the second pass fetches whole rows for exactly those. Both are chunked at 900 ids under
+  the SQLite bind limit, and a card whose row vanished between the two passes simply drops
+  its line — the tolerance every catalog card link takes.
 
 ## Price history & the historic-price chart
 

@@ -192,10 +192,12 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   landing (`PublicCollectionView`) renders them through the shared `ProductHoldingSection`
   (public mode = a `handle` prop) and the read-only `PublicProductBrowseView` (a `readonly`
   `ProductGrid`, owner's counts as a static badge).
-- **No number on a sealed product's page is a count of physical cards** — the API has no such
-  datum, so nothing may word one as containment. Of the card-section keys only `contains` is a
-  guarantee; `exclusive` is a **subset** of the `booster` pull pool (never added to it) and
-  `variable` is a randomized configuration, so a total summed across sections is a *pool* size —
+- **No number on a sealed product's page is a count of a copy's physical cards** — with two
+  exceptions, both per *pack* and both expectations (the booster bullet below). Nothing the card
+  sections carry is such a datum, so none of them may be worded as containment. Of the
+  card-section keys only `contains` is a guarantee; `exclusive` is a **subset** of the
+  `booster` pull pool (never added to it) and `variable` is a randomized configuration, so a
+  total summed across sections is a *pool* size —
   a booster with a 600-card pool holds ~15 of them, which is what "Cards in this product (600)"
   used to claim. `sealed_contents` also has **no quantity column**, so a section total counts
   **distinct cards** (a precon's 30 Forests are one row); only `ProductComponent.quantity` counts
@@ -225,6 +227,52 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   by ProductCards and ProductOverview so the chips can never count a pool the sections hid.
   An inherited `contains` stays visible (hiding a guarantee loses information); the flat
   (`?section`-less) `/cards` list stays whole-product and per-card-deduped for API consumers.
+  **The two exceptions are expectations, and they ride the same seam.** Since #682 the API does
+  hold each booster's own sheet configuration, so `PackEv.cards_per_pack` — the cards an
+  **average** pack deals — and the expected values beside it are genuine per-pack numbers, the
+  only ones on the page, and a `PackOpening`'s totals are one seeded roll of the dice. Neither
+  may be worded as contents or as a promise, and `productCounts.ts` words both:
+  `expectedValueHeading` ("per pack" vs "per copy", always "on average"), `cardsPerPackLabel`
+  (a fractional expectation printed as the range it really is — `14–15 cards per pack` — never
+  a fake decimal), `oddsLabel` ("1 in 24 packs"; "most packs" under 1.5, where a ratio stops
+  informing), `boosterLabel`, `evVersusPrice` / `openingVersusPrice` (a *share of* today's
+  price, never a gain), `openingSummary` (past tense, singular to this run). Its spec pins that
+  no such string reads as containment and that every money figure keeps its qualifier, and each
+  response's server-authored `caveats` are meant to be **shown**.
+- **Booster odds** — a sealed product's expected value (`GET .../products/{id}/ev`) and its
+  seeded pack opener (`.../open?seed&copies`), issue #682 — are three catalog tables plus two
+  pure engines (`handlers/catalog/boosters/{ev,open}.rs`). The tables are **rebuilt wholesale**
+  by the MTGJSON sealed sync in `sealed_contents`' own transaction — `booster_configs` (a
+  booster's pack variants), `booster_sheets` (each slot's weighted pool) and `sealed_packs`
+  (which boosters one copy of a product opens, and how many) — so a row id is not stable and
+  never reaches the wire, and a change to how the walk flattens a quantity, keeps a variant or
+  weights a sheet needs a `DERIVATION_VERSION` bump like a precon slug does (the sync is
+  otherwise ETag-gated, so a pure code change takes effect no other way). Nine couplings.
+  `booster_sheets.total_weight` counts **every** parsed card, *including* the ones our catalog
+  couldn't resolve — that gap is the read's `priced_share` and a caveat, never re-normalised
+  away, because re-normalising over what survived would silently inflate every remaining card's
+  odds. A **`fixed`** sheet's slot takes its first `count` cards **in stored order**, so
+  `booster_sheets.cards` is upstream's order and nothing may sort it. `sealed_packs.quantity` is
+  flattened at ingest (a box's `sealed` reference × its `count`, a case of boxes on top of that;
+  two sibling references to one pack **sum**, while two `sealedProduct` entries sharing a
+  TCGplayer id take the **max** — summing them would sell a 36-pack box as 72 — and the walk's
+  path stack, seeded with the product's own `uuid`, guards a self-reference). A configuration
+  with no variants, or zero total weight, **opens empty** rather than failing: that is a bug
+  upstream, not a bad request, and a public catalog read must not `500` on it. The opener and
+  the deck goldfish share **one** generator (`handlers/shared/rng.rs`) and its stream **is a
+  wire contract** — the reference-stream test pins SplitMix64's constants, since every shared
+  hand and every shared opening depends on them; so is the opener's own derivation (state per
+  `(seed, pack ordinal)`, warmed once), which is what makes pack *n* the same pack whatever
+  `copies` was. A **seedless** `/open` must stay `no-store` (a random roll is not a function of
+  its URL, and the route sits in the CDN-cached catalog group), while a seeded one is ordinary
+  cacheable catalog. The bounds — **36 packs** and **1200 cards**, the latter measured off each
+  pack's fattest variant — are checked **before** anything is drawn and answer `422`, because a
+  `quantity` and a slot count are both ingested data. A **foil** sheet prices at the card's foil
+  price and **never** falls back to the regular one (that is a different card's price). And
+  `/ev` is CDN-cacheable and answers `{ data: null }`, **not** `404`, for a product with no
+  booster data — a commander deck, a randomised `variable` pack, anything MTGJSON doesn't
+  describe: nothing to say is not a failure, and an error on every such product is worse than a
+  hidden panel.
 - **Decks** (`/api/decks/{game}*`, issue #363) are a **container** surface — many per user,
   in `decks`/`deck_sections`/`deck_cards`/`deck_folders` — **not** a collection/wishlist twin,
   so they don't ride `makeHoldingApi`/`makeHoldingQueries`; they live beside it and only reuse

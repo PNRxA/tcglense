@@ -415,7 +415,14 @@ mod tests {
                     declared.code,
                     declared_sheet.name
                 );
-                assert_eq!(stored.stored_weight(), stored.total_weight as u64);
+                assert_eq!(
+                    stored
+                        .cards()
+                        .iter()
+                        .map(|&(_, w)| u64::from(w))
+                        .sum::<u64>(),
+                    stored.total_weight as u64
+                );
                 assert_eq!(stored.foil, declared_sheet.foil);
                 assert_eq!(stored.fixed, declared_sheet.fixed);
                 assert_eq!(stored.allow_duplicates, declared_sheet.allow_duplicates);

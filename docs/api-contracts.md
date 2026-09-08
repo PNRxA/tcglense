@@ -505,7 +505,11 @@ on the origin. Per-user, live, and error responses are `no-store`: all `/api/aut
 (access tokens + `Set-Cookie`), the import-`status` route (a live progress signal the
 SPA polls), and any non-2xx (so a CDN can't pin a transient `404`/`5xx`). The image/icon
 routes — and the dataset mirror's dated TCGCSV archives — set their own longer
-`immutable` header, which the layer preserves.
+`immutable` header, which the layer preserves. Two public catalog reads opt *out* per
+request: a **seedless** roll (`.../precons/{slug}/goldfish`, `.../products/{id}/open`) mints
+a random seed, so the response isn't a function of its URL and is returned `no-store` rather
+than letting the edge pin one visitor's hand or box for the TTL; with a `seed` both are
+ordinary cacheable catalog.
 
 **Cloudflare (issue #284 bullet 3).** These directives are all standard and
 Cloudflare-honored: `public` makes a response edge-storable, `s-maxage` sets the edge
@@ -619,6 +623,8 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
+| `GET /api/games/{game}/products/{id}/ev` | `{ data: ProductEv }` — what **one copy** of the product is worth on average at today's prices, broken down per booster and per sheet (issue #682), computed from the booster sheet/slot tables the MTGJSON sealed sync writes (`sealed_packs` / `booster_configs` / `booster_sheets`). `{ "data": null }` — **not** a `404` — when the product has no booster data: MTGJSON doesn't describe it, it opens nothing (a commander deck), or its packs are a randomised `contents.variable` choice, which has no defined expected value; a client hides the panel off that one response rather than treating "nothing to say" as an error. Ordinary **public catalog** cache group (shared-cacheable + ETagged): an expected value is the same number for every visitor and moves only when prices do. `404` for an unknown game/product |
+| `GET /api/games/{game}/products/{id}/open?seed&copies` | `PackOpening` — **one simulated opening** of the product against those same sheets: every pack it holds, the variant each rolled, what each slot dealt, and what the pulls are worth today. Stateless and seeded exactly like the deck goldfish — the run is a pure function of `(product, seed, copies)`, all of which ride in the URL, so a URL reproduces (and shares) a run, and there is no session state. `seed` is a `u32`; omitted, the server mints a random one, echoes it back, and answers **`Cache-Control: no-store`** (a random roll is not a function of its URL, and this route sits in the CDN-cached catalog group — a shared cache would otherwise pin one visitor's box as everyone's for the best part of a day). With a `seed` it is ordinary cacheable catalog. `copies` defaults to 1. Pack *n* of an opening is the same pack whatever `copies` was, so raising it extends the run rather than rerolling it. `422` — refused **before** anything is drawn — when the product has no booster data, when `copies` is 0, when the opening would exceed **36 packs** (`MAX_PACKS_PER_OPENING`, one sealed booster box), or when it would deal more than **1200 cards** (`MAX_CARDS_PER_OPENING`, measured off each pack's fattest variant: a `quantity` and a slot count are both ingested data, so the pack count alone is not a bound). `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. A plain `?section` page spans the product's own cards plus those inherited through **listed** sub-products; the optional `?component` param (a `component` value from the sections manifest) instead pages the cards packed in one **unlisted** box component, with `?section` narrowing to one certainty within it — a name matching no component is an empty page, not an error (names are data, not vocabulary). Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
 | `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. Display order: the plain `contains` section, then one section per certainty of each **unlisted** box component (`component` = its name, in box order), then the plain `exclusive` → `booster` → `variable` sections. A plain section whose every card arrived through a **listed** sub-product is flagged `inherited`. `[]` when the product has no ingested contents; `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
@@ -699,6 +705,18 @@ sections is a pool size, not a pack's worth — a booster with a 600-card pool h
 unknown-key-to-`variable` fallback, and words every heading and chip on the sealed-product page
 from it — a fifth key, or a reordering, has to land on both sides.
 
+**A pack's size and its value are the two exceptions — and both are expectations, not counts.**
+Since issue #682 the API *does* hold each booster's own sheet configuration, so
+`PackEv.cards_per_pack` (the cards an **average** pack deals) and the expected values beside it are
+genuine per-pack numbers, and the only ones on a sealed product's page. Neither is a containment
+claim: `cards_per_pack` is an average over the pack's variants (a pack that is three-in-four a
+fifteen-card configuration and one-in-four a sixteen-card one reports 15.25, a number no pack ever
+holds), an `ev_usd` is an average over many openings at today's prices, and a `PackOpening` is one
+seeded roll of the dice. Every one of those responses carries server-authored `caveats` saying so,
+and `productCounts.ts` is the wording seam for these too — `expectedValueHeading`,
+`cardsPerPackLabel`, `oddsLabel`, `boosterLabel`, `evVersusPrice`, `openingSummary`,
+`openingVersusPrice` — so no per-pack figure reaches the page unqualified.
+
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is
 `sealed` (a nested pack/box), `deck` (a precon deck), `card` (a fixed promo), or `other` (a
@@ -716,6 +734,107 @@ endpoint) reverses linked `sealed` components: `product` is the direct parent an
 is how many copies of the viewed child it contains. It uses the same non-recursive
 `sealed_components` data as `ProductComponent`; it does not infer case/box relationships
 from product names.
+
+### Booster expected value & the pack opener (issue #682)
+
+`ProductEv = { ev_usd, packs: PackEv[], top: PackCardOdds[], caveats: string[] }` (the
+`.../products/{id}/ev` endpoint; handlers in `api/src/handlers/catalog/boosters/`) is what **one
+copy** of the product is worth on average. `ev_usd` is 2-dp USD, `Σ pack.quantity × pack.ev_usd`
+over every booster a copy opens, **summed before rounding** — so it can differ by a cent from
+adding up the rendered per-pack figures, and the unrounded sum is the honest one. `packs` is every
+*distinct* booster one copy opens, with how many of each. `top` is at most **12** of the biggest expected
+contributors across the whole copy, ranked by `contribution_usd` descending — and for this list
+alone that money figure is **per copy** (`expected_per_pack × price × quantity`), while
+`expected_per_pack` and `one_in` stay per pack, because that is the unit odds are meaningful in.
+`caveats` is generated server-side and is meant to be **shown** (see below).
+
+`PackEv = { set_code, booster_code, name: string | null, quantity, cards_per_pack, ev_usd,
+priced_share, slots: SlotEv[], top: PackCardOdds[] }` is one booster configuration. `set_code` is
+the lowercased set code (`blb`) and `booster_code` MTGJSON's booster key (`play`, `collector`,
+`draft`, `set`, …) — together the configuration's identity; `name` is upstream's display name
+(`Play Booster`) or `null`. `quantity` is how many of this pack **one copy** of the product opens
+(a bundle's six, a box's thirty-six). `cards_per_pack` is `Σ_variants P(variant) × Σ slot counts` —
+an expectation, fractional when the variants differ. `ev_usd` is 2-dp USD for **one** pack.
+`priced_share` is `0..1`, the share of the pack's expected picks that land on a card with a market
+price (everything else counts as $0). `slots` is one entry per sheet the pack draws from, in the
+order the sheets first appear in the configuration's variants (stable, and the order the pack reads
+in); `top` is the pack's ten biggest contributors.
+
+`SlotEv = { sheet, foil, picks, ev_usd, card_count, priced_share, top: PackCardOdds[] }` is what one
+**sheet** contributes to an average pack. `sheet` is upstream's own sheet name (`common`,
+`rareMythic`, `foil`, …), not a label; `foil` says the sheet's cards are valued at their **foil**
+price. `picks` is `Σ_variants P(variant) × count` — cards this sheet puts in an average pack, not
+how many it holds; `ev_usd` is `picks × Σ_c (w_c / T) × price_c`, where `T` is the sheet's stated
+total weight (see the model below). `card_count` is the distinct catalog cards the sheet holds;
+`priced_share` the share of *its* picks landing on a priced card — below 1 either because some
+cards are unpriced or because part of the sheet's weight sits on cards the catalog doesn't hold.
+`top` is its three biggest contributors.
+
+`PackCardOdds = { card: Card, foil, sheet, expected_per_pack, one_in, price_usd: string | null,
+contribution_usd }` is one card's pull odds and what they are worth — the unit both `top` lists are
+made of, wrapping the shared `Card` DTO. `expected_per_pack` is expected copies of that card in one
+pack (a with-replacement approximation); `one_in` is `1 / expected_per_pack`, i.e. "one in N packs,
+**on average**", and is finite by construction — a line is never emitted for a card that can't be
+pulled or is worth nothing. `price_usd` is the price actually used (the foil price on a foil sheet),
+`null` when the card has no market price, in which case it counted as $0. `contribution_usd` is
+`expected_per_pack × price`, per pack — except in `ProductEv.top`, where it is per copy.
+
+`PackOpening = { seed, copies, packs: OpenedPack[], value_usd, priced_count, unpriced_count,
+caveats: string[] }` (the `.../products/{id}/open` endpoint) is **one seeded roll of the dice**, not
+an average. `seed` is echoed back so a server-minted roll can be replayed or shared as a URL;
+`packs` is every pack in opening order — copy by copy, and within a copy in the product's own pack
+order (`sealed_packs`, configuration id ascending) — and each pack's roll is derived from
+`(seed, its ordinal in the whole opening)` rather than from one stream walked pack after pack,
+which together make pack *n* the same pack whatever `copies` was. `value_usd` is 2-dp USD of everything pulled (unpriced cards at $0), and
+`priced_count` / `unpriced_count` split the pulls that had a price from those that didn't.
+`OpenedPack = { set_code, booster_code, name, variant, cards: OpenedCard[], value_usd }` adds
+`variant`, the index of the variant that pack rolled within its configuration's variant list;
+`OpenedCard = { card: Card, foil, sheet, price_usd: string | null }` is one dealt card, `foil` (and
+so `price_usd`) coming from the sheet it came off.
+
+**The model, in one place.** A pack rolls **one variant** with probability `weight / Σ weights`,
+then draws `count` cards from each sheet that variant's slots name; a card `c` on a sheet is drawn
+with probability `w_c / T`. `T` is the sheet's stored `total_weight`, which **includes** the weight
+of cards our catalog doesn't hold: that unaccounted share is *reported* (through `priced_share` and
+a caveat) and never re-normalised away, since re-normalising would quietly inflate every remaining
+card's odds. The EV treats each pick as an **independent** weighted draw even where the real sheet
+is drawn without replacement — invisible on any sheet of size, and named in a caveat where it isn't
+— while the **opener genuinely draws without replacement** unless upstream marked the sheet
+`allowDuplicates`, because it deals actual cards where a repeat would be a visible lie. (The
+opener's pool is the cards we hold, so its draw is the one place a simulated pack differs from a
+real one; that too is a caveat.) A `fixed` sheet isn't drawn at all: its slot takes its first
+`count` cards **in stored order**, so a card at position *i* appears in exactly the variants whose
+count exceeds *i*. Upstream's colour balancing of common slots is recorded in the data and
+deliberately **not** simulated. A **foil** sheet prices at the card's foil price and never falls
+back to the regular one — that would be a different card's price.
+
+**`caveats` is part of the answer.** Both responses generate their caveats server-side, in a fixed
+order, each emitted only when it applies (so a caveat that *is* there always means something), and
+they are meant to be **shown**: they are what stops an average or a lucky roll being read as a
+promise. An EV always leads with "an average over many packs at today's market prices — no single
+pack is worth this"; an opening always leads with "one simulated opening … a roll of the dice".
+The rest name the with-replacement approximation, un-simulated colour balancing, unpriced cards
+counted as $0 (with the priced share), and the sheets whose weight the catalog can't account for
+(worst first, at most three named and the rest counted).
+
+**Where the sheet data comes from.** MTGJSON's per-set `booster` maps, kept by the sealed sync's
+booster pass (`api/src/mtgjson/boosters.rs` → `api/src/mtgjson/ingest/boosters.rs`) into three
+tables rebuilt **wholesale** with `sealed_contents`, in the same transaction: `booster_configs`
+(one row per `(game, set_code, code)` — the booster's `name`, its pack variants as a JSON
+`[{ weight, slots: [[sheet, count], …] }]` list in upstream order — a zero-weight variant
+dropped, and each variant's slots sorted by sheet name, since upstream states them as a JSON
+object with no order to keep — and `total_weight`, Σ of the variants *we stored*, recomputed
+rather than trusting upstream's `boostersTotalWeight` so the shares always sum to one), `booster_sheets` (one row per `(config, sheet name)` — the `foil`,
+`balance_colors`, `allow_duplicates` and `fixed` flags, the sheet's `total_weight`, and its cards
+as a JSON `[[card_id, weight], …]` list in **upstream order**, which a `fixed` sheet's slot depends
+on), and `sealed_packs` (one row per `(game, product, config)` with the `quantity` one copy of the
+product opens, nested box → pack references flattened at ingest). Only configurations some catalog
+product actually opens are stored — the reads are product-keyed. A sheet's `total_weight` counts
+every parsed card, **including** the ones our catalog couldn't resolve, which is exactly what makes
+the unaccounted share knowable; a sheet whose every card dropped is still written as an empty list,
+so a slot naming it reads as "we hold none of these" rather than as a missing slot. Row ids are not
+stable across rebuilds and never reach the wire — the wire carries external ids and upstream's own
+set/booster codes.
 
 ## Collection API contract
 
