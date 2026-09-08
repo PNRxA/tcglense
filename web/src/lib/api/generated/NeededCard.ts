@@ -8,14 +8,24 @@ import type { NeededCardDeck } from "./NeededCardDeck";
  * (fully-covered cards are omitted). In [`NeedMode::Card`] the counts aggregate every
  * printing of the gameplay card and `card` is a representative printing the decks use; in
  * [`NeedMode::Printing`] they're for one exact printing and `card` is that printing.
+ *
+ * Scoped to one deck (`?deck_id=`, issue #675), `required` is what *that* deck wants and
+ * `needed` is its share of the shortfall across **all** the caller's decks —
+ * `min(required, every deck's demand − owned)` — so two decks that share one owned Sol
+ * Ring are both told they still need one, rather than both claiming it. `owned` and
+ * `decks` keep their game-wide meaning: the collection's count, and every deck wanting
+ * the card (the scoped deck among them).
  */
 export type NeededCard = { card: Card, 
 /**
- * Copies still to acquire: `max(0, required - owned)`, always &gt; 0.
+ * Copies still to acquire, always &gt; 0: `required - owned` game-wide, and scoped to a
+ * deck `min(required, every deck's demand - owned)` — that deck's share of the
+ * cross-deck shortfall.
  */
 needed: number, 
 /**
- * Total copies (regular + foil) the caller's decks want, summed across decks/sections.
+ * Total copies (regular + foil) wanted, summed across sections — by every deck of the
+ * caller's game-wide, by the scoped deck alone under `deck_id`.
  */
 required: number, 
 /**
@@ -26,4 +36,20 @@ owned: number,
 /**
  * The caller's decks that want this card, by name.
  */
-decks: Array<NeededCardDeck>, };
+decks: Array<NeededCardDeck>, 
+/**
+ * What the `needed` copies cost **at the printings and finishes the decks hold**, 2-dp
+ * USD: the decks' own demand for this card is priced as they hold it (regular copies at
+ * `usd`, foil at `usd_foil`, over every contributing printing), and the shortfall is
+ * charged at that per-copy price. `null` when no held finish of it is priced — never
+ * `"0.00"`.
+ */
+held_usd: string | null, 
+/**
+ * What the `needed` copies cost at the card's **cheapest printing** anywhere in the
+ * catalog — the lower of that printing's regular and foil price (folded foil-★ variants
+ * never considered), times `needed`. The identity's floor in either mode: in
+ * `printing` mode it is what accepting another printing would cost, beside `held_usd`
+ * for the exact one. `null` when no printing of the card is priced.
+ */
+cheapest_usd: string | null, };

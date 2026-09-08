@@ -1746,6 +1746,302 @@ async fn needed_cards_require_authentication_and_a_read_only_key_may_read() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Put `quantity` regular + `foil_quantity` foil copies of a card into a deck section.
+async fn add_deck_card_finishes(
+    app: &TestApp,
+    token: &str,
+    deck_id: i64,
+    section_id: i64,
+    card: &str,
+    quantity: i64,
+    foil_quantity: i64,
+) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": foil_quantity, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "add deck card failed: {body:?}");
+}
+
+/// A catalog price string as cents, for expectations computed from the same payload a
+/// client sees.
+fn cents(price: &Value) -> i64 {
+    let dollars: f64 = price.as_str().expect("a price").parse().expect("a decimal");
+    (dollars * 100.0).round() as i64
+}
+
+/// Scoped to one deck (`?deck_id=`, issue #675), the list names what *that* deck still
+/// needs — but as its share of the shortfall across **every** deck, so a copy two decks
+/// share is never claimed as owned by both. `required` becomes that deck's demand; `owned`,
+/// `decks`, and the supply stay game-wide; a card only the other decks want is absent.
+#[tokio::test]
+async fn needed_cards_scoped_to_a_deck_share_the_cross_deck_shortfall() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "scoped-need@example.com", PW).await;
+
+    let (_, _, catalog) = send(&app, get("/api/games/mtg/cards?page_size=25")).await;
+    let cards = catalog["data"].as_array().expect("catalog cards");
+    let shared = cards[0].clone();
+    let shared_id = shared["id"].as_str().expect("shared id").to_string();
+    let solo = cards
+        .iter()
+        .find(|c| c["name"] != shared["name"])
+        .expect("a second distinctly-named card");
+    let solo_id = solo["id"].as_str().expect("solo id").to_string();
+
+    // Two decks each want one `shared`; deck A also wants two `solo`. One `shared` owned.
+    let deck_a = create_deck(&app, &access, "Scoped A").await;
+    let deck_b = create_deck(&app, &access, "Scoped B").await;
+    let a_id = deck_a["id"].as_i64().expect("a id");
+    let b_id = deck_b["id"].as_i64().expect("b id");
+    let a_section = deck_a["sections"][0]["id"].as_i64().expect("a section");
+    let b_section = deck_b["sections"][0]["id"].as_i64().expect("b section");
+    add_deck_card(&app, &access, a_id, a_section, &shared_id, 1).await;
+    add_deck_card(&app, &access, b_id, b_section, &shared_id, 1).await;
+    add_deck_card(&app, &access, a_id, a_section, &solo_id, 2).await;
+    own_card(&app, &access, &shared_id, 1).await;
+
+    // Deck A: both cards, `shared` as its one-copy share of the one-copy shortfall.
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={a_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "scoped needed failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["deck"]["id"], a_id, "the scope is echoed back");
+    assert_eq!(body["deck"]["name"], "Scoped A");
+    let shared_entry = needed_entry(&body, &shared_id).expect("shared is needed by A");
+    assert_eq!(shared_entry["required"], 1, "what THIS deck wants");
+    assert_eq!(
+        shared_entry["owned"], 1,
+        "the collection's count, game-wide"
+    );
+    assert_eq!(shared_entry["needed"], 1);
+    assert_eq!(
+        shared_entry["decks"].as_array().expect("decks").len(),
+        2,
+        "every deck wanting the card is still named"
+    );
+    let solo_entry = needed_entry(&body, &solo_id).expect("solo is needed by A");
+    assert_eq!(solo_entry["required"], 2);
+    assert_eq!(solo_entry["needed"], 2);
+    assert_eq!(body["totals"]["cards"], 2);
+    assert_eq!(body["totals"]["copies"], 3);
+
+    // Deck B: the same one `shared` — the owned copy is not B's just because A was listed
+    // first — and no `solo`, which only A wants.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={b_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deck"]["name"], "Scoped B");
+    let shared_entry = needed_entry(&body, &shared_id).expect("shared is needed by B too");
+    assert_eq!(shared_entry["required"], 1);
+    assert_eq!(shared_entry["needed"], 1);
+    assert!(
+        needed_entry(&body, &solo_id).is_none(),
+        "a card only another deck wants is not on this deck's list"
+    );
+    assert_eq!(body["totals"]["cards"], 1);
+
+    // The game-wide list is unchanged by the scope's existence, and unscoped (`deck: null`).
+    let (_, _, body) = send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    assert!(body["deck"].is_null());
+    assert_eq!(
+        needed_entry(&body, &shared_id).expect("shared")["required"],
+        2
+    );
+    assert_eq!(body["totals"]["copies"], 3);
+
+    // Owning a second `shared` covers both decks: it leaves every list.
+    own_card(&app, &access, &shared_id, 2).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={b_id}"), &access),
+    )
+    .await;
+    assert!(needed_entry(&body, &shared_id).is_none());
+    assert_eq!(body["totals"]["cards"], 0);
+    assert!(
+        body["totals"]["held_usd"].is_null(),
+        "an empty list prices nothing"
+    );
+
+    // A deck wanting more of a card than the whole shortfall is capped at the shortfall:
+    // deck A wants 3 `solo`, deck B 1, one owned -> shortfall 3, A's share 3, B's share 1.
+    add_deck_card(&app, &access, a_id, a_section, &solo_id, 3).await;
+    add_deck_card(&app, &access, b_id, b_section, &solo_id, 1).await;
+    own_card(&app, &access, &solo_id, 1).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={a_id}"), &access),
+    )
+    .await;
+    assert_eq!(needed_entry(&body, &solo_id).expect("solo")["needed"], 3);
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={b_id}"), &access),
+    )
+    .await;
+    assert_eq!(needed_entry(&body, &solo_id).expect("solo")["needed"], 1);
+}
+
+/// `?deck_id=` goes through the same ownership gate as every deck route: another user's
+/// deck, or no deck at all, is a **404** — never a 403, and never a silently game-wide list.
+#[tokio::test]
+async fn needed_cards_scoped_to_a_foreign_or_missing_deck_is_a_404() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "scoped-alice@example.com", PW).await;
+    let (bob, _) = register(&app, "scoped-bob@example.com", PW).await;
+    let cards = sample_card_ids(&app, 1).await;
+
+    let bobs = create_deck(&app, &bob, "Bob's").await;
+    let bobs_id = bobs["id"].as_i64().expect("deck id");
+    let bobs_section = bobs["sections"][0]["id"].as_i64().expect("section");
+    add_deck_card(&app, &bob, bobs_id, bobs_section, &cards[0], 1).await;
+
+    // Alice, with no decks at all: Bob's id is a 404, not an empty list.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={bobs_id}"), &alice),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "foreign deck leaked: {body:?}"
+    );
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/needed?deck_id=999999", &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Bob's own scope works, and a read-only key may read it.
+    let ro = create_key(&app, &bob, "read").await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={bobs_id}"), &ro),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["totals"]["copies"], 1);
+}
+
+/// The shopping list is priced two ways (issue #675): `held_usd` charges the shortfall at
+/// the printings and finishes the decks hold it in — the deck's own per-copy price — and
+/// `cheapest_usd` at the card's cheapest printing anywhere in the catalog. Both fold through
+/// the shared cents path, so they add up exactly, and both are **null** — never `"0.00"` —
+/// for a card with no price, with the totals counting those entries.
+#[tokio::test]
+async fn needed_cards_are_priced_as_held_and_at_the_cheapest_printing() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "priced-need@example.com", PW).await;
+
+    // The reprint pair: two printings of one card at different prices.
+    let (_, _, printings) = send(
+        &app,
+        get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
+    )
+    .await;
+    let printings = printings["data"].as_array().expect("printings");
+    assert_eq!(printings.len(), 2, "expected a reprint pair");
+    let (dear, cheap) =
+        if cents(&printings[0]["prices"]["usd"]) > cents(&printings[1]["prices"]["usd"]) {
+            (&printings[0], &printings[1])
+        } else {
+            (&printings[1], &printings[0])
+        };
+    let dear_id = dear["id"].as_str().expect("dear id").to_string();
+    let dear_usd = cents(&dear["prices"]["usd"]);
+    let dear_foil = cents(&dear["prices"]["usd_foil"]);
+    // The identity's floor: the lower finish of either printing.
+    let floor = [dear, cheap]
+        .iter()
+        .flat_map(|p| [cents(&p["prices"]["usd"]), cents(&p["prices"]["usd_foil"])])
+        .min()
+        .expect("a floor");
+    assert!(floor < dear_usd, "the pair must offer a cheaper printing");
+
+    // An unpriced card: the token set carries no prices at all.
+    let (_, _, tokens) = send(&app, get("/api/games/mtg/sets/tdmb/cards?page_size=1")).await;
+    let token = &tokens["data"][0];
+    assert!(token["prices"]["usd"].is_null() && token["prices"]["usd_foil"].is_null());
+    let token_id = token["id"].as_str().expect("token id").to_string();
+
+    // The deck wants 2 regular + 1 foil of the dear printing (nothing owned), and 1 token.
+    let deck = create_deck(&app, &access, "Priced").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section = deck["sections"][0]["id"].as_i64().expect("section");
+    add_deck_card_finishes(&app, &access, deck_id, section, &dear_id, 2, 1).await;
+    add_deck_card(&app, &access, deck_id, section, &token_id, 1).await;
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+
+    // Held: 3 copies at the deck's per-copy price (2 × usd + 1 × usd_foil) / 3 — i.e. the
+    // deck's own valuation of its demand, since all three are missing.
+    let relic = needed_entry(&body, &dear_id).expect("the relic is needed");
+    assert_eq!(relic["needed"], 3);
+    let held_expected = 2 * dear_usd + dear_foil;
+    assert_eq!(cents(&relic["held_usd"]), held_expected, "{relic:?}");
+    // Cheapest: 3 copies at the identity's floor — the OTHER printing's price.
+    assert_eq!(cents(&relic["cheapest_usd"]), 3 * floor, "{relic:?}");
+
+    // The token: unpriced both ways, never "0.00".
+    let token_entry = needed_entry(&body, &token_id).expect("the token is needed");
+    assert!(token_entry["held_usd"].is_null(), "{token_entry:?}");
+    assert!(token_entry["cheapest_usd"].is_null(), "{token_entry:?}");
+
+    // Totals: the priced entry's numbers, with the unpriced one counted as such.
+    let totals = &body["totals"];
+    assert_eq!(totals["cards"], 2);
+    assert_eq!(totals["copies"], 4);
+    assert_eq!(cents(&totals["held_usd"]), held_expected);
+    assert_eq!(totals["held_unpriced_cards"], 1);
+    assert_eq!(cents(&totals["cheapest_usd"]), 3 * floor);
+    assert_eq!(totals["cheapest_unpriced_cards"], 1);
+
+    // Owning one copy prices the two still missing at the same per-copy rate: the per-copy
+    // held price is (2 × usd + usd_foil) / 3, charged twice, to the nearest cent.
+    own_card(&app, &access, &dear_id, 1).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={deck_id}"), &access),
+    )
+    .await;
+    let relic = needed_entry(&body, &dear_id).expect("still short");
+    assert_eq!(relic["needed"], 2);
+    let per_copy_twice = (2 * held_expected * 2 + 3) / (3 * 2);
+    assert_eq!(cents(&relic["held_usd"]), per_copy_twice, "{relic:?}");
+    assert_eq!(cents(&relic["cheapest_usd"]), 2 * floor);
+
+    // Only the token left: a list with nothing priced has null totals, not "0.00".
+    own_card(&app, &access, &dear_id, 3).await;
+    let (_, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/needed?deck_id={deck_id}"), &access),
+    )
+    .await;
+    assert_eq!(body["totals"]["cards"], 1);
+    assert!(body["totals"]["held_usd"].is_null());
+    assert!(body["totals"]["cheapest_usd"].is_null());
+    assert_eq!(body["totals"]["held_unpriced_cards"], 1);
+}
+
 /// Give the token's user a username and make `deck_id` public; returns the owner's handle.
 async fn publish_deck(app: &TestApp, access: &str, username: &str, deck_id: i64) -> String {
     let (status, _, u) = send(

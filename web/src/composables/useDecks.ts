@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
-import type { MaybeRefOrGetter, Ref } from 'vue'
+import { ref, type MaybeRefOrGetter, type Ref } from 'vue'
 import {
   addDeckToCollection,
   addPublicDeckToCollection,
@@ -42,7 +42,7 @@ import type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
-  NeededCard,
+  NeededCards,
   UpdateDeckRequest,
 } from '@/lib/api'
 import { invalidateDeckAnalysis } from '@/composables/useDeckAnalysis'
@@ -75,23 +75,27 @@ export function useDecksQuery(game: Ref<string>, enabled?: MaybeRefOrGetter<bool
   return useAuthedQuery<{ data: Deck[] }>(options)
 }
 
-/** Cards the caller's decks collectively need beyond their collection (issue #499). `mode`
- * is a ref inside the key, so flipping between "any printing" and "exact printing" refetches. */
+/** Cards the caller's decks collectively need beyond their collection (issue #499), or —
+ * with a `deckId` — what one deck still needs to be finished and what that costs (issue
+ * #675). `mode` and `deckId` are refs inside the key, so flipping between "any printing"
+ * and "exact printing", or between one deck and all of them, refetches; the family still
+ * shares the `['deck-needed', game]` prefix every invalidation targets. */
 export function useNeededCardsQuery(
   game: Ref<string>,
   mode: Ref<NeedMode>,
-  enabled?: Ref<boolean>,
+  deckId: Ref<number | null> = ref(null),
+  enabled?: MaybeRefOrGetter<boolean>,
 ) {
   const options = {
-    queryKey: ['deck-needed', game, mode],
-    queryFn: (token: string) => getNeededCards(token, game.value, mode.value),
+    queryKey: ['deck-needed', game, mode, deckId],
+    queryFn: (token: string) => getNeededCards(token, game.value, mode.value, deckId.value),
     enabled,
     // Derived from both deck contents AND collection supply. Deck edits invalidate it
     // (via invalidateDeck); collection edits happen on other pages, so revalidate on every
     // mount rather than couple the shared collection engine to this decks-only view.
     staleTime: 0,
   }
-  return useAuthedQuery<{ data: NeededCard[] }>(options)
+  return useAuthedQuery<NeededCards>(options)
 }
 
 /** The caller's decks containing a card — any printing of it — for the card page's
