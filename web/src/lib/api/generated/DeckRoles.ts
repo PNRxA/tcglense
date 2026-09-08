@@ -11,8 +11,10 @@ export type DeckRoles = {
  */
 roles: Array<DeckRoleGroup>, 
 /**
- * The roles each printing in the deck proper fills, keyed by external card id — only
- * printings holding at least one role appear. A card may fill several.
+ * The roles each printing in the deck fills, keyed by external card id — only printings
+ * holding at least one role appear, and a card may fill several. **Maybeboards are in
+ * this map** although they are out of every count above: a role is a fact about the
+ * card, and the list a page filters by it still shows its maybeboards.
  */
 card_roles: { [key in string]: Array<DeckRole> }, 
 /**

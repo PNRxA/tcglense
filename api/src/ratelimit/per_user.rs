@@ -452,6 +452,7 @@ mod tests {
             "/api/decks/mtg/7/legality",
             "/api/decks/mtg/7/bracket",
             "/api/decks/mtg/7/tokens",
+            "/api/decks/mtg/7/roles",
             "/api/decks/mtg/7/goldfish",
         ] {
             assert_eq!(

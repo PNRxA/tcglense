@@ -354,7 +354,8 @@ function copyDeckList() {
         :game="game"
         :roles="roles"
         :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isError.value"
+        :failed="rolesQuery.isLoadingError.value"
+        :stale="rolesQuery.isRefetchError.value"
       />
 
       <!-- Goldfish a sample hand (issue #596). -->

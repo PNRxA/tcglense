@@ -101,7 +101,7 @@ describe('DeckRoles', () => {
     expect(bars.map((bar) => bar.attributes('aria-label'))).toEqual([
       'Ramp: 3 copies',
       'Card draw: 0 copies',
-      'Removal: 1 copies',
+      'Removal: 1 copy',
       'Board wipes: 0 copies',
       'Counterspells: 0 copies',
       'Tutors: 0 copies',
@@ -113,7 +113,9 @@ describe('DeckRoles', () => {
   it('says how much of the deck fills a role at all, rather than letting the bars be added up', () => {
     // The roles are not a partition — most creatures and every land fill none — so the panel
     // states the covered share instead of leaving 60 cards unaccounted for.
-    expect(mountPanel().text()).toContain('39 of 99 cards fill at least one role')
+    expect(mountPanel().text().replace(/\s+/g, ' ')).toContain(
+      '39 of 99 distinct cards fill at least one role',
+    )
   })
 
   it('selects a role on click and clears it on a second click', async () => {

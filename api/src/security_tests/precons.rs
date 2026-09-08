@@ -347,9 +347,10 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
     );
     assert_eq!(precon_bracket["categories"], deck_bracket["categories"]);
 
-    // The role counts too (issue #671): one grammar, one answer, on both surfaces. Only the
-    // per-role groups are compared — `card_roles` is keyed by printing and the copy holds the
-    // same printings, but a fold that dropped a printing would show up as a count first.
+    // The role counts too (issue #671): one grammar, one answer, on both surfaces — the
+    // per-role groups (whose representative `card_id` is the smallest printing id, so the
+    // two load orders can't pick different ones) and the per-printing map (the copy holds
+    // the very same printings).
     assert_eq!(
         precon_roles["roles"], deck_roles["roles"],
         "precon {precon_roles:?} vs copy {deck_roles:?}"

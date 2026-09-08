@@ -3,6 +3,7 @@ import { computed, ref, useId } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import StaleNotice from '@/components/cards/StaleNotice.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckStatBars from '@/components/decks/DeckStatBars.vue'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
@@ -33,8 +34,13 @@ const props = defineProps<{
   /** Only for the detail list's card links — the panel is handed its data, it never fetches. */
   game: string
   roles?: DeckRoles
+  /** The first fetch is in flight — nothing to draw yet. */
   pending: boolean
+  /** The read never loaded (`isLoadingError`, issue #622) — there are no bars to keep. */
   failed: boolean
+  /** A background refetch failed while good bars are on screen (`isRefetchError`): keep
+   *  them, say so, and leave the filter they drive untouched. */
+  stale?: boolean
 }>()
 
 /** The selected role, or null. The bars *are* the filter control (`DeckStatBars`'
@@ -108,6 +114,7 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
     </CardContent>
 
     <CardContent v-else-if="roles" class="space-y-4">
+      <StaleNotice v-if="stale" label="Couldn't refresh — showing the roles as they last loaded." />
       <p class="text-muted-foreground text-xs">
         Read off each card's rules text — a card can fill several roles, and one the grammar isn't
         sure about is left out. Click a role to filter the list.
@@ -123,7 +130,8 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
 
       <p class="text-muted-foreground text-xs">
         <span class="tabular-nums">{{ classifiedCount }}</span> of
-        <span class="tabular-nums">{{ roles.card_count }}</span> cards fill at least one role.
+        <span class="tabular-nums">{{ roles.card_count }}</span> distinct cards fill at least one
+        role.
       </p>
 
       <!-- What each role counts, and the cards it counted — the panel's claim to being

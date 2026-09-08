@@ -223,7 +223,8 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         :game="deck.game"
         :roles="roles"
         :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isError.value"
+        :failed="rolesQuery.isLoadingError.value"
+        :stale="rolesQuery.isRefetchError.value"
       />
 
       <!-- Goldfish a sample hand from the shared deck (issue #596). -->

@@ -361,7 +361,8 @@ usePageMeta({
         :game="game"
         :roles="roles"
         :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isError.value"
+        :failed="rolesQuery.isLoadingError.value"
+        :stale="rolesQuery.isRefetchError.value"
       />
       <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
 

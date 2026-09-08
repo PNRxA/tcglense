@@ -13,9 +13,9 @@
 //! the bars: one group per role, always all eight in a fixed order, with a distinct-name
 //! `count`, a copy-weighted `copies` and the counted cards (folded by name, capped like the
 //! bracket's lists — the count stays exact). `card_roles` is the filter: every printing in
-//! the deck proper that holds at least one role, keyed by its external id, which is what
-//! lets a deck page narrow its list to "the removal" without a second reader of the rules
-//! text. And `unclassified_count` is the honesty line: how many distinct cards matched no
+//! the deck (maybeboards included — the list a page narrows shows them too) that holds at
+//! least one role, keyed by its external id, which is what lets a deck page narrow its list
+//! to "the removal" without a second reader of the rules text. And `unclassified_count` is the honesty line: how many distinct cards matched no
 //! role at all, so the bars are never mistaken for a partition of the deck.
 //!
 //! Scoped to the **deck proper** — a maybeboard card is under consideration, not played
@@ -163,8 +163,10 @@ pub struct DeckRoleGroup {
 pub struct DeckRoles {
     /// Every role, in a stable order, whether or not the deck holds any.
     pub roles: Vec<DeckRoleGroup>,
-    /// The roles each printing in the deck proper fills, keyed by external card id — only
-    /// printings holding at least one role appear. A card may fill several.
+    /// The roles each printing in the deck fills, keyed by external card id — only printings
+    /// holding at least one role appear, and a card may fill several. **Maybeboards are in
+    /// this map** although they are out of every count above: a role is a fact about the
+    /// card, and the list a page filters by it still shows its maybeboards.
     pub card_roles: BTreeMap<String, Vec<DeckRole>>,
     /// Distinct card names in the deck proper.
     pub card_count: i64,
@@ -215,21 +217,23 @@ pub(crate) fn analyse_roles(input: &DeckAnalysisInput) -> DeckRoles {
         .collect();
 
     // Every printing, not only the fold's representative: the deck page filters rows by
-    // the printing they hold, and a second art of one card must narrow with the first.
-    let mut held_by_name: BTreeMap<&str, &Vec<DeckRole>> = BTreeMap::new();
+    // the printing they hold, and a second art of one card must narrow with the first. And
+    // every row, maybeboards included — the filtered list still shows them, and a maybeboard
+    // Cultivate that vanished under "Ramp" would read as "not ramp". A name only a maybeboard
+    // holds is read here, once, since no fold above did.
+    let mut held_by_name: BTreeMap<&str, Vec<DeckRole>> = BTreeMap::new();
     for (fold, held) in folds.iter().zip(&readings) {
-        held_by_name.insert(fold.facts.name.as_str(), held);
+        held_by_name.insert(fold.facts.name.as_str(), held.clone());
     }
-    let card_roles = proper
-        .iter()
-        .filter(|entry| entry.copies() > 0)
-        .filter_map(|entry| {
-            held_by_name
-                .get(entry.facts.name.as_str())
-                .filter(|held| !held.is_empty())
-                .map(|held| (entry.facts.id.clone(), (*held).clone()))
-        })
-        .collect();
+    let mut card_roles: BTreeMap<String, Vec<DeckRole>> = BTreeMap::new();
+    for entry in input.entries.iter().filter(|entry| entry.copies() > 0) {
+        let held = held_by_name
+            .entry(entry.facts.name.as_str())
+            .or_insert_with(|| roles_of(&entry.facts));
+        if !held.is_empty() {
+            card_roles.insert(entry.facts.id.clone(), held.clone());
+        }
+    }
 
     let unclassified_count = readings.iter().filter(|held| held.is_empty()).count() as i64;
 
@@ -383,7 +387,13 @@ mod tests {
         assert_eq!(draw.count, 1);
         assert_eq!(draw.cards[0].name, "Tatyova, Benthic Druid");
         assert!(roles.card_roles.contains_key("cmd"));
-        assert!(!roles.card_roles.contains_key("maybe"));
+        // …but the filter map still knows what the maybeboard card is, because the list it
+        // narrows shows maybeboards too.
+        assert_eq!(
+            roles.card_roles.get("maybe"),
+            Some(&vec![DeckRole::CardDraw]),
+            "a maybeboard row is filterable even though it is not counted"
+        );
         assert_eq!(roles.card_count, 1);
     }
 

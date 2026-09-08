@@ -349,7 +349,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   copy answer byte-identically). The `card_roles` map is keyed by **printing**, because the
   deck page filters rows by the printing they hold; the per-role `cards` lists are capped, the
   counts never are, and `unclassified_count` is on the wire so the bars can't be read as a
-  partition of the deck. Three route mirrors, like every analysis read.
+  partition of the deck — and it holds **every** row, maybeboards included, because the list a
+  page narrows by it shows them (the counts don't). Three route mirrors, like every analysis read.
   **The bracket estimate is a floor, not a verdict** (`analysis::bracket`): it reports the
   lowest of Wizards' rungs the deck's cards don't rule out and is **only ever 2, 3 or 4** —
   1 (Exhibition) and 5 (cEDH) are claims about *intent*, so asserting either from a list would
@@ -360,7 +361,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   *chaining* extra turns — isn't in the list, and a caveat saying so ships with every response.
   Game Changers are read off the catalog's `game_changer` column (Wizards' curated list,
   published on the card); the other three are a **grammar over oracle text**
-  (`bracket/signals.rs`) built on `rules`'s `ability_lines`/`has_word` rather than a second
+  (`analysis/signals/bracket.rs`) built on `rules`'s `ability_lines`/`has_word` rather than a second
   copy of them — same stance as the construction rules, since a false positive costs a player
   two brackets: every predicate declines when unsure, and every counted card rides the
   response so the number can be audited. The ladder's labels **ship in the payload** instead

@@ -1216,9 +1216,10 @@ in a fixed order (`ramp`, `card_draw`, `removal`, `board_wipe`, `counterspell`, 
 `recursion`, `protection`), where `count` is distinct card **names**, `copies` is copy-weighted
 (what a 60-card builder counts; equal to `count` in a singleton deck) and `cards`
 (`{ card_id, name, quantity }`) is that list capped at 50 — `count` and `copies` stay exact.
-`card_roles` maps every **printing** in the deck proper that fills at least one role (by
-external id) to its roles, so a deck page can narrow its list to "the removal" without a
-second reader of the rules text — a name held in two arts appears under both ids. A card may
+`card_roles` maps every **printing** in the deck that fills at least one role (by external
+id) to its roles, so a deck page can narrow its list to "the removal" without a second reader
+of the rules text — a name held in two arts appears under both ids, and **maybeboard rows are
+in the map** though out of every count, because the list the page narrows shows them. A card may
 fill several roles (a cantripping removal spell is both), so the groups are **not a partition**
 of the deck: `unclassified_count` says how many of the `card_count` distinct names matched
 nothing (most creatures, every land), and labels + descriptions ship in the payload, like the

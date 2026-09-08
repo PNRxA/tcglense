@@ -51,7 +51,7 @@ function share(count: number): string {
 
 /** "3: 12 copies" — one wording for a bucket, so a bar reads the same in both layouts. */
 function barLabel(item: DeckStatItem): string {
-  return `${item.label}: ${item.count} copies`
+  return `${item.label}: ${item.count} ${item.count === 1 ? 'copy' : 'copies'}`
 }
 </script>
 
@@ -104,6 +104,7 @@ function barLabel(item: DeckStatItem): string {
         :key="item.key"
         :type="selectable ? 'button' : undefined"
         :aria-pressed="selectable ? selected === item.key : undefined"
+        :aria-label="selectable ? barLabel(item) : undefined"
         :class="
           selectable
             ? [
@@ -119,11 +120,14 @@ function barLabel(item: DeckStatItem): string {
           <span class="text-muted-foreground tabular-nums">{{ item.count }}</span>
         </div>
         <div class="bg-muted h-2 overflow-hidden rounded-full">
+          <!-- As a button the row carries the label itself; the fill inside is then hidden
+            from the accessibility tree so the same words aren't announced twice. -->
           <div
             class="h-full min-w-px rounded-full transition-[width]"
             :style="{ width: share(item.count), backgroundColor: item.color ?? 'var(--primary)' }"
             role="img"
             :aria-label="barLabel(item)"
+            :aria-hidden="selectable || undefined"
           />
         </div>
       </component>

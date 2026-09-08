@@ -167,10 +167,17 @@ fn has_any_word(sentence: &str, words: &[&str]) -> bool {
     words.iter().any(|word| has_word(sentence, word))
 }
 
-/// Whether the card's front face is a land. A land taps for mana because it is a land, and
-/// a fetch land finds a land because that is what fetch lands do — neither is *ramp*.
+/// Whether **any face** of the card is a land. A land taps for mana because it is a land, and
+/// a fetch land finds a land because that is what fetch lands do — neither is *ramp*. The
+/// raw type line is read, not just the front face: a modal double-faced spell's oracle text
+/// carries its land back face's `{T}: Add {U}.` too, and Jwari Disruption is a counterspell
+/// with a land on the back, not a mana rock.
 fn is_land(card: &CardFacts) -> bool {
     has_word(&card.front_type_line, "land")
+        || card
+            .type_line
+            .as_deref()
+            .is_some_and(|line| has_word(&line.to_lowercase(), "land"))
 }
 
 /// Whether `text` ends with a reference to the card itself — "return **this card** from your
@@ -254,10 +261,22 @@ fn targets(sentence: &str) -> Vec<Target> {
         let start = from + offset;
         let end = start + "target".len();
         let bytes = sentence.as_bytes();
-        let is_a_word = (start == 0 || !bytes[start - 1].is_ascii_alphanumeric())
-            && (end == bytes.len() || !bytes[end].is_ascii_alphanumeric());
+        let starts_a_word = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let ends_a_word = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
         from = start + 1;
-        if !is_a_word {
+        if !starts_a_word {
+            continue;
+        }
+        if !ends_a_word {
+            // The plural noun — "damage divided evenly among any number of **targets**"
+            // (Fireball, Arc Lightning, Comet Storm) — is removal-shaped exactly when the
+            // damage is divided; any other suffix ("targeted", "targeting", "untargetable")
+            // is not the noun at all.
+            let plural = bytes[end] == b's'
+                && (end + 1 == bytes.len() || !bytes[end + 1].is_ascii_alphanumeric());
+            if plural && has_word(sentence, "divided") {
+                found.push(Target::OthersPermanent);
+            }
             continue;
         }
         // "any target" is a creature, a player, or a planeswalker — removal-shaped.
@@ -741,6 +760,16 @@ mod tests {
             .type_line("Land Creature — Forest Dryad")
             .oracle("({T}: Add {G}.)");
         assert!(!is_ramp(&arbor));
+        // A modal double-faced spell whose BACK face is a land: the stored oracle text joins
+        // both faces, so the back face's mana ability is in the text — and a counterspell
+        // with a land behind it is still not a mana rock.
+        let mdfc = card("j", "Jwari Disruption // Jwari Ruins")
+            .type_line("Instant // Land")
+            .oracle(
+                "Counter target spell unless its controller pays {2}.\n//\nThis land enters tapped.\n{T}: Add {U}.",
+            );
+        assert!(!is_ramp(&mdfc), "a land on the back face is still a land");
+        assert!(is_counterspell(&mdfc), "…and the front face is still read");
     }
 
     // ---------- Card draw ----------
@@ -890,6 +919,15 @@ mod tests {
                     "Choose one —\n• Destroy target artifact.\n• Destroy target enchantment.\n• Exile target card from a graveyard.",
                 ),
                 ("Pinger", "{T}: This creature deals 1 damage to any target."),
+                // Divided damage is worded with the plural noun and no "any target".
+                (
+                    "Fireball",
+                    "This spell costs {1} more to cast for each target beyond the first.\nFireball deals X damage divided evenly, rounded down, among any number of targets.",
+                ),
+                (
+                    "Arc Lightning",
+                    "Arc Lightning deals 3 damage divided as you choose among one, two, or three targets.",
+                ),
             ],
         );
     }
@@ -1344,6 +1382,15 @@ mod tests {
             vec![Target::Other]
         );
         assert_eq!(targets("untargetable"), Vec::<Target>::new());
+        // The plural noun counts only for divided damage; the verb "targets" never does.
+        assert_eq!(
+            targets("deals 3 damage divided as you choose among one, two, or three targets"),
+            vec![Target::OthersPermanent]
+        );
+        assert_eq!(
+            targets("whenever a spell an opponent controls targets a creature you control"),
+            Vec::<Target>::new()
+        );
     }
 
     #[test]
