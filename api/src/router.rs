@@ -96,9 +96,9 @@ use crate::{
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
-            set_wishlist_product_entry, wishlist_counts, wishlist_product_counts,
-            wishlist_product_summary, wishlist_set_drops, wishlist_set_subtypes, wishlist_sets,
-            wishlist_summary,
+            set_wishlist_product_entry, wishlist_buy_list, wishlist_counts,
+            wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
+            wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
     state::AppState,
@@ -339,6 +339,10 @@ pub fn build_router(state: AppState) -> Router {
         // in, wanted counts out). POST so a big page's id list can't blow the URL
         // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
         .route("/api/wishlist/{game}/counts", post(wishlist_counts))
+        // The shopping list behind "Buy all" (issue #292): the wanted cards (+ sealed
+        // products, unfiltered) as bulk-buy rows with TCGplayer ids. A read, so any
+        // `tcgl_` key may call it.
+        .route("/api/wishlist/{game}/buy-list", get(wishlist_buy_list))
         // The wanted-card search's whole result set as a `.txt` download — the wish-list
         // twin of the collection's `/cards/export` (static segment, so it never collides
         // with `/cards/{id}`).

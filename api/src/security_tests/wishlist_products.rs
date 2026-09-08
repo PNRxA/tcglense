@@ -875,3 +875,45 @@ async fn product_counts_batch_is_isolated_per_user() {
     .await;
     assert_eq!(body["data"]["100"]["quantity"], 2);
 }
+
+/// The shopping list (`GET .../buy-list`, issue #292) carries the wanted sealed products
+/// — by their TCGplayer ids, the same product id a mass-entry page takes — only for a
+/// **whole-list** request: every card filter is a card filter, so "buy these filtered
+/// cards" must not drag a wanted booster box along.
+#[tokio::test]
+async fn buy_list_carries_wanted_products_only_when_unfiltered() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "sealed-buyer@example.com", "password123").await;
+    insert_product(
+        db,
+        "300",
+        "Karlov Play Booster Box",
+        "mkm",
+        "display",
+        Some("129.99"),
+    )
+    .await;
+    want_product(&app, &token, "300", 2).await;
+
+    let (status, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg/buy-list", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["cards"], json!([]));
+    assert_eq!(
+        body["products"],
+        json!([{ "product_id": "300", "name": "Karlov Play Booster Box", "quantity": 2, "foil_quantity": 0 }])
+    );
+    assert_eq!(body["total_products"], 1);
+    assert_eq!(body["truncated"], false);
+
+    for query in ["q=t:creature", "set=mkm", "min_copies=1"] {
+        let (status, _, body) = send(
+            &app,
+            get_with_bearer(&format!("/api/wishlist/mtg/buy-list?{query}"), &token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body:?}");
+        assert_eq!(body["products"], json!([]), "{query}: {body:?}");
+        assert_eq!(body["total_products"], 0, "{query}");
+    }
+}

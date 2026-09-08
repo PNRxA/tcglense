@@ -1,9 +1,10 @@
+import { cardExportQuery, type CardExportParams } from './catalog'
 import { request } from './client'
 import { makeHoldingApi } from './holdings'
 import { makeProductHoldingApi } from './product-holdings'
-import type { CollectionSet, CollectionSummary, WishlistVisibility } from './generated'
+import type { BuyList, CollectionSet, CollectionSummary, WishlistVisibility } from './generated'
 
-export type { WishlistVisibility } from './generated'
+export type { BuyList, BuyListCard, BuyListProduct, WishlistVisibility } from './generated'
 
 // ---------- Wish list (per-user, authenticated) ----------
 //
@@ -76,6 +77,29 @@ export const wishlistCardExportPath = api.cardExportPath
  * counts, one line per non-empty finish (foil copies tagged ` *F*`), honouring the same
  * `q`/`set`/`includeRelated`/`sort`/`dir` the browse grid queried with. */
 export const exportWishlistCards = api.exportCardsFile
+
+// ---------- The shopping list (issue #292) ----------
+
+/** The listing's own filter params, as the `.txt` export takes them (minus `format`, which
+ * the shopping list has no use for). */
+export type BuyListParams = Omit<CardExportParams, 'format'>
+
+/** Relative `/api/wishlist/{game}/buy-list` path — the shopping list behind "Buy all". */
+export function wishlistBuyListPath(game: string, params: BuyListParams = {}): string {
+  return `/api/wishlist/${encodeURIComponent(game)}/buy-list${cardExportQuery(params)}`
+}
+
+/** The wanted cards the filters match as bulk-buy rows (counts + the printing's TCGplayer
+ * product id), plus — on an unfiltered request only — the wanted sealed products. Capped
+ * at 500 card rows; `truncated` and the totals say what was cut. The stores that turn these
+ * rows into a prefilled cart live in `lib/bulkBuy.ts`. */
+export function getWishlistBuyList(
+  token: string,
+  game: string,
+  params?: BuyListParams,
+): Promise<BuyList> {
+  return request<BuyList>(wishlistBuyListPath(game, params), { token })
+}
 
 /** How many copies of one card the user wants (zeros when not on the wish list). */
 export const getWishlistEntry = api.getEntry

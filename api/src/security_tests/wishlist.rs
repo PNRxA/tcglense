@@ -78,6 +78,11 @@ async fn wishlist_requires_authentication() {
         assert_eq!(cache_control(&headers), Some("no-store"), "{uri}");
     }
 
+    // The shopping list (issue #292) is per-user too.
+    let (status, headers, _) = send(&app, get("/api/wishlist/mtg/buy-list")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
     // The batch counts lookup is a POST, but just as private.
     let (status, headers, _) = send(
         &app,
@@ -643,4 +648,87 @@ async fn wishlist_writes_are_isolated_between_users() {
     assert_eq!(a_sum["total_cards"], 2);
     let (_, _, b_sum) = send(&app, get_with_bearer("/api/wishlist/mtg/summary", &bob)).await;
     assert_eq!(b_sum["total_cards"], 5);
+}
+
+/// `GET .../buy-list` (issue #292) — the shopping list behind "Buy all": every wanted
+/// card as a bulk-buy row carrying its counts and the printing's TCGplayer product id (the
+/// dummy catalog seeds one on every card), honouring the list's own filters, so "buy
+/// what's on screen" is the grid. It is a read, so a read-only key may call it, and it
+/// answers `no-store` like every per-user read.
+#[tokio::test]
+async fn buy_list_carries_the_wanted_rows_with_tcgplayer_ids_and_honours_the_filters() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "buy-list@example.com", "password123").await;
+
+    let ids = sample_card_ids(&app, 3).await;
+    want_card(&app, &token, &ids[0], 2).await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &card_path(&ids[1]),
+            &token,
+            json!({ "quantity": 1, "foil_quantity": 3 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "want foil failed: {body:?}");
+
+    let (status, headers, body) =
+        send(&app, get_with_bearer("/api/wishlist/mtg/buy-list", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let cards = body["cards"].as_array().expect("cards array");
+    assert_eq!(cards.len(), 2, "{body:?}");
+    assert_eq!(body["total_cards"], 2);
+    assert_eq!(body["products"], json!([]));
+    assert_eq!(body["total_products"], 0);
+    assert_eq!(body["truncated"], false);
+    let foil_row = cards
+        .iter()
+        .find(|row| row["card_id"] == ids[1])
+        .expect("the foil row");
+    assert_eq!(foil_row["quantity"], 1);
+    assert_eq!(foil_row["foil_quantity"], 3);
+    for key in ["name", "set_code", "collector_number"] {
+        assert!(
+            foil_row[key].is_string(),
+            "{key} should be a string: {foil_row:?}"
+        );
+    }
+    // The TCGplayer product id rides the row — the id a mass-entry page keys on.
+    assert!(
+        foil_row["tcgplayer_id"].is_i64(),
+        "tcgplayer_id should be a number: {foil_row:?}"
+    );
+
+    // The list's own copy-count filter narrows the rows (a `q`, a `set` scope and the
+    // sort resolve through the same seam).
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/buy-list?finish=foil", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let filtered = body["cards"].as_array().expect("cards array");
+    assert_eq!(filtered.len(), 1, "{body:?}");
+    assert_eq!(filtered[0]["card_id"], ids[1]);
+    assert_eq!(body["total_cards"], 1);
+
+    // A malformed filter is a 422, as on the list.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg/buy-list?sort=nope", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/xyz/buy-list", &token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Another user's list is their own: an empty shopping list, never this one.
+    let (bob, _) = register(&app, "buy-list-bob@example.com", "password123").await;
+    let (status, _, body) = send(&app, get_with_bearer("/api/wishlist/mtg/buy-list", &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cards"], json!([]));
+    assert_eq!(body["total_cards"], 0);
 }

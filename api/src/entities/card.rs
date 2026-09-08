@@ -75,6 +75,21 @@ pub struct Model {
     /// TCGplayer product id for the etched printing, when distinct
     /// (Scryfall `tcgplayer_etched_id`). Stored for completeness/future use.
     pub tcgplayer_etched_id: Option<i32>,
+    // --- The other external ids (issue #686), all provider data: Scryfall's
+    // `multiverse_ids` / `mtgo_id` / `mtgo_foil_id` / `arena_id` / `cardmarket_id`, so
+    // the Archidekt export can round-trip the ids it used to zero and the card page can
+    // deep-link a store or Gatherer by id instead of a name search. Each is NULL when
+    // Scryfall has no mapping (an Arena id only exists for an Arena-legal printing).
+    /// Comma-joined Gatherer multiverse ids (one per face for a double-faced card).
+    pub multiverse_ids: Option<String>,
+    /// Magic Online catalog id for the regular printing.
+    pub mtgo_id: Option<i32>,
+    /// Magic Online catalog id for the foil printing, when distinct.
+    pub mtgo_foil_id: Option<i32>,
+    /// MTG Arena id.
+    pub arena_id: Option<i32>,
+    /// Cardmarket product id (`idProduct`).
+    pub cardmarket_id: Option<i32>,
     // --- Fields ingested for Scryfall search parity (see scryfall::search). ---
     /// Comma-joined keyword abilities, e.g. `"Flying,Trample"`.
     pub keywords: Option<String>,

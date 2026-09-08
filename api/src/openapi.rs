@@ -181,6 +181,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::wishlist_counts,
         crate::handlers::wishlist::wishlist_product_counts,
         crate::handlers::wishlist::export_wishlist_cards,
+        crate::handlers::wishlist::wishlist_buy_list,
         // Wish-list public-sharing toggle (issue #493).
         crate::handlers::sharing::get_wishlist_visibility,
         crate::handlers::sharing::set_wishlist_visibility,
@@ -282,6 +283,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::shared::CollectionEntry,
         crate::handlers::shared::CollectionQuantities,
         crate::handlers::shared::CollectionSummary,
+        crate::handlers::shared::BuyList,
+        crate::handlers::shared::BuyListCard,
+        crate::handlers::shared::BuyListProduct,
         crate::handlers::shared::SetQuantitiesRequest,
         crate::handlers::api_keys::CreateApiKeyRequest,
         crate::handlers::api_keys::CreatedApiKey,

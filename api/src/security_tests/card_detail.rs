@@ -74,6 +74,14 @@ async fn insert_detailed_card(db: &sea_orm::DatabaseConnection) {
         content_warning: Set(None),
         edhrec_rank: Set(Some(1234)),
         penny_rank: Set(Some(567)),
+        // --- The external ids (issue #686); `cardmarket_id` left NULL on purpose. ---
+        tcgplayer_id: Set(Some(179421)),
+        tcgplayer_etched_id: Set(Some(250123)),
+        multiverse_ids: Set(Some("450221,450222".to_string())),
+        mtgo_id: Set(Some(68968)),
+        mtgo_foil_id: Set(Some(68969)),
+        arena_id: Set(Some(67890)),
+        cardmarket_id: Set(None),
         digital: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
@@ -256,6 +264,15 @@ async fn card_detail_flattens_the_shared_card_and_adds_the_print_details() {
     // Ranks are numbers, not strings.
     assert_eq!(body["edhrec_rank"], 1234);
     assert_eq!(body["penny_rank"], 567);
+    // The external ids (issue #686): numbers as stored, Gatherer's as a list, and a
+    // provider with no mapping is `null` — a client shows a link only where there is one.
+    assert_eq!(body["tcgplayer_id"], 179421);
+    assert_eq!(body["tcgplayer_etched_id"], 250123);
+    assert_eq!(body["multiverse_ids"], json!([450221, 450222]));
+    assert_eq!(body["mtgo_id"], 68968);
+    assert_eq!(body["mtgo_foil_id"], 68969);
+    assert_eq!(body["arena_id"], 67890);
+    assert!(body["cardmarket_id"].is_null());
 }
 
 #[tokio::test]
@@ -296,6 +313,17 @@ async fn a_card_with_no_print_details_answers_nulls_empty_arrays_and_false_flags
     }
     assert!(body["edhrec_rank"].is_null());
     assert!(body["penny_rank"].is_null());
+    for key in [
+        "tcgplayer_id",
+        "tcgplayer_etched_id",
+        "cardmarket_id",
+        "mtgo_id",
+        "mtgo_foil_id",
+        "arena_id",
+    ] {
+        assert!(body[key].is_null(), "{key} should be null: {body:?}");
+    }
+    assert_eq!(body["multiverse_ids"], json!([]));
 }
 
 #[tokio::test]
@@ -331,6 +359,13 @@ async fn the_listings_still_answer_the_unwidened_card_shape() {
         "content_warning",
         "edhrec_rank",
         "penny_rank",
+        "tcgplayer_id",
+        "tcgplayer_etched_id",
+        "cardmarket_id",
+        "multiverse_ids",
+        "mtgo_id",
+        "mtgo_foil_id",
+        "arena_id",
     ];
 
     // The card listing.

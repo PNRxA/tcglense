@@ -286,8 +286,14 @@ evaluate format breaches client-side from the deck detail they already hold.
 watermark, finishes: string[], frame, frame_effects: string[], border_color,
 security_stamp, promo_types: string[], produced_mana: string[], defense, reserved,
 full_art, textless, promo, variation, story_spotlight, content_warning: boolean,
-edhrec_rank, penny_rank: number | null }` — what `GET /api/games/{game}/cards/{id}`
-answers (issue #673). The `Card` half is **flattened**: every key above sits at the top
+edhrec_rank, penny_rank: number | null, tcgplayer_id, tcgplayer_etched_id, cardmarket_id,
+mtgo_id, mtgo_foil_id, arena_id: number | null, multiverse_ids: number[] }` — what
+`GET /api/games/{game}/cards/{id}` answers (issue #673; the seven **external ids** are issue
+#686 — TCGplayer's product ids, Cardmarket's `idProduct`, Magic Online's regular/foil ids,
+the Arena id and Gatherer's multiverse ids [one per face], each `null`/`[]` where the
+provider has no mapping, so a client shows a deep link only where there is one: an Arena id
+exists only for an Arena-legal printing. They are per-printing and never unioned from a
+folded foil-★ star, which is a different product). The `Card` half is **flattened**: every key above sits at the top
 level of the same object, so a client typed against `Card` reads the detail response
 unchanged and simply ignores the extra keys. Those extras are **detail-only on purpose** —
 `Card` rides every *listing* (a grid page is up to 200 rows, CDN/ETag-cached, and the deck
@@ -1215,6 +1221,7 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 | `GET /api/wishlist/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
 | `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&min_copies&max_copies&finish&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
+| `GET /api/wishlist/{game}/buy-list?q&set&include_related&sort&dir&min_copies&max_copies&finish` | **no collection twin** (you don't buy what you own) — the **shopping list** behind "Buy all" (issue #292): `BuyList = { cards: BuyListCard[], products: BuyListProduct[], total_cards, total_products, truncated }`, where a `BuyListCard` is `{ card_id, name, set_code, collector_number, quantity, foil_quantity, tcgplayer_id: number \| null }` and a `BuyListProduct` `{ product_id, name, quantity, foil_quantity }` (`product_id` is the sealed product's external id, its TCGplayer id). The card rows are the listing's own query (same params, resolved through `resolve_holdings_list` + `wishlist_query`), so "buy what's on screen" is the filtered grid; the wanted **sealed products** ride only an *unfiltered* request (no `q`/`set`/copy-count filter — "buy the whole list"), since every card filter is a card filter. Capped at **500** card rows + one page (200) of products, `truncated` + the totals say what was cut. Rows, not store URLs: the stores and their bulk-entry link spellings (TCGplayer mass entry by product id, MTG Mate's decklist search by pasted list) are the SPA's `lib/bulkBuy.ts` — a CLI builds its own link off the same rows. A read (`AuthUser`), `no-store` |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |
 

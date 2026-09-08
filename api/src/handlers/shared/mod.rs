@@ -8,6 +8,7 @@
 //! Nothing here may import from `handlers::catalog`, `handlers::collection`, or
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
+pub(crate) mod buy_list;
 pub(crate) mod card_export;
 pub(crate) mod cheapest;
 pub(crate) mod download;
@@ -24,6 +25,10 @@ pub(crate) mod sort;
 pub(crate) mod validate;
 pub(crate) mod valuation;
 
+pub(crate) use buy_list::{
+    BUY_LIST_MAX_ROWS, BuyList, BuyListCard, BuyListProduct, build_buy_list, load_buy_list_cards,
+    product_rows,
+};
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
 pub(crate) use cheapest::{PricedPrinting, load_cheapest_by_oracle, priced_printings_by_oracle};
 pub(crate) use download::{csv_download, text_download};
@@ -48,7 +53,9 @@ pub(crate) use pagination::{
     SearchGroup, build_page, resolve_page, trim_query,
 };
 pub(crate) use pricing::{PriceParams, PriceRange, cutoff_date, downsample_rows};
-pub(crate) use product_holdings::{ProductResponse, load_product, product_response, set_name_map};
+pub(crate) use product_holdings::{
+    ProductHoldingListParams, ProductResponse, load_product, product_response, set_name_map,
+};
 pub(crate) use search::{
     every_word_matches, every_word_matches_with, search_condition, starts_with_rank,
 };

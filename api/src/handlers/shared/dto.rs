@@ -96,7 +96,9 @@ pub(crate) struct CardResponse {
 /// shared [`CardResponse`] every listing carries, **flattened**, plus the print + collector
 /// details only the card page reads — who painted it, its flavour text, the finishes it
 /// comes in, frame/border/stamp/promo facts, the Reserved List flag, its EDHREC / Penny
-/// rank, the mana it produces, and a Battle's printed defense.
+/// rank, the mana it produces, a Battle's printed defense, and its external ids (issue
+/// #686: TCGplayer, Cardmarket, Gatherer, Magic Online, Arena — each `null` where the
+/// provider has no mapping, so a client shows a link only when there is one).
 ///
 /// Detail-only on purpose: `CardResponse` rides every list payload (a grid page is up to 200
 /// of them, CDN/ETag-cached), so these ~20 columns stay off it and live here, on the one
@@ -161,6 +163,24 @@ pub(crate) struct CardDetailResponse {
     pub edhrec_rank: Option<i32>,
     /// Popularity rank in Penny Dreadful; `null` when unranked.
     pub penny_rank: Option<i32>,
+    // --- External ids (issue #686). Per-printing, straight off the row; a folded foil-★
+    // star's are never unioned in (they name a different product). ---
+    /// TCGplayer product id of the regular/foil printing (`tcgplayer.com/product/{id}`);
+    /// `null` when TCGplayer doesn't list it.
+    pub tcgplayer_id: Option<i32>,
+    /// TCGplayer product id of the etched printing, when it is a distinct product.
+    pub tcgplayer_etched_id: Option<i32>,
+    /// Cardmarket product id (`cardmarket.com/en/Magic/Products?idProduct={id}`).
+    pub cardmarket_id: Option<i32>,
+    /// Gatherer multiverse ids — one per face for a double-faced card; empty when Gatherer
+    /// never listed the printing.
+    pub multiverse_ids: Vec<i32>,
+    /// Magic Online catalog id of the regular printing; only an MTGO printing carries one.
+    pub mtgo_id: Option<i32>,
+    /// Magic Online catalog id of the foil printing, when distinct.
+    pub mtgo_foil_id: Option<i32>,
+    /// MTG Arena id; only an Arena printing carries one.
+    pub arena_id: Option<i32>,
 }
 
 impl From<card::Model> for CardDetailResponse {
@@ -191,6 +211,13 @@ impl From<card::Model> for CardDetailResponse {
         let content_warning = m.content_warning.unwrap_or(false);
         let edhrec_rank = m.edhrec_rank;
         let penny_rank = m.penny_rank;
+        let tcgplayer_id = m.tcgplayer_id;
+        let tcgplayer_etched_id = m.tcgplayer_etched_id;
+        let cardmarket_id = m.cardmarket_id;
+        let multiverse_ids = parse_id_list(m.multiverse_ids.as_deref());
+        let mtgo_id = m.mtgo_id;
+        let mtgo_foil_id = m.mtgo_foil_id;
+        let arena_id = m.arena_id;
 
         CardDetailResponse {
             card: CardResponse::from(m),
@@ -216,6 +243,13 @@ impl From<card::Model> for CardDetailResponse {
             content_warning,
             edhrec_rank,
             penny_rank,
+            tcgplayer_id,
+            tcgplayer_etched_id,
+            cardmarket_id,
+            multiverse_ids,
+            mtgo_id,
+            mtgo_foil_id,
+            arena_id,
         }
     }
 }
@@ -366,6 +400,19 @@ pub(crate) fn parse_legalities(raw: Option<&str>) -> Option<BTreeMap<String, Str
     raw.and_then(|json| serde_json::from_str(json).ok())
 }
 
+/// Parse a comma-joined integer column (`cards.multiverse_ids`, written by
+/// `scryfall::map`) into the wire list. A NULL column is `[]`, and a token that isn't an
+/// integer is skipped rather than failing the read — the column is provider data.
+pub(crate) fn parse_id_list(value: Option<&str>) -> Vec<i32> {
+    value
+        .map(|v| {
+            v.split(',')
+                .filter_map(|part| part.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn split_csv(value: Option<String>) -> Vec<String> {
     value
         .map(|v| {
@@ -416,10 +463,20 @@ mod tests {
             defense: Some("5".into()),
             reserved: Some(true),
             edhrec_rank: Some(1234),
+            tcgplayer_id: Some(179421),
+            multiverse_ids: Some("450221,450222".into()),
+            mtgo_id: Some(68968),
             // `full_art` and the rest stay NULL, the shape of a row the sync predates.
             ..crate::test_support::card_model(1)
         };
         let detail = CardDetailResponse::from(row.clone());
+
+        // External ids ride as stored; Gatherer's comma-joined list becomes integers.
+        assert_eq!(detail.tcgplayer_id, Some(179421));
+        assert_eq!(detail.multiverse_ids, [450221, 450222]);
+        assert_eq!(detail.mtgo_id, Some(68968));
+        assert_eq!(detail.cardmarket_id, None);
+        assert_eq!(detail.arena_id, None);
 
         assert_eq!(detail.artist.as_deref(), Some("Rebecca Guay"));
         assert_eq!(detail.artist_ids, ["artist-a", "artist-b"]);
@@ -434,6 +491,8 @@ mod tests {
         assert!(!detail.full_art);
         assert!(!detail.content_warning);
         assert_eq!(detail.penny_rank, None);
+        assert_eq!(parse_id_list(None), Vec::<i32>::new());
+        assert_eq!(parse_id_list(Some("12,x,,34")), [12, 34]);
 
         // The wrapped payload is exactly the shared `Card` the listings answer.
         let plain = CardResponse::from(row);

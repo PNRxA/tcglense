@@ -369,14 +369,27 @@ catalog) is planned but not implemented.
   carries — condition, language, tags, purchase price, alter/proxy flags — and fills those
   columns with the neutral defaults a fresh export uses (`NM`/`Near Mint`, `EN`/`English`,
   blank, `False`) rather than inventing data. The Archidekt-only `Multiverse Id`/`MTGO ID`
-  columns are emitted as `0` because the Scryfall ingest never captures them, and
-  `Types`/`Sub-types`/`Super-types` are **derived** by splitting the stored `type_line` on
+  columns carry the catalog's Gatherer and Magic Online ids since issue #686 (the first
+  multiverse id of a double-faced card, and on a foil row the foil printing's own MTGO id
+  where MTGO lists one) and fall back to `0` — Archidekt's own default for a card it can't
+  map — only where the printing has none; a catalog synced before that migration reads as
+  all-`0` until its next card sync rewrites the rows. `Types`/`Sub-types`/`Super-types`
+  are **derived** by splitting the stored `type_line` on
   the em dash (front face only for double-faced cards) since we don't store them apart.
   None of this affects the round trip: re-importing keys off the `Scryfall ID` column
   (Archidekt) or `Edition` + `Collector Number` (Moxfield), both of which are faithful. We
   emit the full provider header (all 23 / 13 columns) so the file re-imports cleanly into
   the real services, not just our own uploader. Export is offered for the collection only,
-  not the wish list (the wish list has no export-shaped provider format to target).
+  not the wish list (the wish list has no export-shaped provider format to target) — what a
+  wish list gets instead is the **shopping list** (`GET /api/wishlist/{game}/buy-list`, issue
+  #292), rows a store's bulk-entry page takes rather than a file. Its stores are deliberately
+  two: TCGplayer's mass entry, whose `?c=` link format was read off its own page bundle
+  (`{qty}-{productId}` per row, `||`-separated, `{qty} Name [SET] number` when there is no
+  id), and MTG Mate's decklist search, which offers no URL prefill we could verify (a bot
+  wall blocked fetching its form), so that option copies the list to the clipboard and opens
+  the page — an honest paste, never a link that silently lands on an empty box. Cardmarket
+  (a logged-in "wants" import) and Card Kingdom (a POST-only deck builder) have no link-shaped
+  bulk entry either, so they stay on the per-card buttons.
 - **Sealed products use independent holding tables (issues #364/#435):** collection and
   wish list each track sealed products through matching route families and a shared lower
   engine (`handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
