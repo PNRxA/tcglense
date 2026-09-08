@@ -18,6 +18,7 @@ import { useProductQuery } from '@/composables/useProducts'
 import type { PackOpenerKeys, ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices, type AlertFinish } from '@/lib/api'
+import { productAlertFinishes } from '@/lib/alertFinishes'
 import { productTypeLabel } from '@/lib/productType'
 import { formatReleaseLabel } from '@/lib/releaseDate'
 
@@ -89,12 +90,8 @@ const releaseLabel = computed(() => formatReleaseLabel(product.value?.released_a
 
 // Sealed products are finish-less (TCGCSV is effectively single-price, and the price chart is
 // single-series), so the alert dialog shows no finish picker — it watches the one available
-// price. Prefer the regular column; use foil only when it's the sole priced one.
-const alertFinishes = computed<AlertFinish[]>(() => {
-  const prices = product.value?.prices
-  if (prices?.usd == null && prices?.usd_foil != null) return ['foil']
-  return ['nonfoil']
-})
+// price (regular, or foil when that's the sole priced column; lib/alertFinishes.ts).
+const alertFinishes = computed<AlertFinish[]>(() => productAlertFinishes(product.value?.prices))
 
 // Jump targets for the overview strip's chips. Template refs (not element ids) so the
 // same body can render twice at once — the full page under an open detail modal —

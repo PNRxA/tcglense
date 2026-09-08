@@ -86,12 +86,13 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
     let now = Utc::now();
     let days = PRICE_HISTORY_DAYS as usize;
     let mut models: Vec<card_price_history::ActiveModel> = Vec::with_capacity(cards.len() * days);
-    for (card_id, usd, usd_foil, eur, tix) in &cards {
+    for (card_id, usd, usd_foil, usd_etched, eur, tix) in &cards {
         // Seed the walk from the card id so every card has its own reproducible series
         // (independent of iteration order) and a reseed upserts identical values.
         let mut rng = StdRng::seed_from_u64(*card_id as u64);
         let usd_series = price_walk(usd, &mut rng, days);
         let foil_series = price_walk(usd_foil, &mut rng, days);
+        let etched_series = price_walk(usd_etched, &mut rng, days);
         let eur_series = price_walk(eur, &mut rng, days);
         let tix_series = price_walk(tix, &mut rng, days);
         for d in 0..days {
@@ -103,6 +104,7 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
                 as_of_date: Set(as_of),
                 price_usd: Set(usd_series[d].clone()),
                 price_usd_foil: Set(foil_series[d].clone()),
+                price_usd_etched: Set(etched_series[d].clone()),
                 price_eur: Set(eur_series[d].clone()),
                 price_tix: Set(tix_series[d].clone()),
                 created_at: Set(now),

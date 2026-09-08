@@ -25,6 +25,9 @@ pub struct PricePoint {
     pub date: String,
     pub usd: Option<String>,
     pub usd_foil: Option<String>,
+    /// The etched-foil price that day (issue #676); `null` on rows captured before the
+    /// history table grew the column, so an old series gaps rather than reads as zero.
+    pub usd_etched: Option<String>,
     pub eur: Option<String>,
     pub tix: Option<String>,
 }
@@ -35,6 +38,7 @@ impl From<card_price_history::Model> for PricePoint {
             date: m.as_of_date,
             usd: m.price_usd,
             usd_foil: m.price_usd_foil,
+            usd_etched: m.price_usd_etched,
             eur: m.price_eur,
             tix: m.price_tix,
         }

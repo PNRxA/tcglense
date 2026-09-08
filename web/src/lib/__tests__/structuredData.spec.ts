@@ -42,7 +42,7 @@ function makeCard(over: Partial<Card> = {}): Card {
     color_identity: ['B', 'G'],
     colors: ['B', 'G'],
     layout: 'normal',
-    prices: { usd: '1.20', usd_foil: '3.50', eur: '1.00', tix: '0.50' },
+    prices: { usd: '1.20', usd_foil: '3.50', usd_etched: null, eur: '1.00', tix: '0.50' },
     has_image: true,
     drop_name: null,
     drop_slug: null,
@@ -162,7 +162,7 @@ describe('cardMetaDescription', () => {
       makeCard({
         rarity: null,
         type_line: null,
-        prices: { usd: null, usd_foil: null, eur: null, tix: null },
+        prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null },
       }),
     )
     expect(out).toBe("Assassin's Trophy — Guilds of Ravnica · #152. " + TAIL)
@@ -170,7 +170,7 @@ describe('cardMetaDescription', () => {
 
   it('omits the price clause when there is no USD price', () => {
     const out = cardMetaDescription(
-      makeCard({ prices: { usd: null, usd_foil: null, eur: null, tix: null } }),
+      makeCard({ prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null } }),
     )
     expect(out).not.toContain('Latest price')
   })
@@ -183,7 +183,7 @@ describe('cardMetaDescription', () => {
         type_line: 'Legendary Creature — Human Artificer Planeswalker',
         set_name: 'Modern Horizons',
         collector_number: '200',
-        prices: { usd: '25.00', usd_foil: null, eur: null, tix: null },
+        prices: { usd: '25.00', usd_foil: null, usd_etched: null, eur: null, tix: null },
       }),
     )
     expect(out.length).toBeLessThanOrEqual(160)
@@ -318,6 +318,22 @@ describe('marketOffers', () => {
   })
 })
 
+describe('cardOffers etched price', () => {
+  it('spans the etched-foil quote in the card offer range (issue #676)', () => {
+    const node = cardProductNode(
+      'mtg',
+      makeCard({
+        prices: { usd: '1.20', usd_foil: '3.50', usd_etched: '14.50', eur: null, tix: null },
+      }),
+    )!
+    const offers = node.offers as Record<string, unknown>
+    expect(offers['@type']).toBe('AggregateOffer')
+    expect(offers.lowPrice).toBe('1.20')
+    expect(offers.highPrice).toBe('14.50')
+    expect(offers.offerCount).toBe(3)
+  })
+})
+
 describe('cardProductNode', () => {
   it('builds a valid Product with the card facts and the tracked price as offers', () => {
     const node = cardProductNode('mtg', makeCard(), 'https://cdn.example.com/large.jpg')!
@@ -342,7 +358,9 @@ describe('cardProductNode', () => {
   it('falls back to the EUR price when no USD price is tracked, and never uses tix', () => {
     const node = cardProductNode(
       'mtg',
-      makeCard({ prices: { usd: null, usd_foil: null, eur: '1.00', tix: '0.50' } }),
+      makeCard({
+        prices: { usd: null, usd_foil: null, usd_etched: null, eur: '1.00', tix: '0.50' },
+      }),
     )!
     expect(node.offers).toMatchObject({ '@type': 'Offer', price: '1.00', priceCurrency: 'EUR' })
   })
@@ -352,7 +370,7 @@ describe('cardProductNode', () => {
     // so no node ships at all — graph() then emits only the breadcrumbs.
     const node = cardProductNode(
       'mtg',
-      makeCard({ prices: { usd: null, usd_foil: null, eur: null, tix: '0.50' } }),
+      makeCard({ prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: '0.50' } }),
     )
     expect(node).toBeNull()
   })

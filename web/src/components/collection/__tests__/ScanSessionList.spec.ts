@@ -29,7 +29,7 @@ function makeCard(id: string, over: Partial<Card> = {}): Card {
     color_identity: [],
     colors: [],
     layout: 'normal',
-    prices: { usd: null, usd_foil: null, eur: null, tix: null },
+    prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null },
     has_image: false,
     drop_name: null,
     drop_slug: null,
@@ -122,7 +122,7 @@ describe('ScanSessionList', () => {
     // Which number a scan landed on is the session's most-asked question (the foil call is
     // made visually, off a printed star). The row states the change, and prices the copy at
     // the price of the finish it actually added.
-    const prices = { usd: '2.00', usd_foil: '20.00', eur: null, tix: null }
+    const prices = { usd: '2.00', usd_foil: '20.00', usd_etched: null, eur: null, tix: null }
     const { wrapper } = await mountList([
       {
         ...makeEntry(1, { card: makeCard('foil-add', { prices }) }),

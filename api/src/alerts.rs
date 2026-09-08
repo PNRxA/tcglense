@@ -400,6 +400,27 @@ async fn load_products(db: &DatabaseConnection, ids: &[i32]) -> HashMap<i32, pro
 mod tests {
     use super::*;
 
+    /// The evaluator reads the alert's finish off the matching live column — an `etched`
+    /// alert watches `price_usd_etched` and nothing else (issue #676): a card with no etched
+    /// price is *unpriced* for that alert, never priced at its foil.
+    #[test]
+    fn card_price_selects_the_column_the_finish_names() {
+        let mut card = crate::test_support::card_model(1);
+        card.price_usd = Some("1.00".to_string());
+        card.price_usd_foil = Some("2.00".to_string());
+        card.price_usd_etched = Some("3.00".to_string());
+        assert_eq!(card_price(&card, "nonfoil"), Some("1.00"));
+        assert_eq!(card_price(&card, "foil"), Some("2.00"));
+        assert_eq!(card_price(&card, "etched"), Some("3.00"));
+
+        card.price_usd_etched = None;
+        assert_eq!(
+            card_price(&card, "etched"),
+            None,
+            "no etched price means unpriced, not the foil price"
+        );
+    }
+
     #[test]
     fn below_is_met_at_or_under_threshold() {
         assert!(is_met("below", 1000, 999));

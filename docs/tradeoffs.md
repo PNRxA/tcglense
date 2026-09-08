@@ -1517,11 +1517,11 @@ interesting decisions are the ones *not* taken:
   get it even when the Redis write fails.
 - **The daily snapshot's cards read is left as a sequential scan — a covering index was measured
   and rejected.** Each tick, `scryfall::price_history::load_price_columns` reads *every* card's
-  five price columns (`SELECT id, price_usd, price_usd_foil, price_eur, price_tix FROM cards WHERE
-  game = ?`, ~106k rows) to snapshot them into history. It shows up as a ~3.7 s slow-query on the
+  five price columns (`SELECT id, price_usd, price_usd_foil, price_usd_etched, price_eur, price_tix
+  FROM cards WHERE game = ?`, ~106k rows) to snapshot them into history. It shows up as a ~3.7 s slow-query on the
   weak, cold prod Postgres because `game = ?` matches the whole (single-game) table so the planner
-  sequential-scans the wide ~140 MB `cards` heap for five tiny columns. The obvious fix — a
-  covering index `(game) INCLUDE (id, price_usd, price_usd_foil, price_eur, price_tix)` for a
+  sequential-scans the wide ~140 MB `cards` heap for six tiny columns. The obvious fix — a
+  covering index `(game) INCLUDE (id, price_usd, price_usd_foil, price_usd_etched, price_eur, price_tix)` for a
   heap-free index-only scan (the `m…031` `card_price_history` pattern) — was built and benchmarked
   and **deliberately not shipped**: it repeats the `m…033 → m…034` mistake. The snapshot runs in
   the **same sync tick, immediately after** `catalog::refresh_all`'s `flush_cards` rewrites every

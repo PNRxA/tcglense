@@ -14,21 +14,23 @@ use crate::db::upsert_changed_guard;
 use crate::entities::prelude::{Card, CardPriceHistory};
 use crate::entities::{card, card_price_history};
 
-/// Rows per price-history upsert. A history row has 8 columns, so ~2000 rows ≈ 16k
+/// Rows per price-history upsert. A history row has 9 columns, so ~2000 rows ≈ 18k
 /// bound parameters — comfortably under SQLite's 32 766 limit.
 pub(super) const PRICE_HISTORY_BATCH: usize = 2000;
 
-/// A card's id plus its four current price columns, as read for a price snapshot
-/// (`usd`, `usd_foil`, `eur`, `tix`). Shared by the live snapshot and dummy seeder.
+/// A card's id plus its five current price columns, as read for a price snapshot
+/// (`usd`, `usd_foil`, `usd_etched`, `eur`, `tix`). Shared by the live snapshot and dummy
+/// seeder.
 pub(super) type PriceColumns = (
     i32,
     Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
-/// Load every card's id + four price columns for `game`. Selects only those five
+/// Load every card's id + five price columns for `game`. Selects only those six
 /// columns (skipping the heavy text columns), shared by the live snapshot and the
 /// dummy seeder.
 pub(super) async fn load_price_columns(
@@ -40,6 +42,7 @@ pub(super) async fn load_price_columns(
         .column(card::Column::Id)
         .column(card::Column::PriceUsd)
         .column(card::Column::PriceUsdFoil)
+        .column(card::Column::PriceUsdEtched)
         .column(card::Column::PriceEur)
         .column(card::Column::PriceTix)
         .filter(card::Column::Game.eq(game))
@@ -70,13 +73,13 @@ pub async fn snapshot_prices(
     game: &str,
     as_of_date: &str,
 ) -> Result<u64, IngestError> {
-    // Only the id + four price columns; avoids loading the heavy text columns.
+    // Only the id + five price columns; avoids loading the heavy text columns.
     let rows = load_price_columns(db, game).await?;
 
     let now = Utc::now();
     let mut total: u64 = 0;
     let mut batch: Vec<card_price_history::ActiveModel> = Vec::with_capacity(PRICE_HISTORY_BATCH);
-    for (card_id, usd, usd_foil, eur, tix) in rows {
+    for (card_id, usd, usd_foil, usd_etched, eur, tix) in rows {
         batch.push(card_price_history::ActiveModel {
             id: NotSet,
             game: Set(game.to_string()),
@@ -84,6 +87,7 @@ pub async fn snapshot_prices(
             as_of_date: Set(as_of_date.to_string()),
             price_usd: Set(usd),
             price_usd_foil: Set(usd_foil),
+            price_usd_etched: Set(usd_etched),
             price_eur: Set(eur),
             price_tix: Set(tix),
             created_at: Set(now),
@@ -104,7 +108,7 @@ pub async fn snapshot_prices(
 }
 
 /// Batched upsert of price-history rows on the `(game, card_id, as_of_date)` unique
-/// key, updating only the four price columns (so `created_at` is preserved on a
+/// key, updating only the five price columns (so `created_at` is preserved on a
 /// same-day re-run). A change-guard skips the write entirely when the day's row already
 /// holds these exact prices, so a same-day restart/tick doesn't rewrite unchanged rows.
 /// Shared by the live snapshot and the dummy seeder.
@@ -125,6 +129,7 @@ pub(super) async fn upsert_price_history(
             .update_columns([
                 card_price_history::Column::PriceUsd,
                 card_price_history::Column::PriceUsdFoil,
+                card_price_history::Column::PriceUsdEtched,
                 card_price_history::Column::PriceEur,
                 card_price_history::Column::PriceTix,
             ])
@@ -167,6 +172,65 @@ mod tests {
     fn format_date_is_iso() {
         let d = NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
         assert_eq!(format_date(d), "2026-06-30");
+    }
+
+    /// The etched-foil column rides the snapshot like the other four prices (issue #676):
+    /// a card priced in all three finishes lands all three on its history row, and a card
+    /// with no etched printing writes `NULL` there — never a copy of the foil price.
+    #[tokio::test]
+    async fn snapshot_captures_the_etched_price_beside_regular_and_foil() {
+        let db = crate::test_support::migrated_memory_db().await;
+        let day = "2099-01-02";
+        let now = Utc::now();
+        let three_finishes = card::ActiveModel {
+            game: Set(crate::scryfall::GAME.to_string()),
+            external_id: Set("etched".to_string()),
+            name: Set("Etched Relic".to_string()),
+            set_code: Set("tst".to_string()),
+            set_name: Set("Test Set".to_string()),
+            collector_number: Set("1".to_string()),
+            lang: Set("en".to_string()),
+            digital: Set(false),
+            price_usd: Set(Some("1.00".to_string())),
+            price_usd_foil: Set(Some("2.00".to_string())),
+            price_usd_etched: Set(Some("3.00".to_string())),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("insert card")
+        .id;
+        let plain = insert_card_with_usd(&db, "plain", "5.00").await;
+
+        assert_eq!(
+            snapshot_prices(&db, crate::scryfall::GAME, day)
+                .await
+                .unwrap(),
+            2
+        );
+
+        let row = CardPriceHistory::find()
+            .filter(card_price_history::Column::CardId.eq(three_finishes))
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("history row");
+        assert_eq!(row.price_usd.as_deref(), Some("1.00"));
+        assert_eq!(row.price_usd_foil.as_deref(), Some("2.00"));
+        assert_eq!(row.price_usd_etched.as_deref(), Some("3.00"));
+
+        let row = CardPriceHistory::find()
+            .filter(card_price_history::Column::CardId.eq(plain))
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("history row");
+        assert_eq!(
+            row.price_usd_etched, None,
+            "no etched printing, no etched price"
+        );
     }
 
     /// Insert a card carrying a starting USD price and return its id.

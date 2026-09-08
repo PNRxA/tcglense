@@ -263,7 +263,7 @@ plain `{ data: [...] }`.
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
-prices: { usd, usd_foil, eur, tix }, has_image,
+prices: { usd, usd_foil, usd_etched, eur, tix }, has_image,
 drop_name: string | null, drop_slug: string | null, drop_noun: string | null, secret_lair_bonus: boolean,
 secret_lair_spend_incentive: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[],
@@ -281,6 +281,12 @@ Scryfall object parsed as-is (issue #557): keys are Scryfall format slugs
 `"legal" | "not_legal" | "banned" | "restricted"`; `null` when the row has no (valid)
 legality data. It rides **every** `Card` payload (lists included) so the deck views can
 evaluate format breaches client-side from the deck detail they already hold.
+`prices.usd_etched` is the **etched-foil** price (issue #676) — the third finish some sets
+ship (Commander Legends, LOTR, Double Masters), priced separately by Scryfall; `null` on every
+card with no etched printing, and USD only (Scryfall publishes no `eur_etched`, so none is
+invented). It is a *catalog* price: the collection/wish-list twins hold an etched copy as
+`foil` (`collection_items` has no etched bucket — holding lots, issue #594), so nothing values a
+holding at it, and the SPA's price tile says so.
 
 `CardDetail = Card + { artist, artist_ids: string[], illustration_id, flavor_text,
 watermark, finishes: string[], frame, frame_effects: string[], border_color,
@@ -333,11 +339,13 @@ card — only this small, non-reversible vector is uploaded, never the image). R
 empty-`data` "no match"). Matching is an in-memory Hamming scan — no per-request DB
 work. See `docs/tradeoffs.md` → *Visual card scanner*.
 
-`PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
-strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
+`PricePoint = { date (YYYY-MM-DD), usd, usd_foil, usd_etched, eur, tix }` — prices are the
+decimal strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
 every sync tick from the already-committed `cards` rows (`scryfall::price_history::snapshot_prices`),
 so the *stored* series stays continuous even on a tick where the version-gated import is
-skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
+skipped. `usd_etched` is captured since the column arrived (`m..081`, issue #676) and is `null`
+on every older row — there is no backfill, since a past day's etched price is not recoverable —
+so the chart's etched line starts where the capture did, and gaps rather than reads as zero. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
 day is always included; the underlying `card_price_history` rows are untouched. The read
@@ -1705,7 +1713,7 @@ idempotent). The tick is leader-gated so only one replica evaluates.
 | Method & path | Body | Returns |
 |---------------|------|---------|
 | `GET /api/alerts` | — | `{ data: PriceAlert[] }` — the caller's alerts across all games, most-recently-updated first. `PriceAlert = { id, game, target, finish, direction, threshold, is_active, triggered, last_triggered_at, last_price, created_at }`; `target = { kind, external_id, name, set_code, image_url, current_price }` (a removed catalog target renders as an orphan placeholder so a stale alert can still be seen + deleted) |
-| `POST /api/alerts` | `{ game, target_kind, external_id, finish, direction, threshold }` | `PriceAlert` — create. `target_kind` ∈ `card`/`product`; `finish` ∈ `nonfoil`/`foil`/`etched` (etched card-only, else `422`); `direction` ∈ `below`/`above`; `threshold` a positive USD number, normalised to a 2-dp string. `404` unknown game/target; `422` bad field or over the per-user cap (**500**) |
+| `POST /api/alerts` | `{ game, target_kind, external_id, finish, direction, threshold }` | `PriceAlert` — create. `target_kind` ∈ `card`/`product`; `finish` ∈ `nonfoil`/`foil`/`etched` (etched card-only, else `422` — an `etched` alert watches `cards.price_usd_etched` and *only* that column: a card with no etched price is unpriced for it, never priced at its foil; the SPA offers each finish only when the card is priced in it, `web/src/lib/alertFinishes.ts`); `direction` ∈ `below`/`above`; `threshold` a positive USD number, normalised to a 2-dp string. `404` unknown game/target; `422` bad field or over the per-user cap (**500**) |
 | `PUT /api/alerts/{id}` | `{ finish?, direction?, threshold?, is_active? }` | `PriceAlert` — change any subset (absent = unchanged). Changing finish/direction/threshold **re-arms** the alert. `404` if not the caller's; `422` bad field |
 | `DELETE /api/alerts/{id}` | — | `204` — delete. `404` if not the caller's |
 | `GET /api/alerts/channels` | — | `AlertChannels { discord_webhook_url, discord_enabled, telegram_bot_token, telegram_chat_id, telegram_enabled, email_enabled, email_available }` — the caller's delivery settings (empty defaults if never set, the free channels defaulting to `enabled`). A channel delivers only when its `*_enabled` flag is on **and** it's configured, so a user can pause a channel without clearing its credential. `email_available` = `ALERTS_EMAIL_ENABLED` **and** an email provider is configured. Returned to the owner to prefill the settings form |

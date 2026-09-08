@@ -319,6 +319,7 @@ mod tests {
             as_of_date: Set(date.to_string()),
             price_usd: Set(Some("1.00".to_string())),
             price_usd_foil: Set(None),
+            price_usd_etched: Set(None),
             price_eur: Set(None),
             price_tix: Set(None),
             created_at: Set(now),

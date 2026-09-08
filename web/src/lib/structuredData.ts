@@ -174,12 +174,13 @@ function cardJsonLdDescription(c: Card): string {
   return [head, body].filter(Boolean).join(' ').slice(0, MAX_JSON_LD_DESCRIPTION)
 }
 
-/** A card's `offers`: the USD market prices (regular + foil) if tracked, else the EUR one.
- * MTGO `tix` is deliberately never used — event tickets aren't an ISO 4217 currency. */
+/** A card's `offers`: the USD market prices (regular + foil + etched foil) if tracked, else
+ * the EUR one. MTGO `tix` is deliberately never used — event tickets aren't an ISO 4217
+ * currency. */
 function cardOffers(game: string, c: Card): Record<string, unknown> | null {
   const url = absoluteUrl(`/cards/${game}/cards/${c.id}`)
   return (
-    marketOffers([c.prices.usd, c.prices.usd_foil], 'USD', url) ??
+    marketOffers([c.prices.usd, c.prices.usd_foil, c.prices.usd_etched], 'USD', url) ??
     marketOffers([c.prices.eur], 'EUR', url)
   )
 }

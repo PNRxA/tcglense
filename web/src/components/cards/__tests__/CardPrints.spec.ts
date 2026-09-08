@@ -28,7 +28,7 @@ function makeCard(id: string, setCode: string): Card {
     color_identity: [],
     colors: [],
     layout: 'normal',
-    prices: { usd: '1.00', usd_foil: null, eur: null, tix: null },
+    prices: { usd: '1.00', usd_foil: null, usd_etched: null, eur: null, tix: null },
     has_image: false,
     drop_name: null,
     drop_slug: null,

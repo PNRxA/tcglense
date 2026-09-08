@@ -68,11 +68,19 @@ describe('sortPrintings', () => {
 
   it('sorts by USD price, falling back to foil price, unpriced last', () => {
     const input = [
-      makeCard('cheap', { prices: { usd: '1.00', usd_foil: null, eur: null, tix: null } }),
-      makeCard('pricey', { prices: { usd: '50.00', usd_foil: null, eur: null, tix: null } }),
+      makeCard('cheap', {
+        prices: { usd: '1.00', usd_foil: null, usd_etched: null, eur: null, tix: null },
+      }),
+      makeCard('pricey', {
+        prices: { usd: '50.00', usd_foil: null, usd_etched: null, eur: null, tix: null },
+      }),
       // Foil-only printing: its foil price stands in for the missing regular price.
-      makeCard('foilonly', { prices: { usd: null, usd_foil: '10.00', eur: null, tix: null } }),
-      makeCard('unpriced', { prices: { usd: null, usd_foil: null, eur: null, tix: null } }),
+      makeCard('foilonly', {
+        prices: { usd: null, usd_foil: '10.00', usd_etched: null, eur: null, tix: null },
+      }),
+      makeCard('unpriced', {
+        prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null },
+      }),
     ]
     expect(ids(sortPrintings(input, 'price:desc'))).toEqual([
       'pricey',

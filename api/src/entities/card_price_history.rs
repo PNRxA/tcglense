@@ -23,6 +23,9 @@ pub struct Model {
     pub as_of_date: String,
     pub price_usd: Option<String>,
     pub price_usd_foil: Option<String>,
+    /// The etched-foil price (`cards.price_usd_etched`), captured since `m..081` (issue
+    /// #676); `NULL` on every row older than that column, which the chart gaps over.
+    pub price_usd_etched: Option<String>,
     pub price_eur: Option<String>,
     pub price_tix: Option<String>,
     pub created_at: DateTimeUtc,
