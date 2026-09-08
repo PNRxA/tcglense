@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef, useId } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import type { Product } from '@/lib/api'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductEvQuery } from '@/composables/useProducts'
@@ -31,6 +32,13 @@ import {
 // assumes (with-replacement draws, no colour balancing, unpriced cards at $0), and a
 // number nobody can audit is a number nobody should believe.
 //
+// Like the deck page's stats / bracket / mana panels, it **rests collapsed**: the headline
+// figure with its unit and qualification, the price comparison, and one line per booster
+// (how many a copy opens, what one is worth, how many cards it deals) — the whole answer in
+// a few lines, on a page whose subject is the product and its cards. Behind "Details" sit
+// the evidence: the sheet tables, the biggest contributors, and the caveats. Nothing the
+// resting view states is unqualified — the blurb and the unit ride every rendering.
+//
 // It self-hides for a product with no booster sheets (the API answers `data: null` — a
 // precon deck, a product MTGJSON doesn't describe) and, on a failed fetch, hides too: a
 // public catalog read that didn't land must not push an error into the middle of the page.
@@ -51,6 +59,10 @@ const pending = computed(() => evQuery.isPending.value)
 const show = computed(() => !evQuery.isError.value && (pending.value || ev.value !== null))
 
 const heading = computed(() => (ev.value ? expectedValueHeading(ev.value) : null))
+
+// The evidence rests folded (the deck panels' idiom); `detailsId` ties the toggle to it.
+const expanded = ref(false)
+const detailsId = useId()
 const vsPrice = computed(() =>
   ev.value ? evVersusPrice(ev.value.ev_usd, props.product?.prices?.usd) : null,
 )
@@ -70,16 +82,36 @@ function picksLabel(picks: number): string {
 </script>
 
 <template>
-  <section v-if="show">
-    <!-- Exactly "Expected value": the unit and the qualification go beneath, so the heading
-      itself stays a stable landmark (and a screenshot script can wait on it). -->
-    <h2 class="mb-1 text-base font-semibold tracking-tight">Expected value</h2>
+  <section v-if="show" :aria-busy="pending || undefined">
+    <div class="mb-1 flex items-center justify-between gap-3">
+      <!-- Exactly "Expected value": the unit and the qualification go beneath, so the heading
+        itself stays a stable landmark (and a screenshot script can wait on it). -->
+      <h2 class="text-base font-semibold tracking-tight">Expected value</h2>
+      <!-- `aria-label` because the deck page's panels each put a button reading "Details"
+        on a page; the visible word stays inside the accessible name. -->
+      <button
+        v-if="ev && heading"
+        type="button"
+        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex shrink-0 items-center gap-1 rounded-sm text-xs font-medium outline-none focus-visible:ring-3"
+        aria-label="Details for expected value"
+        :aria-expanded="expanded"
+        :aria-controls="expanded ? detailsId : undefined"
+        @click="expanded = !expanded"
+      >
+        Details
+        <ChevronDown
+          class="size-3.5 transition-transform"
+          :class="expanded ? 'rotate-180' : ''"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
 
     <!-- The resting shape while the read lands, so the page doesn't jump when it does. -->
     <template v-if="!ev || !heading">
       <Skeleton class="h-3 w-72 max-w-full" />
       <Skeleton class="mt-3 h-8 w-40" />
-      <Skeleton class="mt-3 h-24 w-full" />
+      <Skeleton class="mt-3 h-4 w-64 max-w-full" />
     </template>
 
     <template v-else>
@@ -92,9 +124,36 @@ function picksLabel(picks: number): string {
       </div>
       <p v-if="vsPrice" class="text-muted-foreground mt-1 text-xs">{{ vsPrice.label }}</p>
 
-      <!-- One block per booster a copy opens: what it deals, what it's worth, and the
-        sheets that sum to that figure. -->
-      <div class="mt-4 space-y-3">
+      <!-- The resting row: one line per booster a copy opens — how many, what one is worth,
+        and the one per-pack card count on this page that is a real count of cards (worded per
+        pack, never as the product's contents). The sheets behind each figure are in Details. -->
+      <ul class="mt-3 space-y-1 text-sm">
+        <li
+          v-for="pack in ev.packs"
+          :key="`${pack.set_code}:${pack.booster_code}`"
+          class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
+        >
+          <span class="font-medium">
+            <span v-if="pack.quantity > 1" class="text-muted-foreground tabular-nums"
+              >{{ pack.quantity }}×</span
+            >
+            {{ boosterLabel(pack) }}
+          </span>
+          <span class="text-muted-foreground text-xs">
+            <span class="text-foreground font-semibold tabular-nums">{{
+              money.formatUsd(pack.ev_usd)
+            }}</span>
+            per pack, on average · {{ cardsPerPackLabel(pack.cards_per_pack) }}
+            <template v-if="pack.priced_share < 1">
+              · {{ pricedShareLabel(pack.priced_share) }}
+            </template>
+          </span>
+        </li>
+      </ul>
+
+      <!-- The evidence: the sheets that sum to each figure, the cards the expectation mostly
+        sits in, and what the model assumes. -->
+      <div v-if="expanded" :id="detailsId" class="mt-4 space-y-4 border-t pt-4">
         <div
           v-for="pack in ev.packs"
           :key="`${pack.set_code}:${pack.booster_code}`"
@@ -112,14 +171,6 @@ function picksLabel(picks: number): string {
               <span class="text-muted-foreground ml-1 text-xs">per pack, on average</span>
             </p>
           </div>
-          <p class="text-muted-foreground mt-0.5 text-xs">
-            <!-- The one per-pack card count on this page that is a real count of cards —
-              and it is worded per pack, never as the product's contents. -->
-            {{ cardsPerPackLabel(pack.cards_per_pack) }}
-            <template v-if="pack.priced_share < 1">
-              · {{ pricedShareLabel(pack.priced_share) }}
-            </template>
-          </p>
 
           <!-- The sheets the pack draws from. Scrolls inside itself on a narrow screen
             rather than widening the page. -->
@@ -164,49 +215,49 @@ function picksLabel(picks: number): string {
             </table>
           </div>
         </div>
-      </div>
 
-      <!-- Where the expectation actually sits, so the headline can be audited against the
-        cards that made it. Odds are the API's, worded by the vocabulary seam. -->
-      <template v-if="contributors.length">
-        <h3 class="mt-4 text-sm font-medium">Biggest contributors</h3>
-        <p class="text-muted-foreground text-xs">
-          The cards most of the expected value sits in, per copy.
-        </p>
-        <ul class="mt-1.5">
-          <li
-            v-for="entry in contributors"
-            :key="`${entry.sheet}:${entry.card.id}:${entry.foil}`"
-            class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-t py-1.5 text-sm"
-          >
-            <a
-              :href="hrefFor('card', game, entry.card.id)"
-              class="min-w-0 truncate font-medium hover:underline"
-              @click="onActivate($event, 'card', game, entry.card.id)"
-              @pointerenter="warm('card')"
-              @focusin="warm('card')"
-              >{{ entry.card.name }}</a
+        <!-- Where the expectation actually sits, so the headline can be audited against the
+          cards that made it. Odds are the API's, worded by the vocabulary seam. -->
+        <div v-if="contributors.length">
+          <h3 class="text-sm font-medium">Biggest contributors</h3>
+          <p class="text-muted-foreground text-xs">
+            The cards most of the expected value sits in, per copy.
+          </p>
+          <ul class="mt-1.5">
+            <li
+              v-for="entry in contributors"
+              :key="`${entry.sheet}:${entry.card.id}:${entry.foil}`"
+              class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-t py-1.5 text-sm"
             >
-            <span
-              v-if="entry.foil"
-              class="bg-foil/15 text-foil rounded px-1 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase"
-              >Foil</span
-            >
-            <span class="text-muted-foreground text-xs">{{ oddsLabel(entry.one_in) }}</span>
-            <span class="text-muted-foreground ml-auto text-xs tabular-nums">{{
-              money.formatUsd(entry.price_usd) ?? 'No price'
-            }}</span>
-            <span class="w-20 text-right font-medium tabular-nums">{{
-              money.formatUsd(entry.contribution_usd)
-            }}</span>
-          </li>
+              <a
+                :href="hrefFor('card', game, entry.card.id)"
+                class="min-w-0 truncate font-medium hover:underline"
+                @click="onActivate($event, 'card', game, entry.card.id)"
+                @pointerenter="warm('card')"
+                @focusin="warm('card')"
+                >{{ entry.card.name }}</a
+              >
+              <span
+                v-if="entry.foil"
+                class="bg-foil/15 text-foil rounded px-1 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase"
+                >Foil</span
+              >
+              <span class="text-muted-foreground text-xs">{{ oddsLabel(entry.one_in) }}</span>
+              <span class="text-muted-foreground ml-auto text-xs tabular-nums">{{
+                money.formatUsd(entry.price_usd) ?? 'No price'
+              }}</span>
+              <span class="w-20 text-right font-medium tabular-nums">{{
+                money.formatUsd(entry.contribution_usd)
+              }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- The server's own caveats, verbatim: what the model assumes and what it can't see. -->
+        <ul v-if="ev.caveats.length" class="text-muted-foreground space-y-1 text-xs">
+          <li v-for="(caveat, index) in ev.caveats" :key="index">{{ caveat }}</li>
         </ul>
-      </template>
-
-      <!-- The server's own caveats, verbatim: what the model assumes and what it can't see. -->
-      <ul v-if="ev.caveats.length" class="text-muted-foreground mt-3 space-y-1 text-xs">
-        <li v-for="(caveat, index) in ev.caveats" :key="index">{{ caveat }}</li>
-      </ul>
+      </div>
     </template>
   </section>
 </template>

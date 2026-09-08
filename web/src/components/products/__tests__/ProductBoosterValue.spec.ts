@@ -104,6 +104,11 @@ beforeEach(() => {
   state.failed = false
 })
 
+/** The panel rests collapsed; the sheets, contributors and caveats are behind "Details". */
+async function expand(wrapper: Awaited<ReturnType<typeof mountPanel>>) {
+  await wrapper.get('button[aria-label="Details for expected value"]').trigger('click')
+}
+
 describe('ProductBoosterValue', () => {
   it('renders nothing for a product with no booster sheets', async () => {
     // `data: null` is the API's "there is nothing to compute here" — a precon deck, a
@@ -186,6 +191,7 @@ describe('ProductBoosterValue', () => {
         ],
       }),
     })
+    await expand(wrapper)
     const rows = wrapper.findAll('tbody tr')
     expect(rows).toHaveLength(2)
     expect(rows[0]!.text()).toContain('rareMythic')
@@ -202,8 +208,10 @@ describe('ProductBoosterValue', () => {
       odds({ card: card(`sf-${index}`, `Card ${index}`), one_in: 24 + index }),
     )
     const wrapper = await mountPanel({ ev: productEv({ top: many }) })
-    // The contributors list is the panel's first <ul> (the caveats footnote is the last).
-    const items = wrapper.findAll('ul')[0]!.findAll('li')
+    await expand(wrapper)
+    // The resting booster list is the panel's first <ul>; the contributors follow it (the
+    // caveats footnote is the last).
+    const items = wrapper.findAll('ul')[1]!.findAll('li')
     // The API sends up to 12; the panel is a summary.
     expect(items).toHaveLength(8)
     expect(items[0]!.text()).toContain('Card 0')
@@ -217,6 +225,7 @@ describe('ProductBoosterValue', () => {
     const wrapper = await mountPanel({
       ev: productEv({ top: [odds({ price_usd: null, contribution_usd: '0.00' })] }),
     })
+    await expand(wrapper)
     expect(wrapper.text()).toContain('No price')
   })
 
@@ -224,6 +233,46 @@ describe('ProductBoosterValue', () => {
     const wrapper = await mountPanel({
       ev: productEv({ caveats: ['Colour balancing of common slots is not simulated.'] }),
     })
+    await expand(wrapper)
     expect(wrapper.text()).toContain('Colour balancing of common slots is not simulated.')
+  })
+
+  it('rests collapsed: the figure, its unit and one line per booster, with the evidence folded', async () => {
+    const wrapper = await mountPanel({
+      ev: productEv({
+        packs: [pack({ quantity: 36 })],
+        caveats: ['Colour balancing of common slots is not simulated.'],
+      }),
+      product: product('10.00'),
+    })
+    const text = wrapper.text()
+    // Everything the resting view states stays qualified.
+    expect(text).toContain('$5.00')
+    expect(text).toContain('on average')
+    expect(text).toContain('of the current price')
+    expect(text).toContain('36×')
+    expect(text).toContain('Play Booster')
+    expect(text).toContain('14 cards per pack')
+    // The evidence is behind the toggle.
+    expect(wrapper.find('table').exists()).toBe(false)
+    expect(text).not.toContain('Biggest contributors')
+    expect(text).not.toContain('Colour balancing')
+    const toggle = wrapper.get('button[aria-label="Details for expected value"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.attributes('aria-controls')).toBeUndefined()
+  })
+
+  it('unfolds the evidence on Details and folds it back', async () => {
+    const wrapper = await mountPanel({ ev: productEv() })
+    await expand(wrapper)
+    const toggle = wrapper.get('button[aria-label="Details for expected value"]')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    const controls = toggle.attributes('aria-controls')
+    expect(controls).toBeTruthy()
+    expect(wrapper.find(`[id="${controls}"]`).exists()).toBe(true)
+    expect(wrapper.find('table').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Biggest contributors')
+    await toggle.trigger('click')
+    expect(wrapper.find('table').exists()).toBe(false)
   })
 })
