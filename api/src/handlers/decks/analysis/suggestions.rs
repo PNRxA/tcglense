@@ -245,16 +245,7 @@ async fn owned_candidates(
     user_id: i32,
     game: &str,
 ) -> Result<Vec<(String, OwnedCandidate)>, AppError> {
-    let rows: Vec<(
-        i32,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<i32>,
-        i32,
-        i32,
-    )> = CollectionItem::find()
+    let rows: Vec<OwnedRow> = CollectionItem::find()
         .select_only()
         .column(collection_item::Column::CardId)
         .column(card::Column::OracleId)
@@ -271,6 +262,27 @@ async fn owned_candidates(
         .all(&state.db)
         .await?;
 
+    Ok(fold_owned_rows(rows))
+}
+
+/// One row of the narrow scan: `(card id, oracle id, name, colour identity CSV, legality
+/// JSON, EDHREC rank, regular copies, foil copies)`.
+type OwnedRow = (
+    i32,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    i32,
+    i32,
+);
+
+/// Fold the scan's rows by gameplay identity, most popular first (see [`owned_candidates`]).
+/// Pure, so the cross-printing rules can be pinned without a database: copies sum across
+/// every held printing, the rank is the lowest any printing carries, the printing kept for
+/// the wire is the lowest catalog id, and an identity no held printing ranks is dropped.
+fn fold_owned_rows(rows: Vec<OwnedRow>) -> Vec<(String, OwnedCandidate)> {
     let mut order: Vec<String> = Vec::new();
     let mut folded: HashMap<String, OwnedCandidate> = HashMap::new();
     for (card_id, oracle_id, name, color_identity, legalities, rank, quantity, foil) in rows {
@@ -313,7 +325,7 @@ async fn owned_candidates(
     // Most popular first, then by id, so the window the scan cap cuts is exactly "the most
     // popular" and the same collection answers identically across requests.
     candidates.sort_by_key(|(_, c)| (c.edhrec_rank, c.card_id));
-    Ok(candidates)
+    candidates
 }
 
 /// The caveats every response carries: what the rank is, and what the filters didn't check.
@@ -698,6 +710,72 @@ mod tests {
         );
         assert_eq!(side.in_deck_by_role.get(&DeckRole::Ramp), Some(&1));
         assert_eq!(side.in_deck_by_role.get(&DeckRole::CardDraw), Some(&0));
+    }
+
+    /// The cross-printing fold: four printings of one card are one candidate holding every
+    /// copy, ranked by the lowest rank any printing carries, shown as the lowest catalog id —
+    /// and a card no held printing ranks is not a candidate at all.
+    #[test]
+    fn owned_rows_fold_by_identity_across_printings() {
+        let row = |id: i32, oracle: &str, name: &str, rank: Option<i32>, q: i32, f: i32| {
+            (
+                id,
+                Some(oracle.to_string()),
+                name.to_string(),
+                Some("G".to_string()),
+                None,
+                rank,
+                q,
+                f,
+            )
+        };
+        let folded = fold_owned_rows(vec![
+            row(30, "sol", "Sol Ring", Some(5), 1, 0),
+            row(10, "sol", "Sol Ring", None, 2, 1), // a reprint imported before the rank column
+            row(20, "sol", "Sol Ring", Some(3), 0, 1),
+            row(40, "bear", "Grizzly Bears", None, 4, 0), // never ranked
+            row(50, "bolt", "Lightning Bolt", Some(1), 0, 0), // owned nothing
+            row(60, "cult", "Cultivate", Some(9), 1, 0),
+        ]);
+        let keys: Vec<&str> = folded.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["o:sol", "o:cult"],
+            "most popular first; unranked and empty rows out"
+        );
+        let sol = &folded[0].1;
+        assert_eq!(sol.owned, 5, "every held printing counts, ranked or not");
+        assert_eq!(
+            sol.edhrec_rank,
+            Some(3),
+            "the lowest rank any printing carries"
+        );
+        assert_eq!(
+            sol.card_id, 10,
+            "the lowest catalog id, so the answer is stable"
+        );
+    }
+
+    /// A card with no oracle id folds by name — the shopping list's identity rule.
+    #[test]
+    fn owned_rows_without_an_oracle_id_fold_by_name() {
+        let folded = fold_owned_rows(vec![
+            (1, None, "Island".to_string(), None, None, Some(7), 3, 0),
+            (2, None, "Island".to_string(), None, None, Some(7), 2, 0),
+            (
+                3,
+                Some(String::new()),
+                "Island".to_string(),
+                None,
+                None,
+                None,
+                1,
+                0,
+            ),
+        ]);
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0].0, "n:Island");
+        assert_eq!(folded[0].1.owned, 6);
     }
 
     #[test]
