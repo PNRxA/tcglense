@@ -17,8 +17,9 @@ card: Card,
 section_id: number, quantity: number, foil_quantity: number, 
 /**
  * What the row is worth as held: regular copies at the card's `usd`, foil copies at its
- * `usd_foil` — the same fold as `summary.total_value_usd`, so the lines sum to it.
- * `null` when neither held finish is priced.
+ * `usd_foil` — the same arithmetic as `summary.total_value_usd`, so the lines sum to it.
+ * `null` when no finish the row holds copies of is priced (a nonfoil copy of a
+ * foil-only printing is unpriced, never `"0.00"`).
  */
 price_usd: string | null, 
 /**

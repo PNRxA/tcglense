@@ -725,7 +725,7 @@ catalog) is planned but not implemented.
   Deriving `cheapest_total_usd` from the deck's own total (which is itself
   `summary.total_value_usd`'s exact `Valuation`, not a second computation of it) means the page
   can only ever show a coherent triple: the deck's value, what it would be after every *known*
-  saving, and the difference — with unknown-saving lines contributing to none of them.
+  saving, and the difference — with an unknown-saving line moving the difference by nothing (its held value still counts in the first two, as it does in the header).
 - **"Swap all" is the existing per-row printing write, batched in the client — not a bulk
   endpoint.** `PUT …/cards/{id}/printing` already validates that the target is the same gameplay
   card, preserves the finish split, merges counts when the target printing is already in the

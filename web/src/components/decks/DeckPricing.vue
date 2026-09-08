@@ -87,6 +87,11 @@ function openSwap(line: DeckPricingLine) {
 const swapAll = useChangeDeckCardPrintingsMutation()
 const confirmOpen = ref(false)
 const swapAllError = ref('')
+function openSwapAll() {
+  // A failure from a previous attempt must not greet a fresh confirmation.
+  swapAllError.value = ''
+  confirmOpen.value = true
+}
 async function confirmSwapAll() {
   swapAllError.value = ''
   const swaps = swappable.value.flatMap((line) =>
@@ -141,7 +146,7 @@ async function confirmSwapAll() {
             variant="outline"
             size="sm"
             :disabled="swapAll.isPending.value"
-            @click="confirmOpen = true"
+            @click="openSwapAll"
           >
             <ArrowRightLeft class="size-4" aria-hidden="true" />
             {{ swapAll.isPending.value ? 'Swapping…' : `Swap all (${swappable.length})` }}

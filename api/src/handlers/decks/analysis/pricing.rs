@@ -83,8 +83,9 @@ pub struct DeckPricingLine {
     pub quantity: i32,
     pub foil_quantity: i32,
     /// What the row is worth as held: regular copies at the card's `usd`, foil copies at its
-    /// `usd_foil` — the same fold as `summary.total_value_usd`, so the lines sum to it.
-    /// `null` when neither held finish is priced.
+    /// `usd_foil` — the same arithmetic as `summary.total_value_usd`, so the lines sum to it.
+    /// `null` when no finish the row holds copies of is priced (a nonfoil copy of a
+    /// foil-only printing is unpriced, never `"0.00"`).
     pub price_usd: Option<String>,
     /// The cheapest priced printing of this card at this row's finish split, or `null` when
     /// no printing of it is priced in every finish the row holds.
@@ -143,8 +144,33 @@ fn cost_at(printing: &PricedPrinting, quantity: i32, foil_quantity: i32) -> Opti
     Some(total)
 }
 
-/// Quote one row. `held` is the row's own printing; `held_cents` is what the shared
-/// valuation makes of it (priced finishes only — `None` when nothing is); `candidates` are
+/// What the row is worth as held, over the finishes it **actually holds**: each held finish
+/// that is priced contributes `price × copies`, and the result is `None` only when no held
+/// finish is priced. Deliberately not the shared [`Valuation`]'s `any_priced`, which flips
+/// on a parseable price string even at zero copies — right for a deck total (a row worth
+/// nothing contributes nothing either way), wrong for a per-row price, where a nonfoil copy
+/// of a foil-only printing would be published as `"0.00"` rather than unpriced. The
+/// deck-wide total still goes through the shared fold, so it stays the summary's number.
+fn held_cost(held: &PricedPrinting, quantity: i32, foil_quantity: i32) -> Option<i128> {
+    let mut total: i128 = 0;
+    let mut priced = false;
+    if quantity > 0
+        && let Some(cents) = held.usd
+    {
+        total += cents * i128::from(quantity);
+        priced = true;
+    }
+    if foil_quantity > 0
+        && let Some(cents) = held.usd_foil
+    {
+        total += cents * i128::from(foil_quantity);
+        priced = true;
+    }
+    priced.then_some(total)
+}
+
+/// Quote one row. `held` is the row's own printing; `held_cents` is [`held_cost`]'s answer
+/// (priced held finishes only — `None` when none is); `candidates` are
 /// every priced, non-folded printing of the card (the held one among them when it
 /// qualifies). Ties go to the held printing, then to the lowest internal id, so the answer
 /// is stable across requests and a row already holding the cheapest is never told to swap.
@@ -250,9 +276,7 @@ pub(crate) async fn analyse_pricing(
             usd: price_cents(usd),
             usd_foil: price_cents(usd_foil),
         };
-        let mut line = Valuation::default();
-        line.add(usd, entry.quantity, usd_foil, entry.foil_quantity);
-        let held_cents = line.any_priced.then_some(line.cents);
+        let held_cents = held_cost(&held, entry.quantity, entry.foil_quantity);
 
         // The card's priced siblings, plus the held printing itself whenever the seam
         // didn't return it — a card with no `oracle_id` (no key to find siblings by), or a
@@ -443,6 +467,23 @@ mod tests {
                 saving_cents: None,
             }
         );
+    }
+
+    #[test]
+    fn a_held_cost_reads_only_the_finishes_the_row_holds() {
+        // One nonfoil copy of a foil-only printing: the foil price is real, but the row
+        // holds none — unpriced, not "$0.00".
+        let foil_only = printing(1, None, Some(2_000));
+        assert_eq!(held_cost(&foil_only, 1, 0), None);
+        assert_eq!(held_cost(&foil_only, 0, 1), Some(2_000));
+        assert_eq!(
+            held_cost(&foil_only, 1, 1),
+            Some(2_000),
+            "a priced held finish is a floor"
+        );
+        let both = printing(2, Some(100), Some(300));
+        assert_eq!(held_cost(&both, 2, 1), Some(500));
+        assert_eq!(held_cost(&printing(3, None, None), 3, 0), None);
     }
 
     #[test]

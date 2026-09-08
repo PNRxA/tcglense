@@ -1006,3 +1006,39 @@ async fn a_shared_decks_pricing_is_public_and_identical_to_the_owners() {
     );
     assert_eq!(public_pricing["swappable_count"], 1);
 }
+
+#[tokio::test]
+async fn a_nonfoil_copy_of_a_foil_only_printing_is_unpriced_not_zero() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-foil-only@example.com", PW).await;
+    // The dummy catalog's foil-only showcase: a foil price, no regular one.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/cards?name=Dummy%20Foil-Only%20Showcase&page_size=5"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "lookup failed: {body:?}");
+    let card = &body["data"][0];
+    assert!(card["prices"]["usd"].is_null() && card["prices"]["usd_foil"].is_string());
+    let id = card["id"].as_str().expect("id").to_string();
+
+    let (deck_id, _) = deck_with_cards(&app, &access, "Foil only", "Modern", &[(id, 1)]).await;
+    let (status, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    let line = &pricing["lines"][0];
+    assert!(
+        line["price_usd"].is_null(),
+        "unpriced, never 0.00: {line:?}"
+    );
+    assert!(line["saving_usd"].is_null());
+    assert!(
+        line["cheapest"].is_null(),
+        "no printing is priced for a nonfoil copy: {line:?}"
+    );
+    assert_eq!(pricing["unpriced_count"], 1);
+    assert!(pricing["total_usd"].is_null() || pricing["total_usd"] == "0.00");
+}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { Tag } from '@lucide/vue'
 import { buttonVariants } from '@/components/ui/button'
 import {
@@ -52,6 +52,13 @@ const suggestion = computed(() =>
 const suggestedPrice = computed(() =>
   suggestion.value ? money.formatUsd(suggestion.value.priceUsd) : null,
 )
+
+// One instance can serve many rows (the pricing panel re-points a single dialog at whichever
+// row asked), so a failure recorded against one row must not greet the next: every opening
+// starts clean, as the picker's own filter does.
+watch(open, (isOpen) => {
+  if (isOpen) errorMessage.value = ''
+})
 
 async function choose(printing: Card) {
   if (printing.id === props.card.id || changePrinting.isPending.value) return
