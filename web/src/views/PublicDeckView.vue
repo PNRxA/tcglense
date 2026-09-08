@@ -8,6 +8,7 @@ import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import AddToCollectionButton from '@/components/decks/AddToCollectionButton.vue'
 import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
@@ -19,7 +20,11 @@ import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
-import { useCopyPublicDeckMutation, usePublicDeckQuery } from '@/composables/useDecks'
+import {
+  useAddPublicDeckToCollectionMutation,
+  useCopyPublicDeckMutation,
+  usePublicDeckQuery,
+} from '@/composables/useDecks'
 import { usePublicDeckLegalityQuery } from '@/composables/useDeckAnalysis'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
@@ -33,8 +38,8 @@ import { useCardSizeStore } from '@/stores/cardSize'
 import { useDeckViewStore } from '@/stores/deckView'
 
 // The read-only, shareable public deck (issue #363): `/u/:handle/decks/:id`. Anyone can
-// view; the only control is "Copy to my decks" for a signed-in visitor (issue #502).
-// Indexable so shared links preview and rank.
+// view; the only controls are "Copy to my decks" (issue #502) and "Add to collection" for a
+// signed-in visitor. Indexable so shared links preview and rank.
 const props = defineProps<{ handle: string; id: string }>()
 const money = useCurrency()
 const auth = useAuthStore()
@@ -61,6 +66,21 @@ async function copyDeck() {
     copyError.value =
       error instanceof ApiError ? error.message : 'The deck could not be copied. Please retry.'
   }
+}
+
+// "I bought the singles for this list": every card of the deck proper into the VISITOR's
+// collection, on top of what they own. Offered to any signed-in visitor, the owner included
+// (it is the same write their own deck page offers); the button confirms first, since the
+// write is additive. The game rides the vars because the write is handle-addressed while the
+// collection family to refresh is per game.
+const addMutation = useAddPublicDeckToCollectionMutation()
+const canAdd = computed(() => auth.sessionResolved && auth.isAuthenticated)
+function addToCollection() {
+  return addMutation.mutateAsync({
+    handle: handle.value,
+    deckId: deckId.value,
+    game: deck.value?.game ?? '',
+  })
 }
 
 // The public game slug is carried in the URL as a handle only; the deck's game is on each
@@ -147,16 +167,26 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
             {{ deck.description }}
           </p>
         </div>
-        <div v-if="canCopy" class="flex shrink-0 flex-col items-end gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            :disabled="copyMutation.isPending.value"
-            @click="copyDeck"
-          >
-            <Copy class="size-4" aria-hidden="true" />
-            {{ copyMutation.isPending.value ? 'Copying…' : 'Copy to my decks' }}
-          </Button>
+        <div v-if="canAdd" class="flex shrink-0 flex-col items-end gap-1">
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <AddToCollectionButton
+              v-if="deck.summary.total_cards > 0"
+              :game="deck.game"
+              :copies="deck.summary.total_cards"
+              note="Every card in this deck, from every section except its maybeboards."
+              :submit="addToCollection"
+            />
+            <Button
+              v-if="canCopy"
+              variant="outline"
+              size="sm"
+              :disabled="copyMutation.isPending.value"
+              @click="copyDeck"
+            >
+              <Copy class="size-4" aria-hidden="true" />
+              {{ copyMutation.isPending.value ? 'Copying…' : 'Copy to my decks' }}
+            </Button>
+          </div>
           <p v-if="copyError" class="text-destructive max-w-xs text-right text-xs">
             {{ copyError }}
           </p>

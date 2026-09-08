@@ -50,6 +50,7 @@ mod import;
 mod needed;
 mod read;
 mod sections;
+mod to_collection;
 mod write;
 
 pub use analysis::{
@@ -71,6 +72,12 @@ pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
 pub use needed::needed_cards;
 pub use read::{get_deck, list_decks};
 pub use sections::{create_section, delete_section, reorder_sections, update_section};
+// The add-to-collection write + the seam the precon entry point (`handlers::precons::to_collection`)
+// shares: both hand catalog-joined rows to the import engine's `merge`, stated once there.
+pub use to_collection::{
+    CollectionAddSummary, add_deck_to_collection, add_public_deck_to_collection,
+};
+pub(crate) use to_collection::{add_rows_to_collection, partition_rows};
 pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibility, update_deck};
 
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
@@ -92,6 +99,7 @@ pub use read::{__path_get_deck, __path_list_decks};
 pub use sections::{
     __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,
 };
+pub use to_collection::{__path_add_deck_to_collection, __path_add_public_deck_to_collection};
 pub use write::{
     __path_create_deck, __path_delete_deck, __path_move_deck_to_folder, __path_set_deck_visibility,
     __path_update_deck,

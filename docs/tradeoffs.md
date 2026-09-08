@@ -684,6 +684,21 @@ catalog) is planned but not implemented.
   then heals itself. The alternative — a full re-import forced by the deploy — would re-download
   ~500 MB on every instance to answer a question that answers itself by tomorrow.
 
+- **"Add to collection" is additive and not idempotent — on purpose.**
+  `POST /api/decks/{game}/{deck_id}/collection` (and its precon twin) adds the deck's counts *on
+  top of* what the user owns, so a second call records a second copy of every card. Two
+  alternatives were weighed and rejected: *set-to-at-least* (`max(owned, deck)`) cannot express
+  buying a second copy of a precon you already own one of, which is the commonest reason to press
+  the button twice; and de-duplicating would need a "which purchase" fact the API does not have.
+  The honest reading of the request is "I bought another one", so the write says exactly that,
+  and the SPA's confirmation dialog states the rule before anything is sent (the response also
+  reports what landed, so a slip is visible and reversible from the collection). The write
+  rides the collection importer's `merge` (`collection_import::merge_holdings`) rather than the
+  per-card `PUT` so it inherits the foil-★ fold, the by-card aggregation and the single
+  transaction; a deck's maybeboards are skipped for the same reason `needed` skips them — a card
+  under consideration was not bought — while a precon's every board goes in, since all of it is
+  in the box.
+
 ## Preconstructed decks (issue #363's catalog sibling)
 
 - **The grouped listings ship every deck in a group, uncapped — deliberately.** A review

@@ -39,11 +39,13 @@ use crate::state::AppState;
 mod analysis;
 mod copy;
 mod read;
+mod to_collection;
 
 pub use analysis::{precon_bracket, precon_goldfish, precon_legality, precon_stats, precon_tokens};
 pub use copy::copy_precon_deck;
 pub(crate) use read::search_precons;
 pub use read::{card_precons, get_precon, list_precon_groups, list_precons, precon_facets};
+pub use to_collection::add_precon_to_collection;
 
 pub use analysis::{
     __path_precon_bracket, __path_precon_goldfish, __path_precon_legality, __path_precon_stats,
@@ -54,6 +56,7 @@ pub use read::{
     __path_card_precons, __path_get_precon, __path_list_precon_groups, __path_list_precons,
     __path_precon_facets,
 };
+pub use to_collection::__path_add_precon_to_collection;
 
 // ---------- Response DTOs ----------
 

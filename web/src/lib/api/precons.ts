@@ -1,6 +1,7 @@
 import { request } from './client'
 import type {
   CardPreconRef,
+  CollectionAddSummary,
   DeckDetail,
   Page,
   PreconDeck,
@@ -125,4 +126,20 @@ export function copyPrecon(token: string, game: string, slug: string): Promise<D
   const g = encodeURIComponent(game)
   const s = encodeURIComponent(slug)
   return request<DeckDetail>(`/api/decks/${g}/precons/${s}/copy`, { method: 'POST', token })
+}
+
+/** Add every card the precon ships (command zone, deck and sideboard) to the caller's
+ * collection, **on top of** what they already own — "I bought this precon". Additive by
+ * design, like the deck's own `addDeckToCollection`; returns what was added. */
+export function addPreconToCollection(
+  token: string,
+  game: string,
+  slug: string,
+): Promise<CollectionAddSummary> {
+  const g = encodeURIComponent(game)
+  const s = encodeURIComponent(slug)
+  return request<CollectionAddSummary>(`/api/decks/${g}/precons/${s}/collection`, {
+    method: 'POST',
+    token,
+  })
 }

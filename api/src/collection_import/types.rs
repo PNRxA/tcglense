@@ -121,6 +121,53 @@ pub struct FetchedHolding {
     pub quantity: i32,
 }
 
+/// What a reconcile did, before it is labelled with where the holdings came from.
+///
+/// The provider-agnostic half of [`ImportSummary`]: every count that engine computes, minus
+/// the `provider` an import stamps on top. Split out so a caller that has holdings but no
+/// provider to name — a deck or a preconstructed deck being added to the collection
+/// (`handlers::decks::to_collection`) — can drive the same aggregate / resolve / fold /
+/// plan / apply pipeline and read the same numbers back, without inventing a provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconcileOutcome {
+    pub mode: ReconcileMode,
+    /// Holding rows handed in (before aggregation by card).
+    pub total_rows: usize,
+    /// Distinct cards after aggregating rows by card.
+    pub distinct_cards: usize,
+    /// Distinct cards that matched a card in our catalog and were applied.
+    pub matched_cards: usize,
+    /// Distinct cards with no match in our catalog (skipped).
+    pub unmatched_cards: usize,
+    /// A capped sample of unmatched card ids.
+    pub unmatched_sample: Vec<String>,
+    /// Regular copies across all matched cards.
+    pub regular_copies: i64,
+    /// Foil copies across all matched cards.
+    pub foil_copies: i64,
+    /// Owned cards removed by the reconcile (non-zero only in `Replace` mode).
+    pub removed_cards: usize,
+}
+
+impl ReconcileOutcome {
+    /// Label the outcome with the provider it came from — the shape the import endpoints
+    /// return.
+    pub(crate) fn into_summary(self, provider: Provider) -> ImportSummary {
+        ImportSummary {
+            provider: provider.as_str(),
+            mode: self.mode,
+            total_rows: self.total_rows,
+            distinct_cards: self.distinct_cards,
+            matched_cards: self.matched_cards,
+            unmatched_cards: self.unmatched_cards,
+            unmatched_sample: self.unmatched_sample,
+            regular_copies: self.regular_copies,
+            foil_copies: self.foil_copies,
+            removed_cards: self.removed_cards,
+        }
+    }
+}
+
 /// The outcome of an import, surfaced to the user.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
