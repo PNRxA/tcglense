@@ -161,14 +161,12 @@ describe('productBuyLinksFor', () => {
 })
 
 describe('edhrecSlug', () => {
-  it('lower-cases, drops punctuation and dashes the rest, keeping both faces', () => {
+  it('lower-cases, drops punctuation and dashes the rest', () => {
     expect(edhrecSlug('Sol Ring')).toBe('sol-ring')
     expect(edhrecSlug('Jace, the Mind Sculptor')).toBe('jace-the-mind-sculptor')
     expect(edhrecSlug("Lim-Dûl's Vault")).toBe('lim-duls-vault')
     expect(edhrecSlug('Æther Vial')).toBe('aether-vial')
-    expect(edhrecSlug('Delver of Secrets // Insectile Aberration')).toBe(
-      'delver-of-secrets-insectile-aberration',
-    )
+    expect(edhrecSlug('Fire // Ice')).toBe('fire-ice')
     expect(edhrecSlug('Kongming, "Sleeping Dragon"')).toBe('kongming-sleeping-dragon')
   })
 })
@@ -190,6 +188,21 @@ describe('cardReferenceLinksFor', () => {
     for (const card of [singleFaced, { ...singleFaced, multiverse_ids: [] }]) {
       expect(cardReferenceLinksFor('mtg', card).map((l) => l.name)).toEqual(['EDHREC'])
     }
+  })
+
+  it('slugs the front face of a multi-faced card and the whole name of a split card', () => {
+    // EDHREC files a transform card under its front face; the combined name 404s. A
+    // reversible printing repeats one name either side of the `//` and must not double.
+    const hrefFor = (card: Parameters<typeof cardReferenceLinksFor>[1]) =>
+      cardReferenceLinksFor('mtg', card).find((l) => l.name === 'EDHREC')?.href
+    expect(hrefFor(doubleFaced)).toBe('https://edhrec.com/cards/fable-of-the-mirror-breaker')
+    expect(hrefFor(splitCard)).toBe('https://edhrec.com/cards/fire-ice')
+    const reversible = {
+      name: 'Okaun, Eye of Chaos // Okaun, Eye of Chaos',
+      layout: 'reversible_card',
+      faces: [{ name: 'Okaun, Eye of Chaos' }, { name: 'Okaun, Eye of Chaos' }],
+    }
+    expect(hrefFor(reversible)).toBe('https://edhrec.com/cards/okaun-eye-of-chaos')
   })
 
   it('offers nothing for a game with no references', () => {

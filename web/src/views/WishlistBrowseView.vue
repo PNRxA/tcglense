@@ -260,7 +260,12 @@ const buyListParams = computed(() => ({
                  listing with this grid's `q` / set scope / copy-count filter. Gated like the
                  export — flat list mode only (a grouped view serves other endpoints, and
                  ghost mode is the catalog listing, which isn't a shopping list). -->
-            <BuyListDialog v-if="!grouped && !showGhosts" :game="game" :params="buyListParams" />
+            <BuyListDialog
+              v-if="!grouped && !showGhosts"
+              :game="game"
+              :params="buyListParams"
+              cards-only
+            />
             <CardSizeMenu />
             <CardSortMenu v-model="sort" :options="sortOptions" />
           </div>

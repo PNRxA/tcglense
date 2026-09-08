@@ -18,8 +18,8 @@
 //! was left out.
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QuerySelect,
-    QueryTrait, SelectTwo,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
+    QuerySelect, QueryTrait, SelectTwo,
 };
 use serde::Serialize;
 
@@ -28,9 +28,12 @@ use crate::error::AppError;
 
 use super::product_holdings::ProductHoldingEntry;
 
-/// The most card rows one shopping list carries: a bulk-entry page is a URL, and a
-/// TCGplayer mass-entry row by product id is ~10 characters, so 500 rows stays well
-/// inside every browser's and server's URL limits.
+/// The most card rows one shopping list carries. A bulk-entry page is a URL: a TCGplayer
+/// mass-entry row by product id is ~10 characters, so 500 such rows are ~5 KB — but a row
+/// for a printing TCGplayer doesn't list falls back to `{qty} Name [SET] number`, which
+/// encodes to 40–70 characters, so this row cap alone does **not** bound the link. The SPA
+/// bounds the assembled URL by bytes as well (`bulkBuy.ts`'s `MASS_ENTRY_URL_BUDGET`) and
+/// says what it left off; this cap bounds the read and the payload.
 pub(crate) const BUY_LIST_MAX_ROWS: u64 = 500;
 
 /// One wanted card printing on the shopping list.
@@ -48,7 +51,9 @@ pub(crate) struct BuyListCard {
     pub foil_quantity: i32,
     /// TCGplayer product id of the printing, the key its mass-entry page takes; `null`
     /// when TCGplayer doesn't list it, in which case a client falls back to the name +
-    /// set + collector number.
+    /// set + collector number. The etched id (`tcgplayer_etched_id` on `CardDetail`) is
+    /// deliberately not carried: a holding has only a regular and a foil count, so no row
+    /// can name an etched copy.
     pub tcgplayer_id: Option<i32>,
 }
 
@@ -93,21 +98,26 @@ pub(crate) struct BuyListCardRow {
 }
 
 /// Run a holdings list query (a twin's own `collection_query`/`wishlist_query` output,
-/// filters and sort untouched) narrowed to the shopping-list columns, capped at
-/// [`BUY_LIST_MAX_ROWS`], and count the rows it would have matched uncapped. The twin
-/// passes its own count columns, as [`super::narrow_export_statement`] has it, so the
-/// projection can't drift between surfaces.
+/// filters and sort untouched) narrowed to the shopping-list columns, capped at `cap`
+/// rows ([`BUY_LIST_MAX_ROWS`] on the route; a parameter so the cap is testable), and
+/// count the rows it would have matched uncapped. The twin passes its own count columns,
+/// as [`super::narrow_export_statement`] has it, so the projection can't drift between
+/// surfaces. A holding whose card row is gone (a catalog re-import) is excluded from
+/// **both** the rows and the count — the list skips it, so counting it would report a
+/// truncation that never happened.
 pub(crate) async fn load_buy_list_cards<E, C>(
     db: &DatabaseConnection,
     query: SelectTwo<E, card::Entity>,
     quantity: C,
     foil_quantity: C,
+    cap: u64,
 ) -> Result<(Vec<BuyListCard>, u64), AppError>
 where
     E: EntityTrait,
     E::Model: Send + Sync,
     C: ColumnTrait,
 {
+    let query = query.filter(card::Column::Id.is_not_null());
     let total = count_statement(db, query.clone()).await?;
     let statement = query
         .select_only()
@@ -118,7 +128,7 @@ where
         .column_as(quantity, "quantity")
         .column_as(foil_quantity, "foil_quantity")
         .column_as(card::Column::TcgplayerId, "tcgplayer_id")
-        .limit(BUY_LIST_MAX_ROWS)
+        .limit(cap)
         .into_query();
     let rows = BuyListCardRow::find_by_statement(db.get_database_backend().build(&statement))
         .all(db)
@@ -184,7 +194,87 @@ pub(crate) fn build_buy_list(
 
 #[cfg(test)]
 mod tests {
+    use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder, Set};
+
     use super::*;
+    use crate::entities::wishlist_item;
+    use crate::test_support::{insert_card, insert_user, migrated_memory_db};
+
+    /// The cap reaches the SQL, the count is taken uncapped, and a holding whose card
+    /// row vanished counts for neither — so `truncated` can only ever mean "the cap cut
+    /// the list".
+    #[tokio::test]
+    async fn the_cap_limits_the_rows_and_a_gone_card_counts_for_nothing() {
+        let db = migrated_memory_db().await;
+        let user = insert_user(&db, "buyer@example.com").await;
+        let mut card_ids = Vec::new();
+        for n in 0..3 {
+            card_ids.push(insert_card(&db, &format!("buy-{n}")).await);
+        }
+        for (n, card_id) in card_ids.iter().enumerate() {
+            wishlist_item::ActiveModel {
+                user_id: Set(user),
+                game: Set(crate::scryfall::GAME.to_string()),
+                card_id: Set(*card_id),
+                quantity: Set(n as i32 + 1),
+                foil_quantity: Set(0),
+                created_at: Set(chrono::Utc::now()),
+                updated_at: Set(chrono::Utc::now()),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("want card");
+        }
+        // A holding whose card row is gone: the LEFT JOIN yields NULLs for it.
+        wishlist_item::ActiveModel {
+            user_id: Set(user),
+            game: Set(crate::scryfall::GAME.to_string()),
+            card_id: Set(999_999),
+            quantity: Set(4),
+            foil_quantity: Set(0),
+            created_at: Set(chrono::Utc::now()),
+            updated_at: Set(chrono::Utc::now()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("want a gone card");
+
+        let query = || {
+            wishlist_item::Entity::find()
+                .find_also_related(card::Entity)
+                .filter(wishlist_item::Column::UserId.eq(user))
+                .order_by_asc(wishlist_item::Column::Id)
+        };
+
+        let (rows, total) = load_buy_list_cards(
+            &db,
+            query(),
+            wishlist_item::Column::Quantity,
+            wishlist_item::Column::FoilQuantity,
+            2,
+        )
+        .await
+        .expect("capped read");
+        assert_eq!(total, 3, "the gone card is not counted");
+        assert_eq!(rows.len(), 2, "the cap reaches the SQL");
+        assert_eq!(rows[0].card_id, "buy-0");
+        assert_eq!(rows[1].quantity, 2);
+        assert!(build_buy_list(rows, total, vec![], 0).truncated);
+
+        let (rows, total) = load_buy_list_cards(
+            &db,
+            query(),
+            wishlist_item::Column::Quantity,
+            wishlist_item::Column::FoilQuantity,
+            BUY_LIST_MAX_ROWS,
+        )
+        .await
+        .expect("uncapped read");
+        assert_eq!((rows.len(), total), (3, 3));
+        assert!(!build_buy_list(rows, total, vec![], 0).truncated);
+    }
 
     fn card(n: i32) -> BuyListCard {
         BuyListCard {

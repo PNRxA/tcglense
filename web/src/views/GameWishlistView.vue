@@ -156,9 +156,9 @@ usePageMeta({
           </div>
           <!-- "Buy all" (issue #292) beside the gear: the whole list — cards and sealed
                products — to a store's bulk-entry page. Disabled until there's something on
-               it. -->
+               it, of either kind (the same pair the combined overview gates on). -->
           <div class="flex shrink-0 gap-2">
-            <BuyListDialog :game="game" :disabled="!hasStats" />
+            <BuyListDialog :game="game" :disabled="!hasStats && !hasProductStats" />
             <WishlistSettingsMenu :game="game" />
           </div>
         </div>

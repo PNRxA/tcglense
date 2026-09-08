@@ -77,9 +77,9 @@ pub async fn wishlist_buy_list(
         query,
         wishlist_item::Column::Quantity,
         wishlist_item::Column::FoilQuantity,
+        BUY_LIST_MAX_ROWS,
     )
     .await?;
-    debug_assert!(cards.len() as u64 <= BUY_LIST_MAX_ROWS);
 
     // Sealed products ride only a whole-list request: every card filter is a *card*
     // filter (a set scope, a Scryfall query, a copy count read off card holdings), and

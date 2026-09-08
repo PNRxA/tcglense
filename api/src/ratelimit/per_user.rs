@@ -82,9 +82,12 @@ impl UserRoute {
         }
 
         // The wish list's card-list export is the collection export's twin: the same
-        // uncapped whole-holdings drain, so the same tighter bucket.
+        // uncapped whole-holdings drain, so the same tighter bucket. Its shopping list
+        // (`buy-list`, issue #292) is the same shape one size down — a `COUNT(*)` over the
+        // whole filtered wish list plus a 500-row projection, and a product page besides —
+        // so it rides the same bucket rather than the browse budget.
         if let Some(rest) = path.strip_prefix("/api/wishlist/")
-            && let Some((_game, "cards/export")) = rest.split_once('/')
+            && let Some((_game, "cards/export" | "buy-list")) = rest.split_once('/')
         {
             return Self::Analytics;
         }
@@ -458,6 +461,7 @@ mod tests {
             "/api/collection/mtg/export",
             "/api/collection/mtg/cards/export",
             "/api/wishlist/mtg/cards/export",
+            "/api/wishlist/mtg/buy-list",
             // Deck analysis: each folds every card in the deck (issue #596).
             "/api/decks/mtg/7/stats",
             "/api/decks/mtg/7/legality",

@@ -19,6 +19,8 @@ foil_quantity: number,
 /**
  * TCGplayer product id of the printing, the key its mass-entry page takes; `null`
  * when TCGplayer doesn't list it, in which case a client falls back to the name +
- * set + collector number.
+ * set + collector number. The etched id (`tcgplayer_etched_id` on `CardDetail`) is
+ * deliberately not carried: a holding has only a regular and a foil count, so no row
+ * can name an etched copy.
  */
 tcgplayer_id: number | null, };

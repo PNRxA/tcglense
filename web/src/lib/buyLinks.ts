@@ -342,11 +342,14 @@ export interface ReferenceLink {
   href: string
 }
 
-// EDHREC's card slug: the card name lower-cased, ligatures and accents flattened
-// (Æther → aether, Lim-Dûl → lim-dul), punctuation dropped (Jace, the Mind Sculptor →
-// jace-the-mind-sculptor) and every remaining run of non-alphanumerics a single dash, with
-// both faces of a multi-faced card kept (Delver of Secrets // Insectile Aberration →
-// delver-of-secrets-insectile-aberration), which is how EDHREC files them.
+// EDHREC's card slug: the name lower-cased, ligatures and accents flattened (Æther →
+// aether, Lim-Dûl → lim-dul), punctuation dropped (Jace, the Mind Sculptor →
+// jace-the-mind-sculptor) and every remaining run of non-alphanumerics a single dash.
+// The name to slug is `searchName`'s — EDHREC files a split card under its combined
+// name (fire-ice) but every other multi-faced card under its FRONT face alone
+// (delver-of-secrets, not delver-of-secrets-insectile-aberration), the same rule the
+// store searches follow; slugging the raw printing name 404s every transform / MDFC /
+// adventure card, and doubles a reversible printing's "Okaun // Okaun".
 export function edhrecSlug(name: string): string {
   return name
     .replace(/[Ææ]/g, 'ae')
@@ -370,7 +373,10 @@ const REFERENCES_BY_GAME: Record<string, (card: BuyCard) => ReferenceLink[]> = {
         href: `https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=${multiverseId}`,
       })
     }
-    links.push({ name: 'EDHREC', href: `https://edhrec.com/cards/${edhrecSlug(card.name)}` })
+    links.push({
+      name: 'EDHREC',
+      href: `https://edhrec.com/cards/${edhrecSlug(searchName(card))}`,
+    })
     return links
   },
 }

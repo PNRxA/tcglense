@@ -344,14 +344,16 @@ impl SeedCard {
 
 /// A stable, well-spread integer off a card's external id (FNV-1a), for the fabricated
 /// external ids: a byte *sum* (the legality seed) collides between cards far too often to
-/// stand in for a product id.
+/// stand in for a product id. The range is wide (nine million) so the seed test's
+/// uniqueness assertion holds by construction rather than by luck as the catalog grows —
+/// the ids are synthetic, so a wide number costs nothing.
 fn external_id_hash(external_id: &str) -> i32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in external_id.bytes() {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
     }
-    (hash % 90_000) as i32
+    (hash % 9_000_000) as i32
 }
 
 /// A standard numbered card; its attributes cycle deterministically by number.

@@ -697,13 +697,21 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`handlers/shared/buy_list.rs`, the one wish-list read with **no collection twin** — you don't
   buy what you own). That read is the listing's own query through `resolve_holdings_list` +
   `wishlist_query` (so "buy what's on screen" is the filtered grid), capped at 500 card rows with
-  the totals + `truncated` on the wire, and carries the wanted sealed products (by their TCGplayer
-  product id) **only on an unfiltered request** — every card filter is a card filter. It answers
+  the totals + `truncated` on the wire (a holding whose card row is gone counts for neither, so
+  `truncated` only ever means the cap), in the per-user **Analytics** rate-limit class like the
+  export it is shaped after, and carries the wanted sealed products (by their TCGplayer product
+  id) **only on an unfiltered request** — every card filter is a card filter, and the browse grid's
+  button passes `cards-only` so a plain `/cards` browse doesn't drag them along either. It answers
   rows with `tcgplayer_id`, not store URLs: the stores are `web/src/lib/bulkBuy.ts` — TCGplayer's
   mass entry (`?c=` rows `{qty}-{productId}` / `{qty} Name [SET] number`, `||`-joined, a format
-  read off TCGplayer's own bundle and pinned by the spec) and MTG Mate's decklist search, which has
-  **no verifiable URL prefill**, so that option copies the `{qty} Name` list and opens the page. A
-  third store belongs in that registry; a third *reader* of the ids belongs on `CardDetail`.
+  read off TCGplayer's own bundle and pinned by the spec; the row cap doesn't bound the *link*, since
+  a name-form row is 40–70 encoded characters, so the builder also stops at a byte budget
+  (`MASS_ENTRY_URL_BUDGET`) and the note says what it left off) and MTG Mate's decklist search,
+  which has **no verifiable URL prefill**, so that option copies the `{qty} Name` list and opens
+  the page. The EDHREC reference link slugs `searchName`'s answer, never the printing name — EDHREC
+  files a split card under its combined name but every other multi-faced card under its **front
+  face**, and a reversible printing's `Okaun // Okaun` would double. A third store belongs in that
+  registry; a third *reader* of the ids belongs on `CardDetail`.
 - **Every export is a file-download response through `handlers/shared/download.rs`**
   (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
   pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its

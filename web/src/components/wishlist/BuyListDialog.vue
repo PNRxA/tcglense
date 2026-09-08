@@ -20,7 +20,12 @@ import {
 } from '@/components/ui/dialog'
 import { useCurrency } from '@/composables/useCurrency'
 import { type BuyList, type BuyListParams, getWishlistBuyList } from '@/lib/api'
-import { type BulkBuyOption, bulkBuyOptionsFor } from '@/lib/bulkBuy'
+import {
+  type BulkBuyOption,
+  bulkBuyOptionsFor,
+  buyListSummary,
+  truncationNote,
+} from '@/lib/bulkBuy'
 import { useAuthedQuery } from '@/lib/queries'
 
 // "Buy all" (issue #292): send the wish list — or the filtered slice of it on screen — to a
@@ -39,6 +44,10 @@ const props = defineProps<{
   params?: BuyListParams
   /** Nothing to buy yet (an empty list, or the grid still loading). */
   disabled?: boolean
+  /** Browse grids: the rows on screen are cards, so the wanted sealed products the API
+   * adds to an *unfiltered* request (a plain `/cards` browse sends no filter) are dropped
+   * before the stores see the list. The landing, which shows both, leaves this off. */
+  cardsOnly?: boolean
 }>()
 
 const open = ref(false)
@@ -58,32 +67,28 @@ const options = {
 }
 const buyList = useAuthedQuery<BuyList>(options)
 
-const list = computed(() => buyList.data.value)
+// The observer outlives the closed dialog (it is created in setup), so on a reopen the
+// previous response is still in `data` while the refetch runs — show the spinner for the
+// whole fetch, never a cart from before the list changed.
+const loading = computed(() => buyList.isPending.value || buyList.isFetching.value)
+const list = computed<BuyList | undefined>(() => {
+  const data = buyList.data.value
+  if (!data || !props.cardsOnly) return data
+  return {
+    ...data,
+    products: [],
+    total_products: 0,
+    truncated: data.cards.length < data.total_cards,
+  }
+})
 const storeOptions = computed<BulkBuyOption[]>(() =>
   list.value ? bulkBuyOptionsFor(props.game, list.value, money.currency.value) : [],
-)
-const cardCopies = computed(() =>
-  (list.value?.cards ?? []).reduce((sum, row) => sum + row.quantity + row.foil_quantity, 0),
 )
 const empty = computed(
   () => !!list.value && list.value.cards.length === 0 && list.value.products.length === 0,
 )
-
-// What the list holds, in one line: "12 cards (18 copies) and 2 sealed products".
-const summary = computed(() => {
-  const l = list.value
-  if (!l) return ''
-  const cards = `${l.cards.length.toLocaleString()} ${l.cards.length === 1 ? 'card' : 'cards'} (${cardCopies.value.toLocaleString()} ${cardCopies.value === 1 ? 'copy' : 'copies'})`
-  if (l.products.length === 0) return cards
-  const products = `${l.products.length.toLocaleString()} sealed ${l.products.length === 1 ? 'product' : 'products'}`
-  return `${cards} and ${products}`
-})
-const truncatedNote = computed(() => {
-  const l = list.value
-  if (!l?.truncated) return null
-  const cut = l.total_cards - l.cards.length + (l.total_products - l.products.length)
-  return `Only the first ${l.cards.length.toLocaleString()} card rows are sent — ${cut.toLocaleString()} more are on the list. Narrow the list with a search or a set to buy the rest.`
-})
+const summary = computed(() => (list.value ? buyListSummary(list.value) : ''))
+const truncatedNote = computed(() => (list.value ? truncationNote(list.value) : null))
 
 // Paste stores: copy, then open. Clipboard access can be denied (insecure context /
 // permissions); the list stays in the dialog for manual copying either way.
@@ -139,10 +144,7 @@ watch(open, (isOpen) => {
         is bought until you check out there.
       </DialogDescription>
 
-      <p
-        v-if="buyList.isPending.value"
-        class="text-muted-foreground flex items-center gap-2 text-sm"
-      >
+      <p v-if="loading" class="text-muted-foreground flex items-center gap-2 text-sm">
         <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
         Gathering your list…
       </p>

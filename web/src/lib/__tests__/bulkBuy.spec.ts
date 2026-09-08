@@ -2,12 +2,16 @@ import { describe, it, expect } from 'vitest'
 
 import type { BuyList, BuyListCard, BuyListProduct } from '@/lib/api'
 import {
+  MASS_ENTRY_URL_BUDGET,
   MTG_MATE_DECKLIST_URL,
   bulkBuyOptionsFor,
+  buyListSummary,
   decklistText,
   massEntryNote,
   massEntryRow,
+  tcgplayerMassEntryLink,
   tcgplayerMassEntryUrl,
+  truncationNote,
 } from '../bulkBuy'
 
 function card(overrides: Partial<BuyListCard> = {}): BuyListCard {
@@ -71,6 +75,34 @@ describe('tcgplayerMassEntryUrl', () => {
     )
   })
 
+  it('leaves rows off once the encoded list would pass the URL budget, and counts them', () => {
+    // 500 name-form rows (no product id) encode to ~40 characters each — far past the
+    // budget the row cap alone would allow through.
+    const cards = Array.from({ length: 500 }, (_, i) =>
+      card({ card_id: `sf-${i}`, name: `Card Number ${i}`, tcgplayer_id: null }),
+    )
+    const link = tcgplayerMassEntryLink(list(cards), 'Magic')
+    const encoded = link.href.slice(
+      link.href.indexOf('?c=') + 3,
+      link.href.indexOf('&productline='),
+    )
+    expect(encoded.length).toBeLessThanOrEqual(MASS_ENTRY_URL_BUDGET)
+    expect(link.href.length).toBeLessThan(8_000)
+    expect(link.sent + link.dropped).toBe(500)
+    expect(link.dropped).toBeGreaterThan(0)
+    // The rows that fit are the first ones, in order.
+    expect(
+      decodeURIComponent(encoded).startsWith(
+        '1 Card Number 0 [CMM] 410||1 Card Number 1 [CMM] 410',
+      ),
+    ).toBe(true)
+    // An id-only list of the cap size fits whole.
+    const byId = Array.from({ length: 500 }, (_, i) =>
+      card({ card_id: `sf-${i}`, tcgplayer_id: 500000 + i }),
+    )
+    expect(tcgplayerMassEntryLink(list(byId), 'Magic')).toMatchObject({ sent: 500, dropped: 0 })
+  })
+
   it('appends sealed products by their TCGplayer product id and skips empty rows', () => {
     const url = tcgplayerMassEntryUrl(
       list(
@@ -96,16 +128,52 @@ describe('decklistText', () => {
 })
 
 describe('massEntryNote', () => {
+  const whole = { href: '', sent: 2, dropped: 0 }
+
   it('says how many rows go by name when some printings have no product id', () => {
-    const note = massEntryNote(list([card(), card({ card_id: 'sf-2', tcgplayer_id: null })]))
+    const note = massEntryNote(list([card(), card({ card_id: 'sf-2', tcgplayer_id: null })]), whole)
     expect(note).toContain('1 of 2 printings by exact product')
     expect(note).toContain('1 by name')
   })
 
   it('stays quiet about matching when every row has an id, and counts sealed products', () => {
-    const note = massEntryNote(list([card()], [product()]))
+    const note = massEntryNote(list([card()], [product()]), whole)
     expect(note).not.toContain('by name')
     expect(note).toContain('1 sealed product included')
+  })
+
+  it('says how many rows the URL budget left off', () => {
+    const note = massEntryNote(list([card()]), { href: '', sent: 1, dropped: 3 })
+    expect(note).toContain('the last 3 rows left off')
+  })
+})
+
+describe('buyListSummary', () => {
+  it('counts cards, copies and sealed products with the right plurals', () => {
+    expect(buyListSummary(list([card()]))).toBe('1 card (1 copy)')
+    expect(
+      buyListSummary(
+        list([card({ quantity: 2, foil_quantity: 1 }), card({ card_id: 'b' })], [product()]),
+      ),
+    ).toBe('2 cards (4 copies) and 1 sealed product')
+  })
+})
+
+describe('truncationNote', () => {
+  it('is silent when nothing was cut', () => {
+    expect(truncationNote(list([card()]))).toBeNull()
+  })
+
+  it('words a card cut and a product cut separately, never blaming card rows for a product cut', () => {
+    const cardsCut = { ...list([card()]), total_cards: 501, truncated: true }
+    expect(truncationNote(cardsCut)).toBe(
+      'Only the first 1 card rows are sent (500 more on the list). Narrow the list with a search or a set to buy the rest.',
+    )
+    const productsCut = { ...list([], [product()]), total_products: 201, truncated: true }
+    expect(truncationNote(productsCut)).toBe(
+      'Only the first 1 sealed products are sent (200 more on the list). Narrow the list with a search or a set to buy the rest.',
+    )
+    expect(truncationNote(productsCut)).not.toContain('card rows')
   })
 })
 
