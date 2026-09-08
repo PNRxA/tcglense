@@ -446,15 +446,24 @@ pub(super) fn unaccounted_sheets(packs: &[ResolvedPack]) -> Option<String> {
     Some(sentence)
 }
 
-/// A `0..1` share as a whole-percent label, never rounding a non-zero share down to `0%`
-/// (a sheet that is 0.4% unaccounted for is "<1%", not "0%" — which would read as "none").
+/// A `0..1` share as a whole-percent label that never rounds away the fact it qualifies:
+/// a non-zero share is never "0%" (a sheet that is 0.4% unaccounted for is "<1%", which
+/// would otherwise read as "none"), and a share short of one is never "100%" (a caveat
+/// saying "cards without a price count as $0 — 100% of the picks are priced" contradicts
+/// itself; ">99%" is what a 99.7% share honestly is).
 pub(super) fn percent(share: f64) -> String {
     if !share.is_finite() || share <= 0.0 {
         return "0%".to_string();
     }
+    if share >= 1.0 {
+        return "100%".to_string();
+    }
     let pct = share * 100.0;
     if pct < 0.5 {
         return "<1%".to_string();
+    }
+    if pct >= 99.5 {
+        return ">99%".to_string();
     }
     format!("{pct:.0}%")
 }
@@ -828,6 +837,22 @@ mod tests {
         assert_eq!(percent(0.12), "12%");
         assert_eq!(percent(1.0), "100%");
         assert_eq!(percent(f64::NAN), "0%");
+    }
+
+    /// The mirror case at the top: a share that is *nearly* whole must not print as whole,
+    /// or the caveat it qualifies ("cards without a price count as $0 — 100% of the picks
+    /// are priced") contradicts itself on the very product that has one unpriced card.
+    #[test]
+    fn percent_never_rounds_a_short_share_up_to_whole() {
+        assert_eq!(percent(0.9971), ">99%");
+        assert_eq!(percent(0.995), ">99%");
+        assert_eq!(percent(0.994), "99%");
+        assert_eq!(percent(1.0 - 1e-12), ">99%");
+        assert_eq!(
+            percent(1.2),
+            "100%",
+            "an over-one share still reads as whole"
+        );
     }
 
     #[test]
