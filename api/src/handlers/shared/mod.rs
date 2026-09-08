@@ -24,7 +24,7 @@ pub(crate) mod valuation;
 
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
 pub(crate) use download::{csv_download, text_download};
-pub(crate) use dto::{CardResponse, stored_faces};
+pub(crate) use dto::{CardDetailResponse, CardResponse, stored_faces};
 pub(crate) use grouping::{
     filter_drops_by_title, group_into_drops, group_into_subtypes, paginate_buckets,
     require_drop_table,

@@ -10,6 +10,7 @@ import {
   listSets,
   listSetSubtypes,
 } from '@/lib/api'
+import type { CardDetailOrTile } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
 import { findCardInCache, findSetInCache } from '@/lib/placeholders'
 import { PRICED_CATALOG_STALE_MS, STRUCTURAL_CATALOG_STALE_MS } from '@/lib/queryClient'
@@ -99,7 +100,10 @@ export function useSetQuery(game: Ref<string>, code: Ref<string>, enabled?: Ref<
  * and reads the current refs so a card→card navigation re-evaluates). */
 export function useCardQuery(game: Ref<string>, id: Ref<string>) {
   const qc = useQueryClient()
-  return useQuery({
+  // Typed as CardDetailOrTile, not CardDetail: the fetch answers the full detail, but the
+  // placeholder is a grid tile (a plain `Card`, none of the detail-only fields), so the
+  // data type has to admit both — see the type's doc comment.
+  return useQuery<CardDetailOrTile>({
     queryKey: ['card', game, id],
     queryFn: () => getCard(game.value, id.value),
     placeholderData: () => findCardInCache(qc, game.value, id.value),

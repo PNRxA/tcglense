@@ -2,14 +2,16 @@
 //! detail, and a card's other printings.
 
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter, QuerySelect, Select};
+use sea_orm::{
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+};
 
 use crate::entities::card;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort, build_page, load_card,
-    require_game, trim_query,
+    CardDetailResponse, CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort,
+    build_page, load_card, require_game, trim_query,
 };
 use crate::state::AppState;
 
@@ -205,7 +207,9 @@ pub(crate) async fn search_cards(
 
 /// Get card
 ///
-/// `GET /api/games/{game}/cards/{id}` -> one card's full detail.
+/// `GET /api/games/{game}/cards/{id}` -> one card's full detail: the shared `Card` shape
+/// every listing carries plus the print + collector details only this route exposes
+/// (artist, flavour text, finishes, frame, Reserved List, defense, … — issue #673).
 #[utoipa::path(
     get,
     path = "/api/games/{game}/cards/{id}",
@@ -215,17 +219,34 @@ pub(crate) async fn search_cards(
         ("id" = String, Path, description = "External card id"),
     ),
     responses(
-        (status = 200, description = "The card's full detail.", body = CardResponse),
+        (status = 200, description = "The card's full detail: every `Card` field plus the print details (artist, flavour text, finishes, frame, Reserved List, defense, ranks).", body = CardDetailResponse),
         (status = 404, description = "Unknown game or card."),
     ),
 )]
 pub async fn get_card(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
-) -> Result<Json<CardResponse>, AppError> {
+) -> Result<Json<CardDetailResponse>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
-    Ok(Json(CardResponse::from(card)))
+    // The foil-★ variants folded onto this row (`folded_onto_id`, the `m..076` partial index
+    // — ~500 rows catalog-wide): their finishes and foil-treatment tags are unioned into the
+    // response, since the star is hidden from every listing and its foil price already
+    // rides this card. The spelled-out `IS NOT NULL` keeps SQLite on that partial index
+    // (see `foil_variants::has_folded_foil_variant`). Two narrow columns, never the row.
+    let folded: Vec<(Option<String>, Option<String>)> = card::Entity::find()
+        .select_only()
+        .column(card::Column::Finishes)
+        .column(card::Column::PromoTypes)
+        .filter(card::Column::FoldedOntoId.is_not_null())
+        .filter(card::Column::FoldedOntoId.eq(card.id))
+        .order_by_asc(card::Column::Id)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(Json(
+        CardDetailResponse::from(card).with_folded_variants(folded),
+    ))
 }
 
 /// List card printings

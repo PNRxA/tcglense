@@ -62,6 +62,12 @@ const SEPARATE_FACE_IMAGE_LAYOUTS = [
   'art_series',
 ]
 const isMultiFace = computed(() => (card.value?.faces.length ?? 0) >= 2)
+// A multi-faced card's flavour text arrives as the faces' texts joined by the ingest's
+// "\n//\n" separator (api `scryfall::map`); split it back into paragraphs for display.
+const FLAVOR_FACE_SEPARATOR = '\n//\n'
+const flavorParts = computed(() =>
+  (card.value?.flavor_text ?? '').split(FLAVOR_FACE_SEPARATOR).filter((part) => part.trim()),
+)
 const hasSeparateFaceImages = computed(
   () => isMultiFace.value && SEPARATE_FACE_IMAGE_LAYOUTS.includes(card.value?.layout ?? ''),
 )
@@ -226,13 +232,25 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         Spans both rail rows on md+, so the buy links slot under the rail beside it. -->
       <div class="min-w-0 space-y-6 md:col-start-2 md:row-span-2 md:row-start-1">
         <template v-if="card">
-          <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
+          <!-- Oracle text (single-faced cards; multi-faced show text per face below).
+            The block also stands for a vanilla creature with nothing but flavour text,
+            hence the either-or gate. -->
           <div
-            v-if="!isMultiFace && card.oracle_text"
+            v-if="!isMultiFace && (card.oracle_text || card.flavor_text)"
             class="bg-card rounded-xl border p-4 shadow-sm"
           >
-            <p class="text-sm leading-relaxed whitespace-pre-line">
+            <p v-if="card.oracle_text" class="text-sm leading-relaxed whitespace-pre-line">
               <ManaSymbols :text="card.oracle_text" keywords :game="game" :card-name="card.name" />
+            </p>
+            <!-- Flavour text sits in italics beneath the rules, as it's printed (#673). The
+              gap is bound rather than overridden: `mt-3` + `mt-0` on one element resolves by
+              stylesheet order, not attribute order, so only one of them may ever be emitted. -->
+            <p
+              v-if="card.flavor_text"
+              class="text-muted-foreground text-sm italic whitespace-pre-line"
+              :class="{ 'mt-3': card.oracle_text }"
+            >
+              {{ card.flavor_text }}
             </p>
           </div>
 
@@ -270,6 +288,25 @@ const alertFinishes = computed<AlertFinish[]>(() => {
                 Loyalty {{ face.loyalty }}
               </p>
             </div>
+          </div>
+
+          <!-- Flavour text for a multi-faced card. There's no per-face flavour on the wire —
+            the faces arrive joined by "\n//\n" (the same join `oracle_text` uses), and which
+            face each part belongs to isn't recoverable when one face has none — so the parts
+            render as separate paragraphs in one card beneath the face grid, never the bare
+            "//" separator. -->
+          <div
+            v-if="isMultiFace && flavorParts.length"
+            class="bg-card rounded-xl border p-4 shadow-sm"
+          >
+            <p
+              v-for="(part, index) in flavorParts"
+              :key="index"
+              class="text-muted-foreground text-sm italic whitespace-pre-line"
+              :class="{ 'mt-3 border-t pt-3': index > 0 }"
+            >
+              {{ part }}
+            </p>
           </div>
 
           <!-- The full details list — everything the chips summarise and more. -->

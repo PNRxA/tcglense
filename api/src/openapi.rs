@@ -263,6 +263,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         // automatically from the annotated path response bodies.
         crate::catalog::Game,
         crate::handlers::shared::CardResponse,
+        crate::handlers::shared::CardDetailResponse,
         crate::handlers::shared::dto::PricesResponse,
         crate::handlers::shared::dto::CardFaceResponse,
         crate::handlers::shared::CollectionEntry,
