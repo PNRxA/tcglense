@@ -183,8 +183,11 @@ pub struct VariableConfig {
 /// weighted print **sheets** those variants draw from. Keyed in `set.booster` by its code
 /// (`play`, `collector`, `draft`, …), which is what a `contents.pack` reference names.
 ///
-/// A pack picks one variant with probability `weight / boostersTotalWeight`, then draws
-/// each of that variant's `(sheet, count)` slots from the named sheet. Membership
+/// A pack picks one variant with probability `weight / Σ weights`, then draws each of
+/// that variant's `(sheet, count)` slots from the named sheet. Upstream also states that
+/// sum as `boostersTotalWeight`; it is deliberately **not** read — the stored total is
+/// recomputed from the variants we keep, so the shares sum to one over what we hold, and
+/// a stated total that disagreed with its own list could never skew a roll. Membership
 /// resolution only needs the sheets' cards (every card a pack *can* yield); the odds are
 /// [`super::boosters`]'s, which turns this into the stored booster tables.
 #[derive(Debug, Deserialize)]
@@ -196,10 +199,6 @@ pub struct BoosterConfig {
     /// sheets, and tolerated as an explicit `null` like every other list here.
     #[serde(default, deserialize_with = "null_as_empty")]
     pub boosters: Vec<BoosterVariant>,
-    /// Upstream's Σ of the variant weights. Only ever a cross-check: the stored total is
-    /// recomputed from the variants we keep, so the shares sum to one over what we hold.
-    #[serde(default, rename = "boostersTotalWeight")]
-    pub boosters_total_weight: Option<u64>,
     #[serde(default)]
     pub sheets: HashMap<String, Sheet>,
 }
@@ -1025,7 +1024,6 @@ mod tests {
         .expect("the booster shape parses");
 
         assert_eq!(config.name.as_deref(), Some("Play Booster"));
-        assert_eq!(config.boosters_total_weight, Some(4));
         assert_eq!(config.boosters.len(), 2);
         assert_eq!(config.boosters[0].weight, 3);
         let mut first: Vec<(String, u32)> = config.boosters[0]
@@ -1066,7 +1064,6 @@ mod tests {
                 .expect("a sheets-only configuration parses");
         assert!(config.name.is_none());
         assert!(config.boosters.is_empty());
-        assert_eq!(config.boosters_total_weight, None);
         let sheet = config.sheets.get("empty").expect("the empty sheet");
         assert!(sheet.cards.is_empty());
         assert_eq!(sheet.total_weight, None);

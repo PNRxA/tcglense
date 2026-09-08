@@ -33,8 +33,8 @@ pub struct Model {
     /// MTGJSON's display name for the booster (`Play Booster`), when it states one.
     pub name: Option<String>,
     /// Σ of the stored variants' weights — the denominator a variant's `weight` is a share
-    /// of. Recomputed from the stored variants (upstream's `boostersTotalWeight` is only a
-    /// cross-check), so the shares always sum to one over what's stored.
+    /// of. Recomputed from the stored variants (upstream's `boostersTotalWeight` isn't
+    /// read), so the shares always sum to one over what's stored.
     pub total_weight: i64,
     /// JSON: the pack variants, in upstream order — see [`Variant`] / [`Model::variants`].
     pub variants: String,
