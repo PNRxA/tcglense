@@ -35,7 +35,12 @@ import {
 // compare with and how to lay the answer out:
 //
 // * **The picked deck rides the URL** (`?compare=<id>`), so a comparison is a link the owner
-//   can come back to or hand to a second tab, and the browser's back button undoes a pick.
+//   can come back to or hand to a second tab. The first pick *pushes* a history entry (so
+//   Back returns to the un-compared page), a re-pick *replaces* it (stepping through decks
+//   shouldn't stack entries — the house idiom, see CardDetailDialog), and the picker's
+//   "No comparison" item clears it. An id the list doesn't offer — a deck since deleted, or
+//   never this user's — is treated as no pick once the list has loaded, so the picker and the
+//   panel can't disagree about whether anything is being compared.
 // * **Two layouts of one response.** "By section" lists each section (matched by name) with
 //   its own added / removed / changed rows — a card moved between sections shows in both,
 //   which is what happened there. "Whole deck" is the section-agnostic fold over the deck
@@ -69,25 +74,41 @@ function idFromQuery(value: unknown): number | null {
   return id > 0 && id !== props.deckId ? id : null
 }
 
-const otherId = ref<number | null>(idFromQuery(route.query.compare))
+const requestedId = ref<number | null>(idFromQuery(route.query.compare))
 watch(
   () => route.query.compare,
   (value) => {
-    otherId.value = idFromQuery(value)
+    requestedId.value = idFromQuery(value)
   },
 )
 
-/** The Select's string model: `''` for nothing picked (the trigger shows its placeholder). */
+// The pick the panel acts on: the requested id, narrowed to one the picker can offer — but
+// only once the deck list has actually loaded. Judging it against a pending or failed fetch
+// would silently drop a perfectly valid comparison on a slow connection.
+const otherId = computed<number | null>(() => {
+  const id = requestedId.value
+  if (id == null) return null
+  if (!decksQuery.isSuccess.value) return id
+  return others.value.some((deck) => deck.id === id) ? id : null
+})
+
+/** The Select's sentinel for "nothing picked" — reka-ui refuses an empty item value, so the
+ *  clearing item carries a word instead, as `DeckPickerField`'s "No deck" does. */
+const NONE = 'none'
+
+/** The Select's string model: `''` while nothing is picked, so the trigger shows its
+ *  placeholder rather than the clearing item's label. */
 const selection = computed({
   get: () => (otherId.value == null ? '' : String(otherId.value)),
   set: (value: string) => {
     const id = /^\d+$/.test(value) ? Number(value) : null
-    otherId.value = id
-    // `replace`, not `push`: re-picking within one visit shouldn't stack history entries.
     const query = { ...route.query }
     if (id == null) delete query.compare
     else query.compare = String(id)
-    void router.replace({ query })
+    // Push when a comparison starts (Back then returns to the plain deck page); replace when
+    // it changes or clears, so re-picking within one visit doesn't stack history entries.
+    const starting = otherId.value == null && id != null
+    void (starting ? router.push({ query }) : router.replace({ query }))
   },
 })
 
@@ -135,6 +156,7 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
             <SelectValue placeholder="Pick a deck…" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem :value="NONE">No comparison</SelectItem>
             <SelectItem v-for="other in others" :key="other.id" :value="String(other.id)">
               {{ other.name }}
               <span class="text-muted-foreground tabular-nums">

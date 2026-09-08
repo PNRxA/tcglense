@@ -11,9 +11,13 @@
 //!   regular and foil copies of one printing (which are one row's two counts). Folded per row,
 //!   swapping one art for another would read as a card removed and a card added, and a foil
 //!   upgrade as a change in *what* the deck plays. So the unit here is the card **name**, the
-//!   identity `rules::fold_by_name` and the precon copy's `push_folded` both count by, and the
-//!   copies are summed across every printing and both finishes. A printing swap therefore
-//!   folds away on purpose: the deck plays the same card.
+//!   identity `analysis::fold_by_name` counts by for the bracket and the mana base (the precon
+//!   copy's `push_folded` is a *different* fold — by printing id within a section, for the
+//!   `(deck_id, card_id, section_id)` unique constraint — and would keep a printing swap
+//!   visible), and the copies are summed across every printing and both finishes. A printing
+//!   swap therefore folds away on purpose: the deck plays the same card. It is its own fold
+//!   rather than a call into `analysis::fold_by_name` because that one folds `AnalysisEntry`s
+//!   (catalog facts, copies only) and this one needs the wire `Card` and the foil split.
 //! * **Finish changes are reported separately.** A card whose copies are unchanged but whose
 //!   foil split moved is a real edit — the one a "bling the deck" pass makes — and it is
 //!   emitted as [`DeckDiffChange::Finish`] rather than either being hidden or being counted
@@ -149,7 +153,7 @@ struct Held<'a> {
 }
 
 /// Fold a slice of deck-card entries by card name, in first-seen order — the same identity
-/// `rules::fold_by_name` counts by. Rows holding no copies are skipped.
+/// `analysis::fold_by_name` counts by. Rows holding no copies are skipped.
 fn fold_by_name<'a>(
     entries: impl IntoIterator<Item = &'a DeckCardEntry>,
 ) -> Vec<(String, Held<'a>)> {

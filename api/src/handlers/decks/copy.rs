@@ -181,10 +181,7 @@ pub async fn copy_deck(
 /// mirroring the source's integers — the *order* is what a section's position means, and
 /// it is unchanged. A card whose section somehow didn't come back is dropped rather than
 /// aborting the whole copy — the same tolerance the per-card section lookup had.
-pub(crate) async fn source_sections(
-    state: &AppState,
-    deck_id: i32,
-) -> Result<Vec<NewDeckSection>, AppError> {
+async fn source_sections(state: &AppState, deck_id: i32) -> Result<Vec<NewDeckSection>, AppError> {
     let sections = DeckSection::find()
         .filter(deck_section::Column::DeckId.eq(deck_id))
         .order_by_asc(deck_section::Column::Position)

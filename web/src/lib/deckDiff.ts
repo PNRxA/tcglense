@@ -5,14 +5,21 @@ import type { DeckDiffChange, DeckDiffEntry, DeckDiffSummary } from '@/lib/api'
 // and finishes); this module only turns its numbers into the short labels the compare panel
 // prints, kept out of the component so the exact strings can be pinned.
 
+/** Each kind's rank in the order the server lists them. A `Record` keyed by the wire enum, so a
+ * fifth kind on the Rust side fails the type-check here instead of silently vanishing from the
+ * panel. */
+const DECK_DIFF_CHANGE_RANK: Record<DeckDiffChange, number> = {
+  added: 0,
+  removed: 1,
+  changed: 2,
+  finish: 3,
+}
+
 /** The kinds of change in the order the server lists them — and the order the panel groups
  * them in, so a section's rows and its legend can't disagree. */
-export const DECK_DIFF_CHANGES: readonly DeckDiffChange[] = [
-  'added',
-  'removed',
-  'changed',
-  'finish',
-]
+export const DECK_DIFF_CHANGES: readonly DeckDiffChange[] = (
+  Object.keys(DECK_DIFF_CHANGE_RANK) as DeckDiffChange[]
+).sort((a, b) => DECK_DIFF_CHANGE_RANK[a] - DECK_DIFF_CHANGE_RANK[b])
 
 /** A short heading per kind of change. */
 export const DECK_DIFF_CHANGE_LABEL: Record<DeckDiffChange, string> = {

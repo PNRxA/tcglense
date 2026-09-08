@@ -14,6 +14,7 @@ import type { Deck, DeckDiff } from '@/lib/api'
 
 const state = vi.hoisted(() => ({
   decks: [] as Deck[],
+  decksLoaded: true,
   diff: null as DeckDiff | null,
   pending: false,
   fetching: false,
@@ -27,8 +28,9 @@ vi.mock('@/composables/useDecks', async () => {
   const { computed } = await import('vue')
   return {
     useDecksQuery: () => ({
-      data: computed(() => ({ data: state.decks })),
-      isPending: computed(() => false),
+      data: computed(() => (state.decksLoaded ? { data: state.decks } : undefined)),
+      isPending: computed(() => !state.decksLoaded),
+      isSuccess: computed(() => state.decksLoaded),
     }),
     useDeckDiffQuery: (
       _game: unknown,
@@ -144,6 +146,7 @@ async function mountAt(path: string) {
 
 beforeEach(() => {
   state.decks = [deck(1, 'Krenko v1'), deck(2, 'Krenko v2'), deck(3, 'Mono blue', 40)]
+  state.decksLoaded = true
   state.diff = null
   state.pending = false
   state.fetching = false
@@ -184,6 +187,48 @@ describe('DeckCompare', () => {
     await mountAt('/decks/mtg/1?compare=1')
     expect(state.enabledRef?.value).toBe(false)
     await mountAt('/decks/mtg/1?compare=abc')
+    expect(state.enabledRef?.value).toBe(false)
+  })
+
+  it('treats an id the deck list does not offer as no pick — but only once the list has loaded', async () => {
+    // A deleted (or never-yours) deck: the picker would show its placeholder while the panel
+    // reported "couldn't compare", so the pick is dropped instead.
+    const stale = await mountAt('/decks/mtg/1?compare=99')
+    expect(state.enabledRef?.value).toBe(false)
+    expect(stale.wrapper.text()).not.toContain("Couldn't compare")
+
+    // While the list is still loading, the URL's pick is taken at its word.
+    state.decksLoaded = false
+    state.diff = diff()
+    await mountAt('/decks/mtg/1?compare=99')
+    expect(state.enabledRef?.value).toBe(true)
+  })
+
+  it('pushes history on the first pick, replaces on a re-pick, and clears via "No comparison"', async () => {
+    state.diff = diff()
+    const { wrapper, router } = await mountAt('/decks/mtg/1')
+    const picker = wrapper.find('[data-test="picker"]')
+    expect(picker.findAll('option')[0]!.text()).toBe('No comparison')
+
+    await picker.setValue('2')
+    await flushPromises()
+    expect(router.currentRoute.value.query.compare).toBe('2')
+    await picker.setValue('3')
+    await flushPromises()
+    expect(router.currentRoute.value.query.compare).toBe('3')
+
+    // One history entry for the comparison as a whole: Back lands on the plain deck page,
+    // not on the previous pick.
+    router.back()
+    await flushPromises()
+    expect(router.currentRoute.value.query.compare).toBeUndefined()
+    expect(state.enabledRef?.value).toBe(false)
+
+    await picker.setValue('2')
+    await flushPromises()
+    await picker.setValue('none')
+    await flushPromises()
+    expect(router.currentRoute.value.query.compare).toBeUndefined()
     expect(state.enabledRef?.value).toBe(false)
   })
 

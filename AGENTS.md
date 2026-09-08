@@ -377,12 +377,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   copy all write through it, so the deck cap, the transaction and the chunked insert are stated
   once; a deck-sourced clone also reads its sections through `copy::source_sections`. **The deck
   diff** (`GET …/{deck_id}/diff/{other_id}`, `decks::diff`) is a pure fold over two `DeckDetail`s
-  that **folds by card name** across printings and finishes — the `rules::fold_by_name` /
-  `precons::push_folded` identity — or a playset split across two arts reads as a removal plus an
-  addition; a finish-only change is its own kind (`finish`), never hidden and never counted as a
-  card change. Both decks are ownership-checked (either foreign is 404), maybeboards ride the
+  that **folds by card name** across printings and finishes — the `analysis::fold_by_name`
+  identity the bracket and mana base count by (not the precon copy's `push_folded`, which folds by
+  printing id within a section for the `(deck_id, card_id, section_id)` unique constraint) — or a
+  playset split across two arts reads as a removal plus an addition; a finish-only change is its
+  own kind (`finish`), never hidden and never counted as a card change. Both decks are ownership-checked (either foreign is 404), maybeboards ride the
   per-section view flagged and stay out of the deck-wide `cards`/`summary`, and the SPA's wording
-  lives in `web/src/lib/deckDiff.ts`; the panel keys its pick on `?compare=` so a comparison is a link.
+  lives in `web/src/lib/deckDiff.ts`; the panel keys its pick on `?compare=` so a comparison is a
+  link (the first pick pushes history, a re-pick replaces it, and a `No comparison` item clears it),
+  and an id the deck list doesn't offer is treated as no pick once the list has loaded.
   **Adding a deck or a precon to the collection** (`POST /api/decks/{game}/{deck_id}/collection`,
   `POST /api/decks/{game}/precons/{slug}/collection`, and someone's public deck at
   `POST /api/u/{handle}/decks/{deck_id}/collection`) is the bridge *back* to the holdings
