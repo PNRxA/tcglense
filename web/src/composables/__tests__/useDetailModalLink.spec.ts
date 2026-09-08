@@ -89,6 +89,15 @@ describe('useDetailModalLink', () => {
     expect(router.currentRoute.value.query).toEqual({ product: 'p1', openedFrom: 'product:old' })
   })
 
+  it("drops a leftover namespaced pack-opener seed — it was another product's (#682)", async () => {
+    // Same rule as the card search above, with a request attached: left in place, the product
+    // we're opening would read the seed and deal an opening nobody asked for.
+    const router = await at('/sealed/mtg?product=old&ppack=812345&pcopies=3')
+    link.open('product', 'mtg', 'p1')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ product: 'p1', openedFrom: 'product:old' })
+  })
+
   it('remembers the previous product as the origin on a product->product hop', async () => {
     // Opening a nested/parent product from inside a product modal (a "What's in the box" /
     // "Included in" row) remembers the product you were on so the modal can offer

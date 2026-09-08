@@ -179,37 +179,85 @@ pub struct VariableConfig {
     pub pack: Vec<ContentPack>,
 }
 
-/// A booster configuration: the named sheets a pack draws from (`cards` is
-/// `uuid -> weight`; we only need the uuids). `foil` is per-sheet.
+/// A booster configuration: the pack **variants** a booster rolls (`boosters`) and the
+/// weighted print **sheets** those variants draw from. Keyed in `set.booster` by its code
+/// (`play`, `collector`, `draft`, …), which is what a `contents.pack` reference names.
+///
+/// A pack picks one variant with probability `weight / Σ weights`, then draws each of
+/// that variant's `(sheet, count)` slots from the named sheet. Upstream also states that
+/// sum as `boostersTotalWeight`; it is deliberately **not** read — the stored total is
+/// recomputed from the variants we keep, so the shares sum to one over what we hold, and
+/// a stated total that disagreed with its own list could never skew a roll. Membership
+/// resolution only needs the sheets' cards (every card a pack *can* yield); the odds are
+/// [`super::boosters`]'s, which turns this into the stored booster tables.
 #[derive(Debug, Deserialize)]
 pub struct BoosterConfig {
+    /// Upstream's display name (`Play Booster`), when it states one.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The pack variants ("configurations" upstream). Absent on a config that states only
+    /// sheets, and tolerated as an explicit `null` like every other list here.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub boosters: Vec<BoosterVariant>,
     #[serde(default)]
     pub sheets: HashMap<String, Sheet>,
 }
 
+/// One pack variant: `contents` is `sheet name -> how many cards that slot draws`, and
+/// `weight` is this variant's share of the configuration's total.
 #[derive(Debug, Deserialize)]
-pub struct Sheet {
-    #[serde(default)]
-    pub foil: bool,
-    /// `uuid -> weight`; we keep only the keys (membership, not odds), so the map is
-    /// deserialized straight to its key list — the weights are skipped, and no map is
-    /// built at all: document-wide the sheets hold on the order of a million uuid
-    /// entries, and a `HashMap` of ignored values was pure table overhead on the sync
-    /// path that has to fit a 1 GB instance.
-    #[serde(default, deserialize_with = "map_keys")]
-    pub cards: Vec<Box<str>>,
+pub struct BoosterVariant {
+    /// `sheet -> count`, read as an ordered entry list (upstream states a JSON object, so
+    /// there is no order to honour — [`super::boosters`] sorts it by sheet name).
+    #[serde(default, deserialize_with = "map_entries")]
+    pub contents: Vec<(Box<str>, u32)>,
+    /// This variant's share of the configuration's total. Read through the same tolerance
+    /// as a card's weight ([`tolerant_total`]): a `null`, float or negative costs this
+    /// variant its weight (a weight-0 variant is dropped downstream), never the document.
+    #[serde(default, deserialize_with = "tolerant_weight")]
+    pub weight: u64,
 }
 
-/// Deserialize a JSON map retaining only its keys (values are skipped unread).
-fn map_keys<'de, D>(de: D) -> Result<Vec<Box<str>>, D::Error>
+/// One print sheet: the weighted card pool a slot draws from, plus the flags that say how.
+#[derive(Debug, Deserialize)]
+pub struct Sheet {
+    /// Every card on the sheet is foil (so the slot prices at the foil price).
+    #[serde(default)]
+    pub foil: bool,
+    /// Upstream balances colours across this sheet's picks. Recorded, never simulated.
+    #[serde(default, rename = "balanceColors")]
+    pub balance_colors: bool,
+    /// Draws from the sheet may repeat a card. Without it, a pack's picks from one sheet
+    /// are without replacement.
+    #[serde(default, rename = "allowDuplicates")]
+    pub allow_duplicates: bool,
+    /// The sheet is a fixed list — a slot takes its cards **in order**, not at random.
+    #[serde(default)]
+    pub fixed: bool,
+    /// The denominator a card's weight is a share of. Absent on some configurations — and
+    /// read as absent when stated as `null`, zero, negative or non-finite
+    /// ([`tolerant_total`]) — in which case the parsed weights are summed instead.
+    #[serde(default, rename = "totalWeight", deserialize_with = "tolerant_total")]
+    pub total_weight: Option<u64>,
+    /// `uuid -> weight`, read as an ordered entry list rather than a map: document-wide the
+    /// sheets hold on the order of a million entries, and a `HashMap` was pure table
+    /// overhead on a sync path that has to fit a 1 GB instance. Fixed sheets are taken in
+    /// this order, so upstream's order is preserved rather than sorted.
+    #[serde(default, deserialize_with = "map_entries")]
+    pub cards: Vec<(Box<str>, u32)>,
+}
+
+/// Deserialize a JSON map of `key -> weight` into an ordered `(key, weight)` list — no
+/// `HashMap` built at all (see [`Sheet::cards`] for why).
+fn map_entries<'de, D>(de: D) -> Result<Vec<(Box<str>, u32)>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    struct KeysVisitor;
-    impl<'de> serde::de::Visitor<'de> for KeysVisitor {
-        type Value = Vec<Box<str>>;
+    struct EntriesVisitor;
+    impl<'de> serde::de::Visitor<'de> for EntriesVisitor {
+        type Value = Vec<(Box<str>, u32)>;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a map")
+            f.write_str("a map of weights")
         }
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
         where
@@ -217,16 +265,113 @@ where
         {
             // Capped pre-allocation: the size hint is attacker-controlled input on some
             // deserializers (serde_json's reader gives none), so never trust it whole.
-            let mut keys = Vec::with_capacity(map.size_hint().unwrap_or(0).min(4096));
-            while let Some((key, serde::de::IgnoredAny)) =
-                map.next_entry::<Box<str>, serde::de::IgnoredAny>()?
-            {
-                keys.push(key);
+            let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0).min(4096));
+            while let Some((key, Weight(weight))) = map.next_entry::<Box<str>, Weight>()? {
+                entries.push((key, weight));
             }
-            Ok(keys)
+            Ok(entries)
         }
     }
-    de.deserialize_map(KeysVisitor)
+    de.deserialize_map(EntriesVisitor)
+}
+
+/// One sheet-card / slot weight, clamped into a `u32`.
+///
+/// Upstream states a small positive integer, but this is a ~600 MB third-party document
+/// parsed all-or-nothing: one weight arriving as `null`, a float, or a negative must cost
+/// that entry its weight, not cost the whole catalog its sync (the same lesson
+/// [`null_as_empty`] records). Values above `u32::MAX` saturate — a weight that large is
+/// upstream nonsense, and the stored column is a `u32` share of a `u64` total.
+struct Weight(u32);
+
+impl<'de> Deserialize<'de> for Weight {
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct WeightVisitor;
+        impl<'de> serde::de::Visitor<'de> for WeightVisitor {
+            type Value = Weight;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a weight")
+            }
+            fn visit_u64<E>(self, value: u64) -> Result<Weight, E> {
+                Ok(Weight(u32::try_from(value).unwrap_or(u32::MAX)))
+            }
+            fn visit_i64<E>(self, value: i64) -> Result<Weight, E> {
+                Ok(Weight(u32::try_from(value).unwrap_or(0)))
+            }
+            fn visit_f64<E>(self, value: f64) -> Result<Weight, E> {
+                Ok(Weight(if value.is_finite() && value > 0.0 {
+                    value.min(f64::from(u32::MAX)) as u32
+                } else {
+                    0
+                }))
+            }
+            fn visit_unit<E>(self) -> Result<Weight, E> {
+                Ok(Weight(0))
+            }
+            fn visit_none<E>(self) -> Result<Weight, E> {
+                Ok(Weight(0))
+            }
+            fn visit_some<D2>(self, de: D2) -> Result<Weight, D2::Error>
+            where
+                D2: serde::Deserializer<'de>,
+            {
+                Weight::deserialize(de)
+            }
+        }
+        de.deserialize_any(WeightVisitor)
+    }
+}
+
+/// A **total** stated by upstream — a variant's weight or a sheet's `totalWeight` — read
+/// with the same tolerance as [`Weight`]: `null`, a float, a negative or a zero must cost
+/// the field its value, not the whole catalog its sync. `None` for anything that isn't a
+/// positive number (the callers fall back: a weight-0 variant is dropped, a sheet with no
+/// total sums its weights), a float truncated to its integer part.
+fn tolerant_total<'de, D>(de: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct TotalVisitor;
+    impl<'de> serde::de::Visitor<'de> for TotalVisitor {
+        type Value = Option<u64>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a total weight")
+        }
+        fn visit_u64<E>(self, value: u64) -> Result<Option<u64>, E> {
+            Ok((value > 0).then_some(value))
+        }
+        fn visit_i64<E>(self, value: i64) -> Result<Option<u64>, E> {
+            Ok(u64::try_from(value).ok().filter(|&v| v > 0))
+        }
+        fn visit_f64<E>(self, value: f64) -> Result<Option<u64>, E> {
+            Ok((value.is_finite() && value >= 1.0).then(|| value.min(u64::MAX as f64) as u64))
+        }
+        fn visit_unit<E>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_none<E>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_some<D2>(self, de: D2) -> Result<Option<u64>, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            de.deserialize_any(TotalVisitor)
+        }
+    }
+    de.deserialize_any(TotalVisitor)
+}
+
+/// [`tolerant_total`] for a field that is a plain `u64` on the struct: anything that isn't
+/// a positive number reads as `0`.
+fn tolerant_weight<'de, D>(de: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(tolerant_total(de)?.unwrap_or(0))
 }
 
 /// A precon decklist: its three boards (each card by `uuid`, with a count + foil flag) plus
@@ -377,7 +522,8 @@ pub struct RawMembership {
 }
 
 /// Guards a runaway `sealed` recursion (a box of boxes of …). Real chains are 2–3 deep.
-const MAX_SEALED_DEPTH: usize = 8;
+/// Shared with [`super::boosters`]'s pack walk, which follows the same references.
+pub(super) const MAX_SEALED_DEPTH: usize = 8;
 
 /// One resolved composition line item: a sealed product (by TCGplayer product id) holds
 /// `quantity` of a component. A `sealed` component may link to a sub-product
@@ -598,6 +744,19 @@ impl<'a> Indexes<'a> {
         self.uuid_to_scryfall.get(uuid).copied()
     }
 
+    /// The set filed under a code, matched case-insensitively (the document keys sets
+    /// uppercase while every content reference names them lowercase). The booster
+    /// configurations [`super::boosters`] reads hang off it.
+    pub(super) fn set(&self, code: &str) -> Option<&'a SetData> {
+        self.sets.get(&code.to_lowercase()).copied()
+    }
+
+    /// Resolve a sealed product `uuid` to the product it names — the `sealed` recursion's
+    /// hop, shared with [`super::boosters`]'s pack walk.
+    pub(super) fn product(&self, uuid: &str) -> Option<&'a SealedProduct> {
+        self.product_by_uuid.get(uuid).copied()
+    }
+
     /// Resolve a sealed product `uuid` to its TCGplayer product id (the join onto our
     /// `products` table), when the product it names carries one.
     pub(super) fn product_tcg_id(&self, uuid: &str) -> Option<&str> {
@@ -686,7 +845,7 @@ impl Resolver<'_> {
         };
         let mut cards = Vec::new();
         for sheet in config.sheets.values() {
-            for uuid in &sheet.cards {
+            for (uuid, _weight) in &sheet.cards {
                 cards.push((&**uuid, sheet.foil));
             }
         }
@@ -891,6 +1050,145 @@ mod tests {
         assert!(has(&rows, "1001", "sf-alpha", "booster", false));
         assert!(has(&rows, "1001", "sf-beta", "booster", false));
         assert!(has(&rows, "1001", "sf-rare", "booster", true));
+    }
+
+    /// The booster shape the odds are read off: the variants with their weights, the
+    /// sheets with their flags and per-card weights, and upstream's totals. `contents` and
+    /// `cards` are both JSON objects, so both arrive as ordered entry lists.
+    #[test]
+    fn booster_config_parses_variants_sheets_and_weights() {
+        let config: BoosterConfig = serde_json::from_str(
+            r#"{
+                "name": "Play Booster",
+                "boosters": [
+                    { "contents": { "common": 6, "rareMythic": 1 }, "weight": 3 },
+                    { "contents": { "common": 5, "rareMythic": 1, "list": 1 }, "weight": 1 }
+                ],
+                "boostersTotalWeight": 4,
+                "sheets": {
+                    "common": { "balanceColors": true, "foil": false, "totalWeight": 101,
+                                "cards": { "u-a": 1, "u-b": 100 } },
+                    "foil": { "foil": true, "allowDuplicates": true, "totalWeight": 3600,
+                              "cards": { "u-c": 12 } },
+                    "land": { "fixed": true, "totalWeight": 1, "cards": { "u-d": 1 } }
+                }
+            }"#,
+        )
+        .expect("the booster shape parses");
+
+        assert_eq!(config.name.as_deref(), Some("Play Booster"));
+        assert_eq!(config.boosters.len(), 2);
+        assert_eq!(config.boosters[0].weight, 3);
+        let mut first: Vec<(String, u32)> = config.boosters[0]
+            .contents
+            .iter()
+            .map(|(name, count)| (name.to_string(), *count))
+            .collect();
+        first.sort();
+        assert_eq!(
+            first,
+            vec![("common".to_string(), 6), ("rareMythic".to_string(), 1)]
+        );
+
+        let common = config.sheets.get("common").expect("the common sheet");
+        assert!(common.balance_colors && !common.foil && !common.fixed);
+        assert_eq!(common.total_weight, Some(101));
+        let mut cards: Vec<(String, u32)> = common
+            .cards
+            .iter()
+            .map(|(uuid, weight)| (uuid.to_string(), *weight))
+            .collect();
+        cards.sort();
+        assert_eq!(
+            cards,
+            vec![("u-a".to_string(), 1), ("u-b".to_string(), 100)]
+        );
+        assert!(config.sheets["foil"].foil && config.sheets["foil"].allow_duplicates);
+        assert!(config.sheets["land"].fixed);
+    }
+
+    /// Every booster field stays optional: a configuration may state only sheets (no
+    /// `boosters`, no `name`, no `totalWeight`), a sheet's `cards` may be an empty object,
+    /// and a stated `null` list must read as empty rather than fail the ~600 MB document.
+    #[test]
+    fn booster_config_tolerates_missing_and_empty_shapes() {
+        let config: BoosterConfig =
+            serde_json::from_str(r#"{ "sheets": { "empty": { "cards": {} } } }"#)
+                .expect("a sheets-only configuration parses");
+        assert!(config.name.is_none());
+        assert!(config.boosters.is_empty());
+        let sheet = config.sheets.get("empty").expect("the empty sheet");
+        assert!(sheet.cards.is_empty());
+        assert_eq!(sheet.total_weight, None);
+        assert!(!sheet.foil && !sheet.fixed && !sheet.allow_duplicates && !sheet.balance_colors);
+
+        let bare: BoosterConfig = serde_json::from_str("{}").expect("an empty object parses");
+        assert!(bare.sheets.is_empty() && bare.boosters.is_empty());
+
+        let nulled: BoosterConfig =
+            serde_json::from_str(r#"{ "boosters": null }"#).expect("a stated null list parses");
+        assert!(nulled.boosters.is_empty());
+
+        // A variant with neither key still parses (no slots, weight 0 — dropped later).
+        let variant: BoosterVariant = serde_json::from_str("{}").expect("a bare variant parses");
+        assert!(variant.contents.is_empty());
+        assert_eq!(variant.weight, 0);
+    }
+
+    /// A weight is clamped rather than fatal: the document is third-party and parsed
+    /// all-or-nothing, so one entry stated as `null`, a float, or a negative costs that
+    /// entry its weight — not the whole catalog its sync.
+    #[test]
+    fn sheet_weights_are_clamped_not_fatal() {
+        let sheet: Sheet = serde_json::from_str(
+            r#"{ "cards": { "u-null": null, "u-neg": -5, "u-float": 2.9, "u-huge": 5000000000 } }"#,
+        )
+        .expect("odd weights must not fail the document");
+        let weights: HashMap<String, u32> = sheet
+            .cards
+            .iter()
+            .map(|(uuid, weight)| (uuid.to_string(), *weight))
+            .collect();
+        assert_eq!(weights["u-null"], 0);
+        assert_eq!(weights["u-neg"], 0);
+        assert_eq!(weights["u-float"], 2);
+        assert_eq!(weights["u-huge"], u32::MAX, "an absurd weight saturates");
+    }
+
+    /// The same tolerance for the two totals beside the card weights: a variant's `weight`
+    /// and a sheet's `totalWeight` were the only booster numbers still parsed as strict
+    /// integers, so one upstream `null` or float there would have failed the whole document
+    /// — and every pass that shares its parse.
+    #[test]
+    fn variant_and_sheet_totals_are_tolerant_not_fatal() {
+        let config: BoosterConfig = serde_json::from_str(
+            r#"{
+                "boosters": [
+                    { "contents": { "a": 1 }, "weight": null },
+                    { "contents": { "a": 1 }, "weight": 3.0 },
+                    { "contents": { "a": 1 }, "weight": -2 },
+                    { "contents": { "a": 1 }, "weight": 7 }
+                ],
+                "sheets": {
+                    "f": { "cards": { "u": 1 }, "totalWeight": 3600.0 },
+                    "n": { "cards": { "u": 1 }, "totalWeight": null },
+                    "z": { "cards": { "u": 1 }, "totalWeight": 0 },
+                    "neg": { "cards": { "u": 1 }, "totalWeight": -4 },
+                    "ok": { "cards": { "u": 1 }, "totalWeight": 12 }
+                }
+            }"#,
+        )
+        .expect("odd totals must not fail the document");
+        let weights: Vec<u64> = config.boosters.iter().map(|v| v.weight).collect();
+        assert_eq!(weights, vec![0, 3, 0, 7]);
+        assert_eq!(config.sheets["f"].total_weight, Some(3600));
+        assert_eq!(config.sheets["n"].total_weight, None);
+        assert_eq!(
+            config.sheets["z"].total_weight, None,
+            "a zero total is no total"
+        );
+        assert_eq!(config.sheets["neg"].total_weight, None);
+        assert_eq!(config.sheets["ok"].total_weight, Some(12));
     }
 
     #[test]

@@ -7,13 +7,15 @@ import ProductContents from '@/components/products/ProductContents.vue'
 import ProductContainers from '@/components/products/ProductContainers.vue'
 import ProductCards from '@/components/products/ProductCards.vue'
 import ProductOverview from '@/components/products/ProductOverview.vue'
+import ProductBoosterValue from '@/components/products/ProductBoosterValue.vue'
+import PackOpener from '@/components/products/PackOpener.vue'
 import ProductWishlistControls from '@/components/products/ProductWishlistControls.vue'
 import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import PriceStatGrid from '@/components/shared/PriceStatGrid.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery } from '@/composables/useProducts'
-import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
+import type { PackOpenerKeys, ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices, type AlertFinish } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
@@ -35,10 +37,14 @@ import { formatReleaseLabel } from '@/lib/releaseDate'
 const props = defineProps<{
   game: string
   id: string
-  // Forwarded to the contained-cards list, the one part of this body with URL-backed state of
-  // its own: the modal renders over a route that already owns `?q=`/`?sort=` and so must pass
-  // namespaced keys, while the page leaves this unset and keeps the plain ones.
+  // Forwarded to the contained-cards list, one of the two parts of this body with URL-backed
+  // state of its own: the modal renders over a route that already owns `?q=`/`?sort=` and so
+  // must pass namespaced keys, while the page leaves this unset and keeps the plain ones.
   searchKeys?: ProductCardsSearchKeys
+  // The other one: the pack opener's seed + copies (issue #682), namespaced by the modal for
+  // the same reason — and there the stakes are higher than a stale search box, since a seed
+  // left in the browse URL makes the next product opened deal an opening nobody asked for.
+  openerKeys?: PackOpenerKeys
 }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -218,6 +224,12 @@ function openComponent(name: string) {
           product itself is still loading. -->
         <ProductOverview :game="game" :id="id" @jump="jumpTo" />
 
+        <!-- What an average copy is worth at today's prices, off the product's booster
+          sheets (issue #682). Mounts off the route id and self-hides for a product with
+          no sheets to open — a precon deck, anything MTGJSON doesn't describe. `product`
+          is only for the "vs the current price" line, so the panel never waits on it. -->
+        <ProductBoosterValue :game="game" :id="id" :product="product" />
+
         <!-- What's in the box: the structural composition (nested packs/boxes linked to their
           own pages, decks, promos, physical extras). Mounts off the route id and self-hides
           when the product has no ingested composition. An unlinked sub-product row opens its
@@ -245,6 +257,12 @@ function openComponent(name: string) {
           :game="game"
           single-series
         />
+
+        <!-- The other half of #682: one seeded roll of the dice against the same sheets the
+          expectation above is computed from, mirrored into `?pack=`/`?copies=` so a run can
+          be shared and replayed. Reads the same ['product-ev', …] key as the panel above to
+          decide whether there is anything to open, so it costs no extra fetch. -->
+        <PackOpener :game="game" :id="id" :product="product" :keys="openerKeys" />
 
         <!-- The cards this product contains / can be pulled from — the reverse of the
           card page's "Sealed products" section, guaranteed cards first, then this booster

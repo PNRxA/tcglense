@@ -19,6 +19,7 @@ pub(crate) mod lookup;
 pub(crate) mod pagination;
 pub(crate) mod pricing;
 pub(crate) mod product_holdings;
+pub(crate) mod rng;
 pub(crate) mod search;
 pub(crate) mod sort;
 pub(crate) mod type_line;

@@ -104,6 +104,8 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::product_prices,
         crate::handlers::catalog::product_contents,
         crate::handlers::catalog::product_containers,
+        crate::handlers::catalog::product_ev,
+        crate::handlers::catalog::open_product,
         // --- Preconstructed decks ---
         crate::handlers::precons::list_precons,
         crate::handlers::precons::list_precon_groups,
