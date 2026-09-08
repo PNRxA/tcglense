@@ -11,11 +11,14 @@
 //!   read off the cards. Legality asks "may you play this"; the bracket asks "who should
 //!   you play it against", which is why it is a separate read with its own vocabulary.
 //! * **Tokens** ([`tokens`]) — the tokens and emblems the deck's cards make, which is what a
-//!   player has to bring to a game *besides* the deck. The only one of these that consults
-//!   the catalog again rather than folding what the deck already loaded.
+//!   player has to bring to a game *besides* the deck. Consults the catalog again rather
+//!   than folding what the deck already loaded.
 //! * **Mana base** ([`mana`]) — the colour pips the deck's spells ask for against the
 //!   sources its library holds, judged by Frank Karsten's source counts, so "do I have
 //!   enough blue for `UU` on turn two" is answered rather than guessed.
+//! * **Pricing** ([`pricing`]) — where the money is: every row priced as held, the cheapest
+//!   printing of its card at the row's own finish split, and what swapping would save. The
+//!   other read that goes back to the catalog (for the sibling printings).
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -58,6 +61,7 @@ pub(crate) mod formats;
 pub(crate) mod goldfish;
 pub(crate) mod legality;
 pub(crate) mod mana;
+pub(crate) mod pricing;
 pub(crate) mod read;
 pub(crate) mod rules;
 pub(crate) mod stats;
@@ -66,8 +70,8 @@ pub(crate) mod tokens;
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
     __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
-    __path_deck_stats, __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_mana,
-    deck_stats, deck_tokens,
+    __path_deck_pricing, __path_deck_stats, __path_deck_tokens, deck_bracket, deck_goldfish,
+    deck_legality, deck_mana, deck_pricing, deck_stats, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -76,6 +80,7 @@ pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
 pub(crate) use mana::{DeckManaBase, analyse_mana};
+pub(crate) use pricing::{DeckPricing, analyse_pricing};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
 pub(crate) use tokens::{DeckTokens, analyse_tokens};
 

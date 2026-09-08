@@ -216,6 +216,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::deck_tokens,
         crate::handlers::decks::deck_mana,
         crate::handlers::decks::deck_goldfish,
+        crate::handlers::decks::deck_pricing,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
         crate::handlers::tools::life::list_sessions,
         crate::handlers::tools::life::create_session,
@@ -249,6 +250,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_deck_tokens,
         crate::handlers::sharing::public_deck_mana,
         crate::handlers::sharing::public_deck_goldfish,
+        crate::handlers::sharing::public_deck_pricing,
         // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
         crate::handlers::sharing::public_wishlist_list,
         crate::handlers::sharing::public_wishlist_summary,

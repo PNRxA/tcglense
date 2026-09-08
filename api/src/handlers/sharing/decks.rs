@@ -20,10 +20,10 @@ use crate::entities::prelude::Deck;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
-    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckManaBase, DeckResponse,
-    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
-    analyse_legality, analyse_mana, analyse_stats, analyse_tokens, deck_detail, deck_headers,
-    load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckManaBase, DeckPricing,
+    DeckResponse, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
+    analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing, analyse_stats,
+    analyse_tokens, deck_detail, deck_headers, load_analysis, load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -305,6 +305,38 @@ pub async fn public_deck_mana(
     let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
     let input = load_analysis(&state, deck.id).await?;
     Ok(Json(analyse_mana(deck.format.as_deref(), &input)))
+}
+
+/// Public deck pricing breakdown
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/pricing` -> where a public deck's value is — every
+/// row priced as held with its cheapest printing and saving, plus the totals — identical to
+/// what its owner sees (issue #672). `404` when the handle is unknown or the deck is
+/// private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/pricing",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The deck's rows priced as held, most expensive first, each with its cheapest printing and saving, plus the totals.", body = DeckPricing),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_pricing(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckPricing>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
+    // The deck row's own game, as the token mirror reads it — this surface addresses a deck
+    // by handle and id alone.
+    Ok(Json(
+        analyse_pricing(&state, &deck.game, &input, &models).await?,
+    ))
 }
 
 /// Goldfish a public deck

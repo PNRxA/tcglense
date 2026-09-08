@@ -12,12 +12,14 @@ import {
   getDeckGoldfish,
   getDeckLegality,
   getDeckMana,
+  getDeckPricing,
   getDeckStats,
   getDeckTokens,
   getPublicDeckBracket,
   getPublicDeckGoldfish,
   getPublicDeckLegality,
   getPublicDeckMana,
+  getPublicDeckPricing,
   getPublicDeckStats,
   getPublicDeckTokens,
   type DeckStatsParams,
@@ -29,6 +31,7 @@ import type {
   DeckBracketEstimate,
   DeckLegality,
   DeckManaBase,
+  DeckPricing,
   DeckTokens,
   GoldfishHand,
 } from '@/lib/api'
@@ -105,6 +108,21 @@ export function useDeckTokensQuery(game: Ref<string>, deckId: Ref<number>, enabl
     placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckTokens>(options)
+}
+
+/** Where a deck's value is: every row priced, its cheapest printing, and the totals. */
+export function useDeckPricingQuery(
+  game: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  const options = {
+    queryKey: ['deck-pricing', game, deckId],
+    queryFn: (token: string) => getDeckPricing(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckPricing>(options)
 }
 
 /** A deck's mana base: pips demanded against sources present, per colour. */
@@ -197,6 +215,21 @@ export function usePublicDeckTokensQuery(
   })
 }
 
+/** Where a public deck's value is — the same breakdown its owner sees. */
+export function usePublicDeckPricingQuery(
+  handle: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckPricing, ApiError>({
+    queryKey: ['public-deck-pricing', handle, deckId],
+    queryFn: () => getPublicDeckPricing(handle.value, deckId.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** A public deck's mana base. */
 export function usePublicDeckManaQuery(
   handle: Ref<string>,
@@ -240,8 +273,9 @@ export function usePublicDeckGoldfishQuery(
  * The goldfish goes too: its cards come from the library, so a card added or removed makes
  * every previously dealt hand for that deck a hand of a deck that no longer exists. So does
  * the bracket: adding one Game Changer is exactly the edit that moves it — and so do the
- * tokens, since the card just added may be the only one that made one, and the mana base,
- * since a land swapped is exactly the edit that changes a source count.
+ * tokens, since the card just added may be the only one that made one, the mana base,
+ * since a land swapped is exactly the edit that changes a source count — and the pricing,
+ * since a printing swap is precisely the edit that changes what a row costs.
  */
 export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: number) {
   const keys =
@@ -253,6 +287,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-tokens', game],
           ['deck-mana', game],
           ['deck-goldfish', game],
+          ['deck-pricing', game],
         ]
       : [
           ['deck-stats', game, deckId],
@@ -261,6 +296,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-tokens', game, deckId],
           ['deck-mana', game, deckId],
           ['deck-goldfish', game, deckId],
+          ['deck-pricing', game, deckId],
         ]
   for (const queryKey of keys) qc.invalidateQueries({ queryKey })
 }
