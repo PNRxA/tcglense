@@ -3,6 +3,7 @@ import {
   BookCopy,
   BookOpen,
   Boxes,
+  CalendarDays,
   Code,
   Compass,
   Heart,
@@ -14,6 +15,7 @@ import {
 } from '@lucide/vue'
 import type { Game } from '@/lib/api'
 import { preconsPath } from '@/lib/precons'
+import { releasesPath } from '@/lib/releases'
 import { toolPath, toolsFor, toolsPath } from '@/lib/tools'
 
 /**
@@ -122,6 +124,16 @@ export const NAV: readonly NavRoot[] = [
             icon: Boxes,
             landing: '/precons',
             gameLinks: (game) => [{ label: game.name, to: preconsPath(game.id) }],
+          },
+          {
+            id: 'releases',
+            // Catalog too: a release date is published game data, and the calendar is the
+            // page behind the release heads-ups — the account-scoped opt-in stays in the
+            // alert settings, reached from the page, not from here.
+            label: 'Release calendar',
+            icon: CalendarDays,
+            landing: '/releases',
+            gameLinks: (game) => [{ label: game.name, to: releasesPath(game.id) }],
           },
           {
             id: 'keywords',

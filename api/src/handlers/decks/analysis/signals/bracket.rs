@@ -7,192 +7,22 @@
 //! is the Game Changers list, which *is* curated — by Wizards, and shipped on the card row
 //! as Scryfall's `game_changer` boolean, so it is read rather than reproduced.
 //!
-//! The stance is the parent module's: **a false positive is worse than a miss.** A category
+//! The stance is the bracket module's: **a false positive is worse than a miss.** A category
 //! here can push a deck's estimate up a bracket, so every predicate below is written to
 //! decline when it isn't sure, and the estimate hands the matched cards back so a player can
 //! see exactly what was counted rather than being told a number to trust.
+//!
+//! The clause grammar these predicates scan — [`sentences`], the land vocabulary, the
+//! table-wide / self-scoped / targeted tests and the quantifier scan — lives in the parent
+//! [`super`] module, shared with the deck-role predicates in [`super::roles`]: both read the
+//! same oracle text for the same reason, and "does this clause say X" must mean one thing.
 
 use super::super::CardFacts;
-use super::super::rules::{ability_lines, has_word};
-
-/// Land words a mass-denial effect can name — the type itself plus the five basic land
-/// types, so "Destroy all Islands" reads as land denial the same way "Destroy all lands"
-/// does.
-const LAND_WORDS: &[&str] = &[
-    "land",
-    "lands",
-    "plains",
-    "island",
-    "islands",
-    "swamp",
-    "swamps",
-    "mountain",
-    "mountains",
-    "forest",
-    "forests",
-];
-
-/// The plural half of [`LAND_WORDS`]. The untap-denial branch needs it: a card that stops
-/// *one* land untapping is describing itself, while one that stops **lands** untapping is
-/// Winter Orb. (`plains` is in both lists — it is its own plural.)
-const PLURAL_LAND_WORDS: &[&str] = &[
-    "lands",
-    "plains",
-    "islands",
-    "swamps",
-    "mountains",
-    "forests",
-];
-
-/// Verbs that remove a permanent from the battlefield en masse. Deliberately *not*
-/// "search", "put", or "play": those are how a deck ramps, and every land-fetch effect in
-/// the game would otherwise read as land destruction.
-const MASS_VERBS: &[&str] = &[
-    "destroy",
-    "destroys",
-    "exile",
-    "exiles",
-    "sacrifice",
-    "sacrifices",
-    "return",
-    "returns",
-];
-
-/// Words that may sit between a mass quantifier and the noun it reaches, so
-/// "all artifacts, creatures, and lands" (Jokulhaups) still finds its land while
-/// "all creatures" stops at the first noun that isn't one. Permanent types are in the list
-/// because a wrath that also hits lands spells them out; "nonland" deliberately is **not**,
-/// so "destroy all nonland permanents" stops dead.
-const TYPE_LIST_WORDS: &[&str] = &[
-    "and",
-    "or",
-    "other",
-    "the",
-    "basic",
-    "nonbasic",
-    "non-basic",
-    "snow",
-    "legendary",
-    "tapped",
-    "untapped",
-    "artifact",
-    "artifacts",
-    "creature",
-    "creatures",
-    "enchantment",
-    "enchantments",
-    "planeswalker",
-    "planeswalkers",
-    "permanent",
-    "permanents",
-    "battle",
-    "battles",
-];
-
-/// How far past a quantifier the scan looks for the noun it governs. Long enough for the
-/// longest printed type list, short enough that "all creatures" can't reach a "land" three
-/// clauses later in the same sentence.
-const QUANTIFIER_SCAN_WORDS: usize = 8;
-
-/// How far into a "search your library …" clause the scan reads when the sentence never
-/// says "card" — bounded so a long sentence can't drag an unrelated land word into the
-/// descriptor.
-const SEARCH_SCAN_CHARS: usize = 80;
-
-/// Rules text as lowercased **clauses**, reminder text stripped: split on sentence stops
-/// **and on the colon that separates an activation cost from its effect**.
-///
-/// Both splits are load-bearing, and the colon is the subtler one. `{T}, Sacrifice a Forest:
-/// Untap all lands you control.` is a single sentence whose *cost* supplies a mass verb and
-/// whose *effect* supplies "all … lands"; read whole, it is Armageddon, and read as two
-/// clauses it is the mana creature it actually is. Every predicate below scans a clause, so
-/// a cost can never lend its verb to an effect that didn't have one.
-fn sentences(card: &CardFacts) -> Vec<String> {
-    ability_lines(card)
-        .iter()
-        .flat_map(|line| {
-            line.split(['.', ':'])
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn names_a_land(text: &str) -> bool {
-    LAND_WORDS.iter().any(|word| has_word(text, word))
-}
-
-fn names_lands(text: &str) -> bool {
-    PLURAL_LAND_WORDS.iter().any(|word| has_word(text, word))
-}
-
-/// Whether the clause puts a table-wide subject in front of its verb — "each player
-/// sacrifices four lands", "…during their **controllers'** untap steps". The symmetric
-/// spellings only; a clause about *one* player is targeted removal, not mass denial.
-fn addresses_everyone(sentence: &str) -> bool {
-    has_word(sentence, "each player")
-        || has_word(sentence, "each opponent")
-        || has_word(sentence, "players")
-        || has_word(sentence, "controllers")
-}
-
-/// Whether the clause is about the caster's **own** permanents. The Amonkhet "Last …" cycle
-/// is the reason this exists: "Lands you control don't untap during your next untap step" is
-/// a *drawback on a wrath*, and reads word-for-word like Winter Orb to anything that only
-/// asks whether "lands" and "don't untap" are both present.
-fn is_self_scoped(sentence: &str) -> bool {
-    sentence.contains("you control") || sentence.contains("you own")
-}
-
-/// Whether the clause names a target. A targeted effect is by definition not table-wide, so
-/// "Up to three target lands don't untap…" and "Target player can't play lands this turn"
-/// are tempo cards rather than the lockdown they otherwise pattern-match.
-fn is_targeted(sentence: &str) -> bool {
-    has_word(sentence, "target")
-}
-
-/// Whether the clause denies the **whole table** something: it addresses everyone, and it
-/// neither targets nor confines itself to the caster's own side. Every "nobody gets to use
-/// their lands" branch gates on this, because those branches read a *restriction* rather
-/// than a removal, and a restriction on yourself is a cost you paid.
-fn denies_the_table(sentence: &str) -> bool {
-    addresses_everyone(sentence) && !is_targeted(sentence) && !is_self_scoped(sentence)
-}
-
-/// Whether a mass quantifier in this sentence governs a **land**: `all` (or `every`)
-/// followed, within a bounded run of type-list words, by a land word.
-///
-/// This is the whole difference between Armageddon and Wrath of God, both of which are
-/// "destroy all …" — so the scan stops at the first word that isn't part of a type list
-/// rather than looking anywhere in the sentence.
-fn mass_quantified_land(sentence: &str) -> bool {
-    for quantifier in ["all ", "every "] {
-        let mut from = 0usize;
-        while let Some(offset) = sentence[from..].find(quantifier) {
-            let start = from + offset;
-            let starts_a_word =
-                start == 0 || !sentence.as_bytes()[start - 1].is_ascii_alphanumeric();
-            if starts_a_word {
-                for word in sentence[start + quantifier.len()..]
-                    .split_whitespace()
-                    .take(QUANTIFIER_SCAN_WORDS)
-                {
-                    let word = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
-                    if LAND_WORDS.contains(&word) {
-                        return true;
-                    }
-                    if !TYPE_LIST_WORDS.contains(&word) {
-                        break;
-                    }
-                }
-            }
-            from = start + 1;
-        }
-    }
-    false
-}
+use super::super::rules::has_word;
+use super::{
+    MASS_VERBS, addresses_everyone, denies_the_table, is_self_scoped, mass_quantified_land,
+    names_a_land, names_lands, search_descriptor, sentences,
+};
 
 /// Whether the card denies everyone their lands: destroying, bouncing, or sacrificing them
 /// as a group, or stopping them untapping at all.
@@ -203,7 +33,7 @@ fn mass_quantified_land(sentence: &str) -> bool {
 /// ramp, and are excluded by name rather than by hoping the verb list misses them
 /// (Splendid Reclamation is "Return all land cards from your graveyard …", which is the
 /// exact shape of Sunder's "Return all lands to their owners' hands").
-pub(super) fn is_mass_land_denial(card: &CardFacts) -> bool {
+pub(crate) fn is_mass_land_denial(card: &CardFacts) -> bool {
     sentences(card).iter().any(|sentence| {
         if !names_a_land(sentence) {
             return false;
@@ -246,7 +76,7 @@ pub(super) fn is_mass_land_denial(card: &CardFacts) -> bool {
 /// Both the taking verb and the phrase are required, so a card that merely *cares* about
 /// turns ("during each opponent's turn …") is left alone. Matched as a substring rather
 /// than a word so "take two extra turns after this one" counts too.
-pub(super) fn is_extra_turn(card: &CardFacts) -> bool {
+pub(crate) fn is_extra_turn(card: &CardFacts) -> bool {
     sentences(card).iter().any(|sentence| {
         sentence.contains("extra turn")
             && (has_word(sentence, "take") || has_word(sentence, "takes"))
@@ -259,28 +89,11 @@ pub(super) fn is_extra_turn(card: &CardFacts) -> bool {
 /// guidance is about is how reliably a deck finds its *best* card. The exclusion reads the
 /// search's own descriptor ("search your library for a **basic land** card") rather than
 /// the whole sentence, so "search your library for a creature card, then put a land …"
-/// still counts.
-pub(super) fn is_tutor(card: &CardFacts) -> bool {
+/// still counts. The descriptor scan itself is [`search_descriptor`], shared with the ramp
+/// role, which reads the same clause for the opposite answer.
+pub(crate) fn is_tutor(card: &CardFacts) -> bool {
     sentences(card).iter().any(|sentence| {
-        let Some(index) = sentence.find("search your library") else {
-            return false;
-        };
-        // Bounded by chars, not bytes — oracle text carries em dashes and accents, and a
-        // byte slice through one would panic.
-        let scanned: String = sentence[index..].chars().take(SEARCH_SCAN_CHARS).collect();
-        // "If you search your library this way, shuffle" is a back-reference to a search
-        // that already happened, not a second one — and it names nothing, so a descriptor
-        // scan finds no land in it and would call every land-fetcher a tutor. A real search
-        // says what it is *for*.
-        let Some(target) = scanned.find(" for ") else {
-            return false;
-        };
-        let clause = &scanned[target..];
-        let descriptor = match clause.find(" card") {
-            Some(end) => &clause[..end + " card".len()],
-            None => clause,
-        };
-        !names_a_land(descriptor)
+        search_descriptor(sentence).is_some_and(|descriptor| !names_a_land(&descriptor))
     })
 }
 
@@ -290,7 +103,7 @@ pub(super) fn is_tutor(card: &CardFacts) -> bool {
 /// *by the format's rules committee* and published on the card, so reproducing it here
 /// would be a second copy that goes stale. A row with no value is `false` — "we have no
 /// data" is not "this is a Game Changer".
-pub(super) fn is_game_changer(card: &CardFacts) -> bool {
+pub(crate) fn is_game_changer(card: &CardFacts) -> bool {
     card.game_changer.unwrap_or(false)
 }
 

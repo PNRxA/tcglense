@@ -13,9 +13,10 @@ use crate::state::AppState;
 
 use super::super::load_deck;
 use super::{
-    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckManaBase, DeckTokens, GoldfishHand,
-    GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana,
-    analyse_stats, analyse_tokens, load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckManaBase, DeckPricing, DeckRoles,
+    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
+    analyse_legality, analyse_mana, analyse_pricing, analyse_roles, analyse_stats, analyse_tokens,
+    load_analysis, load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -123,6 +124,39 @@ pub async fn deck_bracket(
     }))
 }
 
+/// Card roles
+///
+/// `GET /api/decks/{game}/{deck_id}/roles` -> how many pieces of ramp, card draw, removal,
+/// board wipes, counterspells, tutors, recursion and protection the deck holds, read off each
+/// card's rules text over the deck proper (command zone in, maybeboards out), with the
+/// counted cards per role and a per-printing map for filtering a list. Every role is always
+/// reported, and a card may fill several. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/roles",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The deck's role counts, the cards behind each, and which roles each printing fills.", body = DeckRoles),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_roles(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckRoles>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_roles(&input)))
+}
+
 /// Tokens the deck makes
 ///
 /// `GET /api/decks/{game}/{deck_id}/tokens` -> the tokens and emblems the deck's cards make
@@ -224,4 +258,38 @@ pub async fn deck_goldfish(
     let deck = load_deck(&state, user.id, &game, deck_id).await?;
     let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
     Ok(Json(analyse_goldfish(&input, &models, &params)?))
+}
+
+/// Deck pricing breakdown
+///
+/// `GET /api/decks/{game}/{deck_id}/pricing` -> where the deck's value is (issue #672):
+/// every row of the deck proper priced as held, most expensive first, each with the
+/// cheapest priced printing of its card **at the row's own finish split** (what the printing
+/// swap would land on) and the saving; plus the deck's total (identical to the detail's
+/// `summary.total_value_usd`), the total after every known saving, and the saving itself.
+/// `null` is "unpriced", never `$0.00`. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/pricing",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "The deck's rows priced as held, most expensive first, each with its cheapest printing and saving, plus the totals.", body = DeckPricing),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_pricing(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckPricing>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let (input, models) = load_analysis_with_cards(&state, deck.id).await?;
+    Ok(Json(analyse_pricing(&state, &game, &input, &models).await?))
 }

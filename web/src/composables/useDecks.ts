@@ -1,5 +1,5 @@
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
-import type { MaybeRefOrGetter, Ref } from 'vue'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
+import { ref, type MaybeRefOrGetter, type Ref } from 'vue'
 import {
   addDeckToCollection,
   addPublicDeckToCollection,
@@ -42,12 +42,13 @@ import type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
-  NeededCard,
+  NeededCards,
   UpdateDeckRequest,
 } from '@/lib/api'
 import { invalidateDeckAnalysis } from '@/composables/useDeckAnalysis'
 import { invalidateCollectionData } from '@/composables/useCollection'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
+import { useAuthStore } from '@/stores/auth'
 
 // ---------- Deck query + mutation composables (issue #363) ----------
 //
@@ -74,23 +75,27 @@ export function useDecksQuery(game: Ref<string>, enabled?: MaybeRefOrGetter<bool
   return useAuthedQuery<{ data: Deck[] }>(options)
 }
 
-/** Cards the caller's decks collectively need beyond their collection (issue #499). `mode`
- * is a ref inside the key, so flipping between "any printing" and "exact printing" refetches. */
+/** Cards the caller's decks collectively need beyond their collection (issue #499), or —
+ * with a `deckId` — what one deck still needs to be finished and what that costs (issue
+ * #675). `mode` and `deckId` are refs inside the key, so flipping between "any printing"
+ * and "exact printing", or between one deck and all of them, refetches; the family still
+ * shares the `['deck-needed', game]` prefix every invalidation targets. */
 export function useNeededCardsQuery(
   game: Ref<string>,
   mode: Ref<NeedMode>,
-  enabled?: Ref<boolean>,
+  deckId: Ref<number | null> = ref(null),
+  enabled?: MaybeRefOrGetter<boolean>,
 ) {
   const options = {
-    queryKey: ['deck-needed', game, mode],
-    queryFn: (token: string) => getNeededCards(token, game.value, mode.value),
+    queryKey: ['deck-needed', game, mode, deckId],
+    queryFn: (token: string) => getNeededCards(token, game.value, mode.value, deckId.value),
     enabled,
     // Derived from both deck contents AND collection supply. Deck edits invalidate it
     // (via invalidateDeck); collection edits happen on other pages, so revalidate on every
     // mount rather than couple the shared collection engine to this decks-only view.
     staleTime: 0,
   }
-  return useAuthedQuery<{ data: NeededCard[] }>(options)
+  return useAuthedQuery<NeededCards>(options)
 }
 
 /** The caller's decks containing a card — any printing of it — for the card page's
@@ -273,6 +278,22 @@ export interface ChangeDeckCardPrintingVars {
   id: string
   newCardId: string
   sectionId: number
+}
+/** One row of a batched printing swap: the printing held, the section it sits in, and the
+ * printing to hold instead. */
+export interface PrintingSwap {
+  id: string
+  sectionId: number
+  newCardId: string
+}
+export interface ChangeDeckCardPrintingsVars {
+  game: string
+  deckId: number
+  swaps: PrintingSwap[]
+}
+/** What a batched swap reports back: how many rows were swapped before it stopped. */
+export interface PrintingSwapsResult {
+  swapped: number
 }
 
 // ----- Deck mutations -----
@@ -530,4 +551,41 @@ export function useChangeDeckCardPrintingMutation() {
     ) => invalidateDeck(qc, vars.game, vars.deckId),
   }
   return useAuthedMutation<CollectionQuantities, ChangeDeckCardPrintingVars>(options)
+}
+
+/** Swap many rows to other printings in one go — the pricing panel's "swap all" (issue
+ * #672). Deliberately the SAME per-row write as `useChangeDeckCardPrintingMutation`, run
+ * sequentially (the server serialises every card write of a deck through its deck row
+ * anyway), rather than a new bulk endpoint: one write path, one "same gameplay card" check,
+ * one place where counts merge. The deck is invalidated ONCE when the batch settles instead
+ * of once per row, so a 60-row swap doesn't refetch the deck 60 times. A row that fails
+ * stops the batch — every row before it is already committed and stays — and the error
+ * carries on to the caller.
+ *
+ * NOT built on `useAuthedMutation`: that wraps the whole `mutationFn` in one `authFetch`,
+ * whose 401 retry re-runs the function from the top. Safe for a single request (a 401 means
+ * it was rejected, not applied), wrong for a loop — a token expiring at row k would replay
+ * rows 0..k-1, which are already swapped away and now 404 as "card not in that section".
+ * So the auth boundary sits INSIDE the loop, per row: a rejected row is the only row
+ * retried, and a committed one is never re-sent (the life counter's no-retry stance, kept
+ * for the same reason). */
+export function useChangeDeckCardPrintingsMutation() {
+  const qc = useQueryClient()
+  const auth = useAuthStore()
+  return useMutation<PrintingSwapsResult, ApiError, ChangeDeckCardPrintingsVars>({
+    mutationFn: async (vars) => {
+      let swapped = 0
+      for (const swap of vars.swaps) {
+        await auth.authFetch((token) =>
+          changeDeckCardPrinting(token, vars.game, vars.deckId, swap.id, {
+            new_card_id: swap.newCardId,
+            section_id: swap.sectionId,
+          }),
+        )
+        swapped += 1
+      }
+      return { swapped }
+    },
+    onSettled: (_d, _e, vars) => invalidateDeck(qc, vars.game, vars.deckId),
+  })
 }

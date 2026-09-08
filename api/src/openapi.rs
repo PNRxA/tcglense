@@ -96,6 +96,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::card_prints,
         crate::handlers::catalog::card_rulings,
         crate::handlers::catalog::card_art_tags,
+        crate::handlers::catalog::list_releases,
         // --- Sealed products ---
         crate::handlers::catalog::list_products,
         crate::handlers::catalog::product_facets,
@@ -113,6 +114,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::precons::precon_bracket,
         crate::handlers::precons::precon_tokens,
         crate::handlers::precons::precon_mana,
+        crate::handlers::precons::precon_roles,
         crate::handlers::precons::precon_goldfish,
         crate::handlers::precons::copy_precon_deck,
         crate::handlers::precons::add_precon_to_collection,
@@ -215,7 +217,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::deck_bracket,
         crate::handlers::decks::deck_tokens,
         crate::handlers::decks::deck_mana,
+        crate::handlers::decks::deck_roles,
         crate::handlers::decks::deck_goldfish,
+        crate::handlers::decks::deck_pricing,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
         crate::handlers::tools::life::list_sessions,
         crate::handlers::tools::life::create_session,
@@ -248,7 +252,9 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_deck_bracket,
         crate::handlers::sharing::public_deck_tokens,
         crate::handlers::sharing::public_deck_mana,
+        crate::handlers::sharing::public_deck_roles,
         crate::handlers::sharing::public_deck_goldfish,
+        crate::handlers::sharing::public_deck_pricing,
         // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
         crate::handlers::sharing::public_wishlist_list,
         crate::handlers::sharing::public_wishlist_summary,

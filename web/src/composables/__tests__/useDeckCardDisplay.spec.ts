@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { makeCard } from '@/test/fixtures'
-import type { Card, DeckCardEntry, DeckSection } from '@/lib/api'
+import type { Card, DeckCardEntry, DeckRoles, DeckSection } from '@/lib/api'
 import { useDeckCardDisplay } from '../useDeckCardDisplay'
 
 function entry(
@@ -45,6 +45,13 @@ function make(showEmpty = false) {
     sections: ref(sections),
     showEmpty: ref(showEmpty),
   })
+}
+
+/** A roles response holding only the parts the filter reads. `card_roles` is keyed by
+ * EXTERNAL card id, so a name held in two printings appears twice — which is the case that
+ * separates a per-id filter from a per-name one. */
+function makeRoles(cardRoles: DeckRoles['card_roles']): DeckRoles {
+  return { roles: [], card_roles: cardRoles, card_count: 3, unclassified_count: 1 }
 }
 
 describe('useDeckCardDisplay', () => {
@@ -126,6 +133,81 @@ describe('useDeckCardDisplay', () => {
     expect(display.cardsBySection.value.get(3)?.map((e) => e.card.id)).toEqual(['cut'])
     expect(display.visibleSections.value.map((s) => s.id)).toEqual([1, 2, 3])
     expect(display.totalCount.value).toBe(6)
+  })
+
+  // The role filter (issue #671): the roles are the server's, keyed by card id, so the
+  // engine's whole job is turning the selected one into a set of ids — and being honest when
+  // it has no roles to turn.
+  describe('the role filter', () => {
+    const roles = ref<DeckRoles | undefined>(
+      makeRoles({ island: ['ramp'], goblin: ['removal', 'ramp'] }),
+    )
+
+    function makeWithRoles() {
+      return useDeckCardDisplay({ cards: ref(cards), sections: ref(sections), roles })
+    }
+
+    it('narrows the list to the cards filling the selected role', () => {
+      const display = makeWithRoles()
+      display.filterRole.value = 'ramp'
+      expect(display.filteredCards.value.map((e) => e.card.id)).toEqual(['goblin', 'island'])
+      expect(display.filterActive.value).toBe(true)
+      // Copy-weighted, like every other count on this page.
+      expect(display.matchCount.value).toBe(4)
+
+      display.filterRole.value = 'removal'
+      expect(display.filteredCards.value.map((e) => e.card.id)).toEqual(['goblin'])
+    })
+
+    it('keeps every printing of a card the roles map lists', () => {
+      // One name, two printings: the map keys on the printing, so both must narrow in.
+      const twoPrints = [
+        entry('bolt-a', 1, { name: 'Lightning Bolt' }),
+        entry('bolt-b', 1, { name: 'Lightning Bolt' }),
+        entry('bear-x', 1, { name: 'Grizzly Bears' }),
+      ]
+      const display = useDeckCardDisplay({
+        cards: ref(twoPrints),
+        sections: ref(sections),
+        roles: ref(makeRoles({ 'bolt-a': ['removal'], 'bolt-b': ['removal'] })),
+      })
+      display.filterRole.value = 'removal'
+      expect(display.filteredCards.value.map((e) => e.card.id)).toEqual(['bolt-a', 'bolt-b'])
+    })
+
+    it('ANDs with the text and colour filters, and clears with them', () => {
+      const display = makeWithRoles()
+      display.filterRole.value = 'ramp'
+      display.filterQuery.value = 'island'
+      expect(display.filteredCards.value.map((e) => e.card.id)).toEqual(['island'])
+      display.filterColors.value = ['R']
+      expect(display.filteredCards.value).toEqual([])
+
+      display.clearFilters()
+      expect(display.filterRole.value).toBe(null)
+      expect(display.filterActive.value).toBe(false)
+      expect(display.matchCount.value).toBe(5)
+    })
+
+    it('narrows to nothing while the roles are absent, rather than showing everything', () => {
+      // A selected role with no data behind it must not read as "matched every card" — that
+      // is indistinguishable from a filter that silently did nothing.
+      const display = useDeckCardDisplay({
+        cards: ref(cards),
+        sections: ref(sections),
+        roles: ref(undefined),
+      })
+      display.filterRole.value = 'ramp'
+      expect(display.filterActive.value).toBe(true)
+      expect(display.filteredCards.value).toEqual([])
+      expect(display.visibleSections.value).toEqual([])
+    })
+
+    it('is no constraint at all while no role is selected', () => {
+      const display = makeWithRoles()
+      expect(display.filterActive.value).toBe(false)
+      expect(display.filteredCards.value).toHaveLength(3)
+    })
   })
 
   it('keeps the deck/maybeboard split independent of the filter box', () => {

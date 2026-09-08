@@ -361,6 +361,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   caller-controlled, so an oversized library is a `422`, never an allocation. For the same
   reason the command-zone check counts copies instead of expanding them; **nothing on these
   paths may go per-copy.**
+  **Card roles are a grammar, not a list** (`analysis::roles`, issue #671): "ten ramp, ten
+  draw, eight removal" is counted off each card's rules text through the **same clause grammar
+  the bracket's signals read** — `analysis/signals/` (mod.rs the shared grammar, `bracket.rs`
+  and `roles.rs` the predicates; the tutor role *is* `signals::bracket::is_tutor`), so a ninth
+  role or a fifth bracket category extends that module rather than starting a third copy of
+  "does this clause say X". Same stance as the bracket: **every predicate declines when unsure**
+  (a land search to hand isn't ramp, "Whenever you draw a card" isn't draw, a target *you
+  control* is a flicker not removal, `Hexproof` on its own line protects nothing but itself),
+  the counted cards ride the response, and a card name is matched through `rules::own_names` /
+  `answers_to` — never `facts.name` — so a reversible printing's `Name // Name` still answers.
+  Maybeboards out, command zone in; both of those and the bracket count through the one
+  `analysis::fold_by_name` seam (representative = smallest external id, so a precon and its
+  copy answer byte-identically). The `card_roles` map is keyed by **printing**, because the
+  deck page filters rows by the printing they hold; the per-role `cards` lists are capped, the
+  counts never are, and `unclassified_count` is on the wire so the bars can't be read as a
+  partition of the deck — and it holds **every** row, maybeboards included, because the list a
+  page narrows by it shows them (the counts don't). Three route mirrors, like every analysis read.
   **The bracket estimate is a floor, not a verdict** (`analysis::bracket`): it reports the
   lowest of Wizards' rungs the deck's cards don't rule out and is **only ever 2, 3 or 4** —
   1 (Exhibition) and 5 (cEDH) are claims about *intent*, so asserting either from a list would
@@ -371,13 +388,33 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   *chaining* extra turns — isn't in the list, and a caveat saying so ships with every response.
   Game Changers are read off the catalog's `game_changer` column (Wizards' curated list,
   published on the card); the other three are a **grammar over oracle text**
-  (`bracket/signals.rs`) built on `rules`'s `ability_lines`/`has_word` rather than a second
+  (`analysis/signals/bracket.rs`) built on `rules`'s `ability_lines`/`has_word` rather than a second
   copy of them — same stance as the construction rules, since a false positive costs a player
   two brackets: every predicate declines when unsure, and every counted card rides the
   response so the number can be audited. The ladder's labels **ship in the payload** instead
   of being mirrored client-side like the format table above: the panel that draws them doesn't
-  exist until the response lands, so a mirror would buy nothing and could drift. Deck writes must invalidate the analysis query family
-  client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
+  exist until the response lands, so a mirror would buy nothing and could drift.
+  **Pricing is the sixth analysis read** (`/pricing`, issue #672) and takes the same shape as
+  the five: a `GET` on `AuthUser`, mirrored at `/api/u/{handle}/decks/{id}/pricing` through the
+  one `analyse_pricing` core. Its `total_usd` **is** `summary.total_value_usd` — the same deck
+  proper rows through the same `Valuation`, never a second fold — and `cheapest_total_usd` is
+  that total minus the summed savings, so the three numbers can't disagree. **Cheapest is
+  judged at the row's own finish split** (`usd × quantity + usd_foil × foil_quantity`), because
+  the swap preserves it: the drops surface's cheapest-single-copy question would name a
+  cheap-foil/dear-nonfoil printing for a nonfoil row and make the deck dearer, and a printing
+  unpriced in a finish the row holds is no candidate at all. A **saving needs both sides
+  priced** (a held printing unpriced in a held finish is a floor), ties stay on the held
+  printing, and `null` is "unpriced", never `"0.00"`. Candidates come from
+  `handlers/shared/cheapest.rs`, which excludes **folded foil-★** rows — their foil price is
+  already on the base, so a star could only tie, and a swap that took the tie would land on a
+  printing no grid shows; that seam is also the Secret Lair drops' "cheapest prints" total, so
+  a change to what counts as a candidate moves both. The swap itself stays the existing
+  `WritableUser` `PUT …/cards/{id}/printing` — "swap all" is that same write batched
+  client-side (`useChangeDeckCardPrintingsMutation`, sequential, one invalidation), **never a
+  new bulk write**, so "same gameplay card", the finish split and the count merge are validated
+  in one place. Deck writes must invalidate the analysis query family
+  client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
+  the `['deck', …]` key.
   **Adding a deck or a precon to the collection** (`POST /api/decks/{game}/{deck_id}/collection`,
   `POST /api/decks/{game}/precons/{slug}/collection`, and someone's public deck at
   `POST /api/u/{handle}/decks/{deck_id}/collection`) is the bridge *back* to the holdings
@@ -518,6 +555,24 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`slci`).
   Session-only channel settings, like price alerts; the two flags ride the `AlertChannels` DTO,
   so they're already in the OpenAPI `INTENTIONALLY_UNDOCUMENTED` group.
+  **What counts as a release is decided once, in `catalog::releases`** (issue #679) — the set
+  predicate (`announceable_sets`), the `sl`-prefix upgrade (`is_secret_lair_release`) and the
+  per-drop date derivation off `sld` alone (`sld_drops_releasing`) — and **two surfaces read
+  it**: the alert engine above, and the public **release calendar**
+  (`GET /api/games/{game}/releases?from&to`, `handlers/catalog/releases.rs`; the SPA's
+  `/releases/{game}`, a month view). The calendar is the page behind the heads-ups, so it must
+  list exactly what they would notify about — a second filter on either side is the bug. It is
+  a *fact page*: every date is the catalog's own, nothing per-user rides the read (CDN/ETag
+  cached in the public group; the SPA asks for a **month-aligned** window so one URL serves a
+  whole month), a set nests the precons and sealed products of its whole catalog **group**
+  (root + `parent_set_code` children — a Commander precon lives in the `…c` child), a drop's
+  products are attributed through the cards they **contain** (never by name or date — a
+  superdrop releases many drops on one day), and nothing on it words a spoiler or a preview.
+  The nested `Set` is the `/sets` payload dressed the same way (`has_subtypes`, the folded
+  `card_count`), so a set can't publish two counts. The "get a heads-up" button deep-links to
+  `/alerts#release-headsups` (`RELEASE_HEADS_UP_ANCHOR` in `lib/releases.ts`, the id the
+  alert settings' release section carries; the router scrolls a hash on a new page to its
+  element).
 - **Tools** (`/api/tools/{game}/...`) is a *namespace*, not a surface: play aids backed by the
   caller's own rows, grouped so a second tool adds a path segment rather than a new top-level
   route family (the API mirror of the SPA's `/tools` section, placed the way `/keywords` is).
@@ -623,8 +678,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   the base advertising anything. `DropTable::drop_for` re-tries a miss with a trailing `★` so a
   drop that lists only the star still claims the base. Every published set `card_count` —
   Scryfall's own set-object count, stored verbatim — has the folded rows subtracted through the
-  one `FoldedSetCounts` seam, in all three of its readers (`sets::list_sets`, `sets::get_set`,
-  and the collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
+  one `FoldedSetCounts` seam, in all four of its readers (`sets::list_sets`, `sets::get_set`,
+  the release calendar's nested set in `handlers::catalog::releases`, and the
+  collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
   because a `card_sets` row lagging the cards it counts must publish a stale number, never a
   negative. And a new `cards` column that isn't provider data must be denied in **both** halves
   of `ingest::flush_cards` — the

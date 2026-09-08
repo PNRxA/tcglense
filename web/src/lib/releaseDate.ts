@@ -33,7 +33,9 @@ export function formatReleaseLabel(
 // showing "Released July 31" for an Aug 1 release that hasn't happened). Parse a date-only value
 // as *local* midnight so both the displayed day and the future/past verb match the user's
 // calendar. Anything with a time component (or non-matching) falls back to the native parser.
-function parseReleaseDate(raw: string): Date | null {
+// Exported for the release calendar, which walks the same date-only strings into month
+// sections and must agree with the label on which local day a date falls.
+export function parseReleaseDate(raw: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim())
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   const date = new Date(raw)

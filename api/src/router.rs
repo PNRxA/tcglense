@@ -37,9 +37,9 @@ use crate::{
             card_art_tags, card_image, card_names, card_prices, card_prints, card_rulings,
             card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
             ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
-            list_set_cards, list_set_drops, list_set_subtypes, list_sets, preview_cards,
-            product_card_sections, product_cards, product_containers, product_contents,
-            product_facets, product_image, product_prices, scan_cards, set_icon,
+            list_releases, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
+            preview_cards, product_card_sections, product_cards, product_containers,
+            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -56,11 +56,11 @@ use crate::{
         decks::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
             change_deck_card_printing, copy_public_deck, create_deck, create_folder,
-            create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_stats,
-            deck_tokens, decks_containing_card, delete_deck, delete_folder, delete_section,
-            export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
-            move_deck_card, move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
-            set_deck_visibility, update_deck, update_folder, update_section,
+            create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing,
+            deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck, delete_folder,
+            delete_section, export_deck, get_deck, import_deck, list_deck_formats, list_decks,
+            list_folders, move_deck_card, move_deck_to_folder, needed_cards, reorder_sections,
+            set_deck_card, set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -71,15 +71,15 @@ use crate::{
         precons::{
             add_precon_to_collection, card_precons, copy_precon_deck, get_precon,
             list_precon_groups, list_precons, precon_bracket, precon_facets, precon_goldfish,
-            precon_legality, precon_mana, precon_stats, precon_tokens,
+            precon_legality, precon_mana, precon_roles, precon_stats, precon_tokens,
         },
         search::universal_search,
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
-            public_deck_goldfish, public_deck_legality, public_deck_mana, public_deck_stats,
-            public_deck_tokens, public_decks, public_list, public_owned_counts,
-            public_product_sets, public_product_summary, public_products, public_profile,
-            public_set_drops, public_set_subtypes, public_sets, public_summary,
+            public_deck_goldfish, public_deck_legality, public_deck_mana, public_deck_pricing,
+            public_deck_roles, public_deck_stats, public_deck_tokens, public_decks, public_list,
+            public_owned_counts, public_product_sets, public_product_summary, public_products,
+            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
             public_wishlist_list, public_wishlist_owned_counts, public_wishlist_product_sets,
             public_wishlist_product_summary, public_wishlist_products, public_wishlist_set_drops,
             public_wishlist_set_subtypes, public_wishlist_sets, public_wishlist_summary,
@@ -429,8 +429,8 @@ pub fn build_router(state: AppState) -> Router {
             post(add_deck_to_collection),
         )
         // Deck analysis (issue #596): composition + draw odds, the legality verdict, the
-        // estimated Commander bracket, the tokens the deck makes, and a seeded goldfish
-        // hand. All are reads of a deck
+        // estimated Commander bracket, the tokens the deck makes, a seeded goldfish
+        // hand, and the pricing breakdown (issue #672). All are reads of a deck
         // the caller already owns, so they take `AuthUser` (a read-only key may call them)
         // and are `GET`s — the goldfish carries its whole state in the query string rather
         // than a table, so a hand is reproducible from a URL by a CLI as easily as by the SPA.
@@ -439,7 +439,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/decks/{game}/{deck_id}/bracket", get(deck_bracket))
         .route("/api/decks/{game}/{deck_id}/tokens", get(deck_tokens))
         .route("/api/decks/{game}/{deck_id}/mana", get(deck_mana))
+        .route("/api/decks/{game}/{deck_id}/roles", get(deck_roles))
         .route("/api/decks/{game}/{deck_id}/goldfish", get(deck_goldfish))
+        .route("/api/decks/{game}/{deck_id}/pricing", get(deck_pricing))
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",
@@ -625,6 +627,13 @@ pub fn build_router(state: AppState) -> Router {
         // `deck.format` is normalised against, published so a CLI can complete and validate
         // it. Static sibling of `cards`/`sets`, public and CDN-cacheable like them.
         .route("/api/games/{game}/formats", get(list_deck_formats))
+        // The release calendar (issue #679): the sets and Secret Lair drops releasing inside
+        // a date window, each set with the precons and sealed products it ships — the page
+        // behind the release heads-ups, listing exactly what they would notify about
+        // (`catalog::releases` is the one definition both read). Public and the same for
+        // every visitor, so CDN + ETag cached with the rest; another static sibling of
+        // `cards`/`sets`.
+        .route("/api/games/{game}/releases", get(list_releases))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
@@ -679,6 +688,7 @@ pub fn build_router(state: AppState) -> Router {
             get(precon_tokens),
         )
         .route("/api/games/{game}/precons/{slug}/mana", get(precon_mana))
+        .route("/api/games/{game}/precons/{slug}/roles", get(precon_roles))
         .route(
             "/api/games/{game}/precons/{slug}/goldfish",
             get(precon_goldfish),
@@ -837,8 +847,16 @@ pub fn build_router(state: AppState) -> Router {
             get(public_deck_mana),
         )
         .route(
+            "/api/u/{handle}/decks/{deck_id}/roles",
+            get(public_deck_roles),
+        )
+        .route(
             "/api/u/{handle}/decks/{deck_id}/goldfish",
             get(public_deck_goldfish),
+        )
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/pricing",
+            get(public_deck_pricing),
         )
         // Per-IP rate limiting (issue #413): these unauthenticated reads run the
         // same full-collection cores as the authed twins but the per-user limiter

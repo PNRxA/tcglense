@@ -20,6 +20,7 @@ import {
   useTestAlertChannelsMutation,
 } from '@/composables/useAlerts'
 import { ApiError, type AlertTestChannel, type AlertTestResult } from '@/lib/api'
+import { RELEASE_HEADS_UP_ANCHOR } from '@/lib/releases'
 
 // The notification-channels settings card on the Alerts page. Free, self-service channels —
 // a Discord incoming-webhook URL and a Telegram bot token + chat id — plus an optional email
@@ -384,8 +385,11 @@ async function onTestAll() {
           />
         </div>
 
-        <!-- Release heads-ups (opt-in): delivered over the channels above, a day before. -->
-        <div class="space-y-2 border-t pt-4">
+        <!-- Release heads-ups (opt-in): delivered over the channels above, a day before. The
+             id is the release calendar's deep-link target (`RELEASE_HEADS_UP_ANCHOR`) — its
+             "get a heads-up" button lands here; `scroll-mt` keeps the heading clear of the
+             viewport edge when it does. -->
+        <div :id="RELEASE_HEADS_UP_ANCHOR" class="scroll-mt-4 space-y-2 border-t pt-4">
           <div class="space-y-0.5">
             <p class="text-sm font-medium">Release heads-ups</p>
             <p class="text-muted-foreground text-xs">

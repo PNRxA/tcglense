@@ -13,6 +13,7 @@ pub mod images;
 pub mod ingest_state;
 pub mod keywords;
 pub mod precon_values;
+pub mod releases;
 pub mod sld_product_dates;
 pub(crate) mod sync_state;
 

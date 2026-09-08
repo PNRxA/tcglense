@@ -248,6 +248,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/stats")),
     )
     .await;
+    let (_, _, precon_roles) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/roles")),
+    )
+    .await;
     let (_, _, precon_mana) = send(
         &app,
         get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/mana")),
@@ -279,6 +284,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
     let (_, _, deck_stats) = send(
         &app,
         get_with_bearer(&format!("/api/decks/mtg/{deck_id}/stats"), &access),
+    )
+    .await;
+    let (_, _, deck_roles) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/roles"), &access),
     )
     .await;
     let (_, _, deck_mana) = send(
@@ -346,6 +356,16 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         "precon {precon_bracket:?} vs copy {deck_bracket:?}"
     );
     assert_eq!(precon_bracket["categories"], deck_bracket["categories"]);
+
+    // The role counts too (issue #671): one grammar, one answer, on both surfaces — the
+    // per-role groups (whose representative `card_id` is the smallest printing id, so the
+    // two load orders can't pick different ones) and the per-printing map (the copy holds
+    // the very same printings).
+    assert_eq!(
+        precon_roles["roles"], deck_roles["roles"],
+        "precon {precon_roles:?} vs copy {deck_roles:?}"
+    );
+    assert_eq!(precon_roles["card_roles"], deck_roles["card_roles"]);
 
     // And the composition: same cards, so the same copies in the deck proper.
     assert_eq!(
