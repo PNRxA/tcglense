@@ -416,6 +416,12 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   in the bulk card API, so the mirror origin scrapes Scryfall's gallery and re-serves them.
   On by default; ignored on the mirror origin (`MIRROR_ENABLED` scrapes the source itself);
   set `false` to keep only the committed fallback snapshot / opt out of the outbound pull),
+  `COMBOS_SYNC_ENABLED` (`true`; sync the Commander Spellbook combo database (issue #683) on
+  the card-sync tick — a self-host pulls the mirror's compact snapshot at
+  `DATASET_MIRROR_URL/api/mirror/spellbook/combos`, ETag-gated so an unchanged day is one
+  `304`; the mirror origin (`SYNC_FROM_UPSTREAM=true`) fetches the upstream ~28 MB gzipped
+  export itself. Set `false` to opt out of the dataset — the deck page's "Combos" panel and
+  the card page's "Combos with" then report that no combo data is present),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
   cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many

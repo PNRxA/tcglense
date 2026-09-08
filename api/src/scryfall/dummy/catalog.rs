@@ -700,6 +700,13 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     // Base #1 gets its own artwork identity so the art-tag seed has a second,
     // unrelated illustration to tag (`seed_art_tags`).
     cards[0].illustration_id = Some(BASE_ONE_ILLUSTRATION_ID.to_string());
+    // The first six base cards get a gameplay identity of their own (issue #683): the
+    // combo database keys its pieces by `oracle_id`, so the dummy combos
+    // (`spellbook::dummy`) need cards that carry one — a single-printing card otherwise
+    // has none here. Distinct ids, so nothing groups as a reprint.
+    for (index, card) in cards.iter_mut().take(6).enumerate() {
+        card.oracle_id = Some(format!("dummy-oracle-base-{:04}", index + 1));
+    }
     // Print details on a deterministic handful of the base set's cards (issue #673): the
     // card page renders flavour text, the Reserved List badge, the popularity ranks and the
     // story-spotlight mark off columns no listing carries, so the offline catalog needs

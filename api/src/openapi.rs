@@ -95,6 +95,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::card_prices,
         crate::handlers::catalog::card_prints,
         crate::handlers::catalog::card_rulings,
+        crate::handlers::catalog::card_combos,
         crate::handlers::catalog::card_art_tags,
         crate::handlers::catalog::list_releases,
         // --- Sealed products ---
@@ -113,6 +114,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::precons::precon_legality,
         crate::handlers::precons::precon_bracket,
         crate::handlers::precons::precon_tokens,
+        crate::handlers::precons::precon_combos,
         crate::handlers::precons::precon_mana,
         crate::handlers::precons::precon_roles,
         crate::handlers::precons::precon_goldfish,
@@ -222,6 +224,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::deck_roles,
         crate::handlers::decks::deck_goldfish,
         crate::handlers::decks::deck_pricing,
+        crate::handlers::decks::deck_combos,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
         crate::handlers::tools::life::list_sessions,
         crate::handlers::tools::life::create_session,
@@ -257,6 +260,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_deck_roles,
         crate::handlers::sharing::public_deck_goldfish,
         crate::handlers::sharing::public_deck_pricing,
+        crate::handlers::sharing::public_deck_combos,
         // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
         crate::handlers::sharing::public_wishlist_list,
         crate::handlers::sharing::public_wishlist_summary,
@@ -532,6 +536,10 @@ mod coverage_drift {
         (
             "/api/mirror/scryfall/sld-drops",
             "opt-in dataset mirror (Secret Lair drop snapshot)",
+        ),
+        (
+            "/api/mirror/spellbook/combos",
+            "opt-in dataset mirror (combo database snapshot)",
         ),
         (
             "/api/mirror/mtgjson/AllPrintings.json.gz",

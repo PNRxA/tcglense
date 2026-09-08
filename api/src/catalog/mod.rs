@@ -157,6 +157,16 @@ pub async fn refresh_all(
                     tracing::error!(game = game.id, error = %err, "art tags refresh failed");
                     providers_succeeded = false;
                 }
+                // The Commander Spellbook combo database (issue #683): which cards go
+                // infinite together, keyed by oracle_id. Its own document with its own
+                // conditional-GET version gate (an unchanged day is one 304), pulled from
+                // the mirror's compact snapshot — or, on the origin, the upstream export.
+                // Independent of the card sync; a `false` flag here retries next tick like
+                // the rest.
+                if let Err(err) = crate::spellbook::refresh(db, client, source).await {
+                    tracing::error!(game = game.id, error = %err, "combo database refresh failed");
+                    providers_succeeded = false;
+                }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =
@@ -335,7 +345,11 @@ mod tests {
 pub async fn seed_all(db: &DatabaseConnection) {
     for game in GAMES {
         let result = match game.id {
-            crate::scryfall::GAME => crate::scryfall::seed(db).await,
+            crate::scryfall::GAME => match crate::scryfall::seed(db).await {
+                // The dummy combos ride the dummy cards' oracle ids, so they seed after.
+                Ok(()) => crate::spellbook::dummy::seed(db).await,
+                Err(err) => Err(err),
+            },
             other => {
                 tracing::warn!(game = other, "no dummy seeder wired for game; skipping");
                 continue;

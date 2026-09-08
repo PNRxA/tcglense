@@ -121,6 +121,7 @@ impl UserRoute {
                         | "roles"
                         | "goldfish"
                         | "pricing"
+                        | "combos"
                 )
             ) {
                 return Self::Analytics;
@@ -467,6 +468,7 @@ mod tests {
             "/api/decks/mtg/7/roles",
             "/api/decks/mtg/7/goldfish",
             "/api/decks/mtg/7/pricing",
+            "/api/decks/mtg/7/combos",
         ] {
             assert_eq!(
                 UserRoute::from_path(analytics),

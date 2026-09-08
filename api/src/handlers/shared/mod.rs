@@ -10,6 +10,7 @@
 
 pub(crate) mod card_export;
 pub(crate) mod cheapest;
+pub(crate) mod combos;
 pub(crate) mod download;
 pub(crate) mod dto;
 pub(crate) mod grouping;

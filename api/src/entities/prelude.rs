@@ -11,6 +11,8 @@ pub use super::cli_auth_code::Entity as CliAuthCode;
 pub use super::collection_item::Entity as CollectionItem;
 pub use super::collection_product_item::Entity as CollectionProductItem;
 pub use super::collection_visibility::Entity as CollectionVisibility;
+pub use super::combo::Entity as Combo;
+pub use super::combo_piece::Entity as ComboPiece;
 pub use super::deck::Entity as Deck;
 pub use super::deck_card::Entity as DeckCard;
 pub use super::deck_folder::Entity as DeckFolder;

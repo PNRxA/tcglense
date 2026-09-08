@@ -28,6 +28,10 @@ pub const MTGJSON_MIRROR_PREFIX: &str = "/api/mirror/mtgjson";
 /// Path prefix the mirror-mode URL builder targets for arbitrary TCGCSV paths
 /// (last-updated, groups, products, prices, and the daily price archives).
 pub const TCGCSV_MIRROR_PREFIX: &str = "/api/mirror/tcgcsv";
+/// Path prefix the mirror-mode URL builder targets for the Commander Spellbook combo
+/// snapshot (issue #683) — the origin's compact re-serve of the upstream export, not the
+/// export itself.
+pub const SPELLBOOK_MIRROR_PREFIX: &str = "/api/mirror/spellbook";
 
 /// Resolves each provider's dataset base URL to either its real upstream or a mirror.
 ///
@@ -38,12 +42,17 @@ pub struct SyncSource {
     from_upstream: bool,
     /// Mirror origin with any trailing slash trimmed, so URL joins never double up.
     mirror_base: String,
+    /// Whether the combo dataset is synced at all (`COMBOS_SYNC_ENABLED`). Carried here
+    /// rather than threaded as a separate flag because "no source" is the natural way to
+    /// say "don't fetch" — [`Self::spellbook_combos_url`] answers `None`.
+    combos_enabled: bool,
 }
 
 impl SyncSource {
     /// Build from application config.
     pub fn from_config(config: &Config) -> Self {
         Self::new(config.sync_from_upstream, config.dataset_mirror_url.clone())
+            .with_combos(config.combos_sync_enabled)
     }
 
     /// Construct directly (used by tests). Trims a trailing slash off `mirror_base`
@@ -52,7 +61,21 @@ impl SyncSource {
         Self {
             from_upstream,
             mirror_base: mirror_base.into().trim_end_matches('/').to_string(),
+            combos_enabled: true,
         }
+    }
+
+    /// Switch the combo dataset on or off (see [`Self::spellbook_combos_url`]).
+    pub fn with_combos(mut self, enabled: bool) -> Self {
+        self.combos_enabled = enabled;
+        self
+    }
+
+    /// Whether the sync talks to the real upstream services (else a TCGLense mirror).
+    /// The Commander Spellbook ingest branches on this: the upstream export and the
+    /// mirror's re-serve are different documents (see [`crate::spellbook::ingest`]).
+    pub fn from_upstream(&self) -> bool {
+        self.from_upstream
     }
 
     // ---------- Scryfall ----------
@@ -95,6 +118,23 @@ impl SyncSource {
         }
     }
 
+    // ---------- Commander Spellbook ----------
+
+    /// Where the combo dataset (issue #683) is pulled from: upstream's gzipped bulk
+    /// export, or the mirror's compact JSONL snapshot of it. `None` when the dataset is
+    /// switched off (`COMBOS_SYNC_ENABLED=false`) — the ingest then skips without touching
+    /// `ingest_state`.
+    pub fn spellbook_combos_url(&self) -> Option<String> {
+        if !self.combos_enabled {
+            return None;
+        }
+        Some(if self.from_upstream {
+            crate::spellbook::VARIANTS_URL.to_string()
+        } else {
+            format!("{}{SPELLBOOK_MIRROR_PREFIX}/combos", self.mirror_base)
+        })
+    }
+
     // ---------- TCGCSV ----------
 
     /// Base URL the TCGCSV client joins each path (`/last-updated.txt`,
@@ -121,6 +161,24 @@ mod tests {
         assert_eq!(s.scryfall_file_url("default_cards"), None);
         assert_eq!(s.mtgjson_base_url(), crate::mtgjson::BASE_URL);
         assert_eq!(s.tcgcsv_base_url(), crate::tcgcsv::BASE_URL);
+        assert_eq!(
+            s.spellbook_combos_url().as_deref(),
+            Some(crate::spellbook::VARIANTS_URL)
+        );
+        assert!(s.from_upstream());
+    }
+
+    #[test]
+    fn combos_can_be_switched_off_in_either_mode() {
+        let upstream = SyncSource::new(true, "https://tcglense.com").with_combos(false);
+        assert_eq!(upstream.spellbook_combos_url(), None);
+        let mirror = SyncSource::new(false, "https://tcglense.com").with_combos(false);
+        assert_eq!(mirror.spellbook_combos_url(), None);
+        // The switch touches nothing else.
+        assert_eq!(
+            mirror.tcgcsv_base_url(),
+            "https://tcglense.com/api/mirror/tcgcsv"
+        );
     }
 
     #[test]
@@ -147,5 +205,10 @@ mod tests {
             s.tcgcsv_base_url(),
             "https://tcglense.com/api/mirror/tcgcsv"
         );
+        assert_eq!(
+            s.spellbook_combos_url().as_deref(),
+            Some("https://tcglense.com/api/mirror/spellbook/combos")
+        );
+        assert!(!s.from_upstream());
     }
 }

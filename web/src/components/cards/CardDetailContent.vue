@@ -10,6 +10,7 @@ import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import CardLegalities from '@/components/cards/CardLegalities.vue'
 import CardArtTags from '@/components/cards/CardArtTags.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
+import CardCombos from '@/components/cards/CardCombos.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardDecks from '@/components/decks/CardDecks.vue'
@@ -351,6 +352,11 @@ const alertFinishes = computed<AlertFinish[]>(() => {
           note when it's a different printing) and the published precons. Renders nothing
           when both are empty. -->
         <CardDecks :game="game" :id="id" />
+
+        <!-- The combos this card is a piece of (issue #683) — curated interactions, not
+          anything read off its rules text. Keyed off the route id like the rulings below;
+          renders nothing when the card is in none. -->
+        <CardCombos :game="game" :id="id" />
 
         <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
           Keyed off the route id so it mounts before the card loads; renders nothing when

@@ -2,6 +2,7 @@ import { API_URL, listQuery, request, requestBlob } from './client'
 import type {
   ArtTagEntry,
   Card,
+  CardCombos,
   CardDetail,
   CardSet,
   DropGroup,
@@ -24,10 +25,14 @@ import type {
 export type {
   ArtTagEntry,
   Card,
+  CardCombo,
+  CardCombos,
   CardDetail,
   CardFace,
   CardPrices,
   CardSet,
+  ComboPiece,
+  ComboSummary,
   DropGroup,
   Game,
   IngestStatus,
@@ -362,6 +367,17 @@ export function getCardRulings(game: string, id: string): Promise<{ data: Ruling
   const g = encodeURIComponent(game)
   const i = encodeURIComponent(id)
   return request<{ data: Ruling[] }>(`/api/games/${g}/cards/${i}/rulings`)
+}
+
+/** The Commander Spellbook combos this card is a piece of, most-played first (issue #683).
+ * Keyed by the card's gameplay identity (oracle id), so every printing returns the same
+ * list; `combos` is capped at 50 while `total` stays exact, and `source`/`source_url` carry
+ * the attribution the source's terms ask for. Empty when the card is in no combo — or when
+ * no combo data has been synced. */
+export function getCardCombos(game: string, id: string): Promise<CardCombos> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<CardCombos>(`/api/games/${g}/cards/${i}/combos`)
 }
 
 /** The Tagger art tags on a card's **artwork**, most specific first (rarest tag first —

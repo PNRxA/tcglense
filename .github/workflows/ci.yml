@@ -128,13 +128,15 @@ jobs:
       # containers. `--ignored` alone would also pick up scryfall::client's
       # `live_bulk_catalog` canary, which hits api.scryfall.com — a third-party API on the
       # critical path of every PR, and one that has 403'd GitHub's runners and turned an
-      # unrelated PR red (#624). It stays manual (see its doc comment), so skip it by name;
-      # a new ignored test that needs no service container needs skipping here too.
+      # unrelated PR red (#624) — and spellbook::ingest's `live_spellbook_export` canary,
+      # which streams Commander Spellbook's 28 MB export. Both stay manual (see their doc
+      # comments), so skip them by name; a new ignored test that needs no service container
+      # needs skipping here too.
       # The default SQLite suite + the ts-rs drift check live in the untouched
       # `backend-tests` job (the ts-rs export only fires for the non-ignored DTO tests,
       # which this job doesn't run, so it stays owned there).
       - name: Run gated integration tests
-        run: cargo test --locked -- --ignored --skip live_bulk_catalog
+        run: cargo test --locked -- --ignored --skip live_bulk_catalog --skip live_spellbook_export
 
   web-unit-tests:
     name: Frontend unit tests (vitest)

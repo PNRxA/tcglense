@@ -346,8 +346,8 @@ fn estimate_bracket(format_key: &str, input: &DeckAnalysisInput) -> DeckBracketE
     let exhibition_possible = bracket == 2 && extra_turns == 0;
 
     let mut caveats: Vec<String> = vec![
-        "Two-card infinite combos aren't detected. A deck that can assemble one is bracket 4 \
-         — or bracket 3 if it can only do it late."
+        "Combos aren't counted here — the deck's combos read lists the ones it can assemble. \
+         A deck with a two-card infinite is bracket 4, or bracket 3 if it can only do it late."
             .to_string(),
     ];
     if extra_turns > 0 {

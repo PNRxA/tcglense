@@ -408,6 +408,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
+  **Combos are a dataset, not a grammar** (`/combos`, issue #683 — the ninth analysis read, three
+  route mirrors like the rest): which cards go infinite together is a fact about *several* cards,
+  so it is read off the synced Commander Spellbook database (`combos` + `combo_pieces`, keyed by
+  **oracle id** — `CardFacts::oracle_id`, any printing matches), never a grammar over rules text.
+  The provider is `spellbook/` and **only the mirror origin fetches upstream** (a ~650 MB JSON
+  document, streamed through `spellbook::stream`'s splitter, never buffered); every other
+  instance imports the origin's compact gzipped-JSONL re-serve (`/api/mirror/spellbook/combos`,
+  `COMBOS_SYNC_ENABLED`) — the Secret Lair stance. Both paths write through the one
+  `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
+  maybeboards out, sideboard + command zone in; a `must_be_commander` piece counts only from the
+  command zone of a format that leads with one (the same two `rules` answers the facets borrow);
+  a **template** ("any sac outlet") is always one missing card, so such a combo is never
+  "complete"; `almost` (one card short) is filtered to the commander's colours. `available: false`
+  is "no data synced", never "no combos" — the `token_parts` NULL stance. The bracket estimate
+  deliberately does **not** read the table (its floor-not-verdict contract, `docs/tradeoffs.md`).
+  Attribution is a term of use: every combo carries its `url`, every response its `source` +
+  `source_url`, and the SPA panels name and link Commander Spellbook.
   **Every deck clone goes through one seam** (`decks::copy::insert_deck_with_cards`): the public
   copy, the owner's own duplicate (`POST /api/decks/{game}/{deck_id}/copy`, issue #674 — `load_deck`
   first, lands in the source's folder, answers a `Deck` header through `deck_header`) and the precon
