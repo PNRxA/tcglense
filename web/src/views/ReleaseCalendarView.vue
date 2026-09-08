@@ -58,7 +58,7 @@ usePageMeta({
     <PageBreadcrumbs :items="[{ label: 'Releases', to: '/releases' }, { label: gameName }]" />
 
     <header class="mb-8 flex flex-wrap items-start justify-between gap-4">
-      <div>
+      <div class="max-w-xl">
         <h1 class="flex items-center gap-2 text-3xl font-semibold tracking-tight">
           <CalendarDays class="size-7" />
           {{ gameName }} release calendar
