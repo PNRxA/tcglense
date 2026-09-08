@@ -13,6 +13,7 @@ import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
+import DeckPricing from '@/components/decks/DeckPricing.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
@@ -230,6 +231,15 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
 
       <!-- The mana base, mirroring the owner view through the same server read (issue #670). -->
       <DeckMana
+        v-if="deck.summary.total_cards > 0"
+        :game="deck.game"
+        :deck-id="deck.id"
+        :handle="handle"
+      />
+
+      <!-- The same money breakdown the owner sees, read-only: which cards cost what, and
+        what the list would cost at the cheapest printings (issue #672). -->
+      <DeckPricing
         v-if="deck.summary.total_cards > 0"
         :game="deck.game"
         :deck-id="deck.id"

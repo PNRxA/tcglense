@@ -5,6 +5,7 @@ import type {
   DeckFormat,
   DeckLegality,
   DeckManaBase,
+  DeckPricing,
   DeckRoles,
   DeckTokens,
   GoldfishHand,
@@ -31,6 +32,7 @@ export type {
   DeckBracketLevel,
   DeckBracketSignal,
   DeckCardOdds,
+  DeckCheapestPrinting,
   DeckComposition,
   DeckDrawOdds,
   DeckFormat,
@@ -43,6 +45,8 @@ export type {
   DeckManaDemandCard,
   DeckManaSource,
   DeckManaStatus,
+  DeckPricing,
+  DeckPricingLine,
   DeckRole,
   DeckRoleCard,
   DeckRoleGroup,
@@ -207,6 +211,21 @@ export function getDeckRoles(token: string, game: string, deckId: number): Promi
 /** The same read for a deck its owner shared. */
 export function getPublicDeckRoles(handle: string, deckId: number): Promise<DeckRoles> {
   return request<DeckRoles>(`${publicBase(handle, deckId)}/roles`)
+}
+
+// ----- Pricing -----
+
+/** Where a deck's value is (issue #672): every row of the deck proper priced as held, most
+ * expensive first, each with the cheapest priced printing of its card at the row's own finish
+ * split and the saving a swap would make; plus the totals. `total_usd` is the detail's own
+ * `summary.total_value_usd`; `null` anywhere means unpriced, never `$0.00`. */
+export function getDeckPricing(token: string, game: string, deckId: number): Promise<DeckPricing> {
+  return request<DeckPricing>(`${deckBase(game, deckId)}/pricing`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckPricing(handle: string, deckId: number): Promise<DeckPricing> {
+  return request<DeckPricing>(`${publicBase(handle, deckId)}/pricing`)
 }
 
 // ----- Mana base -----

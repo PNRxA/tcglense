@@ -9,6 +9,7 @@
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
 pub(crate) mod card_export;
+pub(crate) mod cheapest;
 pub(crate) mod download;
 pub(crate) mod dto;
 pub(crate) mod grouping;
@@ -23,6 +24,7 @@ pub(crate) mod validate;
 pub(crate) mod valuation;
 
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
+pub(crate) use cheapest::{PricedPrinting, load_cheapest_by_oracle, priced_printings_by_oracle};
 pub(crate) use download::{csv_download, text_download};
 pub(crate) use dto::{CardDetailResponse, CardResponse, stored_faces};
 pub(crate) use grouping::{

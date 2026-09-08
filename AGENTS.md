@@ -386,8 +386,28 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   two brackets: every predicate declines when unsure, and every counted card rides the
   response so the number can be audited. The ladder's labels **ship in the payload** instead
   of being mirrored client-side like the format table above: the panel that draws them doesn't
-  exist until the response lands, so a mirror would buy nothing and could drift. Deck writes must invalidate the analysis query family
-  client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
+  exist until the response lands, so a mirror would buy nothing and could drift.
+  **Pricing is the sixth analysis read** (`/pricing`, issue #672) and takes the same shape as
+  the five: a `GET` on `AuthUser`, mirrored at `/api/u/{handle}/decks/{id}/pricing` through the
+  one `analyse_pricing` core. Its `total_usd` **is** `summary.total_value_usd` — the same deck
+  proper rows through the same `Valuation`, never a second fold — and `cheapest_total_usd` is
+  that total minus the summed savings, so the three numbers can't disagree. **Cheapest is
+  judged at the row's own finish split** (`usd × quantity + usd_foil × foil_quantity`), because
+  the swap preserves it: the drops surface's cheapest-single-copy question would name a
+  cheap-foil/dear-nonfoil printing for a nonfoil row and make the deck dearer, and a printing
+  unpriced in a finish the row holds is no candidate at all. A **saving needs both sides
+  priced** (a held printing unpriced in a held finish is a floor), ties stay on the held
+  printing, and `null` is "unpriced", never `"0.00"`. Candidates come from
+  `handlers/shared/cheapest.rs`, which excludes **folded foil-★** rows — their foil price is
+  already on the base, so a star could only tie, and a swap that took the tie would land on a
+  printing no grid shows; that seam is also the Secret Lair drops' "cheapest prints" total, so
+  a change to what counts as a candidate moves both. The swap itself stays the existing
+  `WritableUser` `PUT …/cards/{id}/printing` — "swap all" is that same write batched
+  client-side (`useChangeDeckCardPrintingsMutation`, sequential, one invalidation), **never a
+  new bulk write**, so "same gameplay card", the finish split and the count merge are validated
+  in one place. Deck writes must invalidate the analysis query family
+  client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
+  the `['deck', …]` key.
   **Adding a deck or a precon to the collection** (`POST /api/decks/{game}/{deck_id}/collection`,
   `POST /api/decks/{game}/precons/{slug}/collection`, and someone's public deck at
   `POST /api/u/{handle}/decks/{deck_id}/collection`) is the bridge *back* to the holdings
