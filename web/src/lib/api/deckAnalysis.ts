@@ -4,6 +4,7 @@ import type {
   DeckBracketEstimate,
   DeckFormat,
   DeckLegality,
+  DeckRoles,
   DeckTokens,
   GoldfishHand,
 } from './generated'
@@ -36,6 +37,10 @@ export type {
   DeckIssueStatus,
   DeckLegality,
   DeckLegalityIssue,
+  DeckRole,
+  DeckRoleCard,
+  DeckRoleGroup,
+  DeckRoles,
   DeckRuleCardStatus,
   DeckRuleId,
   DeckRuleSeverity,
@@ -185,6 +190,19 @@ export function getPublicDeckTokens(handle: string, deckId: number): Promise<Dec
   return request<DeckTokens>(`${publicBase(handle, deckId)}/tokens`)
 }
 
+// ----- Roles -----
+
+/** What each of a deck's cards does — ramp, draw, removal and the rest — read off its rules
+ * text server-side, so a CLI gets the same eight buckets the deck page draws. */
+export function getDeckRoles(token: string, game: string, deckId: number): Promise<DeckRoles> {
+  return request<DeckRoles>(`${deckBase(game, deckId)}/roles`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckRoles(handle: string, deckId: number): Promise<DeckRoles> {
+  return request<DeckRoles>(`${publicBase(handle, deckId)}/roles`)
+}
+
 // ----- Goldfish -----
 
 /** Deal a sample hand from a deck's library. */
@@ -219,7 +237,7 @@ export function getDeckFormats(game: string): Promise<{ data: DeckFormat[] }> {
 
 // ----- Preconstructed decks -----
 //
-// The third address for the same four reads. The server computes them with the very same
+// The third address for the same reads. The server computes them with the very same
 // core it uses for a deck, so these return byte-identical payloads to the two above — which
 // is what lets the deck panels render a precon unchanged.
 
@@ -252,6 +270,11 @@ export function getPreconBracket(
 /** The tokens a published decklist makes — the ones its product's token sheet holds. */
 export function getPreconTokens(game: string, slug: string): Promise<DeckTokens> {
   return request<DeckTokens>(`${preconBase(game, slug)}/tokens`)
+}
+
+/** The roles a published decklist's cards fill. */
+export function getPreconRoles(game: string, slug: string): Promise<DeckRoles> {
+  return request<DeckRoles>(`${preconBase(game, slug)}/roles`)
 }
 
 /** A seeded sample hand from a published decklist. */

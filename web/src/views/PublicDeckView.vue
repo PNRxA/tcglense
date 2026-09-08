@@ -13,6 +13,7 @@ import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
+import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -25,7 +26,7 @@ import {
   useCopyPublicDeckMutation,
   usePublicDeckQuery,
 } from '@/composables/useDecks'
-import { usePublicDeckLegalityQuery } from '@/composables/useDeckAnalysis'
+import { usePublicDeckLegalityQuery, usePublicDeckRolesQuery } from '@/composables/useDeckAnalysis'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { useAuthStore } from '@/stores/auth'
@@ -99,9 +100,14 @@ usePageMeta({
 // owner view; the size menu writes the same persisted preference every grid reads.
 const sections = computed(() => deck.value?.sections ?? [])
 const allCards = computed<DeckCardEntry[]>(() => deck.value?.cards ?? [])
+// Card roles (issue #671), the public mirror of the owner view's read. Fetched here, not by
+// the panel: the same response draws the bars and backs the card list's role filter.
+const rolesQuery = usePublicDeckRolesQuery(handle, deckId)
+const roles = computed(() => rolesQuery.data.value)
 const {
   filterQuery,
   filterColors,
+  filterRole,
   filterActive,
   clearFilters,
   cardsBySection,
@@ -109,7 +115,7 @@ const {
   sectionNavItems,
   matchCount,
   totalCount,
-} = useDeckCardDisplay({ cards: allCards, sections })
+} = useDeckCardDisplay({ cards: allCards, sections, roles })
 const cardSize = useCardSizeStore()
 const deckView = useDeckViewStore()
 function copies(entry: DeckCardEntry): number {
@@ -211,6 +217,14 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
       />
 
       <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
+
+      <DeckRoles
+        v-model:role="filterRole"
+        :game="deck.game"
+        :roles="roles"
+        :pending="rolesQuery.isPending.value"
+        :failed="rolesQuery.isError.value"
+      />
 
       <!-- Goldfish a sample hand from the shared deck (issue #596). -->
       <DeckGoldfish :game="deck.game" :deck-id="deck.id" :handle="handle" />

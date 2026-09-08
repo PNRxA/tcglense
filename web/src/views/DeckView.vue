@@ -51,6 +51,7 @@ import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
+import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -83,8 +84,11 @@ const {
   showEmpty,
   visibleSections,
   sectionNavItems,
+  rolesQuery,
+  roles,
   filterQuery,
   filterColors,
+  filterRole,
   filterActive,
   clearFilters,
   matchCount,
@@ -342,6 +346,16 @@ function copyDeckList() {
       />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+
+      <!-- What the deck's cards *do* (issue #671). The bars double as a filter for the card
+        list below, which is why the query lives in the editor engine rather than in here. -->
+      <DeckRoles
+        v-model:role="filterRole"
+        :game="game"
+        :roles="roles"
+        :pending="rolesQuery.isPending.value"
+        :failed="rolesQuery.isError.value"
+      />
 
       <!-- Goldfish a sample hand (issue #596). -->
       <DeckGoldfish :game="game" :deck-id="deck.id" />

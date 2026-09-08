@@ -5,16 +5,19 @@ import {
   getPreconBracket,
   getPreconGoldfish,
   getPreconLegality,
+  getPreconRoles,
   getPreconStats,
   getPreconTokens,
   getDeckBracket,
   getDeckGoldfish,
   getDeckLegality,
+  getDeckRoles,
   getDeckStats,
   getDeckTokens,
   getPublicDeckBracket,
   getPublicDeckGoldfish,
   getPublicDeckLegality,
+  getPublicDeckRoles,
   getPublicDeckStats,
   getPublicDeckTokens,
   type DeckStatsParams,
@@ -25,6 +28,7 @@ import type {
   DeckAnalytics,
   DeckBracketEstimate,
   DeckLegality,
+  DeckRoles,
   DeckTokens,
   GoldfishHand,
 } from '@/lib/api'
@@ -101,6 +105,19 @@ export function useDeckTokensQuery(game: Ref<string>, deckId: Ref<number>, enabl
     placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckTokens>(options)
+}
+
+/** The deckbuilding role each of a deck's cards fills. Also what the card list's role
+ * filter narrows by, so it keeps the previous answer while a refetch is in flight — a
+ * blanked `card_roles` would momentarily empty a filtered list. */
+export function useDeckRolesQuery(game: Ref<string>, deckId: Ref<number>, enabled?: Ref<boolean>) {
+  const options = {
+    queryKey: ['deck-roles', game, deckId],
+    queryFn: (token: string) => getDeckRoles(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckRoles>(options)
 }
 
 /** A goldfished hand. */
@@ -182,6 +199,21 @@ export function usePublicDeckTokensQuery(
   })
 }
 
+/** The roles a public deck's cards fill. */
+export function usePublicDeckRolesQuery(
+  handle: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckRoles, ApiError>({
+    queryKey: ['public-deck-roles', handle, deckId],
+    queryFn: () => getPublicDeckRoles(handle.value, deckId.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** A hand goldfished from a public deck — the same seed deals the same cards as it would
  * for the owner. */
 export function usePublicDeckGoldfishQuery(
@@ -210,7 +242,10 @@ export function usePublicDeckGoldfishQuery(
  * The goldfish goes too: its cards come from the library, so a card added or removed makes
  * every previously dealt hand for that deck a hand of a deck that no longer exists. So does
  * the bracket: adding one Game Changer is exactly the edit that moves it — and so do the
- * tokens, since the card just added may be the only one that made one.
+ * tokens, since the card just added may be the only one that made one. So do the roles: an
+ * edit is exactly what changes what the deck ramps, draws and removes with — and the card
+ * list's role filter reads `card_roles`, so a stale one would narrow to cards the deck no
+ * longer holds.
  */
 export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: number) {
   const keys =
@@ -220,6 +255,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game],
           ['deck-bracket', game],
           ['deck-tokens', game],
+          ['deck-roles', game],
           ['deck-goldfish', game],
         ]
       : [
@@ -227,6 +263,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game, deckId],
           ['deck-bracket', game, deckId],
           ['deck-tokens', game, deckId],
+          ['deck-roles', game, deckId],
           ['deck-goldfish', game, deckId],
         ]
   for (const queryKey of keys) qc.invalidateQueries({ queryKey })
@@ -234,7 +271,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
 
 // ----- Preconstructed decks (published catalog decklists) -----
 //
-// A third address for the same four reads. Their own key prefix on purpose: a precon is
+// A third address for the same reads. Their own key prefix on purpose: a precon is
 // immutable catalog data rebuilt only by the daily sync, so it must NOT be swept by
 // `invalidateDeckAnalysis` when an unrelated deck is edited — and a slug would otherwise
 // share a key space with a numeric deck id. `staleTime` matches the rest of the precon
@@ -292,6 +329,17 @@ export function usePreconTokensQuery(game: Ref<string>, slug: Ref<string>, enabl
   return useQuery<DeckTokens, ApiError>({
     queryKey: ['precon-tokens', game, slug],
     queryFn: () => getPreconTokens(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** The roles a published decklist's cards fill. */
+export function usePreconRolesQuery(game: Ref<string>, slug: Ref<string>, enabled?: Ref<boolean>) {
+  return useQuery<DeckRoles, ApiError>({
+    queryKey: ['precon-roles', game, slug],
+    queryFn: () => getPreconRoles(game.value, slug.value),
     enabled,
     retry: false,
     staleTime: PRICED_CATALOG_STALE_MS,
