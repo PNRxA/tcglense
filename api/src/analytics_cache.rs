@@ -1,5 +1,6 @@
 //! Version-keyed response cache for the collection analytics pair — value-history
-//! and movers (issues #413 / #365).
+//! and movers (issues #413 / #365) — and the deck suggestions read (issue #684),
+//! which scans the same holdings and folds a deck fingerprint into its params.
 //!
 //! Those two endpoints are the heaviest per-user reads in the app: each request
 //! re-scans every held card/product's **entire** captured price history

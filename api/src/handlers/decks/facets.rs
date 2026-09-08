@@ -57,7 +57,7 @@ const SECTION_IDS_PER_QUERY: usize = 8_192;
 /// One card in a deck's command zone, as the deck list names it. The **external** card id
 /// travels (like every card id on the wire), so a client can link to the printing; the deck
 /// page is what serves the card in full.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "DeckCommander"))]
 pub struct DeckCommanderResponse {
     /// The provider **external** card id (a Scryfall UUID for MTG).
@@ -244,7 +244,7 @@ fn section_ids(sections: &[(i32, i32)]) -> Vec<i32> {
 /// (a stray letter in a stored CSV) is dropped rather than appended — the same stance
 /// [`rules`](super::analysis::rules)' own identity label takes, so the two agree on what a
 /// colour is.
-fn order_wubrg(held: &BTreeSet<String>) -> Vec<String> {
+pub(crate) fn order_wubrg(held: &BTreeSet<String>) -> Vec<String> {
     COLOUR_ORDER
         .iter()
         .copied()

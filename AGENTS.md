@@ -408,6 +408,32 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
+  **Suggestions are the seventh analysis read and the one with no public mirror** (`/suggestions`,
+  issue #684): the cards the caller already owns that the deck could play — collection ∩ colour
+  identity ∩ format legality ∩ not already in the deck — ranked by `cards.edhrec_rank` and grouped
+  by role. It **reads the caller's collection**, so it is never mirrored under `/api/u/{handle}`
+  or the precons, and it is honest about what the rank is: EDHREC's *global* popularity (the
+  per-commander tables have no bulk export and would be a scrape), never synergy, and the first
+  caveat on every response says so — the SPA keeps that line in view even collapsed. Every
+  answer it needs is borrowed, never re-decided: the colour identity is the facets' rule over the
+  loaded deck (`suggestions::deck_colour_identity` — the command zone's when
+  `format_leads_with_command_zone` and it holds a card, else the union over the deck proper with
+  the sideboard out; `None` = no colour filter, `Some([])` = colourless), legality is
+  `legality::status_of`, the role is `roles::roles_of` (so "in deck N · you own M more" counts
+  both sides with one grammar), and "already in the deck" is the shopping list's `identity_key`
+  over **every** section, maybeboards included. A filter the server didn't apply is stated on the
+  wire (`color_identity`/`format_key` null) and in `caveats`, never implied. **Bounded two ways:**
+  the collection scan selects the narrow columns only and folds by identity, then only the
+  `SCAN_CAP` most popular survivors are loaded in full for the role grammar — `candidate_count`
+  stays exact, `scanned_count` says how many were classified. The body is memoised in
+  `analytics_cache` under the holdings version, the price epoch and the day like value history,
+  **plus a fingerprint of the deck's format + rows** (`read::deck_fingerprint`), because those two
+  counters don't cover a deck edit; client-side it must be invalidated by **both** deck writes
+  (`invalidateDeckAnalysis`) and collection writes (`holdingQueries`'
+  `invalidateCollectionAnalytics` gate, collection-only), since the answer reads both. The "Add"
+  on a suggestion is the add-cards box's own engine (`useDeckCardAdder`: automatic-by-type filing,
+  optimistic counts, the existing absolute-count `PUT …/cards/{id}`), never a second way to file a
+  card.
   **Every deck clone goes through one seam** (`decks::copy::insert_deck_with_cards`): the public
   copy, the owner's own duplicate (`POST /api/decks/{game}/{deck_id}/copy`, issue #674 — `load_deck`
   first, lands in the source's folder, answers a `Deck` header through `deck_header`) and the precon

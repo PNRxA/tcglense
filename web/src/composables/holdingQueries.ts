@@ -92,8 +92,10 @@ export interface HoldingQueriesConfig {
   ) => Promise<CollectionQuantities>
   /** Collection only: thread the bulk-threshold preference into summary/sets keys+calls. */
   withBulkThreshold: boolean
-  /** Collection only: also invalidate the `collection-value-history` key on a write. */
-  invalidateValueHistory: boolean
+  /** Collection only: also invalidate every read *derived from* the collection on a write —
+   * the value history, the movers, and the decks' "from your collection" suggestions
+   * (issue #684), which a card owned or sold changes. */
+  invalidateCollectionAnalytics: boolean
   /** Wish list only: freeze the browse view's tile order until the next navigation, so a
    * per-card count edit never resorts the recency-sorted (`updated:desc`) tiles out from under
    * an open quick-add popover (issue #364 follow-up). The grid sources its count chips and its
@@ -221,9 +223,10 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     }
     reflowing([prefix, game], cfg.deferListRefetch)
     reflowing([`${prefix}-summary`, game], cfg.deferListRefetch)
-    if (cfg.invalidateValueHistory) {
+    if (cfg.invalidateCollectionAnalytics) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
+      qc.invalidateQueries({ queryKey: ['deck-suggestions', game] })
     }
     // The per-card entry and the batch counts repaint tiles IN PLACE (order-independent), so
     // they're never frozen — they're what keeps an open control's own numbers honest.

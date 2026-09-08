@@ -56,7 +56,7 @@ mod write;
 
 pub use analysis::{
     deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing, deck_roles, deck_stats,
-    deck_tokens, list_deck_formats,
+    deck_suggestions, deck_tokens, list_deck_formats,
 };
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use containing::decks_containing_card;
@@ -89,8 +89,8 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
 pub use analysis::{
     __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
-    __path_deck_pricing, __path_deck_roles, __path_deck_stats, __path_deck_tokens,
-    __path_list_deck_formats,
+    __path_deck_pricing, __path_deck_roles, __path_deck_stats, __path_deck_suggestions,
+    __path_deck_tokens, __path_list_deck_formats,
 };
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
 pub use containing::__path_decks_containing_card;

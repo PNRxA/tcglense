@@ -1184,6 +1184,7 @@ deck ids), matching the public-sharing surface.
 | `GET /api/decks/{game}/{deck_id}/mana` | — | `DeckManaBase` — the deck's **mana base** (issue #670): per colour, the pips its spells demand against the sources its library produces, judged by Frank Karsten's 2022 source counts, with a plain verdict (`"Short 2 black sources: …"`). **Demand** is the deck a player casts from — the shuffled library **plus** the command zone (a commander's own pips count) — and **supply** is the library alone (a commander is never a source for the 99); maybeboards and sideboards are in neither. The zone split borrows both of `rules`' answers, like the deck list's facets: which sections are the zone is `deck_zone`'s, and whether the zone leads this deck's format is `format_leads_with_command_zone`'s — so in a format with no command zone the cards in the seeded `Commander` section supply mana like the rest of the 60. Colours include `C` (an Eldrazi's `{C}` is a real requirement). Hybrid, Phyrexian and `{2/C}` pips ride `hybrid_pips` and are never counted against a colour. `table_size` (40/60/80/99) is the format's stated deck size when it has one (Commander → the 99-card column, however few cards are in it yet), else the nearest to `deck_size`. Always answers — never `null`; an empty deck has an empty `colors`. `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/goldfish` | — | `GoldfishHand` — shuffle the library and deal an opening hand (issue #596). Stateless and seeded: `?seed=` (u32; omitted = a fresh one, echoed back), `?mulligans=` (London — each reshuffles and owes one card to the bottom), `?bottom=<card ids>` (at most one per mulligan, each must be in the hand), `?draws=` (the draw step, clamped to the library), `?opening=` (default 7), `?sections=` as above. The same URL always deals the same cards. The shuffled library is capped at 20,000 cards (a deck row's counts are caller-controlled and the shuffle materialises one slot per copy, so a bigger one is refused rather than allocated). `404` if not the caller's; `422` for a parameter out of range, a library too large to shuffle, or a bottomed card that isn't in hand |
 | `GET /api/decks/{game}/{deck_id}/pricing` | — | `DeckPricing` — **where the deck's money is** (issue #672): every row of the deck **proper** (maybeboard rows are neither listed nor counted) priced as held, most expensive first, each carrying the cheapest priced printing of its card **at that row's own finish split** — what `PUT …/cards/{id}/printing` would land on — and the saving. `total_usd` is the deck detail's `summary.total_value_usd`, not a second fold of it (same rows, same `Valuation` accumulator), `cheapest_total_usd` is that total minus `saving_usd`, and `null` always means **unpriced**, never `"0.00"`. Three bounded queries; nothing goes per copy. This read writes nothing, so a read-only key may call it — the swap it suggests is the existing `WritableUser` printing write, and "swap all" is that same write batched client-side. `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/suggestions` | — | `DeckSuggestions` — **cards you already own that the deck could play** (issue #684): every card in the caller's collection that is legal in the deck's format, inside its colour identity, and not already in the deck (any section, maybeboards included), ranked by EDHREC's **global** popularity (`cards.edhrec_rank` — unranked cards are never listed) and grouped by the role each fills through the roles read's own grammar, with the deck's current count per role beside it. The colour identity is the facets' rule over the loaded deck — the command zone's when `format_leads_with_command_zone` and it holds a card, else the union over the deck proper (sideboard out) — and `null` when there is nothing to read one off, in which case **no colour filter applied**; `format_key` is `null` for an untracked format, in which case **no legality filter applied**; both are stated on the wire and in `caveats`, never implied. `candidate_count` is exact; only the `scanned_count` most popular (a cap of 500) are loaded in full and classified, and each list is capped. Memoised in the analytics cache under the holdings version, the price epoch, the day **and a fingerprint of the deck's rows**, so a deck edit misses rather than serving the pre-edit answer. It reads the caller's collection, so — alone among the analysis reads — it has **no public mirror**. `404` if not the caller's; shares the `Analytics` rate-limit bucket |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
 | `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |
@@ -1372,6 +1373,37 @@ already copied onto its base, so it could only tie, and a swap that took the tie
 a printing no card grid shows — though the row's own printing is always compared against, star
 or not. A card with no `oracle_id` has no siblings to find (the `/prints` rule), so it is its
 own only candidate. Three bounded queries, nothing per copy.
+
+`DeckSuggestions = { format_key, format_label, color_identity, commanders, candidate_count,
+scanned_count, top, roles, unclassified_count, caveats }` — **cards you own that the deck could
+play** (issue #684). `top` and each role's `cards` are `DeckSuggestionCard = { card, edhrec_rank,
+owned, roles }` — one printing the caller owns (the lowest catalog id among those held, so the
+same collection answers identically across requests), its EDHREC rank (the sort key, 1 = most
+played), copies owned across every printing, and the roles it fills in the roles read's order.
+`roles` is always all eight `DeckSuggestionRole = { role, label, description, in_deck, count,
+cards }`: `in_deck` is the roles read's `count` for the deck proper ("you have 6") and `count`
+the scanned candidates filling the role ("you own 14 more"), listed most popular first and
+capped (`count` stays exact). What the read is, honestly:
+
+* **The rank is global popularity, not synergy.** EDHREC's per-commander tables have no bulk
+  export and would be a scrape, so the claim made is "popular cards in your colours that you
+  own", and the first caveat says so on every response. Cards with no rank aren't listed — they
+  have no popularity claim to make.
+* **The filters are named, and their absence is named too.** `color_identity` is the identity
+  candidates had to fit inside (WUBRG-ordered; `[]` is a colourless deck, which only colourless
+  cards fit) and `commanders` the command-zone cards whose identity it is (empty when the colours
+  are a union over the deck proper); `null` means no colour filter applied. `format_key` /
+  `format_label` are the legality key applied; `null` means no legality filter applied. A card
+  with no legality data, or none for the format, is left out rather than vouched for; a
+  `restricted` card counts as playable except in Pauper Commander, where the provider spells
+  "commander only" that way.
+* **Bounded two ways.** The collection is scanned through one narrow query (identity, colours,
+  legality object, rank, counts — never the wide catalog row) and folded by gameplay identity
+  (`oracle_id`, else name — the shopping list's key), so four printings of a card are one
+  candidate holding four copies; then only the 500 most popular survivors are loaded in full for
+  the role grammar and the wire. `candidate_count` stays exact, `scanned_count` says how many
+  were classified, and a caveat names the gap when there is one. `unclassified_count` is the
+  scanned cards filling no role, so the groups are never read as a partition.
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
 maybeboard_summary, sections, cards, created_at, updated_at }` — `summary` and
