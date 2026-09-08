@@ -15,10 +15,13 @@ import CollectionSignInPrompt from '@/components/collection/CollectionSignInProm
 import CollectionImportControls from '@/components/collection/CollectionImportControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import HoldingBreakdownPanel from '@/components/holdings/HoldingBreakdownPanel.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
+import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
 import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
 import {
+  useCollectionBreakdownQuery,
   useCollectionProductSummaryQuery,
   useCollectionSetsQuery,
   useCollectionSummaryQuery,
@@ -65,9 +68,14 @@ const {
   totalValue,
   bulkValue,
   hasStats,
+  breakdown,
+  breakdownPending,
+  breakdownError,
+  breakdownExpanded,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useCollectionSummaryQuery,
   useHeldSetsQuery: useCollectionSetsQuery,
+  useBreakdownQuery: useCollectionBreakdownQuery,
   basePath: '/collection',
   withBulk: true,
 })
@@ -201,20 +209,34 @@ function fetchValueHistory(range: PriceRange) {
 
       <!-- Card and sealed-product value over time — the current basket re-priced from
            historic snapshots, as two independent lines on the shared history chart, each
-           toggleable via the legend. Show it when either holding kind exists. -->
-      <PriceChart
+           toggleable via the legend. Show it when either holding kind exists. It rests
+           collapsed (like the two analytics panels below it): the disclosure mounts its body
+           only while open, so the frameless chart — and the value-history query it owns —
+           exist only once the section is opened. -->
+      <CollapsibleSection
         v-if="(hasStats || hasProductStats) && showValueChart"
         title="Collection value"
-        empty-text="No value history for this range yet."
-        :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
-        :query-key="['collection-value-history', game]"
-        :fetcher="fetchValueHistory"
-        :game="game"
-        toggleable
-      />
+        blurb="Your cards and sealed products re-priced at each day's captured prices."
+        heading="h2"
+      >
+        <PriceChart
+          title="Collection value"
+          empty-text="No value history for this range yet."
+          :series-labels="{ primary: 'Cards', secondary: 'Sealed products' }"
+          :query-key="['collection-value-history', game]"
+          :fetcher="fetchValueHistory"
+          :game="game"
+          toggleable
+          frameless
+        />
+      </CollapsibleSection>
 
       <!-- One panel switches between independent Singles and Sealed mover rankings. -->
-      <CollectionMovers v-if="(hasStats || hasProductStats) && showMovers" :game="game" />
+      <CollectionMovers
+        v-if="(hasStats || hasProductStats) && showMovers"
+        :game="game"
+        class="mb-10"
+      />
 
       <!-- Keep the sealed holdings grid directly below the collection analytics. -->
       <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
@@ -223,6 +245,20 @@ function fetchValueHistory(range: PriceRange) {
            the sealed section's heading + stats above. -->
       <h2 class="mb-4 text-lg font-semibold">Cards</h2>
       <HoldingStatList :items="cardStats" class="mb-6" />
+
+      <!-- Where the cards' value sits (issue #680): by rarity / colour / type / finish, and
+           the top holdings by held value. Beside the stats it slices; gated like them, and
+           collapsed by default — the engine gates the query on the bound open state. -->
+      <HoldingBreakdownPanel
+        v-if="hasStats"
+        v-model:expanded="breakdownExpanded"
+        :game="game"
+        :breakdown="breakdown"
+        :pending="breakdownPending"
+        :error="breakdownError"
+        count-noun="owned"
+        class="mb-8"
+      />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

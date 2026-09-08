@@ -1,7 +1,12 @@
 import { request } from './client'
 import { makeHoldingApi } from './holdings'
 import { makeProductHoldingApi } from './product-holdings'
-import type { CollectionSet, CollectionSummary, WishlistVisibility } from './generated'
+import type {
+  CollectionSet,
+  CollectionSummary,
+  HoldingBreakdown,
+  WishlistVisibility,
+} from './generated'
 
 export type { WishlistVisibility } from './generated'
 
@@ -46,6 +51,15 @@ export function getWishlistSummary(
  * and values overlaid on the wish-list landing's all-sets grid. */
 export function getWishlistSets(token: string, game: string): Promise<{ data: CollectionSet[] }> {
   return api.sets(token, game)
+}
+
+/** Relative `/api/wishlist/{game}/breakdown` path (issue #680). */
+export const wishlistBreakdownPath = api.breakdownPath
+
+/** Where the wish list's cost sits — the collection breakdown's twin over the wanted
+ * cards. A wish list has no bulk-threshold preference, so it takes no `bulkMaxCents`. */
+export function getWishlistBreakdown(token: string, game: string): Promise<HoldingBreakdown> {
+  return api.breakdown(token, game)
 }
 
 /** Relative `/api/wishlist/{game}/sets/{code}/drops` path (paginated by drop). */

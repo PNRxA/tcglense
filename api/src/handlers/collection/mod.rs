@@ -14,7 +14,8 @@
 //!
 //! The handlers are split across submodules by concern — [`read`] (list / summary /
 //! owned-count reads), [`sets`] (per-set landing + by-drop), [`write`] (the owned-count
-//! upsert), and [`import`] (one-off external import) — with the
+//! upsert), [`import`] (one-off external import), and the analytics trio
+//! [`value_history`] / [`price_movements`] / [`breakdown`] — with the
 //! import-specific DTOs kept here. The entity-agnostic wire DTOs, params, and helpers
 //! live in [`crate::handlers::shared::holdings`], shared with the wish list (its
 //! same-shaped "want" twin), and are re-exported below so the submodules and their
@@ -30,6 +31,7 @@ use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod breakdown;
 mod export;
 mod import;
 mod price_movements;
@@ -42,6 +44,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+pub use breakdown::collection_breakdown;
 pub use export::{export_collection, export_collection_cards};
 pub use import::{
     get_import_job, import_collection, import_collection_csv, import_collection_text,
@@ -66,6 +69,7 @@ pub(crate) use sets::{owned_drop_page, owned_sets, owned_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::collection::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
+pub use breakdown::__path_collection_breakdown;
 pub use export::{__path_export_collection, __path_export_collection_cards};
 pub use import::{
     __path_get_import_job, __path_import_collection, __path_import_collection_csv,

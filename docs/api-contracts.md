@@ -858,9 +858,10 @@ card id (the same id the public catalog exposes); the handler resolves it to the
 internal `cards.id` before storage (so a holding survives a catalog re-import). A
 missing token is `401`; an unknown game/card is `404`. These endpoints are **per-user
 rate limited** (issue #168, `ratelimit::user_rate_limit`, keyed by the token's user
-id): a generous `general` quota covers reads/edits/batch lookups, and a tighter
-`import` quota covers the expensive import/CSV endpoints; over-limit is `429` +
-`Retry-After` (and, being per-user, `no-store`).
+id): a generous `general` quota covers reads/edits/batch lookups, a middle `analytics`
+quota covers the whole-collection scans (`value-history`, `movers`, `breakdown`, the
+exports), and a tighter `import` quota covers the expensive import/CSV endpoints;
+over-limit is `429` + `Retry-After` (and, being per-user, `no-store`).
 
 A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
 a card you don't own (setting both counts to zero deletes the row), so the table holds
@@ -945,6 +946,7 @@ surface.
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
 | `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
+| `GET /api/collection/{game}/breakdown?bulk_max_cents` | — | `HoldingBreakdown` — **where the collection's value sits** (issue #680): copies + estimated USD value by rarity, by colour-identity bucket, by card type and by finish, plus the ten most valuable holdings by **held** value (price × copies — not a single copy's price, which is the list's `sort=price`). Cards only (sealed products have none of these facets). The embedded `summary` is `/summary`'s own answer over the same rows, so every bucket is a slice of that total; `bulk_max_cents` sets the cutoff for its bulk slice exactly as it does there. `AuthUser` — a read-only key may call it. Rides the analytics response cache under the collection's holdings version + the price epoch + the UTC date (an edit through any handler invalidates it) and the per-user `analytics` bucket. See `HoldingBreakdown` below |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
 | `GET /api/collection/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
 | `GET /api/collection/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
@@ -1035,6 +1037,28 @@ is a candidate only when both endpoints have a price. `all_time` instead compare
 with its own earliest non-null captured price, so a newer catalog item is not excluded by an
 older item's history. A holding kind with no captured history has null `as_of` / `day_as_of`
 and fourteen empty arrays, independently of the other kind.
+
+`HoldingBreakdown = { summary, rarity, color, card_type, finish, top, unpriced_cards }`
+(`api/src/handlers/shared/breakdown.rs`, issue #680): `summary` is a `CollectionSummary`; the
+four facets are `BreakdownBucket[] = { key, cards, copies, value_usd }[]` — distinct held
+cards, held copies, and their estimated USD value (a 2-dp string, `null` when none of them is
+priced) — listing **non-empty buckets only**, each facet a partition of the same rows so its
+values sum to `summary.total_value_usd` and its copies to `summary.total_cards`. Keys:
+`rarity` uses Scryfall's spelling (`common`/`uncommon`/`rare`/`mythic`/`special`/`bonus`,
+`unknown` for a card with none), in that order then alphabetically with `unknown` last;
+`color` is `white`/`blue`/`black`/`red`/`green` for a mono-coloured identity, `multicolor` for
+two or more colours, `colorless` for none, in WUBRG-then-multicolour-then-colourless order;
+`card_type` is the type line's **first card type** past the supertypes, lower-cased
+(`creature`, `land`, … — an artifact creature files under `artifact`; the front face of a
+multi-faced line; `other` when the line names none), most valuable bucket first (then most
+copies, then key); `finish` is `regular` / `foil`, each counting **only that finish's**
+copies (a card held in both is in both). `top: TopHolding[] = { card: Card, quantity,
+foil_quantity, value_usd }[]` ranks by held value — `usd × quantity + usd_foil ×
+foil_quantity` over the finishes the card is priced in — highest first, at most ten, ties by
+internal id; a holding with no priced held finish never ranks and is counted in
+`unpriced_cards` instead (so a small total can be told from an unpriced one). A price counts
+only for a finish that is actually held. The SPA's labels/swatches for the keys are
+`web/src/lib/holdingBreakdown.ts`.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
 `card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `drop_noun`, `has_subtypes` — the
@@ -1218,6 +1242,7 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 |---------------|---------|
 | `GET /api/wishlist/{game}?q&sort&dir&set&include_related&min_copies&max_copies&finish&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope, the **copy-count filter** — read on the wanted counts) |
 | `GET /api/wishlist/{game}/summary?set&include_related` | the collection summary (unique / copies / value of what's wanted) |
+| `GET /api/wishlist/{game}/breakdown` | the collection breakdown (issue #680): what buying the list costs by rarity / colour / type / finish, and the ten most valuable wanted lines by wanted value — the same `HoldingBreakdown` shape and fold over `wishlist_items`; no `bulk_max_cents` on the SPA side (a wish list has no bulk preference), though the param is accepted. Cached under the wish list's **own** holdings version (`analytics_cache::HoldingsSurface::Wishlist`, bumped by every wish-list card write), so a wish-list edit invalidates it and a collection edit doesn't; same `analytics` rate bucket |
 | `GET /api/wishlist/{game}/sets` | the collection per-set aggregates (sets holding wishlisted cards, newest first, counts + value) |
 | `GET /api/wishlist/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
 | `GET /api/wishlist/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
