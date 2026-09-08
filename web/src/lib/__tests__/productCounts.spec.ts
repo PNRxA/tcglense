@@ -1,7 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import type { ProductCardSection, ProductComponent } from '@/lib/api'
+import type {
+  PackEv,
+  PackOpening,
+  ProductCardSection,
+  ProductComponent,
+  ProductEv,
+} from '@/lib/api'
 import {
+  boosterLabel,
   boxItemCount,
+  cardsPerPackLabel,
+  evVersusPrice,
+  expectedValueHeading,
+  oddsLabel,
+  openingSummary,
+  openingVersusPrice,
   productCardChips,
   productCardCounts,
   productCardsHeading,
@@ -264,5 +277,260 @@ describe('boxItemCount', () => {
     // would break it in exactly the case a clamp was meant to cover.
     expect(boxItemCount([component('Odd row', 0)])).toBe(0)
     expect(boxItemCount([component('Pack', 3), component('Odd row', 0)])).toBe(3)
+  })
+})
+
+// ---------- Booster expected value + the seeded opener (issue #682) ----------
+
+const packEv = (overrides: Partial<PackEv> = {}): PackEv => ({
+  set_code: 'blb',
+  booster_code: 'play',
+  name: 'Play Booster',
+  quantity: 1,
+  cards_per_pack: 14,
+  ev_usd: '5.00',
+  priced_share: 1,
+  slots: [],
+  top: [],
+  ...overrides,
+})
+
+const productEv = (packs: PackEv[], overrides: Partial<ProductEv> = {}): ProductEv => ({
+  ev_usd: '5.00',
+  packs,
+  top: [],
+  caveats: [],
+  ...overrides,
+})
+
+const opening = (overrides: Partial<PackOpening> = {}): PackOpening => ({
+  seed: 7,
+  copies: 1,
+  packs: [],
+  value_usd: '12.34',
+  priced_count: 14,
+  unpriced_count: 0,
+  caveats: [],
+  ...overrides,
+})
+
+describe('expectedValueHeading', () => {
+  it('quotes a single booster per pack', () => {
+    const heading = expectedValueHeading(productEv([packEv({ quantity: 1 })]))
+    expect(heading.title).toBe('Expected value')
+    expect(heading.unit).toBe('per pack, on average')
+    // Nothing to reconcile: one copy IS one pack, so the blurb is only the qualification.
+    expect(heading.blurb).toBe(
+      "An average over many openings at today's prices — not what any one pack holds.",
+    )
+  })
+
+  it('quotes a box per copy and spells out how many packs a copy opens', () => {
+    const heading = expectedValueHeading(productEv([packEv({ quantity: 36 })]))
+    expect(heading.unit).toBe('per copy, on average')
+    expect(heading.blurb).toContain('One copy opens 36 packs.')
+  })
+
+  it('sums the packs a copy opens across booster configurations', () => {
+    // A bundle: nine play boosters plus a collector booster is 10 packs, not 2 lines.
+    const heading = expectedValueHeading(
+      productEv([packEv({ quantity: 9 }), packEv({ booster_code: 'collector', quantity: 1 })]),
+    )
+    expect(heading.blurb).toContain('One copy opens 10 packs.')
+  })
+
+  it('never claims a copy opens zero packs', () => {
+    const heading = expectedValueHeading(productEv([]))
+    expect(heading.blurb).not.toContain('0 packs')
+    expect(heading.unit).toBe('per copy, on average')
+  })
+
+  it('always says the figure is an average at today’s prices', () => {
+    for (const quantity of [1, 6, 36]) {
+      const heading = expectedValueHeading(productEv([packEv({ quantity })]))
+      expect(heading.blurb).toContain("An average over many openings at today's prices")
+      expect(heading.blurb).toContain('not what any one pack holds')
+    }
+  })
+})
+
+describe('evVersusPrice', () => {
+  it('reads the expectation as a share of the current price', () => {
+    const vs = evVersusPrice('6.20', '10.00')
+    expect(vs?.ratio).toBeCloseTo(0.62)
+    expect(vs?.label).toBe('Expected value is 62% of the current price')
+  })
+
+  it('keeps the comparison free of advice', () => {
+    const label = evVersusPrice('120.00', '100.00')!.label
+    // An expectation over many openings is not a promise about this copy: nothing here may
+    // read as money back, a profit, or a recommendation.
+    expect(label).not.toMatch(/get back|profit|worth buying|value for money/i)
+    expect(label).toBe('Expected value is 120% of the current price')
+  })
+
+  it('is null without a usable price to compare against', () => {
+    expect(evVersusPrice('6.20', null)).toBeNull()
+    expect(evVersusPrice('6.20', undefined)).toBeNull()
+    expect(evVersusPrice('6.20', '')).toBeNull()
+    expect(evVersusPrice('6.20', '0')).toBeNull()
+    expect(evVersusPrice('6.20', 'not a price')).toBeNull()
+  })
+})
+
+describe('oddsLabel', () => {
+  it('quotes whole packs above ten', () => {
+    expect(oddsLabel(24)).toBe('1 in 24 packs')
+    // Rounded, not truncated — and never to a decimal at this end, where the
+    // with-replacement approximation can't support one.
+    expect(oddsLabel(23.7)).toBe('1 in 24 packs')
+    expect(oddsLabel(900)).toBe('1 in 900 packs')
+  })
+
+  it('keeps one decimal below ten, where the fraction is the answer', () => {
+    expect(oddsLabel(2.5)).toBe('1 in 2.5 packs')
+    expect(oddsLabel(2)).toBe('1 in 2 packs')
+    expect(oddsLabel(9.44)).toBe('1 in 9.4 packs')
+  })
+
+  it('stops quoting a ratio once it would read as a guarantee', () => {
+    expect(oddsLabel(1.5)).toBe('most packs')
+    expect(oddsLabel(1.2)).toBe('most packs')
+    expect(oddsLabel(1)).toBe('most packs')
+  })
+
+  it('says nothing precise about an unusable figure', () => {
+    expect(oddsLabel(Number.POSITIVE_INFINITY)).toBe('rarely')
+    expect(oddsLabel(Number.NaN)).toBe('rarely')
+    expect(oddsLabel(0)).toBe('rarely')
+  })
+})
+
+describe('cardsPerPackLabel', () => {
+  it('words the sheet count per pack, never as the product’s contents', () => {
+    expect(cardsPerPackLabel(14)).toBe('14 cards per pack')
+    expect(cardsPerPackLabel(1)).toBe('1 card per pack')
+  })
+
+  it('renders a fractional expectation as the range it really is', () => {
+    // A configuration that sometimes deals a fifteenth card averages 14.25 — a pack is
+    // never "14.25 cards", so say what it can be.
+    expect(cardsPerPackLabel(14.25)).toBe('14–15 cards per pack')
+    expect(cardsPerPackLabel(15.999)).toBe('16 cards per pack')
+  })
+
+  it('says nothing when there is no count to state', () => {
+    expect(cardsPerPackLabel(0)).toBe('')
+    expect(cardsPerPackLabel(Number.NaN)).toBe('')
+  })
+})
+
+describe('openingSummary', () => {
+  it('words the total as one run of the dice', () => {
+    const summary = openingSummary(opening({ packs: [{}] as PackOpening['packs'] }))
+    expect(summary.title).toBe('What this run dealt')
+    expect(summary.value).toBe('pulled in this run')
+    expect(summary.blurb).toBe('This run is one roll of the dice, not what a pack is worth.')
+  })
+
+  it('names the run’s size once it spans more than one pack', () => {
+    const summary = openingSummary(opening({ packs: Array(6).fill({}) as PackOpening['packs'] }))
+    expect(summary.title).toBe('What this run dealt across 6 packs')
+  })
+
+  it('says how much of the run had no price, so the total is never read as complete', () => {
+    const summary = openingSummary(opening({ priced_count: 12, unpriced_count: 3 }))
+    expect(summary.blurb).toContain('3 of the 15 cards dealt had no market price')
+    expect(summary.blurb).toContain('count as $0')
+  })
+})
+
+describe('the EV + opener vocabulary as a whole', () => {
+  // Every string the two panels can print, over a spread of inputs.
+  const strings = (): string[] => {
+    const out: string[] = []
+    for (const quantity of [1, 6, 36]) {
+      const heading = expectedValueHeading(productEv([packEv({ quantity })]))
+      out.push(heading.title, heading.unit, heading.blurb)
+    }
+    out.push(evVersusPrice('6.20', '10.00')!.label)
+    out.push(openingVersusPrice(opening(), '10.00')!)
+    out.push(openingVersusPrice(opening({ copies: 6 }), '10.00')!)
+    for (const oneIn of [1, 2.5, 24, 900, Number.POSITIVE_INFINITY]) out.push(oddsLabel(oneIn))
+    for (const per of [1, 14, 14.25]) out.push(cardsPerPackLabel(per))
+    for (const unpriced of [0, 3]) {
+      const summary = openingSummary(
+        opening({ unpriced_count: unpriced, packs: Array(6).fill({}) as PackOpening['packs'] }),
+      )
+      out.push(summary.title, summary.value, summary.blurb)
+    }
+    return out
+  }
+
+  it('never words a number as the product’s contents or a guarantee', () => {
+    // The rule this whole module exists for: an expectation and a simulation are not
+    // containment. `contains` catches the manifest's own vocabulary leaking in here.
+    for (const text of strings()) {
+      expect(text.toLowerCase()).not.toContain('cards in this product')
+      expect(text.toLowerCase()).not.toContain('guaranteed')
+      expect(text.toLowerCase()).not.toContain('contains')
+    }
+  })
+
+  it('qualifies every money-bearing string as an average, an expectation, or this run', () => {
+    // The strings that sit next to a dollar figure are the ones that can be read as a
+    // promise, so each has to carry its own qualification — a caption read on its own
+    // (a screen reader, a wrapped row) must still say what kind of number it labels.
+    const moneyStrings = [
+      ...[1, 36].flatMap((quantity) => {
+        const heading = expectedValueHeading(productEv([packEv({ quantity })]))
+        return [heading.title, heading.unit, heading.blurb]
+      }),
+      evVersusPrice('6.20', '10.00')!.label,
+      openingVersusPrice(opening({ copies: 6 }), '10.00')!,
+      ...(() => {
+        const summary = openingSummary(opening({ unpriced_count: 3 }))
+        return [summary.title, summary.value, summary.blurb]
+      })(),
+    ]
+    for (const text of moneyStrings) {
+      expect(text).toMatch(/average|expected|this run/i)
+    }
+  })
+})
+
+describe('boosterLabel', () => {
+  it('prefers the booster’s stated name', () => {
+    expect(boosterLabel({ name: 'Play Booster', booster_code: 'play' })).toBe('Play Booster')
+  })
+
+  it('falls back to upstream’s own key when it states none', () => {
+    expect(boosterLabel({ name: null, booster_code: 'collector' })).toBe('collector booster')
+  })
+})
+
+describe('openingVersusPrice', () => {
+  it('reads the run’s total as a share of what one copy costs', () => {
+    expect(openingVersusPrice(opening({ value_usd: '5.00' }), '10.00')).toBe(
+      "This run dealt 50% of what one copy costs at today's price",
+    )
+  })
+
+  it('scales the comparison by the copies opened', () => {
+    // Six copies at $10 is a $60 run, not a $10 one.
+    expect(openingVersusPrice(opening({ value_usd: '30.00', copies: 6 }), '10.00')).toBe(
+      "This run dealt 50% of what 6 copies cost at today's price",
+    )
+  })
+
+  it('keeps the subject the run, never the product’s worth', () => {
+    const label = openingVersusPrice(opening({ value_usd: '400.00' }), '10.00')!
+    expect(label).toContain('This run dealt')
+    expect(label).not.toMatch(/get back|profit|worth/i)
+  })
+
+  it('is null without a usable price', () => {
+    expect(openingVersusPrice(opening(), null)).toBeNull()
+    expect(openingVersusPrice(opening(), '0')).toBeNull()
   })
 })
