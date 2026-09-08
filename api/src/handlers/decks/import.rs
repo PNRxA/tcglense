@@ -65,10 +65,16 @@ pub async fn import_deck(
     let parsed = match (payload.source, payload.contents) {
         (Some(source), None) => {
             // Match the collection link-import gate exactly: Moxfield remains upload-only
-            // until its explicitly approved User-Agent path is enabled.
+            // until its explicitly approved User-Agent path is enabled, and the phone apps
+            // (Mythic Tools, ManaBox) have no API to fetch from at all.
             if !provider.network_import_enabled() {
+                let why = if provider.file_only() {
+                    "isn't available — the app has no public API"
+                } else {
+                    "is temporarily unavailable"
+                };
                 return Err(AppError::Validation(format!(
-                    "{} live import is temporarily unavailable; upload a deck CSV or text export instead",
+                    "{} live import {why}; upload a deck CSV or text export instead",
                     provider.label()
                 )));
             }

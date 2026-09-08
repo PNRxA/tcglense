@@ -1,6 +1,6 @@
-//! CSV collection parsers (Archidekt, Moxfield, and Mythic Tools exports).
+//! CSV collection parsers (Archidekt, Moxfield, Mythic Tools and ManaBox exports).
 //!
-//! All three services offer a CSV "export collection", but their shapes differ:
+//! All four services offer a CSV "export collection", but their shapes differ:
 //!
 //! * **Archidekt** rows carry a **Scryfall ID** (our `cards.external_id`) plus a
 //!   **Finish** and a **Quantity**; those three columns are all we read (extra columns
@@ -16,12 +16,18 @@
 //!   (`Nonfoil` / `foil` / `etched`). Rows with an id resolve like Archidekt's; rows
 //!   without one fall back to `(set code, collector number)` like Moxfield's, because
 //!   the app lets a row exist without an id.
+//! * **ManaBox** (issue #669) — the phone scanner most collections start in — writes
+//!   the same hybrid: a **Scryfall ID**, a **Set code** + **Collector number**, a
+//!   **Quantity**, and the finish in a **Foil** column (`normal` / `foil` / `etched`).
+//!   Its own **ManaBox ID** column is the fingerprint: no other export carries one.
 //!
 //! [`parse_csv`] sniffs which shape an upload is from its header row, in this order:
-//! an **Amount** column means Mythic Tools; otherwise a Scryfall-id column means
-//! Archidekt; otherwise Edition + Collector Number + Count means Moxfield. The order
-//! matters both ways — Mythic Tools also has a Scryfall ID column, and Archidekt's
-//! quantity column also accepts a "Count" spelling.
+//! an **Amount** column means Mythic Tools; otherwise a **ManaBox ID** column means
+//! ManaBox; otherwise a Scryfall-id column means Archidekt; otherwise Edition +
+//! Collector Number + Count means Moxfield. The order matters both ways — Mythic Tools
+//! and ManaBox both carry a Scryfall ID column too (and ManaBox spells its finish
+//! column `Foil`, which the Archidekt parser would refuse as a missing `Finish`), and
+//! Archidekt's quantity column also accepts a "Count" spelling.
 //!
 //! Every byte here is an untrusted upload, so parsing is deliberately defensive:
 //!
@@ -41,9 +47,9 @@
 //!
 //! The Archidekt output is the same normalized `Vec<FetchedHolding>` a network provider
 //! yields; the Moxfield output is a `Vec<PrintingRow>` that becomes `FetchedHolding`s
-//! once its set/number pairs are resolved to external ids, and a Mythic Tools export can
-//! yield both. Either way the provider-independent aggregate / resolve / reconcile /
-//! apply path is reused as-is.
+//! once its set/number pairs are resolved to external ids, and a Mythic Tools or ManaBox
+//! export can yield both. Either way the provider-independent aggregate / resolve /
+//! reconcile / apply path is reused as-is.
 
 use super::archidekt::is_foil_finish;
 use super::{FetchedHolding, ImportError, MAX_IMPORT_ROWS, Provider};
@@ -86,13 +92,53 @@ const MOX_PROXY_HEADERS: &[&str] = &["proxy"];
 /// covered by the header lists above.
 const MYTHIC_AMOUNT_HEADERS: &[&str] = &["amount"];
 
+/// ManaBox's own per-card id column (issue #669). No other export carries one, so its
+/// presence is what identifies a ManaBox export; the id itself is never read (it names a
+/// row in the app's database, not a printing). Everything else the shape needs (Scryfall
+/// ID / Set code / Collector number / Foil / Quantity / Name) is already covered by the
+/// header lists above.
+const MANABOX_ID_HEADERS: &[&str] = &["manabox id", "manabox_id", "manaboxid"];
+
+/// The two exports whose rows identify a printing by **Scryfall ID when present, else set
+/// code + collector number** — Mythic Tools and ManaBox — share one row parser
+/// ([`parse_id_or_pair_rows`]). What differs is only the copy: which provider the parse is
+/// reported as, and what the app calls its finish column, so a refusal names the column
+/// the user's file actually lacks rather than one it never had.
+#[derive(Debug, Clone, Copy)]
+struct HybridShape {
+    provider: Provider,
+    /// The app's own spelling of its finish column, for the refusal message.
+    finish_column: &'static str,
+}
+
+impl HybridShape {
+    const MYTHIC_TOOLS: Self = Self {
+        provider: Provider::MythicTools,
+        finish_column: "Finish",
+    };
+    const MANABOX: Self = Self {
+        provider: Provider::ManaBox,
+        finish_column: "Foil",
+    };
+
+    /// A 422 for an export of this shape that lacks a column it needs. Names the app and
+    /// the column, since at this point we know exactly which file the user has.
+    fn missing_column(self, column: &str, consequence: &str) -> ImportError {
+        ImportError::InvalidSource(format!(
+            "the {} export is missing its \"{column}\" column{consequence}. Re-export with \
+             the default columns selected.",
+            self.provider.label()
+        ))
+    }
+}
+
 /// A parsed collection upload, tagged with the provider whose export shape it matched.
 ///
 /// The two row buckets are how each row identifies its printing, not two different
 /// providers: `holdings` are rows that carried a card id (already the engine's normalized
 /// shape) and `printings` are rows that must first be resolved from a
 /// `(set code, collector number)` pair or a bare name. Archidekt fills only the first,
-/// Moxfield only the second, and a Mythic Tools export can fill both.
+/// Moxfield only the second, and a Mythic Tools or ManaBox export can fill both.
 #[derive(Debug)]
 pub(super) struct ParsedCsv {
     pub(super) provider: Provider,
@@ -102,7 +148,7 @@ pub(super) struct ParsedCsv {
 
 /// One usable row of a collection export that carries no card id, pre-normalized (set code
 /// lowercased, number trimmed) but not yet resolved to a catalog card. Produced by the
-/// Moxfield and Mythic Tools CSV parsers and by the plain-text list parser.
+/// Moxfield, Mythic Tools and ManaBox CSV parsers and by the plain-text list parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrintingRow {
     /// Scryfall set code, lowercased (the catalog stores lowercase codes). `None` when the
@@ -154,7 +200,17 @@ pub(super) fn parse_csv(bytes: &[u8]) -> Result<Option<ParsedCsv>, ImportError> 
     // An "Amount" column pins the shape to Mythic Tools — checked first because its export
     // also carries a Scryfall ID column, which would otherwise read as Archidekt.
     if let Some(amount_idx) = find_column(&headers, MYTHIC_AMOUNT_HEADERS) {
-        return parse_mythic_tools_rows(reader, &headers, amount_idx).map(Some);
+        return parse_id_or_pair_rows(reader, &headers, HybridShape::MYTHIC_TOOLS, amount_idx)
+            .map(Some);
+    }
+    // A "ManaBox ID" column pins the shape to ManaBox — also ahead of Archidekt, for the
+    // same reason: its export carries a Scryfall ID too, and read as Archidekt it would be
+    // refused for spelling its finish column "Foil" rather than "Finish" (issue #669).
+    if find_column(&headers, MANABOX_ID_HEADERS).is_some() {
+        let shape = HybridShape::MANABOX;
+        let quantity_idx = find_column(&headers, QUANTITY_HEADERS)
+            .ok_or_else(|| shape.missing_column("Quantity", ""))?;
+        return parse_id_or_pair_rows(reader, &headers, shape, quantity_idx).map(Some);
     }
     // An id column pins the shape to Archidekt — checked before Moxfield because
     // Archidekt's quantity column also matches Moxfield's "Count" spelling.
@@ -229,41 +285,41 @@ fn parse_archidekt_rows(
     Ok(holdings)
 }
 
-/// Parse the data rows of a Mythic Tools-shaped CSV.
+/// Parse the data rows of a Mythic Tools- or ManaBox-shaped CSV (`shape` says which).
 ///
-/// Its export is a hybrid: every row has an **Amount**, and identifies its printing by a
-/// **Scryfall ID** when the app has one, falling back to **Set Code** + **Collector
-/// Number**. So a single export can yield both id-keyed holdings and pair-keyed rows, and
-/// each row takes whichever key it actually carries. A row with neither is skipped.
+/// Both exports are a hybrid: every row has an owned count (`quantity_idx` — Mythic
+/// Tools' **Amount**, ManaBox's **Quantity**), and identifies its printing by a **Scryfall
+/// ID** when the app has one, falling back to **Set Code** + **Collector Number**. So a
+/// single export can yield both id-keyed holdings and pair-keyed rows, and each row takes
+/// whichever key it actually carries. A row with neither is skipped.
 ///
 /// Which card-key columns are present is flexible — an export with only ids and one with
-/// only set/number are both legitimate — but at least one key, and the **Finish** column,
-/// are required. Finish is not optional for the same reason it isn't for a Moxfield export:
-/// Mythic Tools lets the user choose which columns to export, and silently importing a foil
-/// collection as regular copies would corrupt both the counts and the valuation.
-fn parse_mythic_tools_rows(
+/// only set/number are both legitimate — but at least one key, and the finish column
+/// (Mythic Tools' **Finish**, ManaBox's **Foil**), are required. The finish is not optional
+/// for the same reason it isn't for a Moxfield export: silently importing a foil collection
+/// as regular copies would corrupt both the counts and the valuation — and Mythic Tools
+/// lets the user choose which columns to export, so a finish-less file is reachable.
+fn parse_id_or_pair_rows(
     mut reader: csv::Reader<&[u8]>,
     headers: &csv::StringRecord,
-    amount_idx: usize,
+    shape: HybridShape,
+    quantity_idx: usize,
 ) -> Result<ParsedCsv, ImportError> {
     let id_idx = find_column(headers, ID_HEADERS);
     let set_idx = find_column(headers, MOX_EDITION_HEADERS);
     let number_idx = find_column(headers, MOX_NUMBER_HEADERS);
     let name_idx = find_column(headers, MOX_NAME_HEADERS);
     if id_idx.is_none() && (set_idx.is_none() || number_idx.is_none()) {
-        return Err(ImportError::InvalidSource(
-            "the Mythic Tools export needs either a \"Scryfall ID\" column or both a \
-             \"Set Code\" and a \"Collector Number\" column — re-export with the default \
-             columns selected"
-                .to_string(),
-        ));
+        return Err(ImportError::InvalidSource(format!(
+            "the {} export needs either a \"Scryfall ID\" column or both a \"Set Code\" and \
+             a \"Collector Number\" column — re-export with the default columns selected",
+            shape.provider.label()
+        )));
     }
     let finish_idx = find_column(headers, MOX_FOIL_HEADERS).ok_or_else(|| {
-        ImportError::InvalidSource(
-            "the Mythic Tools export is missing its \"Finish\" column — without it we'd \
-             import your foils as regular copies. Re-export with the default columns \
-             selected."
-                .to_string(),
+        shape.missing_column(
+            shape.finish_column,
+            " — without it we'd import your foils as regular copies",
         )
     })?;
 
@@ -273,7 +329,7 @@ fn parse_mythic_tools_rows(
     for record in reader.records() {
         let record = read_record(record, &mut rows_seen)?;
 
-        let Some(quantity) = positive_quantity(&record, amount_idx) else {
+        let Some(quantity) = positive_quantity(&record, quantity_idx) else {
             continue;
         };
         let foil = is_foil_finish(false, record.get(finish_idx));
@@ -309,7 +365,7 @@ fn parse_mythic_tools_rows(
     }
 
     Ok(ParsedCsv {
-        provider: Provider::MythicTools,
+        provider: shape.provider,
         holdings,
         printings,
     })
@@ -805,5 +861,159 @@ mod tests {
             panic!("expected InvalidSource");
         };
         assert!(msg.contains("Mythic Tools"), "names the format: {msg}");
+    }
+
+    // ---- ManaBox exports (issue #669) ----
+
+    /// The header row of a real ManaBox collection export, verbatim.
+    const MANABOX_HEADER: &str = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,\
+                                  ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,\
+                                  Condition,Language,Purchase price currency";
+
+    /// Unwrap a ManaBox-detected parse.
+    fn parse_manabox(bytes: &[u8]) -> Result<ParsedCsv, ImportError> {
+        let parsed = parse_known(bytes)?;
+        assert_eq!(parsed.provider, Provider::ManaBox, "sniffed shape");
+        Ok(parsed)
+    }
+
+    /// An id-keyed row, for readable fixture assertions.
+    fn holding_of(id: &str, foil: bool, quantity: i32) -> FetchedHolding {
+        FetchedHolding {
+            external_card_id: id.to_string(),
+            foil,
+            quantity,
+        }
+    }
+
+    #[test]
+    fn parses_a_real_shaped_manabox_export() {
+        // Real rows: the three finish spellings the app writes, a quoted name with a
+        // comma, and a purchase price + ManaBox ID that must not be mistaken for a count.
+        let csv = format!(
+            "{MANABOX_HEADER}\n\
+             \"Aang, Air Nomad\",tle,Avatar: The Last Airbender,146,normal,rare,2,79315,{UID_A},0.25,false,false,near_mint,en,USD\n\
+             Sol Ring,c21,Commander 2021,263,foil,uncommon,1,79316,{UID_B},1.5,false,false,near_mint,en,USD\n\
+             Sol Ring,c21,Commander 2021,263,etched,uncommon,3,79317,{UID_B},4,false,false,near_mint,en,USD\n"
+        );
+        let parsed = parse_manabox(csv.as_bytes()).expect("parse");
+        assert!(
+            parsed.printings.is_empty(),
+            "every row carried a Scryfall ID, so none needs a pair lookup"
+        );
+        assert_eq!(
+            parsed.holdings,
+            vec![
+                holding_of(UID_A, false, 2),
+                holding_of(UID_B, true, 1),
+                holding_of(UID_B, true, 3),
+            ],
+            "\"normal\" is a regular copy, \"foil\" and \"etched\" are foils, and Quantity \
+             (not Purchase price or ManaBox ID) is the count"
+        );
+    }
+
+    #[test]
+    fn a_manabox_export_never_reads_as_archidekt() {
+        // The ordering case from issue #669. A ManaBox export carries a Scryfall ID column,
+        // so before the fingerprint existed it was routed down the Archidekt branch — and
+        // refused there for lacking a "Finish" column, which ManaBox spells "Foil". The
+        // "ManaBox ID" check must win before the Scryfall ID one, whatever the column
+        // order or header casing.
+        let csv = format!(
+            "Scryfall ID,Foil,Quantity,MANABOX ID,Name\n\
+             {UID_A},foil,4,1,Sol Ring\n"
+        );
+        let parsed = parse_manabox(csv.as_bytes())
+            .expect("a ManaBox export must parse, not 422 on a Finish column it never had");
+        assert_eq!(
+            parsed.holdings,
+            vec![holding_of(UID_A, true, 4)],
+            "the Foil column was read as the finish"
+        );
+    }
+
+    #[test]
+    fn manabox_rows_without_an_id_fall_back_to_set_and_number() {
+        let csv = format!(
+            "{MANABOX_HEADER}\n\
+             Counterspell,TLE,Avatar: The Last Airbender,146,normal,common,3,1,,,false,false,near_mint,en,USD\n\
+             Sol Ring,c21,Commander 2021,263,foil,uncommon,1,2,{UID_B},,false,false,near_mint,en,USD\n"
+        );
+        let parsed = parse_manabox(csv.as_bytes()).expect("parse");
+        assert_eq!(
+            parsed.holdings,
+            vec![holding_of(UID_B, true, 1)],
+            "only the row that carried an id is id-keyed"
+        );
+        assert_eq!(
+            parsed.printings,
+            vec![printing("tle", "146", "Counterspell", false, 3)],
+            "the id-less row keeps its (set, number) key, lowercased — it names a printing, \
+             so it must never resolve by name to a different one"
+        );
+    }
+
+    #[test]
+    fn manabox_rows_with_neither_key_or_a_bad_quantity_are_skipped() {
+        let csv = format!(
+            "{MANABOX_HEADER}\n\
+             No Keys,,Nowhere,,normal,common,1,1,,,false,false,near_mint,en,USD\n\
+             Zero,tle,Avatar,146,normal,common,0,2,{UID_A},,false,false,near_mint,en,USD\n\
+             Bad,tle,Avatar,147,normal,common,x,3,{UID_A},,false,false,near_mint,en,USD\n\
+             Keeper,tle,Avatar,148,normal,common,4,4,{UID_A},,false,false,near_mint,en,USD\n"
+        );
+        let parsed = parse_manabox(csv.as_bytes()).expect("parse");
+        assert!(parsed.printings.is_empty());
+        assert_eq!(parsed.holdings, vec![holding_of(UID_A, false, 4)]);
+    }
+
+    #[test]
+    fn a_manabox_export_without_a_foil_column_is_a_validation_error() {
+        // Refuse rather than file a foil collection as regular copies — the same refusal
+        // Moxfield's Foil and Mythic Tools' Finish columns get. The message names the
+        // column as ManaBox spells it, not one the file never had.
+        let csv = format!(
+            "Name,Set code,Collector number,Quantity,ManaBox ID,Scryfall ID\n\
+             Sol Ring,c21,263,1,1,{UID_A}\n"
+        );
+        let err = parse_csv(csv.as_bytes()).expect_err("missing Foil must fail");
+        let ImportError::InvalidSource(msg) = err else {
+            panic!("expected InvalidSource");
+        };
+        assert!(
+            msg.contains("ManaBox") && msg.contains("\"Foil\""),
+            "names the app and its column: {msg}"
+        );
+        assert!(
+            !msg.contains("Finish"),
+            "doesn't ask for a column ManaBox never writes: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_manabox_export_without_a_quantity_column_is_a_validation_error() {
+        let csv = format!(
+            "Name,Set code,Collector number,Foil,ManaBox ID,Scryfall ID\n\
+             Sol Ring,c21,263,normal,1,{UID_A}\n"
+        );
+        let err = parse_csv(csv.as_bytes()).expect_err("missing Quantity must fail");
+        let ImportError::InvalidSource(msg) = err else {
+            panic!("expected InvalidSource");
+        };
+        assert!(
+            msg.contains("ManaBox") && msg.contains("\"Quantity\""),
+            "names the app and its column: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_manabox_export_with_no_card_key_at_all_is_a_validation_error() {
+        let csv = "Name,Foil,Quantity,ManaBox ID\nSol Ring,normal,1,1\n";
+        let err = parse_csv(csv.as_bytes()).expect_err("no card key must fail");
+        let ImportError::InvalidSource(msg) = err else {
+            panic!("expected InvalidSource");
+        };
+        assert!(msg.contains("ManaBox"), "names the format: {msg}");
     }
 }

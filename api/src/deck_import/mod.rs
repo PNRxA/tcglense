@@ -50,8 +50,9 @@ pub fn parse_source(provider: Provider, input: &str) -> Result<String, ImportErr
         Provider::Archidekt => archidekt::parse_deck_id(input),
         Provider::Moxfield => moxfield::parse_deck_id(input),
         // No public API to link to; the handler gates on `network_import_enabled` first,
-        // so this is a defensive fallthrough (a Mythic Tools deck arrives as a file).
-        Provider::MythicTools => None,
+        // so this is a defensive fallthrough (a Mythic Tools or ManaBox deck arrives as a
+        // file).
+        Provider::MythicTools | Provider::ManaBox => None,
     };
     id.ok_or_else(|| {
         ImportError::InvalidSource(format!(
@@ -70,7 +71,7 @@ pub async fn fetch_deck(
     match provider {
         Provider::Archidekt => archidekt::fetch_deck(ctx, deck_id).await,
         Provider::Moxfield => moxfield::fetch_deck(ctx, deck_id).await,
-        Provider::MythicTools => Err(ImportError::InvalidSource(format!(
+        Provider::MythicTools | Provider::ManaBox => Err(ImportError::InvalidSource(format!(
             "{} decks can't be fetched — upload the exported deck file instead",
             provider.label()
         ))),

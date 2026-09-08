@@ -332,6 +332,45 @@ async fn csv_import_sniffs_a_moxfield_export_and_resolves_by_set_and_number() {
     );
 }
 
+#[tokio::test]
+async fn csv_import_sniffs_a_manabox_export_ahead_of_archidekt() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "csv-manabox@example.com", "password123").await;
+
+    // The phone scanner's export (issue #669), header verbatim. It carries a Scryfall ID,
+    // which used to route it down the Archidekt branch — and a 422 for the "Finish" column
+    // it spells "Foil". It must import, with that Foil column honoured and the price /
+    // condition / language columns ignored.
+    let csv = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,\
+               Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,\
+               Purchase price currency\n\
+               \"Card, One\",dmb,Dummy,1,foil,rare,2,1,dummy-dmb-0001,0.25,false,false,\
+               near_mint,en,USD\n\
+               Card Two,dmb,Dummy,2,normal,common,3,2,dummy-dmb-0002,0.1,false,false,\
+               near_mint,en,USD\n\
+               Ghost,zzz,Nowhere,999,normal,common,1,3,ffffffff-ffff-ffff-ffff-ffffffffffff,0,\
+               false,false,near_mint,en,USD\n";
+    let (status, headers, body) = send(
+        &app,
+        csv_upload("/api/collection/mtg/import/csv?mode=overwrite", &token, csv),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "import failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(
+        body["provider"], "manabox",
+        "the shape was sniffed as ManaBox, not Archidekt"
+    );
+    assert_eq!(body["matched_cards"], 2);
+    assert_eq!(body["unmatched_cards"], 1);
+    assert_eq!(body["foil_copies"], 2);
+    assert_eq!(body["regular_copies"], 3);
+
+    let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 2, "the unknown card was not imported");
+}
+
 // ---- Pasted text (POST .../import/text) ----
 //
 // The paste endpoint is the same offline parse + reconcile as the upload, reached by

@@ -32,8 +32,10 @@ describe('PasteImportFields', () => {
     expect(many.text()).toContain('3 lines pasted')
   })
 
-  it('tells the user how to export from Mythic Tools', () => {
+  it('tells the user how to export from the phone apps', () => {
+    // Both are phone apps: a phone has no comfortable file picker to hand a CSV to.
     const wrapper = mount(PasteImportFields, { props: { modelValue: '' } })
     expect(wrapper.text()).toContain('Mythic Tools')
+    expect(wrapper.text()).toContain('ManaBox')
   })
 })

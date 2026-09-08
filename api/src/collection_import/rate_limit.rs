@@ -37,6 +37,8 @@ pub struct ProviderLimiters {
     /// nothing outbound is ever sent. Present so the dispatch stays exhaustive without
     /// aliasing another provider's cap.
     mythic_tools: RateLimiter,
+    /// Likewise unused: ManaBox is upload/paste-only too (issue #669).
+    manabox: RateLimiter,
 }
 
 impl ProviderLimiters {
@@ -46,6 +48,7 @@ impl ProviderLimiters {
             archidekt: RateLimiter::per_minute(archidekt_per_minute),
             moxfield: RateLimiter::per_minute(moxfield_per_minute),
             mythic_tools: RateLimiter::per_minute(ARCHIDEKT_REQUESTS_PER_MINUTE),
+            manabox: RateLimiter::per_minute(ARCHIDEKT_REQUESTS_PER_MINUTE),
         }
     }
 
@@ -60,6 +63,7 @@ impl ProviderLimiters {
             Provider::Archidekt => &self.archidekt,
             Provider::Moxfield => &self.moxfield,
             Provider::MythicTools => &self.mythic_tools,
+            Provider::ManaBox => &self.manabox,
         }
     }
 }
