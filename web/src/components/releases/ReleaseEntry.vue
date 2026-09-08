@@ -54,16 +54,28 @@ const precons = computed<PreconDeck[]>(() =>
 )
 const products = computed<Product[]>(() => props.entry.release.products)
 
-// A big set ships dozens of products; the row shows a handful and hands the rest to the
-// set-scoped browse it already has, so the calendar stays a calendar.
+// A big set ships dozens of products; the row shows a handful and hands the rest to a browse
+// that lists ALL of them, so the calendar stays a calendar. The cut is only made when such a
+// browse exists — every row the API nested must stay reachable from the entry. The precon
+// browse spans the set's whole catalog group (`?related=1`), matching how the API nested
+// them; the sealed browse is per exact set code, so it stands in for the remainder only when
+// every nested product is filed under the entry's own code (a child set's products would
+// otherwise vanish behind "+N more"). A drop has no listing of its own at all, so it shows
+// everything.
 const SHOWN = 6
-const shownPrecons = computed(() => precons.value.slice(0, SHOWN))
-const shownProducts = computed(() => products.value.slice(0, SHOWN))
 const morePreconsTo = computed(() =>
   set.value ? `/decks/${props.game}/precons/sets/${set.value.code}?related=1` : null,
 )
 const moreProductsTo = computed(() =>
-  set.value ? `/sealed/${props.game}/sets/${set.value.code}` : null,
+  set.value && products.value.every((product) => product.set_code === set.value?.code)
+    ? `/sealed/${props.game}/sets/${set.value.code}`
+    : null,
+)
+const shownPrecons = computed(() =>
+  morePreconsTo.value ? precons.value.slice(0, SHOWN) : precons.value,
+)
+const shownProducts = computed(() =>
+  moreProductsTo.value ? products.value.slice(0, SHOWN) : products.value,
 )
 
 // The set icon through the caching proxy, with a graceful fallback; a drop shows the Secret

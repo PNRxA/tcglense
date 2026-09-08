@@ -9,7 +9,11 @@
 //! 2026-09-25), and the Zeta stand-in `slz` (a top-level `box` set released 2026-09-02, the
 //! `sl`-prefix upgrade).
 
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
 use super::harness::*;
+use crate::entities::{card, precon_deck, product, sealed_content};
 
 #[tokio::test]
 async fn release_calendar_is_public_and_shared_cacheable() {
@@ -162,6 +166,12 @@ async fn release_calendar_defaults_and_validates_its_window() {
             "/api/games/mtg/releases?from=2026-01-01&to=2027-06-01",
             "a window wider than a year",
         ),
+        // A signed extended year parses to `NaiveDate::MAX`; the defaulted `to` must be a
+        // 422, never the panic `NaiveDate + TimeDelta` raises (`%2B`: a raw `+` is a space).
+        (
+            "/api/games/mtg/releases?from=%2B262142-12-31",
+            "an out-of-range `from` with a defaulted `to`",
+        ),
     ] {
         let (status, headers, _) = send(&app, get(uri)).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {uri}");
@@ -174,4 +184,174 @@ async fn release_calendar_defaults_and_validates_its_window() {
 
     let (status, _, _) = send(&app, get("/api/games/nope/releases")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A set's precons and sealed products are gathered across its whole catalog **group** —
+/// the top-level set plus every child naming it as `parent_set_code` — because that is
+/// where an expansion's Commander decks live. Seeds a precon and a product under `tdmb`
+/// (the dummy token child of `dmb`) and reads them off the `dmb` entry.
+#[tokio::test]
+async fn release_calendar_nests_child_set_rows_under_their_parent() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let now = Utc::now();
+
+    crate::test_support::insert_product(
+        db,
+        "900901",
+        "Dummy Base Set Token Booster",
+        "tdmb",
+        "booster_pack",
+        Some("4.99"),
+    )
+    .await;
+    precon_deck::ActiveModel {
+        game: Set("mtg".to_string()),
+        slug: Set("dummy-token-theme-tdmb".to_string()),
+        name: Set("Dummy Token Theme".to_string()),
+        set_code: Set("tdmb".to_string()),
+        deck_type: Set("Jumpstart".to_string()),
+        released_at: Set(Some("2024-01-15".to_string())),
+        card_count: Set(20),
+        sideboard_count: Set(0),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert child-set precon");
+
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/releases?from=2024-01-01&to=2024-01-31"),
+    )
+    .await;
+    let sets = body["sets"].as_array().expect("sets");
+    assert_eq!(
+        sets.len(),
+        1,
+        "the child set never becomes an entry: {sets:?}"
+    );
+    let dmb = &sets[0];
+    assert_eq!(dmb["set"]["code"], "dmb");
+
+    let precon = dmb["precons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["slug"] == "dummy-token-theme-tdmb")
+        .expect("the child set's precon nests under its parent");
+    assert_eq!(precon["set_code"], "tdmb");
+    assert_eq!(
+        precon["set_name"], "Dummy Base Set Tokens",
+        "the child's own name is resolved, not the parent's"
+    );
+    let product = dmb["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "900901")
+        .expect("the child set's product nests under its parent");
+    assert_eq!(product["set_code"], "tdmb");
+    assert_eq!(product["set_name"], "Dummy Base Set Tokens");
+}
+
+/// A Secret Lair drop's products are attributed through the cards they **contain** — the
+/// `contains` membership rows to cards the drop table places in the drop — never by name or
+/// by date. Seeds an `sld` product dated in the window whose contents are the dummy
+/// "Eldraine Wonderland" cards, plus a decoy dated the same day whose contents place in no
+/// drop, and reads only the first off the drop.
+#[tokio::test]
+async fn release_calendar_attributes_drop_products_through_their_contents() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let now = Utc::now();
+
+    // The dummy `sld` cards 1–5 are the committed snapshot's "Eldraine Wonderland" drop,
+    // dated 2026-09-25 by the seed.
+    let card_ids: Vec<i32> = crate::entities::prelude::Card::find()
+        .filter(card::Column::SetCode.eq("sld"))
+        .filter(card::Column::CollectorNumber.is_in(["1", "2", "3"]))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(card_ids.len(), 3, "the seed's Eldraine Wonderland cards");
+
+    let date_product = |external_id: &'static str, name: &'static str| async move {
+        let id = crate::test_support::insert_product(
+            db,
+            external_id,
+            name,
+            "sld",
+            "secret_lair",
+            Some("39.99"),
+        )
+        .await;
+        crate::entities::prelude::Product::update_many()
+            .col_expr(
+                product::Column::ReleasedAt,
+                sea_orm::sea_query::Expr::value(Some("2026-09-25".to_string())),
+            )
+            .filter(product::Column::Id.eq(id))
+            .exec(db)
+            .await
+            .unwrap();
+        id
+    };
+    let drop_product = date_product("900902", "Dummy Eldraine Wonderland Foil Edition").await;
+    let decoy = date_product("900903", "Dummy Same-Day Bundle").await;
+    // A dateless-drop card the snapshot doesn't place: the decoy's only content.
+    let stray = crate::test_support::insert_card(db, "dummy-sld-stray").await;
+
+    for &card_id in &card_ids {
+        sealed_content::ActiveModel {
+            game: Set("mtg".to_string()),
+            product_id: Set(drop_product),
+            card_id: Set(card_id),
+            membership: Set("contains".to_string()),
+            foil: Set(true),
+            component: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+    sealed_content::ActiveModel {
+        game: Set("mtg".to_string()),
+        product_id: Set(decoy),
+        card_id: Set(stray),
+        membership: Set("contains".to_string()),
+        foil: Set(false),
+        component: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let (_, _, body) = send(
+        &app,
+        get("/api/games/mtg/releases?from=2026-09-01&to=2026-09-30"),
+    )
+    .await;
+    let drops = body["secret_lair_drops"].as_array().expect("drops");
+    assert_eq!(drops.len(), 1, "{drops:?}");
+    assert_eq!(drops[0]["slug"], "eldraine-wonderland");
+    let products = drops[0]["products"].as_array().expect("products");
+    let ids: Vec<&str> = products.iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids,
+        ["900902"],
+        "only the product whose contents place in the drop; the same-day decoy is unattributable"
+    );
+    assert_eq!(products[0]["set_name"], "Dummy Secret Lair Drop");
 }

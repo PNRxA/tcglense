@@ -155,7 +155,12 @@ pub(crate) fn resolve_window(
     };
     let to = match params.to.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(value) => parse("to", value)?,
-        None => from + Duration::days(DEFAULT_WINDOW_DAYS),
+        // Checked, not `+`: chrono's `NaiveDate + TimeDelta` panics on overflow, and a
+        // signed extended year (`+262142-12-31`) parses to `NaiveDate::MAX` — a request
+        // path answers `422`, never unwinds.
+        None => from
+            .checked_add_signed(Duration::days(DEFAULT_WINDOW_DAYS))
+            .ok_or_else(|| AppError::Validation("`from` is out of range".to_string()))?,
     };
     if to < from {
         return Err(AppError::Validation(
@@ -182,7 +187,7 @@ pub(crate) fn resolve_window(
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
         ("from" = Option<String>, Query, description = "First day of the window, `YYYY-MM-DD`, inclusive (default: today)"),
-        ("to" = Option<String>, Query, description = "Last day of the window, `YYYY-MM-DD`, inclusive (default: `from` + 90 days; at most 366 days after `from`)"),
+        ("to" = Option<String>, Query, description = "Last day of the window, `YYYY-MM-DD`, inclusive (default: `from` + 90 days; the window spans at most 366 days, so at most 365 days after `from`)"),
     ),
     responses(
         (status = 200, description = "The sets and Secret Lair drops releasing inside the window.", body = ReleaseCalendarResponse),
@@ -400,11 +405,15 @@ async fn drop_products(
         .collect();
     let mut card_slugs: HashMap<i32, String> = HashMap::new();
     for chunk in card_ids.chunks(IN_CHUNK) {
+        // Only an `sld` card can place a product in a drop: the drop table is keyed by
+        // collector number within that set, so a bundled card from another set whose
+        // number happens to coincide must not vote.
         let rows: Vec<(i32, String)> = Card::find()
             .select_only()
             .column(card::Column::Id)
             .column(card::Column::CollectorNumber)
             .filter(card::Column::Game.eq(releases::GAME))
+            .filter(card::Column::SetCode.eq(SLD_SET_CODE))
             .filter(card::Column::Id.is_in(chunk.iter().copied()))
             .into_tuple()
             .all(&state.db)
@@ -527,6 +536,9 @@ mod tests {
             (Some("2026-09-10"), Some("2026-09-09")),
             // 367 days inclusive: one past the cap.
             (Some("2026-01-01"), Some("2027-01-02")),
+            // chrono parses a signed extended year up to `NaiveDate::MAX`; the defaulted
+            // `to` must then be a 422, not the panic `NaiveDate + TimeDelta` raises.
+            (Some("+262142-12-31"), None),
         ] {
             assert!(
                 matches!(

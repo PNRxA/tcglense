@@ -160,7 +160,9 @@ describe('ReleaseCalendarView', () => {
     expect(wrapper.find(`a[href="${RELEASE_HEADS_UP_PATH}"]`).text()).toContain('Get a heads-up')
 
     // A fact page: nothing here words a preview.
-    expect(wrapper.text().toLowerCase()).not.toContain('spoiler')
+    const text = wrapper.text().toLowerCase()
+    expect(text).not.toContain('spoiler')
+    expect(text).not.toContain('preview')
   })
 
   it('shows the loading and error states', async () => {

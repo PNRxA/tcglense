@@ -634,8 +634,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   the base advertising anything. `DropTable::drop_for` re-tries a miss with a trailing `★` so a
   drop that lists only the star still claims the base. Every published set `card_count` —
   Scryfall's own set-object count, stored verbatim — has the folded rows subtracted through the
-  one `FoldedSetCounts` seam, in all three of its readers (`sets::list_sets`, `sets::get_set`,
-  and the collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
+  one `FoldedSetCounts` seam, in all four of its readers (`sets::list_sets`, `sets::get_set`,
+  the release calendar's nested set in `handlers::catalog::releases`, and the
+  collection/wish-list/public tiles via `build_collection_sets`), **floored at zero**
   because a `card_sets` row lagging the cards it counts must publish a stale number, never a
   negative. And a new `cards` column that isn't provider data must be denied in **both** halves
   of `ingest::flush_cards` — the

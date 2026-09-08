@@ -370,20 +370,6 @@ const router = createRouter({
     //
     // Game-scoped like the rest of the catalog (`/cards/:game/…`, `/sealed/:game/…`), so
     // a second TCG's glossary needs no new route shape and moves no existing URL.
-    // The release calendar (issue #679): the all-games hub and each game's month view. Public
-    // catalog data (no `requiresAuth`) and indexable — the page behind the release heads-ups,
-    // whose "get a heads-up" button is the only thing that leads to a signed-in surface.
-    {
-      path: '/releases',
-      name: 'release-games',
-      component: () => import('@/views/ReleaseGamesView.vue'),
-    },
-    {
-      path: '/releases/:game',
-      name: 'game-releases',
-      component: () => import('@/views/ReleaseCalendarView.vue'),
-      props: true,
-    },
     {
       path: '/keywords',
       name: 'keywords',
@@ -399,6 +385,20 @@ const router = createRouter({
       path: '/keywords/:game/:slug',
       name: 'keyword',
       component: () => import('@/views/KeywordView.vue'),
+      props: true,
+    },
+    // The release calendar (issue #679): the all-games hub and each game's month view. Public
+    // catalog data (no `requiresAuth`) and indexable — the page behind the release heads-ups,
+    // whose "get a heads-up" button is the only thing that leads to a signed-in surface.
+    {
+      path: '/releases',
+      name: 'release-games',
+      component: () => import('@/views/ReleaseGamesView.vue'),
+    },
+    {
+      path: '/releases/:game',
+      name: 'game-releases',
+      component: () => import('@/views/ReleaseCalendarView.vue'),
       props: true,
     },
     // Tools: the play aids that sit beside the catalog rather than inside it. Same shape as
