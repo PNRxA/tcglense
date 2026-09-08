@@ -97,6 +97,7 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     usePublicDeckStatsQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckGoldfishQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckTokensQuery: () => ({ data: vueRef(undefined), ...settled() }),
+    usePublicDeckPricingQuery: () => ({ data: vueRef(undefined), ...settled() }),
   }
 })
 
@@ -134,6 +135,7 @@ function mountView(pinia = createPinia()) {
         CardSizeMenu: PassThrough,
         DeckSectionNav: PassThrough,
         DeckStats: PassThrough,
+        DeckPricing: PassThrough,
       },
     },
   })

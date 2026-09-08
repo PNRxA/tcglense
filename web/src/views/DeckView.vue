@@ -51,6 +51,7 @@ import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
+import DeckPricing from '@/components/decks/DeckPricing.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -342,6 +343,10 @@ function copyDeckList() {
       />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+
+      <!-- Where the money is (issue #672): the value per card, the cheapest printing of
+        each, and the swaps that would realise the saving. Nothing to price in an empty deck. -->
+      <DeckPricing v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
       <!-- Goldfish a sample hand (issue #596). -->
       <DeckGoldfish :game="game" :deck-id="deck.id" />

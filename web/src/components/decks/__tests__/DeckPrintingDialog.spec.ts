@@ -56,6 +56,12 @@ vi.mock('@/composables/useDecks', async () => {
   }
 })
 
+vi.mock('@/composables/useCurrency', () => ({
+  useCurrency: () => ({
+    formatUsd: (raw: string | null | undefined) => (raw == null ? null : `$${raw}`),
+  }),
+}))
+
 import DeckPrintingDialog from '@/components/decks/DeckPrintingDialog.vue'
 
 const PassThrough = defineComponent({ template: '<div><slot /></div>' })
@@ -77,7 +83,7 @@ const PrintingTileStub = defineComponent({
   `,
 })
 
-function mountDialog() {
+function mountDialog(extra: { suggested?: { card: Card; priceUsd: string } | null } = {}) {
   return mount(DeckPrintingDialog, {
     props: {
       open: true,
@@ -87,6 +93,7 @@ function mountDialog() {
       card: makeCard('current'),
       quantity: 3,
       foilQuantity: 1,
+      ...extra,
     },
     global: {
       stubs: {
@@ -147,5 +154,31 @@ describe('DeckPrintingDialog action adapter', () => {
     })
     const openEvents = wrapper.emitted('update:open') ?? []
     expect(openEvents[openEvents.length - 1]).toEqual([false])
+  })
+
+  it('leads with the suggested cheapest printing, swaps to it in one click, and marks it in the grid', async () => {
+    const suggested = makeCard('target', { set_name: 'Target Set', collector_number: '201' })
+    const wrapper = mountDialog({ suggested: { card: suggested, priceUsd: '2.50' } })
+    expect(wrapper.text()).toContain('Cheapest printing')
+    expect(wrapper.text()).toContain('$2.50 for its copies')
+    // The grid's own tile for the same printing carries the marker, so the two readings of
+    // "cheapest" can't point at different tiles.
+    expect(wrapper.text()).toContain('Cheapest')
+
+    await wrapper.get('[data-testid="suggested-printing"]').trigger('click')
+    await flushPromises()
+    expect(mocks.mutateAsync).toHaveBeenCalledWith({
+      game: 'mtg',
+      deckId: 1,
+      sectionId: 2,
+      id: 'current',
+      newCardId: 'target',
+    })
+  })
+
+  it('offers no suggestion when the cheapest printing is the one already held', () => {
+    const wrapper = mountDialog({ suggested: { card: makeCard('current'), priceUsd: '9.00' } })
+    expect(wrapper.find('[data-testid="suggested-printing"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Cheapest printing')
   })
 })

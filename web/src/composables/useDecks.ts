@@ -274,6 +274,22 @@ export interface ChangeDeckCardPrintingVars {
   newCardId: string
   sectionId: number
 }
+/** One row of a batched printing swap: the printing held, the section it sits in, and the
+ * printing to hold instead. */
+export interface PrintingSwap {
+  id: string
+  sectionId: number
+  newCardId: string
+}
+export interface ChangeDeckCardPrintingsVars {
+  game: string
+  deckId: number
+  swaps: PrintingSwap[]
+}
+/** What a batched swap reports back: how many rows were swapped before it stopped. */
+export interface PrintingSwapsResult {
+  swapped: number
+}
 
 // ----- Deck mutations -----
 
@@ -530,4 +546,38 @@ export function useChangeDeckCardPrintingMutation() {
     ) => invalidateDeck(qc, vars.game, vars.deckId),
   }
   return useAuthedMutation<CollectionQuantities, ChangeDeckCardPrintingVars>(options)
+}
+
+/** Swap many rows to other printings in one go — the pricing panel's "swap all" (issue
+ * #672). Deliberately the SAME per-row write as `useChangeDeckCardPrintingMutation`, run
+ * sequentially (the server serialises every card write of a deck through its deck row
+ * anyway), rather than a new bulk endpoint: one write path, one "same gameplay card" check,
+ * one place where counts merge. The deck is invalidated ONCE when the batch settles instead
+ * of once per row, so a 60-row swap doesn't refetch the deck 60 times. A row that fails
+ * stops the batch — every row before it is already committed and stays — and the error
+ * carries on to the caller, who reads `context`-free `swapped` off the rejection's cause. */
+export function useChangeDeckCardPrintingsMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: async (
+      token: string,
+      vars: ChangeDeckCardPrintingsVars,
+    ): Promise<PrintingSwapsResult> => {
+      let swapped = 0
+      for (const swap of vars.swaps) {
+        await changeDeckCardPrinting(token, vars.game, vars.deckId, swap.id, {
+          new_card_id: swap.newCardId,
+          section_id: swap.sectionId,
+        })
+        swapped += 1
+      }
+      return { swapped }
+    },
+    onSettled: (
+      _d: PrintingSwapsResult | undefined,
+      _e: ApiError | null,
+      vars: ChangeDeckCardPrintingsVars,
+    ) => invalidateDeck(qc, vars.game, vars.deckId),
+  }
+  return useAuthedMutation<PrintingSwapsResult, ChangeDeckCardPrintingsVars>(options)
 }

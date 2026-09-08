@@ -702,6 +702,42 @@ catalog) is planned but not implemented.
   under consideration was not bought — while a precon's every board goes in, since all of it is
   in the box.
 
+- **The cheapest printing is judged at the row's own finish split, not by cheapest single copy
+  (issue #672).** The pricing breakdown (`GET /api/decks/{game}/{deck_id}/pricing`) prices each
+  candidate printing as `usd × quantity + usd_foil × foil_quantity`, because the swap it
+  suggests — `PUT …/cards/{id}/printing` — *preserves* that split. The Secret Lair drops' total
+  asks a genuinely different question ("what would one copy of this card cost at its cheapest,
+  any finish"), and answering it here would name a printing with a cheap foil and a dear
+  nonfoil as the bargain for a nonfoil row and make the deck **dearer** after the swap. Two
+  consequences follow from the same honesty: a printing unpriced in a finish the row holds is
+  not a candidate at all, and a **saving is stated only when both sides are priced** — if the
+  held printing itself has no price in a finish the row holds, its cost is a floor, and a
+  saving measured off a floor could be wrong in either direction. Such a line still names its
+  cheapest printing (that much is true), just without a number attached. Ties go to the held
+  printing, so a row already holding the cheapest is never told to swap, and folded foil-★
+  variants are excluded as candidates (their foil price is already copied onto the base, so
+  they could only ever tie — and winning that tie would send a swap to a row no card grid
+  shows). `null` means unpriced throughout, never `$0.00`.
+- **The cheapest total is defined as `total − saving`, not folded independently.** Two separate
+  folds of the same deck — one at held prices, one at cheapest prices — would each be defensible
+  and would still let a line with an *unknown* saving move the second without moving the first,
+  so the three published numbers could fail to add up in a way no reader could reconcile.
+  Deriving `cheapest_total_usd` from the deck's own total (which is itself
+  `summary.total_value_usd`'s exact `Valuation`, not a second computation of it) means the page
+  can only ever show a coherent triple: the deck's value, what it would be after every *known*
+  saving, and the difference — with unknown-saving lines contributing to none of them.
+- **"Swap all" is the existing per-row printing write, batched in the client — not a bulk
+  endpoint.** `PUT …/cards/{id}/printing` already validates that the target is the same gameplay
+  card, preserves the finish split, merges counts when the target printing is already in the
+  section, and serializes against count-set and section-move writes through the parent deck row.
+  A bulk route would be a second place all four of those live, and the first place they could
+  drift; it would also have to invent a partial-failure contract (one unrelated row gone stale
+  fails the batch, or doesn't). So the SPA sends the same mutation per row, sequentially, and
+  invalidates once at the end (`useChangeDeckCardPrintingsMutation`) — a swap-all of a deck's
+  handful of swappable rows is a handful of small writes, each independently correct, and the
+  read-only-key rule needs stating exactly once (the pricing read takes `AuthUser`; the write it
+  suggests takes `WritableUser`, so a read-only key can see the savings and not take them).
+
 ## Preconstructed decks (issue #363's catalog sibling)
 
 - **The grouped listings ship every deck in a group, uncapped — deliberately.** A review

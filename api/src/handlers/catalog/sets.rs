@@ -10,20 +10,20 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, Select,
     sea_query::NullOrdering,
 };
 use serde::Serialize;
 
-use crate::entities::prelude::{Card, CardSet};
+use crate::entities::prelude::CardSet;
 use crate::entities::{card, card_set};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
     cheapest_single_cents, filter_drops_by_title, format_cents, group_into_drops,
-    group_into_subtypes, load_group_set_codes, load_set, paginate_buckets, require_drop_table,
-    require_game,
+    group_into_subtypes, load_cheapest_by_oracle, load_group_set_codes, load_set, paginate_buckets,
+    require_drop_table, require_game,
 };
 use crate::state::AppState;
 
@@ -389,7 +389,8 @@ pub async fn list_set_drops(
     // Paginate by drop, then price each on-page drop's "cheapest prints" total. That floors
     // every card at its cheapest printing *anywhere* (not the pricier Secret Lair printing),
     // so it needs one cross-set lookup — scoped to just the cards on this page, keyed by the
-    // indexed `(game, oracle_id)`.
+    // indexed `(game, oracle_id)`, through the shared cheapest-printing seam the deck pricing
+    // breakdown reads too (`handlers::shared::cheapest`).
     let (page, page_size) = params.drop_page_and_size();
     let total = buckets.len() as u64;
     let start = page.saturating_sub(1).saturating_mul(page_size) as usize;
@@ -404,7 +405,7 @@ pub async fn list_set_drops(
         .flat_map(|bucket| bucket.cards.iter())
         .filter_map(|card| card.oracle_id.as_deref().filter(|id| !id.is_empty()))
         .collect();
-    let cheapest_by_oracle = load_cheapest_by_oracle(&state, &game, &oracle_ids).await?;
+    let cheapest_by_oracle = load_cheapest_by_oracle(&state.db, &game, &oracle_ids).await?;
 
     let data: Vec<DropGroupResponse> = on_page
         .into_iter()
@@ -427,43 +428,6 @@ pub async fn list_set_drops(
         })
         .collect();
     Ok(Json(build_page(data, page, page_size, total)))
-}
-
-/// The cheapest single (in integer cents) for each gameplay identity among a page of drops'
-/// cards: one indexed `(game, oracle_id)` lookup spanning *every* printing of those cards, so
-/// a card's floor price can come from a cheap reprint in another set rather than its Secret
-/// Lair printing. Keyed by `oracle_id`; a printing with no priced finish doesn't contribute,
-/// so an identity whose printings are all unpriced is simply absent from the map.
-async fn load_cheapest_by_oracle(
-    state: &AppState,
-    game: &str,
-    oracle_ids: &HashSet<&str>,
-) -> Result<HashMap<String, i128>, AppError> {
-    if oracle_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows: Vec<(Option<String>, Option<String>, Option<String>)> = Card::find()
-        .filter(card::Column::Game.eq(game))
-        .filter(card::Column::OracleId.is_in(oracle_ids.iter().map(|id| id.to_string())))
-        .select_only()
-        .column(card::Column::OracleId)
-        .column(card::Column::PriceUsd)
-        .column(card::Column::PriceUsdFoil)
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-
-    let mut cheapest: HashMap<String, i128> = HashMap::new();
-    for (oracle_id, usd, usd_foil) in rows {
-        let Some(oracle_id) = oracle_id else { continue };
-        if let Some(cents) = cheapest_single_cents(usd.as_deref(), usd_foil.as_deref()) {
-            cheapest
-                .entry(oracle_id)
-                .and_modify(|best| *best = (*best).min(cents))
-                .or_insert(cents);
-        }
-    }
-    Ok(cheapest)
 }
 
 /// One drop's "cheapest prints" total: for each *distinct* card in the drop (by gameplay

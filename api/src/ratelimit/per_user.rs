@@ -105,12 +105,14 @@ impl UserRoute {
             }
             // Deck analysis (issue #596): each of these folds every card in the deck, the
             // goldfish shuffles one slot per copy on top, and the token read follows the fold
-            // with a catalog lookup per referenced token printing. Cheap for a real deck, but
-            // the same "whole-holdings scan per request" shape as the collection analytics
-            // above, so the same tighter bucket rather than the generous General one.
+            // with a catalog lookup per referenced token printing — as does the pricing
+            // breakdown (issue #672), which loads every priced printing of every card in the
+            // deck. Cheap for a real deck, but the same "whole-holdings scan per request"
+            // shape as the collection analytics above, so the same tighter bucket rather
+            // than the generous General one.
             if matches!(
                 tail.rsplit('/').next(),
-                Some("stats" | "legality" | "bracket" | "tokens" | "goldfish")
+                Some("stats" | "legality" | "bracket" | "tokens" | "goldfish" | "pricing")
             ) {
                 return Self::Analytics;
             }
@@ -453,6 +455,7 @@ mod tests {
             "/api/decks/mtg/7/bracket",
             "/api/decks/mtg/7/tokens",
             "/api/decks/mtg/7/goldfish",
+            "/api/decks/mtg/7/pricing",
         ] {
             assert_eq!(
                 UserRoute::from_path(analytics),

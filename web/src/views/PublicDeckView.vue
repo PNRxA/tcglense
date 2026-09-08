@@ -12,6 +12,7 @@ import AddToCollectionButton from '@/components/decks/AddToCollectionButton.vue'
 import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckPricing from '@/components/decks/DeckPricing.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
@@ -211,6 +212,15 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
       />
 
       <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
+
+      <!-- The same money breakdown the owner sees, read-only: which cards cost what, and
+        what the list would cost at the cheapest printings (issue #672). -->
+      <DeckPricing
+        v-if="deck.summary.total_cards > 0"
+        :game="deck.game"
+        :deck-id="deck.id"
+        :handle="handle"
+      />
 
       <!-- Goldfish a sample hand from the shared deck (issue #596). -->
       <DeckGoldfish :game="deck.game" :deck-id="deck.id" :handle="handle" />

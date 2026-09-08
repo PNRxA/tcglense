@@ -56,10 +56,10 @@ use crate::{
         decks::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
             change_deck_card_printing, copy_public_deck, create_deck, create_folder,
-            create_section, deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens,
-            decks_containing_card, delete_deck, delete_folder, delete_section, export_deck,
-            get_deck, import_deck, list_deck_formats, list_decks, list_folders, move_deck_card,
-            move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
+            create_section, deck_bracket, deck_goldfish, deck_legality, deck_pricing, deck_stats,
+            deck_tokens, decks_containing_card, delete_deck, delete_folder, delete_section,
+            export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
+            move_deck_card, move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
             set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
@@ -76,11 +76,11 @@ use crate::{
         search::universal_search,
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
-            public_deck_goldfish, public_deck_legality, public_deck_stats, public_deck_tokens,
-            public_decks, public_list, public_owned_counts, public_product_sets,
-            public_product_summary, public_products, public_profile, public_set_drops,
-            public_set_subtypes, public_sets, public_summary, public_wishlist_list,
-            public_wishlist_owned_counts, public_wishlist_product_sets,
+            public_deck_goldfish, public_deck_legality, public_deck_pricing, public_deck_stats,
+            public_deck_tokens, public_decks, public_list, public_owned_counts,
+            public_product_sets, public_product_summary, public_products, public_profile,
+            public_set_drops, public_set_subtypes, public_sets, public_summary,
+            public_wishlist_list, public_wishlist_owned_counts, public_wishlist_product_sets,
             public_wishlist_product_summary, public_wishlist_products, public_wishlist_set_drops,
             public_wishlist_set_subtypes, public_wishlist_sets, public_wishlist_summary,
             set_collection_visibility, set_wishlist_visibility,
@@ -429,8 +429,8 @@ pub fn build_router(state: AppState) -> Router {
             post(add_deck_to_collection),
         )
         // Deck analysis (issue #596): composition + draw odds, the legality verdict, the
-        // estimated Commander bracket, the tokens the deck makes, and a seeded goldfish
-        // hand. All are reads of a deck
+        // estimated Commander bracket, the tokens the deck makes, a seeded goldfish
+        // hand, and the pricing breakdown (issue #672). All are reads of a deck
         // the caller already owns, so they take `AuthUser` (a read-only key may call them)
         // and are `GET`s — the goldfish carries its whole state in the query string rather
         // than a table, so a hand is reproducible from a URL by a CLI as easily as by the SPA.
@@ -439,6 +439,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/decks/{game}/{deck_id}/bracket", get(deck_bracket))
         .route("/api/decks/{game}/{deck_id}/tokens", get(deck_tokens))
         .route("/api/decks/{game}/{deck_id}/goldfish", get(deck_goldfish))
+        .route("/api/decks/{game}/{deck_id}/pricing", get(deck_pricing))
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",
@@ -833,6 +834,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/u/{handle}/decks/{deck_id}/goldfish",
             get(public_deck_goldfish),
+        )
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/pricing",
+            get(public_deck_pricing),
         )
         // Per-IP rate limiting (issue #413): these unauthenticated reads run the
         // same full-collection cores as the authed twins but the per-user limiter

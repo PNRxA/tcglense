@@ -191,7 +191,7 @@ async fn a_read_only_key_may_analyse() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "goldfish", "pricing"] {
         let (status, _, body) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &key),
@@ -449,7 +449,7 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     let (deck_id, _) = deck_with_cards(&app, &access, "Shared", "Modern", &stack).await;
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "goldfish", "pricing"] {
         let (status, headers, _) = send(
             &app,
             get(&format!("/api/u/nobody-0001/decks/{deck_id}/{path}")),
@@ -768,4 +768,241 @@ async fn a_library_too_big_to_shuffle_is_refused_not_allocated() {
                     .is_some_and(|m| m.starts_with("1000000 cards in the command zone"))),
         "{body:?}"
     );
+}
+
+/// The two printings of the dummy catalog's reprinted card, dearest first: `(external id,
+/// regular USD price)`. The pair is what makes "cheapest printing" testable offline.
+async fn reprint_pair(app: &Router) -> Vec<(String, String)> {
+    let (status, _, body) = send(
+        app,
+        get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "printing lookup failed: {body:?}");
+    let mut pair: Vec<(String, String)> = body["data"]
+        .as_array()
+        .expect("printing data")
+        .iter()
+        .map(|c| {
+            (
+                c["id"].as_str().expect("id").to_string(),
+                c["prices"]["usd"].as_str().expect("usd").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(pair.len(), 2, "dummy catalog must contain a reprint pair");
+    pair.sort_by(|a, b| {
+        b.1.parse::<f64>()
+            .expect("price")
+            .partial_cmp(&a.1.parse::<f64>().expect("price"))
+            .expect("ordered")
+    });
+    pair
+}
+
+#[tokio::test]
+async fn pricing_names_the_cheapest_printing_and_its_saving_at_the_rows_finish_split() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing@example.com", PW).await;
+    let pair = reprint_pair(&app).await;
+    let (dear, dear_usd) = &pair[0];
+    let (cheap, cheap_usd) = &pair[1];
+    let dear_cents = (dear_usd.parse::<f64>().expect("price") * 100.0).round() as i64;
+    let cheap_cents = (cheap_usd.parse::<f64>().expect("price") * 100.0).round() as i64;
+    assert!(cheap_cents < dear_cents, "the pair must differ in price");
+
+    // Two regular copies of the dear printing in the deck proper; the same card in the
+    // maybeboard, which must not appear anywhere in the breakdown.
+    let (deck_id, section_id) =
+        deck_with_cards(&app, &access, "Priced", "Modern", &[(dear.clone(), 2)]).await;
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    let maybeboard = detail["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|s| s["is_maybeboard"] == true)
+        .expect("a maybeboard is seeded")["id"]
+        .as_i64()
+        .expect("id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{dear}"),
+            &access,
+            json!({ "quantity": 4, "foil_quantity": 0, "section_id": maybeboard }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, headers, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let lines = pricing["lines"].as_array().expect("lines");
+    assert_eq!(
+        lines.len(),
+        1,
+        "the maybeboard row is not listed: {lines:?}"
+    );
+    let line = &lines[0];
+    assert_eq!(line["card"]["id"], *dear);
+    assert_eq!(line["section_id"].as_i64(), Some(section_id));
+    assert_eq!(line["quantity"], 2);
+    assert_eq!(line["foil_quantity"], 0);
+    let cents = |v: &Value| -> i64 {
+        (v.as_str().expect("usd string").parse::<f64>().expect("usd") * 100.0).round() as i64
+    };
+    assert_eq!(cents(&line["price_usd"]), 2 * dear_cents);
+    assert_eq!(line["cheapest"]["card"]["id"], *cheap);
+    assert_eq!(cents(&line["cheapest"]["price_usd"]), 2 * cheap_cents);
+    assert_eq!(cents(&line["saving_usd"]), 2 * (dear_cents - cheap_cents));
+
+    // The totals agree with the deck's own summary and with each other.
+    assert_eq!(pricing["total_usd"], detail["summary"]["total_value_usd"]);
+    assert_eq!(cents(&pricing["total_usd"]), 2 * dear_cents);
+    assert_eq!(
+        cents(&pricing["saving_usd"]),
+        2 * (dear_cents - cheap_cents)
+    );
+    assert_eq!(cents(&pricing["cheapest_total_usd"]), 2 * cheap_cents);
+    assert_eq!(pricing["unpriced_count"], 0);
+    assert_eq!(pricing["swappable_count"], 1);
+
+    // Swap through the existing printing write — what the panel's button does — and the
+    // breakdown now reports the row as already the cheapest: a zero saving, never null.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{dear}/printing"),
+            &access,
+            json!({ "new_card_id": cheap, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "swap failed: {body:?}");
+    let (_, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    let line = &pricing["lines"][0];
+    assert_eq!(line["card"]["id"], *cheap);
+    assert_eq!(line["cheapest"]["card"]["id"], *cheap);
+    assert_eq!(line["saving_usd"], "0.00");
+    assert_eq!(pricing["saving_usd"], "0.00");
+    assert_eq!(pricing["swappable_count"], 0);
+    assert_eq!(pricing["total_usd"], pricing["cheapest_total_usd"]);
+}
+
+#[tokio::test]
+async fn pricing_lists_most_expensive_first_and_a_foil_row_is_priced_as_foil() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-order@example.com", PW).await;
+    let cards = sample_card_ids(&app, 3).await;
+    let (deck_id, section_id) = deck_with_cards(
+        &app,
+        &access,
+        "Ordered",
+        "Modern",
+        &[(cards[0].clone(), 1), (cards[1].clone(), 1)],
+    )
+    .await;
+    // A third row held as one foil copy: its price is the foil price, not the regular.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{}", cards[2]),
+            &access,
+            json!({ "quantity": 0, "foil_quantity": 1, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    let lines = pricing["lines"].as_array().expect("lines");
+    assert_eq!(lines.len(), 3);
+    let prices: Vec<f64> = lines
+        .iter()
+        .map(|l| {
+            l["price_usd"]
+                .as_str()
+                .expect("priced")
+                .parse()
+                .expect("usd")
+        })
+        .collect();
+    assert!(
+        prices.windows(2).all(|w| w[0] >= w[1]),
+        "most expensive first: {prices:?}"
+    );
+    let foil_line = lines
+        .iter()
+        .find(|l| l["card"]["id"] == cards[2])
+        .expect("the foil row is listed");
+    assert_eq!(
+        foil_line["price_usd"], foil_line["card"]["prices"]["usd_foil"],
+        "one foil copy is worth the foil price"
+    );
+    assert_eq!(foil_line["cheapest"]["card"]["id"], cards[2]);
+    assert_eq!(foil_line["saving_usd"], "0.00");
+}
+
+#[tokio::test]
+async fn a_shared_decks_pricing_is_public_and_identical_to_the_owners() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-share@example.com", PW).await;
+    let pair = reprint_pair(&app).await;
+    let (deck_id, _) = deck_with_cards(
+        &app,
+        &access,
+        "Shared pricing",
+        "Modern",
+        &[(pair[0].0.clone(), 3)],
+    )
+    .await;
+    let handle = share(&app, &access, "pricer", deck_id).await;
+
+    let (status, headers, public_pricing) = send(
+        &app,
+        get(&format!("/api/u/{handle}/decks/{deck_id}/pricing")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public pricing failed: {public_pricing:?}"
+    );
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read should be CDN-cacheable, got {:?}",
+        cache_control(&headers)
+    );
+    let (_, _, owner_pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(
+        public_pricing, owner_pricing,
+        "a shared deck is the same deck"
+    );
+    assert_eq!(public_pricing["swappable_count"], 1);
 }
