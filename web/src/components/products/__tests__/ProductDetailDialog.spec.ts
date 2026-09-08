@@ -153,6 +153,42 @@ describe('ProductDetailDialog', () => {
     })
   })
 
+  it('takes the pack opener’s namespaced seed with it on close (#682)', async () => {
+    // A seed left in the browse URL is not inert like a stale search string: the next product
+    // opened would read it, auto-deal, and fire an `/open` request nobody asked for.
+    const router = await open('b', ['a', 'b', 'c'], '&q=bloomburrow&ppack=812345&pcopies=3')
+    byLabel('Close')!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', q: 'bloomburrow' })
+  })
+
+  it('resets the opener seed when stepping to the next product (#682)', async () => {
+    // A run rolled for product b is b's, and the neighbour must open un-dealt — otherwise
+    // holding the arrow key through a grid deals (and requests) an opening per step.
+    const router = await open('b', ['a', 'b', 'c'], '&ppack=812345&pcopies=3')
+    byLabel('Next sealed product')!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', product: 'c' })
+  })
+
+  it('drops the opener seed on the origin return trip too (#682)', async () => {
+    const router = await open('b', ['a', 'b', 'c'], '&openedFrom=card:card-7&ppack=812345')
+    crumbButton()!.click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ sort: 'name', card: 'card-7' })
+  })
+
+  it('keeps a deep-linked ?ppack= on open (a shared run stays dealt)', async () => {
+    // The mirror of the `?pq=` deep link below: arriving with `?product=` + `?ppack=` is a
+    // shared opening, which must still open dealt — only transitions AWAY strip the keys.
+    const router = await open('b', ['a', 'b', 'c'], '&ppack=812345')
+    expect(dialogEl()).not.toBeNull()
+    expect(router.currentRoute.value.query.ppack).toBe('812345')
+  })
+
   it('keeps a deep-linked ?pq= on open (a shared filtered modal stays filtered)', async () => {
     // Only transitions AWAY from a product (step / swap / close) drop the namespaced keys;
     // arriving with `?product=` + `?pq=` is the shareable-filtered-modal deep link (#443),

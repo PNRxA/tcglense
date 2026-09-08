@@ -16,12 +16,17 @@
 //! seed and the mulligan count), you always draw a full opening hand, and you then put
 //! `mulligans` cards on the **bottom** of the library — which is where they go, so a long
 //! enough draw step really can reach them again.
+//!
+//! The generator itself lives in [`crate::handlers::shared::rng`], shared with the sealed
+//! pack opener (the other seeded, stateless read) so the stream a shared URL depends on has
+//! exactly one definition.
 
 use serde::{Deserialize, Serialize};
 
 use crate::entities::card;
 use crate::error::AppError;
 use crate::handlers::shared::CardResponse;
+use crate::handlers::shared::rng::split_mix64;
 
 use super::stats::{default_library_section_ids, parse_section_ids};
 use super::{AnalysisEntry, DeckAnalysisInput};
@@ -92,17 +97,6 @@ pub struct GoldfishHand {
 }
 
 // ---------- The shuffle ----------
-
-/// SplitMix64 — Steele et al.'s mixing function, used here as the whole generator. Fixed
-/// constants, no library, identical output everywhere: exactly what a seed that appears on
-/// the wire needs.
-fn split_mix64(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
 
 /// The generator state for one `(seed, mulligans)` pair. Mixing the mulligan count in is
 /// what makes a mulligan a genuine reshuffle rather than the same order minus a card.

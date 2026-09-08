@@ -14,6 +14,13 @@
 //! tallied. Cross-set references whose card isn't in our catalog, and any product not on
 //! TCGplayer, simply don't appear.
 //!
+//! The same transaction also rebuilds the **booster odds** ([`boosters`]): the
+//! configurations a product's packs roll, their weighted print sheets, and how many of each
+//! pack one copy opens — the numbers behind a sealed product's expected value and its pack
+//! opener (issue #682). They are replaced with the memberships they were derived from, so a
+//! reader can never see a pack pool and a slot table that disagree, and only configurations
+//! a catalog product actually opens are stored.
+//!
 //! After the MTGJSON pass, curated [`fallback`](super::fallback) memberships are merged in
 //! for any product MTGJSON left empty (its cards would otherwise show no sealed product),
 //! and the stored version couples the file's `ETag` with the fallback snapshot's content
@@ -31,6 +38,7 @@ use sea_orm::{
     sea_query::OnConflict,
 };
 
+use super::boosters::{RawBoosterConfig, RawPack};
 use super::client::{FetchOutcome, fetch_all_printings};
 use super::fallback;
 use super::model::{self, RawComponent, RawMembership};
@@ -42,6 +50,7 @@ use crate::catalog::ingest_state::{self, StateFields};
 use crate::entities::prelude::{SealedComponent, SealedContent};
 use crate::entities::{sealed_component, sealed_content};
 
+pub(crate) mod boosters;
 mod merge;
 pub(crate) mod precons;
 mod resolve;
@@ -81,14 +90,18 @@ pub(super) struct ComponentRow {
 const VERSION_SEP: char = '\u{1f}';
 
 /// Version tag for every **derived** output of this sync: the booster-pool synthesis
-/// ([`merge_contained_booster_pools`] + [`merge_sibling_booster_pools`]) and the precon
-/// rebuild ([`precons`]). Folded into the stored version (see [`compose_version`]) so that
-/// changing a derivation forces a one-off rebuild even when `AllPrintings.json`, the
-/// fallback data, and the SLD inputs are all byte-identical — the only way a pure code
-/// change takes effect, since the sync is otherwise ETag-gated. Bump it whenever any of that
-/// logic changes (including a change to how a precon slug is derived, since the slug is the
-/// browser's URL identity).
-const DERIVATION_VERSION: &str = "booster-pool-2+precon-2";
+/// ([`merge_contained_booster_pools`] + [`merge_sibling_booster_pools`]), the precon
+/// rebuild ([`precons`]), and the booster odds + product pack links ([`boosters`]). Folded
+/// into the stored version (see [`compose_version`]) so that changing a derivation forces a
+/// one-off rebuild even when `AllPrintings.json`, the fallback data, and the SLD inputs are
+/// all byte-identical — the only way a pure code change takes effect, since the sync is
+/// otherwise ETag-gated. Bump it whenever any of that logic changes (including a change to
+/// how a precon slug is derived, since the slug is the browser's URL identity, or to how a
+/// pack's quantity is flattened out of nested `sealed` references, or to what a sheet
+/// stores for a card the catalog can't name — `packs-2` is the fixed-sheet placeholder,
+/// without which an already-synced instance would keep serving position-shifted sheets
+/// until upstream's ETag happened to move).
+const DERIVATION_VERSION: &str = "booster-pool-2+precon-2+packs-2";
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
@@ -177,25 +190,38 @@ async fn refresh_inner(
     )
     .await?;
 
-    // Resolve contents -> per-card memberships, the structural composition, and the
-    // published precon decklists off the async runtime (CPU-bound over a big document).
-    // `all` is dropped when the closure returns, freeing the parse tree; all three passes
-    // run in the one blocking task so it's moved once — and they share ONE `Indexes`, whose
-    // build walks every card in the document (~115k cards): three passes each building their
-    // own would triple that walk for a document that only ever produces one answer.
+    // Resolve contents -> per-card memberships, the structural composition, the published
+    // precon decklists, and the booster odds (which product opens which pack, and what those
+    // packs roll) off the async runtime (CPU-bound over a big document). `all` is dropped
+    // when the closure returns, freeing the parse tree; all five passes run in the one
+    // blocking task so it's moved once — and they share ONE `Indexes`, whose build walks
+    // every card in the document (~115k cards): five passes each building their own would
+    // quintuple that walk for a document that only ever produces one answer.
     progress.set_stage("resolving contents");
     let all = *all;
     #[allow(clippy::type_complexity)]
-    let (memberships, components, precons): (
+    let (memberships, components, precons, packs, booster_configs): (
         HashSet<RawMembership>,
         Vec<RawComponent>,
         Vec<RawPrecon>,
+        Vec<RawPack>,
+        Vec<RawBoosterConfig>,
     ) = tokio::task::spawn_blocking(move || {
         let idx = model::Indexes::build(&all);
+        // Packs first: only the configurations a product actually opens are stored, and
+        // the pack walk is what names them (a product-keyed read has no use for the rest).
+        let packs = super::boosters::packs_from(&all, &idx);
+        let referenced: HashSet<(String, String)> = packs
+            .iter()
+            .map(|p| (p.set_code.clone(), p.booster_code.clone()))
+            .collect();
+        let booster_configs = super::boosters::configs_from(&all, &idx, &referenced);
         (
             model::memberships_from(&all, &idx),
             model::compositions_from(&all, &idx),
             super::precons::precons_from(&all, &idx),
+            packs,
+            booster_configs,
         )
     })
     .await
@@ -204,13 +230,16 @@ async fn refresh_inner(
         memberships = memberships.len(),
         components = components.len(),
         precons = precons.len(),
-        "mtgjson: resolved membership + composition + precon rows"
+        packs = packs.len(),
+        booster_configs = booster_configs.len(),
+        "mtgjson: resolved membership + composition + precon + booster rows"
     );
 
     // Map external ids onto our catalog: products for membership targets, component parents,
-    // the sub-products components link to, and the products a precon ships in; cards for
-    // membership targets, linked promos, and every precon decklist entry. One resolution
-    // pass for all three consumers — the precon ids ride the same chunked lookups.
+    // the sub-products components link to, the products a precon ships in, and the products
+    // that open a booster; cards for membership targets, linked promos, every precon
+    // decklist entry, and every booster sheet's cards. One resolution pass for all
+    // consumers — the precon and booster ids ride the same chunked lookups.
     let product_ext: Vec<String> = distinct(
         memberships
             .iter()
@@ -221,7 +250,8 @@ async fn refresh_inner(
                     .iter()
                     .filter_map(|c| c.child_tcgplayer_product_id.as_ref()),
             )
-            .chain(precons.iter().flat_map(|p| p.product_ids.iter())),
+            .chain(precons.iter().flat_map(|p| p.product_ids.iter()))
+            .chain(packs.iter().map(|p| &p.tcgplayer_product_id)),
     );
     let card_ext: Vec<String> = distinct(
         memberships
@@ -236,7 +266,13 @@ async fn refresh_inner(
                 precons
                     .iter()
                     .flat_map(|p| p.cards.iter().map(|c| &c.scryfall_id)),
-            ),
+            )
+            .chain(booster_configs.iter().flat_map(|config| {
+                config
+                    .sheets
+                    .iter()
+                    .flat_map(|sheet| sheet.cards.iter().map(|(scryfall, _)| scryfall))
+            })),
     );
     progress.set_stage("matching to catalog");
     let products = resolve_products(db, &product_ext).await?;
@@ -398,6 +434,16 @@ async fn refresh_inner(
     // the decklists arrived with the sealed contents, so they're replaced together or not
     // at all.
     let precon_stats = precons::rebuild(&txn, &precons, &cards, &products, now).await?;
+    // …and the booster odds beside them, off the same document and the same resolution
+    // maps: the sheets a pack rolls and the packs a product opens are only meaningful
+    // together with the memberships they were derived from.
+    let booster_stats =
+        boosters::rebuild(&txn, &booster_configs, &packs, &cards, &products, now).await?;
+    // Both are resolved into rows now; free the raw booster data before the commit and the
+    // bookkeeping below rather than at function exit (this path has to fit the 1 GB
+    // App Platform instance — see the write phase's note above).
+    drop(booster_configs);
+    drop(packs);
     txn.commit().await?;
 
     drop(progress);
@@ -414,8 +460,13 @@ async fn refresh_inner(
          {from_contained} from contained boosters, {from_siblings} from sibling boosters); \
          {component_count} components ({components_from_mtgjson} from mtgjson, \
          {components_from_fallback} from fallback); \
-         {} precon decks ({} cards)",
-        precon_stats.decks, precon_stats.cards
+         {} precon decks ({} cards); \
+         {} booster configs ({} sheets) opened by {} product links",
+        precon_stats.decks,
+        precon_stats.cards,
+        booster_stats.configs,
+        booster_stats.sheets,
+        booster_stats.packs
     );
     ingest_state::put(
         db,
@@ -444,6 +495,9 @@ async fn refresh_inner(
         fallback_components = components_from_fallback,
         precon_decks = precon_stats.decks,
         precon_cards = precon_stats.cards,
+        booster_configs = booster_stats.configs,
+        booster_sheets = booster_stats.sheets,
+        sealed_packs = booster_stats.packs,
         "mtgjson sealed contents sync complete"
     );
     Ok(())

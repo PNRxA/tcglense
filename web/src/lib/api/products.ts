@@ -18,19 +18,26 @@ import type {
 // re-exported here so importers keep the `@/lib/api` entrypoint.
 
 export type {
+  OpenedCard,
+  OpenedPack,
+  PackCardOdds,
+  PackEv,
+  PackOpening,
   Product,
   ProductCardEntry,
   ProductCardSection,
   ProductComponent,
   ProductContainer,
+  ProductEv,
   ProductFacets,
   ProductPricePoint,
   ProductPrices,
   ProductSetRef,
   SealedProductRef,
+  SlotEv,
 } from './generated'
 
-import type { ProductComponent, SealedProductRef } from './generated'
+import type { PackOpening, ProductComponent, ProductEv, SealedProductRef } from './generated'
 
 /** A page of sealed products plus pagination cursors. */
 export type ProductPage = Page<Product>
@@ -236,6 +243,60 @@ export function getProductPrices(
   range?: PriceRange,
 ): Promise<{ data: ProductPricePoint[] }> {
   return request<{ data: ProductPricePoint[] }>(productPriceHistoryPath(game, id, range))
+}
+
+// ---------- Booster expected value + the seeded pack opener (issue #682) ----------
+//
+// Two public reads over the same booster-sheet data: what an average pack is worth, and
+// what one *seeded* roll of the dice actually dealt. Both are anonymous catalog reads.
+
+/**
+ * The expected value of one copy of a sealed product at today's prices, or `data: null`
+ * when the product has no booster sheets to open (a precon deck, a product MTGJSON
+ * doesn't describe) — the SPA renders nothing at all for a `null`.
+ */
+export function getProductEv(
+  game: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ data: ProductEv | null }> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  return request<{ data: ProductEv | null }>(`/api/games/${g}/products/${i}/ev`, { signal })
+}
+
+/** How many copies {@link openProduct} may be asked for at once, and the API's own ceiling
+ * on the packs one request may deal (a request past it is a 422). */
+export const MAX_OPENING_COPIES = 6
+export const MAX_OPENING_PACKS = 36
+
+/** What to open: a client-minted u32 `seed` (always sent, so the response is a pure
+ * function of its URL and can be shared, replayed and CDN-cached) and how many copies of
+ * the product to open. */
+export interface OpenProductParams {
+  seed: number
+  copies?: number
+}
+
+/**
+ * Simulate opening `copies` of a sealed product with the given seed. The response is
+ * deterministic in `(id, seed, copies)` — pack *n* is the same pack whatever `copies` was
+ * — so the caller can mirror the seed into its URL and reproduce the run exactly.
+ *
+ * `422` when the product has no booster data, when `copies` is 0, or when the request
+ * would deal more than the API's pack/card ceilings.
+ */
+export function openProduct(
+  game: string,
+  id: string,
+  params: OpenProductParams,
+  signal?: AbortSignal,
+): Promise<PackOpening> {
+  const g = encodeURIComponent(game)
+  const i = encodeURIComponent(id)
+  const search = new URLSearchParams({ seed: String(params.seed) })
+  if (params.copies && params.copies > 1) search.set('copies', String(params.copies))
+  return request<PackOpening>(`/api/games/${g}/products/${i}/open?${search.toString()}`, { signal })
 }
 
 /** URL of the caching image proxy for a product, for `<img src>`. */

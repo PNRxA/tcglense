@@ -1,6 +1,8 @@
 pub mod alert_channel;
 pub mod api_key;
 pub mod art_tag;
+pub mod booster_config;
+pub mod booster_sheet;
 pub mod card;
 pub mod card_art_tag;
 pub mod card_fingerprint;
@@ -30,6 +32,7 @@ pub mod refresh_token;
 pub mod release_notification;
 pub mod sealed_component;
 pub mod sealed_content;
+pub mod sealed_pack;
 pub mod sld_drop_snapshot;
 pub mod user;
 pub mod wishlist_item;

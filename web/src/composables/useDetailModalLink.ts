@@ -1,5 +1,8 @@
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import { PRODUCT_CARDS_MODAL_SEARCH_KEYS } from '@/composables/useProductCardsSearch'
+import {
+  PRODUCT_CARDS_MODAL_SEARCH_KEYS,
+  PRODUCT_OPENER_MODAL_KEYS,
+} from '@/composables/useProductCardsSearch'
 import { applyDetailOrigin, type DetailOriginKind } from '@/lib/detailOrigin'
 import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { loadProductDetailDialog } from '@/components/products/detailDialogLoader'
@@ -60,8 +63,11 @@ export function useDetailModalLink() {
     const fromSame = typeof route.query[kind] === 'string' ? route.query[kind] : null
     delete query[other]
     // A namespaced product-card search still in the URL was typed for a now-closed product
-    // modal (issue #448); the surface we open starts fresh.
+    // modal (issue #448); the surface we open starts fresh. The pack opener's namespaced seed
+    // goes with it (issue #682) — and that one is not merely stale state: left in place, the
+    // surface we're opening would read it and deal an opening nobody asked for.
     for (const key of Object.values(PRODUCT_CARDS_MODAL_SEARCH_KEYS)) delete query[key]
+    for (const key of Object.values(PRODUCT_OPENER_MODAL_KEYS)) delete query[key]
     // Record where we came from so the modal can show the return crumb: the cross-surface item
     // wins, else the previous same-surface item — but never the item we're opening (a no-op
     // re-open), and cleared when there's nothing to return to (a fresh open from a browse grid).
