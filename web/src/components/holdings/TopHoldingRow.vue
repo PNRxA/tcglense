@@ -1,27 +1,19 @@
-<script lang="ts">
-// Warm the shared card-detail dialog chunk on the first hover/focus of ANY row (module
-// flag → once per session), mirroring MoverRow, so the click that opens ?card= finds the
-// chunk already fetched.
-let dialogWarmed = false
-</script>
-
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { Layers, Sparkles } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
-import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useCurrency } from '@/composables/useCurrency'
+import { useDetailModalLink } from '@/composables/useDetailModalLink'
 import type { TopHolding } from '@/lib/api'
+import type { CountNoun } from '@/lib/ownership'
 
-// One row of the breakdown panel's "Top holdings" list (issue #680): the card, how many
-// copies are held, and the held value (price × copies — the figure that ranks it). Clicks
-// open the shared card detail modal over the landing, keeping a real href for modifier /
-// middle clicks — the same idiom as the movers panel's rows.
-const props = defineProps<{ game: string; holding: TopHolding; countNoun: string }>()
+// One row of the breakdown panel's top list (issue #680): the card, how many copies are
+// held, and the held value (price × copies — the figure that ranks it). A click opens the
+// shared card detail modal over the landing through the one `useDetailModalLink` seam every
+// tile and row uses, keeping a real href for modifier / middle clicks.
+const props = defineProps<{ game: string; holding: TopHolding; countNoun: CountNoun }>()
 const money = useCurrency()
-const route = useRoute()
-const router = useRouter()
+const { hrefFor, onActivate, warm } = useDetailModalLink()
 
 const card = computed(() => props.holding.card)
 const metaText = computed(
@@ -30,32 +22,15 @@ const metaText = computed(
 const total = computed(() => props.holding.quantity + props.holding.foil_quantity)
 const foilCount = computed(() => props.holding.foil_quantity)
 const value = computed(() => money.formatUsd(props.holding.value_usd))
-
-const to = computed(() => `/cards/${props.game}/cards/${card.value.id}`)
-const href = computed(() => router.resolve(to.value).href)
-function onClick(event: MouseEvent) {
-  if (event.defaultPrevented) return
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-    return
-  }
-  event.preventDefault()
-  void router.push({ query: { ...route.query, card: card.value.id } })
-}
-function warmDetail() {
-  if (!dialogWarmed) {
-    dialogWarmed = true
-    void loadCardDetailDialog()
-  }
-}
 </script>
 
 <template>
   <a
-    :href="href"
+    :href="hrefFor('card', game, card.id)"
     class="group hover:bg-muted/50 -mx-2 flex items-center gap-3 rounded-md px-2 py-1.5"
-    @click="onClick"
-    @pointerenter="warmDetail"
-    @focusin="warmDetail"
+    @click="onActivate($event, 'card', game, card.id)"
+    @pointerenter="warm('card')"
+    @focusin="warm('card')"
   >
     <CardImage
       :game="game"

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useCurrency } from '@/composables/useCurrency'
 import type { BreakdownBucket } from '@/lib/api'
 import { breakdownBars, type BreakdownFacet } from '@/lib/holdingBreakdown'
+import type { CountNoun } from '@/lib/ownership'
 
 // One facet of the holdings breakdown (issue #680) as labelled rows: a bar per bucket
 // whose length is the bucket's share of the facet's priced value, with the value and the
@@ -14,7 +15,7 @@ const props = defineProps<{
   facet: BreakdownFacet
   buckets: BreakdownBucket[]
   /** The copy noun — `owned` for the collection, `wanted` for the wish list. */
-  countNoun: string
+  countNoun: CountNoun
 }>()
 const money = useCurrency()
 

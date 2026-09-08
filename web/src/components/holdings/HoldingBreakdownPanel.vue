@@ -7,11 +7,12 @@ import BreakdownBars from '@/components/holdings/BreakdownBars.vue'
 import TopHoldingRow from '@/components/holdings/TopHoldingRow.vue'
 import type { HoldingBreakdown } from '@/lib/api'
 import { BREAKDOWN_FACETS, hasBreakdown, type BreakdownFacet } from '@/lib/holdingBreakdown'
+import type { CountNoun } from '@/lib/ownership'
 
 // The holdings landing's breakdown panel (issue #680): "where is my money?". One card with
 // a facet switch (rarity / colour / type / finish) over a bar list on the left and the top
 // holdings by held value on the right — the same panel for the collection and the wish
-// list, which differ only in the count noun (owned / wanted) and the title. Everything it
+// list, which differ only in the count noun (owned / wanted). Everything it
 // draws is the server's `GET …/breakdown` response, read through `useHoldingsLanding`;
 // the panel itself is presentational so the two landings can't compute it differently.
 //
@@ -23,9 +24,9 @@ const props = defineProps<{
   breakdown: HoldingBreakdown | undefined
   pending: boolean
   error: boolean
-  /** The copy noun — `owned` (collection) or `wanted` (wish list). */
-  countNoun: string
-  title: string
+  /** The copy noun — `owned` (collection) or `wanted` (wish list); the panel's surface
+   * wording (the title, the top list's heading) derives from it. */
+  countNoun: CountNoun
 }>()
 
 const facet = ref<BreakdownFacet>('rarity')
@@ -33,7 +34,11 @@ const buckets = computed(() => props.breakdown?.[facet.value] ?? [])
 const top = computed(() => props.breakdown?.top ?? [])
 const unpriced = computed(() => props.breakdown?.unpriced_cards ?? 0)
 const visible = computed(() => props.pending || props.error || hasBreakdown(props.breakdown))
-// A wish list is a shopping list, so its top list is worded as cost, not holdings.
+// A wish list is a shopping list, so its wording is cost, not holdings; both strings come
+// off the one noun so the two landings can't pass a mismatched pair.
+const title = computed(() =>
+  props.countNoun === 'wanted' ? 'Where the cost is' : 'Where the value is',
+)
 const topTitle = computed(() =>
   props.countNoun === 'wanted' ? 'Most expensive wanted cards' : 'Top holdings by value',
 )

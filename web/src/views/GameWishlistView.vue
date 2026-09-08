@@ -61,8 +61,9 @@ const {
   ownership,
   totalValue,
   hasStats,
-  breakdownQuery,
   breakdown,
+  breakdownPending,
+  breakdownError,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useWishlistSummaryQuery,
   useHeldSetsQuery: useWishlistSetsQuery,
@@ -199,10 +200,9 @@ usePageMeta({
         v-if="hasStats"
         :game="game"
         :breakdown="breakdown"
-        :pending="breakdownQuery?.isPending.value ?? false"
-        :error="breakdownQuery?.isError.value ?? false"
+        :pending="breakdownPending"
+        :error="breakdownError"
         count-noun="wanted"
-        title="Where the cost is"
         class="mb-8"
       />
 

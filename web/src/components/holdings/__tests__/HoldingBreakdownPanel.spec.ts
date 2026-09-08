@@ -57,8 +57,7 @@ function mountPanel(props: Partial<InstanceType<typeof HoldingBreakdownPanel>['$
       breakdown,
       pending: false,
       error: false,
-      countNoun: 'owned',
-      title: 'Where the value is',
+      countNoun: 'owned' as const,
       ...props,
     },
     global: {
@@ -104,6 +103,7 @@ describe('HoldingBreakdownPanel', () => {
 
   it('lists the top holdings by held value with their counts', () => {
     const wrapper = mountPanel({ countNoun: 'wanted' })
+    expect(wrapper.text()).toContain('Where the cost is')
     expect(wrapper.text()).toContain('Most expensive wanted cards')
     expect(wrapper.text()).not.toContain('Top holdings by value')
     const rows = wrapper.findAll('a')

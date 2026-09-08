@@ -60,7 +60,7 @@ export function bucketLabel(facet: BreakdownFacet, key: string): string {
     case 'card_type':
       return key === 'other' ? 'Other' : titleCase(key)
     case 'finish':
-      return key === 'foil' ? 'Foil' : 'Regular'
+      return key === 'regular' ? 'Regular' : titleCase(key)
   }
 }
 

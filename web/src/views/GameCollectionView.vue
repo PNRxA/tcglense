@@ -67,8 +67,9 @@ const {
   totalValue,
   bulkValue,
   hasStats,
-  breakdownQuery,
   breakdown,
+  breakdownPending,
+  breakdownError,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useCollectionSummaryQuery,
   useHeldSetsQuery: useCollectionSetsQuery,
@@ -235,10 +236,9 @@ function fetchValueHistory(range: PriceRange) {
         v-if="hasStats"
         :game="game"
         :breakdown="breakdown"
-        :pending="breakdownQuery?.isPending.value ?? false"
-        :error="breakdownQuery?.isError.value ?? false"
+        :pending="breakdownPending"
+        :error="breakdownError"
         count-noun="owned"
-        title="Where the value is"
         class="mb-8"
       />
 

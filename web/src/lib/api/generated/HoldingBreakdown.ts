@@ -15,8 +15,9 @@ export type HoldingBreakdown = {
  */
 summary: CollectionSummary, 
 /**
- * By rarity, in rarity order (common → mythic → special → bonus, then anything
- * else alphabetically, `unknown` last). Only non-empty buckets are listed.
+ * By rarity, in rarity order (common → uncommon → rare → mythic → special → bonus,
+ * then anything else alphabetically, `unknown` last). Only non-empty buckets are
+ * listed.
  */
 rarity: Array<BreakdownBucket>, 
 /**

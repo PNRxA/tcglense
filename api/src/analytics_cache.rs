@@ -553,6 +553,24 @@ mod tests {
             .expect("key");
         assert_eq!(plain, explicit);
         assert_ne!(plain, collection_after);
+        // The params segment is part of the key on either surface, so a breakdown at one
+        // bulk threshold can never serve another's.
+        assert_ne!(
+            cache
+                .surface_body_key(HoldingsSurface::Wishlist, 7, "mtg", "breakdown", "bulk100")
+                .await
+                .expect("key"),
+            cache
+                .surface_body_key(
+                    HoldingsSurface::Wishlist,
+                    7,
+                    "mtg",
+                    "breakdown",
+                    "bulk1000000"
+                )
+                .await
+                .expect("key")
+        );
         // A price bump moves both surfaces.
         cache.bump_prices("mtg").await;
         assert_ne!(

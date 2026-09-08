@@ -27,6 +27,9 @@ describe('bucketLabel', () => {
   it('renders a key it does not know as itself, capitalised', () => {
     expect(bucketLabel('rarity', 'bonus')).toBe('Bonus')
     expect(bucketLabel('color', 'ultraviolet')).toBe('Ultraviolet')
+    expect(bucketLabel('card_type', 'battle')).toBe('Battle')
+    // A finish the server might add later (etched) must not read as Regular.
+    expect(bucketLabel('finish', 'etched')).toBe('Etched')
   })
 })
 

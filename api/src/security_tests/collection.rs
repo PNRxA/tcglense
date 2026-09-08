@@ -7,7 +7,7 @@
 use super::harness::*;
 
 use chrono::{Duration, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set, sea_query::Expr};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, sea_query::Expr};
 
 use crate::entities::prelude::{Card, CardPriceHistory, CollectionItem};
 use crate::entities::{card, card_price_history, collection_item};
@@ -76,15 +76,57 @@ async fn priced_card_ids(app: &Router, n: usize) -> Vec<String> {
     ids
 }
 
+/// Grab `n` real card external ids priced in **both** finishes in the seeded catalog.
+async fn foil_priced_card_ids(app: &Router, n: usize) -> Vec<String> {
+    let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=50")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
+    let ids: Vec<String> = body["data"]
+        .as_array()
+        .expect("cards data array")
+        .iter()
+        .filter(|c| {
+            c["prices"]["usd"].as_str().is_some() && c["prices"]["usd_foil"].as_str().is_some()
+        })
+        .take(n)
+        .map(|c| c["id"].as_str().expect("card id").to_string())
+        .collect();
+    assert!(
+        ids.len() >= n,
+        "need >= {n} seeded cards priced in both finishes, got {}",
+        ids.len()
+    );
+    ids
+}
+
+/// The internal `users.id` for a registered email.
+async fn internal_user_id(db: &sea_orm::DatabaseConnection, email: &str) -> i32 {
+    crate::entities::prelude::User::find()
+        .filter(crate::entities::user::Column::Email.eq(email))
+        .one(db)
+        .await
+        .expect("query user")
+        .expect("registered user exists")
+        .id
+}
+
 /// Own one card, absolute counts, for the token's user.
 async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
+    own_card_finishes(app, token, id, quantity, 0).await;
+}
+
+/// Own one card in both finishes, absolute counts, for the token's user.
+async fn own_card_finishes(app: &Router, token: &str, id: &str, quantity: i64, foil: i64) {
     let (status, _, body) = send(
         app,
         json_with_bearer(
             "PUT",
             &card_path(id),
             token,
-            json!({ "quantity": quantity, "foil_quantity": 0 }),
+            json!({ "quantity": quantity, "foil_quantity": foil }),
         ),
     )
     .await;
@@ -1677,10 +1719,12 @@ async fn breakdown_slices_the_summary_and_ranks_by_held_value() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Own two priced cards: one copy of the dearer, four of the cheaper.
-    let ids = priced_card_ids(&app, 2).await;
+    // Own two cards priced in both finishes: one regular copy of the first, four regular
+    // plus one foil of the second — so the foil bucket, a card held in both finishes and a
+    // top holding with a foil count all go through the real handler.
+    let ids = foil_priced_card_ids(&app, 2).await;
     own_card(&app, &token, &ids[0], 1).await;
-    own_card(&app, &token, &ids[1], 4).await;
+    own_card_finishes(&app, &token, &ids[1], 4, 1).await;
 
     let (status, _, breakdown) = send(
         &app,
@@ -1711,11 +1755,16 @@ async fn breakdown_slices_the_summary_and_ranks_by_held_value() {
             .iter()
             .map(|b| b["copies"].as_i64().unwrap())
             .sum();
-        assert_eq!(copies, 5, "{facet} should account for every copy");
+        assert_eq!(copies, 6, "{facet} should account for every copy");
     }
-    // The regular finish is the only one held.
-    assert_eq!(breakdown["finish"].as_array().unwrap().len(), 1);
+    // Finish buckets count only their own finish's copies: the card held in both is in
+    // both buckets, so `cards` overlaps while `copies` still partition the six.
     assert_eq!(breakdown["finish"][0]["key"], "regular");
+    assert_eq!(breakdown["finish"][0]["cards"], 2);
+    assert_eq!(breakdown["finish"][0]["copies"], 5);
+    assert_eq!(breakdown["finish"][1]["key"], "foil");
+    assert_eq!(breakdown["finish"][1]["cards"], 1);
+    assert_eq!(breakdown["finish"][1]["copies"], 1);
 
     // Top holdings: both cards, ranked by held value, each carrying the card DTO.
     let top = breakdown["top"].as_array().unwrap();
@@ -1730,11 +1779,60 @@ async fn breakdown_slices_the_summary_and_ranks_by_held_value() {
     for entry in top {
         let id = entry["card"]["id"].as_str().expect("card id");
         assert!(ids.contains(&id.to_string()));
-        let per_copy = usd_cents(&entry["card"]["prices"]["usd"]);
-        let copies = entry["quantity"].as_i64().unwrap() + entry["foil_quantity"].as_i64().unwrap();
-        assert_eq!(usd_cents(&entry["value_usd"]), per_copy * copies);
+        // Held value = each finish's price × its copies.
+        let regular =
+            usd_cents(&entry["card"]["prices"]["usd"]) * entry["quantity"].as_i64().unwrap();
+        let foil = usd_cents(&entry["card"]["prices"]["usd_foil"])
+            * entry["foil_quantity"].as_i64().unwrap();
+        assert_eq!(usd_cents(&entry["value_usd"]), regular + foil);
     }
+    assert!(
+        top.iter().any(|entry| entry["foil_quantity"] == 1),
+        "the foil copy rides its top holding"
+    );
     assert_eq!(breakdown["unpriced_cards"], 0);
+
+    // A holding whose card row is gone (a catalog re-import — `collection_items` has no FK
+    // on `card_id`) is skipped by the projected row exactly as `/summary` skips it: insert
+    // an orphan behind the handlers, then bump the cache through a real write.
+    let now = Utc::now();
+    collection_item::ActiveModel {
+        user_id: Set(internal_user_id(&app.state.db, "breakdown@example.com").await),
+        game: Set("mtg".into()),
+        card_id: Set(999_999),
+        quantity: Set(7),
+        foil_quantity: Set(7),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert orphan holding");
+    own_card(&app, &token, &ids[0], 2).await;
+    let (status, _, breakdown) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, summary) =
+        send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(breakdown["summary"], summary);
+    assert_eq!(breakdown["summary"]["unique_cards"], 2);
+    assert_eq!(breakdown["summary"]["total_cards"], 7);
+    assert_eq!(breakdown["top"].as_array().unwrap().len(), 2);
+    assert_eq!(breakdown["unpriced_cards"], 0);
+    for facet in ["rarity", "color", "card_type", "finish"] {
+        let copies: i64 = breakdown[facet]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["copies"].as_i64().unwrap())
+            .sum();
+        assert_eq!(copies, 7, "{facet} must skip the orphan");
+    }
 
     // Another user sees only their own (empty) breakdown.
     let (bob, _) = register(&app, "breakdown-bob@example.com", "password123").await;

@@ -35,7 +35,7 @@ use super::holdings::{
     select_summary_columns, summarize_holdings,
 };
 use super::type_line::primary_type;
-use super::valuation::{Valuation, format_cents, price_cents, resolve_bulk_threshold_cents};
+use super::valuation::{Valuation, format_cents, resolve_bulk_threshold_cents};
 
 /// How many top holdings the breakdown names. Enough to answer "where is my money" at
 /// a glance; the full ranking is the list endpoint sorted by price.
@@ -107,8 +107,9 @@ pub struct HoldingBreakdown {
     /// The same summary `GET …/summary` answers, folded from the same rows (so the
     /// bucket values below are slices of exactly this total).
     pub summary: CollectionSummary,
-    /// By rarity, in rarity order (common → mythic → special → bonus, then anything
-    /// else alphabetically, `unknown` last). Only non-empty buckets are listed.
+    /// By rarity, in rarity order (common → uncommon → rare → mythic → special → bonus,
+    /// then anything else alphabetically, `unknown` last). Only non-empty buckets are
+    /// listed.
     pub rarity: Vec<BreakdownBucket>,
     /// By colour identity, in WUBRG order then `multicolor` then `colorless`. Only
     /// non-empty buckets are listed.
@@ -288,6 +289,17 @@ impl BucketAgg {
         self.valuation.add(usd, qty, usd_foil, foil_qty);
     }
 
+    /// The bucket's sort key: its value in cents, or `-1` for an unpriced bucket so it
+    /// sorts **below** every priced one — including a priced `"0.00"`, which the copies
+    /// tie-break must never rescue an unpriced bucket past.
+    fn sort_cents(&self) -> i128 {
+        if self.valuation.any_priced {
+            self.valuation.cents
+        } else {
+            -1
+        }
+    }
+
     fn into_bucket(self, key: String) -> BreakdownBucket {
         BreakdownBucket {
             key,
@@ -392,16 +404,19 @@ pub(crate) fn fold_breakdown<R: BreakdownRow>(
         })
         .collect();
 
-    let mut card_type: Vec<BreakdownBucket> = card_type
+    // Sorted on the exact cents the fold holds (never a re-parse of the rendered string):
+    // most valuable first, then most copies, then key.
+    let mut card_type: Vec<(i128, BreakdownBucket)> = card_type
         .into_iter()
-        .map(|(key, agg)| agg.into_bucket(key))
+        .map(|(key, agg)| (agg.sort_cents(), agg.into_bucket(key)))
         .collect();
-    card_type.sort_by(|a, b| {
-        bucket_cents(b)
-            .cmp(&bucket_cents(a))
+    card_type.sort_by(|(a_cents, a), (b_cents, b)| {
+        b_cents
+            .cmp(a_cents)
             .then_with(|| b.copies.cmp(&a.copies))
             .then_with(|| a.key.cmp(&b.key))
     });
+    let card_type: Vec<BreakdownBucket> = card_type.into_iter().map(|(_, b)| b).collect();
 
     let finish: Vec<BreakdownBucket> = [("regular", regular), ("foil", foil)]
         .into_iter()
@@ -428,12 +443,6 @@ fn rarity_rank(key: &str) -> (usize, usize, &str) {
         None if key == "unknown" => (2, 0, key),
         None => (1, 0, key),
     }
-}
-
-/// A bucket's value in cents for sorting (unpriced sorts as zero — after every priced
-/// bucket, since a priced one is at least `"0.00"` by explicit value and typically more).
-fn bucket_cents(bucket: &BreakdownBucket) -> i128 {
-    price_cents(bucket.value_usd.as_deref()).unwrap_or(-1)
 }
 
 // ---------- Dressing + caching ----------
@@ -686,27 +695,47 @@ mod tests {
 
     #[test]
     fn fold_bounds_the_ranking_and_breaks_ties_by_id() {
-        let rows: Vec<(collection_item::Model, Option<card::Model>)> = (1..=5)
+        // Rows arrive in no particular order (the DB promises none): a $2 card among four $1
+        // ties. The ranking must put value first and break the ties by id — which the
+        // scrambled input can only produce if the id comparator actually runs (`sort_by`
+        // is stable, so ascending input would pass without it).
+        let rows: Vec<(collection_item::Model, Option<card::Model>)> = [3, 1, 5, 4, 2]
+            .into_iter()
             .map(|id| {
+                let usd = if id == 4 { "2.00" } else { "1.00" };
                 (
                     holding(id, 1, 0),
-                    Some(card(
-                        id,
-                        Some("common"),
-                        None,
-                        "Instant",
-                        Some("1.00"),
-                        None,
-                    )),
+                    Some(card(id, Some("common"), None, "Instant", Some(usd), None)),
                 )
             })
             .collect();
-        let folded = fold_breakdown(&rows, 100, 2);
+        let folded = fold_breakdown(&rows, 100, 3);
         let top: Vec<i32> = folded.top.iter().map(|t| t.0).collect();
-        assert_eq!(top, [1, 2]);
+        assert_eq!(top, [4, 1, 2]);
         // The buckets are still folded over every row, not the truncated ranking.
         assert_eq!(bucket(&folded.rarity, "common").cards, 5);
         assert_eq!(folded.finish[0].copies, 5);
+    }
+
+    #[test]
+    fn type_buckets_sort_unpriced_below_a_priced_zero() {
+        // A priced-at-$0.00 bucket outranks an unpriced one whatever their copy counts:
+        // "unpriced" is a fact about the data, not a value of zero.
+        let rows = vec![
+            (
+                holding(1, 9, 0),
+                Some(card(1, Some("common"), None, "Land", None, None)),
+            ),
+            (
+                holding(2, 1, 0),
+                Some(card(2, Some("common"), None, "Token", Some("0.00"), None)),
+            ),
+        ];
+        let folded = fold_breakdown(&rows, 100, 10);
+        let keys: Vec<&str> = folded.card_type.iter().map(|b| b.key.as_str()).collect();
+        assert_eq!(keys, ["token", "land"]);
+        assert_eq!(folded.card_type[0].value_usd.as_deref(), Some("0.00"));
+        assert_eq!(folded.card_type[1].value_usd, None);
     }
 
     #[test]

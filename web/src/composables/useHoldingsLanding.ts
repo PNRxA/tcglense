@@ -159,6 +159,11 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
   // and the panel has nothing to draw before then anyway. Absent for the public landings.
   const breakdownQuery = surface.useBreakdownQuery?.(game, { enabled: hasStats })
   const breakdown = computed(() => breakdownQuery?.data.value)
+  // The panel's loading/error state, reduced here (like `activePending`/`activeError`) so the
+  // twins bind two booleans rather than unwrapping the query object; a surface with no
+  // breakdown read is simply never pending.
+  const breakdownPending = computed(() => breakdownQuery?.isPending.value ?? false)
+  const breakdownError = computed(() => breakdownQuery?.isError.value ?? false)
 
   return {
     game,
@@ -180,7 +185,8 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
     totalValue,
     bulkValue,
     hasStats,
-    breakdownQuery,
     breakdown,
+    breakdownPending,
+    breakdownError,
   }
 }
