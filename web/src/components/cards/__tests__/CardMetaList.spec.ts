@@ -71,6 +71,15 @@ function makeDetail(overrides: Partial<CardDetail> = {}): CardDetail {
   }
 }
 
+/** Expand the collapsed print-shop rows (frame, border, stamp, watermark, promo types,
+ * printing flags, produced mana, ranks), which sit behind the "Show all details" toggle. */
+async function expandAll(wrapper: ReturnType<typeof mountMeta>) {
+  const toggle = wrapper.findAll('button').find((b) => b.text().includes('Show all details'))
+  expect(toggle, 'the show-all toggle should render when secondary rows exist').toBeTruthy()
+  await toggle!.trigger('click')
+  return wrapper
+}
+
 function mountMeta(card: CardDetailOrTile) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -228,18 +237,20 @@ describe('CardMetaList print details (issue #673)', () => {
     expect(wrapper.text()).toContain('Etched foil')
   })
 
-  it('humanises the frame, promo types and printing flags', () => {
-    const wrapper = mountMeta(
-      makeDetail({
-        frame: '2015',
-        frame_effects: ['showcase', 'extendedart'],
-        border_color: 'borderless',
-        security_stamp: 'oval',
-        watermark: 'boros',
-        promo_types: ['buyabox', 'surgefoil'],
-        full_art: true,
-        content_warning: true,
-      }),
+  it('humanises the frame, promo types and printing flags', async () => {
+    const wrapper = await expandAll(
+      mountMeta(
+        makeDetail({
+          frame: '2015',
+          frame_effects: ['showcase', 'extendedart'],
+          border_color: 'borderless',
+          security_stamp: 'oval',
+          watermark: 'boros',
+          promo_types: ['buyabox', 'surgefoil'],
+          full_art: true,
+          content_warning: true,
+        }),
+      ),
     )
     expect(wrapper.text()).toContain('2015 \u00b7 Showcase, Extended art')
     expect(wrapper.text()).toContain('Borderless')
@@ -253,15 +264,49 @@ describe('CardMetaList print details (issue #673)', () => {
     expect(wrapper.text()).not.toContain('Textless')
   })
 
-  it('marks the Reserved List only for a card on it', () => {
-    expect(mountMeta(makeDetail({ reserved: true })).text()).toContain(
-      'Reserved List \u2014 never to be reprinted',
-    )
+  it('marks the Reserved List only for a card on it, in the collapsed view', () => {
+    // A collector's first question, so it is never folded behind the toggle.
+    const onList = mountMeta(makeDetail({ reserved: true }))
+    expect(onList.text()).toContain('Reserved List')
+    expect(onList.text()).toContain('Never to be reprinted')
     expect(mountMeta(makeDetail({ reserved: false })).text()).not.toContain('Reserved List')
   })
 
-  it('formats the popularity ranks and omits an unranked one', () => {
-    const wrapper = mountMeta(makeDetail({ edhrec_rank: 12345, penny_rank: null }))
+  it('opens on the essentials and folds the print-shop rows behind a counted toggle', async () => {
+    const wrapper = mountMeta(
+      makeDetail({
+        artist: 'Rebecca Guay',
+        finishes: ['nonfoil'],
+        frame: '2015',
+        border_color: 'black',
+        watermark: 'boros',
+        edhrec_rank: 7,
+      }),
+    )
+    // Collapsed: the essentials show, the four secondary rows do not, and the toggle counts them.
+    expect(wrapper.text()).toContain('Artist')
+    expect(wrapper.text()).toContain('Finishes')
+    for (const row of ['Frame', 'Border', 'Watermark', 'EDHREC rank']) {
+      expect(wrapper.text(), `${row} should be folded away by default`).not.toContain(row)
+    }
+    expect(wrapper.text()).toContain('Show all details (4 more)')
+
+    await expandAll(wrapper)
+    for (const row of ['Frame', 'Border', 'Watermark', 'EDHREC rank']) {
+      expect(wrapper.text(), `${row} should show once expanded`).toContain(row)
+    }
+    expect(wrapper.text()).toContain('Show fewer details')
+
+    // A card with nothing to fold shows no toggle at all.
+    expect(
+      mountMeta(makeDetail({ artist: 'Rebecca Guay' }))
+        .find('button')
+        .exists(),
+    ).toBe(false)
+  })
+
+  it('formats the popularity ranks and omits an unranked one', async () => {
+    const wrapper = await expandAll(mountMeta(makeDetail({ edhrec_rank: 12345, penny_rank: null })))
     expect(wrapper.text()).toContain('EDHREC rank')
     expect(wrapper.text()).toContain(`#${(12345).toLocaleString()}`)
     expect(wrapper.text()).not.toContain('Penny rank')
