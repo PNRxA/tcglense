@@ -162,6 +162,35 @@ fn card_row(row: BuyListCardRow) -> Option<BuyListCard> {
     })
 }
 
+/// A shopping-list row off a whole catalog row, for a list that is a **fold** rather than a
+/// query — the deck shopping list (`decks::needed`) computes its shortfall in Rust over
+/// deck demand and collection supply, so its rows arrive as `card::Model`s with a count,
+/// not as a narrowed statement. Same shape as the query path's rows, stated once.
+pub(crate) fn card_row_from_model(
+    card: &card::Model,
+    quantity: i32,
+    foil_quantity: i32,
+) -> BuyListCard {
+    BuyListCard {
+        card_id: card.external_id.clone(),
+        name: card.name.clone(),
+        set_code: card.set_code.clone(),
+        collector_number: card.collector_number.clone(),
+        quantity,
+        foil_quantity,
+        tcgplayer_id: card.tcgplayer_id,
+    }
+}
+
+/// Cap an already-folded row list at [`BUY_LIST_MAX_ROWS`], answering the rows kept and
+/// the total there were — the in-memory twin of the `LIMIT` + `COUNT(*)` the query path
+/// runs, so [`build_buy_list`] reads truncation the same way from either.
+pub(crate) fn cap_rows(mut rows: Vec<BuyListCard>) -> (Vec<BuyListCard>, u64) {
+    let total = rows.len() as u64;
+    rows.truncate(BUY_LIST_MAX_ROWS as usize);
+    (rows, total)
+}
+
 /// Shape a page of wanted sealed products into shopping-list rows.
 pub(crate) fn product_rows(entries: Vec<ProductHoldingEntry>) -> Vec<BuyListProduct> {
     entries
@@ -286,6 +315,27 @@ mod tests {
             foil_quantity: 0,
             tcgplayer_id: None,
         }
+    }
+
+    #[test]
+    fn a_folded_list_is_capped_like_the_query_path() {
+        let rows: Vec<BuyListCard> = (0..(BUY_LIST_MAX_ROWS as i32 + 3)).map(card).collect();
+        let (kept, total) = cap_rows(rows);
+        assert_eq!(kept.len() as u64, BUY_LIST_MAX_ROWS);
+        assert_eq!(total, BUY_LIST_MAX_ROWS + 3);
+        assert_eq!(kept[0].card_id, "c0", "the first rows are the ones kept");
+        assert!(build_buy_list(kept, total, vec![], 0).truncated);
+
+        let model = card::Model {
+            tcgplayer_id: Some(500123),
+            ..crate::test_support::card_model(7)
+        };
+        let row = card_row_from_model(&model, 3, 0);
+        assert_eq!(row.card_id, model.external_id);
+        assert_eq!(
+            (row.quantity, row.foil_quantity, row.tcgplayer_id),
+            (3, 0, Some(500123))
+        );
     }
 
     #[test]

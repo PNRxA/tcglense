@@ -74,7 +74,7 @@ pub use facets::DeckCommanderResponse;
 pub(crate) use facets::{DeckFacets, deck_facets_by_deck};
 pub use folders::{create_folder, delete_folder, list_folders, update_folder};
 pub use import::{MAX_DECK_UPLOAD_BYTES, import_deck};
-pub use needed::needed_cards;
+pub use needed::{needed_buy_list, needed_cards};
 pub use read::{get_deck, list_decks};
 pub use sections::{create_section, delete_section, reorder_sections, update_section};
 // The add-to-collection write + the seam the precon entry point (`handlers::precons::to_collection`)
@@ -101,7 +101,7 @@ pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,
 };
 pub use import::__path_import_deck;
-pub use needed::__path_needed_cards;
+pub use needed::{__path_needed_buy_list, __path_needed_cards};
 pub use read::{__path_get_deck, __path_list_decks};
 pub use sections::{
     __path_create_section, __path_delete_section, __path_reorder_sections, __path_update_section,

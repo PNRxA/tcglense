@@ -188,6 +188,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         // --- Decks (issues #363/#389): decks, import/export, folders, sections, cards ---
         crate::handlers::decks::list_decks,
         crate::handlers::decks::needed_cards,
+        crate::handlers::decks::needed_buy_list,
         crate::handlers::decks::decks_containing_card,
         crate::handlers::decks::create_deck,
         crate::handlers::decks::import_deck,

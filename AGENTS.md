@@ -710,8 +710,12 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   which has **no verifiable URL prefill**, so that option copies the `{qty} Name` list and opens
   the page. The EDHREC reference link slugs `searchName`'s answer, never the printing name — EDHREC
   files a split card under its combined name but every other multi-faced card under its **front
-  face**, and a reversible printing's `Okaun // Okaun` would double. A third store belongs in that
-  registry; a third *reader* of the ids belongs on `CardDetail`.
+  face**, and a reversible printing's `Okaun // Okaun` would double. The deck shopping list has
+  the same read — `GET /api/decks/{game}/needed/buy-list`, the **same `needed_rows` fold** as
+  `…/needed` (never a second shortfall computation), shaped through `shared/buy_list.rs`'s
+  `card_row_from_model` + `cap_rows` and rendered by the same `BuyListDialog` with a `source`
+  plugged in. A third store belongs in that registry; a third *reader* of the ids belongs on
+  `CardDetail`; a third shopping list belongs on that seam.
 - **Every export is a file-download response through `handlers/shared/download.rs`**
   (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
   pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its

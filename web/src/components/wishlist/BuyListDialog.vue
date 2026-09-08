@@ -28,10 +28,17 @@ import {
 } from '@/lib/bulkBuy'
 import { useAuthedQuery } from '@/lib/queries'
 
-// "Buy all" (issue #292): send the wish list — or the filtered slice of it on screen — to a
-// store's bulk-entry page. The trigger opens a dialog that fetches the shopping list
-// (`GET /api/wishlist/{game}/buy-list`, the listing's own query, so the rows are the grid's)
-// only once open, then offers one button per store from `lib/bulkBuy.ts`: a **link** store
+export interface BuyListSource {
+  key: unknown[]
+  load: (token: string) => Promise<BuyList>
+}
+
+// "Buy all" (issue #292): send the wish list — or the filtered slice of it on screen, or a
+// deck's shopping list — to a store's bulk-entry page. The trigger opens a dialog that
+// fetches the shopping list (`GET /api/wishlist/{game}/buy-list` by default, the listing's
+// own query, so the rows are the grid's; or whatever `source` the caller plugs in — the deck
+// needed page passes its `…/needed/buy-list` read) only once open, then offers one button
+// per store from `lib/bulkBuy.ts`: a **link** store
 // (TCGplayer's Mass Entry) is a plain outbound anchor with the cart prefilled, and a
 // **paste** store (MTG Mate) copies the list to the clipboard and opens its decklist page —
 // two clicks the user can see, never a popup opened behind an async fetch that a browser
@@ -48,6 +55,10 @@ const props = defineProps<{
    * adds to an *unfiltered* request (a plain `/cards` browse sends no filter) are dropped
    * before the stores see the list. The landing, which shows both, leaves this off. */
   cardsOnly?: boolean
+  /** Another shopping list than the wish list's: its query key (reactive pieces inside, as
+   * vue-query wants) and the authed read. The deck needed page passes its own; absent, the
+   * dialog reads the wish list with `params`. */
+  source?: BuyListSource
 }>()
 
 const open = ref(false)
@@ -58,9 +69,18 @@ const query = computed(() => props.params ?? {})
 // edited since is a different cart) — hence `staleTime: 0` and no cache reuse. Keyed on
 // the params so a filter change is a different list.
 const game = computed(() => props.game)
+const source = computed<BuyListSource>(
+  () =>
+    props.source ?? {
+      key: ['wishlist-buy-list', game.value, query.value],
+      load: (token: string) => getWishlistBuyList(token, game.value, query.value),
+    },
+)
 const options = {
-  queryKey: ['wishlist-buy-list', game, query],
-  queryFn: (token: string) => getWishlistBuyList(token, game.value, query.value),
+  // The key is a computed over the source's pieces, so a mode/deck/filter change is a
+  // different list without the caller threading refs through.
+  queryKey: ['buy-list', computed(() => source.value.key)],
+  queryFn: (token: string) => source.value.load(token),
   enabled: open,
   staleTime: 0,
   gcTime: 0,

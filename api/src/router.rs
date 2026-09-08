@@ -60,9 +60,9 @@ use crate::{
             create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing,
             deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck, delete_folder,
             delete_section, diff_deck, export_deck, get_deck, import_deck, list_deck_formats,
-            list_decks, list_folders, move_deck_card, move_deck_to_folder, needed_cards,
-            reorder_sections, set_deck_card, set_deck_visibility, update_deck, update_folder,
-            update_section,
+            list_decks, list_folders, move_deck_card, move_deck_to_folder, needed_buy_list,
+            needed_cards, reorder_sections, set_deck_card, set_deck_visibility, update_deck,
+            update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -407,6 +407,9 @@ pub fn build_router(state: AppState) -> Router {
         // Cards the caller's decks collectively need beyond their collection (issue #499).
         // Static `needed` wins over the dynamic `{deck_id}` below, like `folders`/`import`.
         .route("/api/decks/{game}/needed", get(needed_cards))
+        // The same shortfall as bulk-buy rows (issue #292's deck half); a read, so any
+        // `tcgl_` key may call it.
+        .route("/api/decks/{game}/needed/buy-list", get(needed_buy_list))
         // The caller's decks containing a card (any printing) — the card page's "in your
         // decks" panel. Static `containing` wins over `{deck_id}`, like `needed` above.
         .route(

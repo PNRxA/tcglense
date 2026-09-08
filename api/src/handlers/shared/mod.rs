@@ -26,8 +26,8 @@ pub(crate) mod validate;
 pub(crate) mod valuation;
 
 pub(crate) use buy_list::{
-    BUY_LIST_MAX_ROWS, BuyList, BuyListCard, BuyListProduct, build_buy_list, load_buy_list_cards,
-    product_rows,
+    BUY_LIST_MAX_ROWS, BuyList, BuyListCard, BuyListProduct, build_buy_list, cap_rows,
+    card_row_from_model, load_buy_list_cards, product_rows,
 };
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
 pub(crate) use cheapest::{PricedPrinting, load_cheapest_by_oracle, priced_printings_by_oracle};

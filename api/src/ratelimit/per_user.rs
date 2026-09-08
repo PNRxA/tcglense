@@ -98,6 +98,12 @@ impl UserRoute {
             if tail == "import" {
                 return Self::Import;
             }
+            // The deck shopping list as bulk-buy rows (issue #292): the wish-list buy list's
+            // deck twin, so the same tighter bucket it has — a whole-account demand scan
+            // against the whole collection on every call.
+            if tail == "needed/buy-list" {
+                return Self::Analytics;
+            }
             // "Add to collection" (`{deck_id}/collection` and `precons/{slug}/collection`):
             // the deck's or precon's rows through the collection importer's own `merge` —
             // the foil-★ pair scan, a full read of the caller's holdings and one upsert per
@@ -462,6 +468,7 @@ mod tests {
             "/api/collection/mtg/cards/export",
             "/api/wishlist/mtg/cards/export",
             "/api/wishlist/mtg/buy-list",
+            "/api/decks/mtg/needed/buy-list",
             // Deck analysis: each folds every card in the deck (issue #596).
             "/api/decks/mtg/7/stats",
             "/api/decks/mtg/7/legality",

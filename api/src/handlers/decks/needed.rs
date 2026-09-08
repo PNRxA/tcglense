@@ -26,6 +26,12 @@
 //! relevant is priced, with the totals counting how many entries that is, so a total is
 //! always known to be a floor when it is one.
 //!
+//! **Two wires, one fold** (issue #292's follow-up): `GET …/needed` answers the priced
+//! `NeededCard` list, and `GET …/needed/buy-list` the same shortfall as `BuyList` rows —
+//! each card's `needed` copies with the printing's TCGplayer id, for a store's bulk-entry
+//! page — through the shared [`crate::handlers::shared::buy_list`] shaping. Both call
+//! [`needed_rows`], so what is short is decided once.
+//!
 //! Reads only (`AuthUser`), in the no-store private group. A deck card has no `user_id`, so
 //! the demand scan is scoped to the deck ids the caller owns for the game (never queried by
 //! user directly), and a `deck_id` that isn't one of them is a **404** through the same
@@ -44,7 +50,10 @@ use crate::entities::{card, collection_item, deck, deck_card};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::valuation::{cheapest_single_cents, format_cents, price_cents};
-use crate::handlers::shared::{CardResponse, load_cheapest_by_oracle, require_game};
+use crate::handlers::shared::{
+    BuyList, CardResponse, build_buy_list, cap_rows, card_row_from_model, load_cheapest_by_oracle,
+    require_game,
+};
 use crate::state::AppState;
 
 use super::{
@@ -84,12 +93,101 @@ pub async fn needed_cards(
     Query(params): Query<NeededParams>,
 ) -> Result<Json<NeededCards>, AppError> {
     require_game(&game)?;
+    let NeededResult { deck, rows } = needed_rows(&state, user.id, &game, &params).await?;
+    let data: Vec<NeededCard> = rows
+        .into_iter()
+        .map(|row| NeededCard {
+            card: CardResponse::from(row.card),
+            needed: row.needed,
+            required: row.required,
+            owned: row.owned,
+            decks: row.decks,
+            held_usd: row.held_usd,
+            cheapest_usd: row.cheapest_usd,
+        })
+        .collect();
+    let totals = fold_totals(&data);
+    Ok(Json(NeededCards { data, deck, totals }))
+}
 
+/// Deck shopping list as bulk-buy rows
+///
+/// `GET /api/decks/{game}/needed/buy-list` -> the same shortfall `GET /api/decks/{game}/needed`
+/// reports — the same `mode` and `deck_id`, the same fold, the same maybeboard exclusion —
+/// as the rows a store's bulk-entry page takes (issue #292's `BuyList`): each card's `needed`
+/// copies as its `quantity`, with the printing's TCGplayer product id. The `card` mode folds
+/// by gameplay identity, so a row names the printing the decks want most and carries the
+/// whole count as regular copies (`foil_quantity` is always `0` — the fold doesn't keep the
+/// finish, and a bulk-entry page picks it). Never any sealed products. Capped at 500 rows,
+/// `truncated` + `total_cards` say what was cut.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/needed/buy-list",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("mode" = Option<String>, Query, description = "`card` (default: any printing you own covers any printing a deck wants) or `printing` (exact printing)"),
+        ("deck_id" = Option<i32>, Query, description = "Scope to one of the caller's decks — its share of the shortfall across every deck. A deck that isn't the caller's is a 404."),
+    ),
+    responses(
+        (status = 200, description = "The shortfall as bulk-buy rows (at most 500); `products` is always empty.", body = BuyList),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or a `deck_id` that isn't the caller's."),
+    ),
+)]
+pub async fn needed_buy_list(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(game): Path<String>,
+    Query(params): Query<NeededParams>,
+) -> Result<Json<BuyList>, AppError> {
+    require_game(&game)?;
+    let NeededResult { rows, .. } = needed_rows(&state, user.id, &game, &params).await?;
+    let cards = rows
+        .iter()
+        // `needed` is always positive and bounded by what the decks list, which the deck
+        // writes cap at the card-quantity ceiling; the saturating cast is belt and braces.
+        .map(|row| card_row_from_model(&row.card, i32::try_from(row.needed).unwrap_or(i32::MAX), 0))
+        .collect();
+    let (cards, total) = cap_rows(cards);
+    Ok(Json(build_buy_list(cards, total, Vec::new(), 0)))
+}
+
+/// One shortfall row before it is shaped for a wire: the representative printing's whole
+/// catalog row (so a second reader can take a column `NeededCard` doesn't carry — the buy
+/// list wants `tcgplayer_id`), the counts, and the money.
+pub(crate) struct NeededRow {
+    pub card: card::Model,
+    pub needed: i64,
+    pub required: i64,
+    pub owned: i64,
+    pub decks: Vec<NeededCardDeck>,
+    pub held_usd: Option<String>,
+    pub cheapest_usd: Option<String>,
+}
+
+/// The shopping-list fold's answer: the scoped deck, if any, and the shortfall rows sorted
+/// by card name.
+pub(crate) struct NeededResult {
+    pub deck: Option<NeededCardDeck>,
+    pub rows: Vec<NeededRow>,
+}
+
+/// The shopping-list core both `GET …/needed` and `GET …/needed/buy-list` read: the scope
+/// gate, the demand scan over every owned deck, the collection supply, the fold and the
+/// pricing — stated once, so the two can never disagree on what is short.
+pub(crate) async fn needed_rows(
+    state: &AppState,
+    user_id: i32,
+    game: &str,
+    params: &NeededParams,
+) -> Result<NeededResult, AppError> {
     // The scope, proved first: a deck that isn't the caller's (or is for another game) is
     // a 404 before any work — and before the "no decks" early return below, so a foreign
     // id on an empty account answers exactly as it would on a full one.
     let scope = match params.deck_id {
-        Some(deck_id) => Some(load_deck(&state, user.id, &game, deck_id).await?),
+        Some(deck_id) => Some(load_deck(state, user_id, game, deck_id).await?),
         None => None,
     };
     let scope_ref = scope.as_ref().map(|d| NeededCardDeck {
@@ -104,17 +202,16 @@ pub async fn needed_cards(
         .select_only()
         .column(deck::Column::Id)
         .column(deck::Column::Name)
-        .filter(deck::Column::UserId.eq(user.id))
-        .filter(deck::Column::Game.eq(&game))
+        .filter(deck::Column::UserId.eq(user_id))
+        .filter(deck::Column::Game.eq(game))
         .into_tuple()
         .all(&state.db)
         .await?;
     if decks.is_empty() {
-        return Ok(Json(NeededCards {
-            data: Vec::new(),
+        return Ok(NeededResult {
             deck: scope_ref,
-            totals: fold_totals(&[]),
-        }));
+            rows: Vec::new(),
+        });
     }
     let deck_names: HashMap<i32, String> = decks.iter().cloned().collect();
     let deck_ids: Vec<i32> = decks.iter().map(|(id, _)| *id).collect();
@@ -144,8 +241,8 @@ pub async fn needed_cards(
         .column(collection_item::Column::Quantity)
         .column(collection_item::Column::FoilQuantity)
         .inner_join(Card)
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(&game))
+        .filter(collection_item::Column::UserId.eq(user_id))
+        .filter(collection_item::Column::Game.eq(game))
         .into_tuple()
         .all(&state.db)
         .await?;
@@ -202,10 +299,10 @@ pub async fn needed_cards(
         .flat_map(|group| group.printings.values())
         .filter_map(|p| p.card.oracle_id.as_deref().filter(|id| !id.is_empty()))
         .collect();
-    let cheapest_by_oracle = load_cheapest_by_oracle(&state.db, &game, &oracle_ids).await?;
+    let cheapest_by_oracle = load_cheapest_by_oracle(&state.db, game, &oracle_ids).await?;
 
     // Emit the shortfalls (demand beyond supply), sorted by card name.
-    let mut data: Vec<NeededCard> = Vec::new();
+    let mut rows: Vec<NeededRow> = Vec::new();
     for (key, group) in groups {
         // Scoped, the entry describes what *this* deck wants; unscoped, what every deck does.
         let required = if scope_id.is_some() {
@@ -297,8 +394,8 @@ pub async fn needed_cards(
         let Some(rep) = printings.remove(&rep_id) else {
             continue; // unreachable: `rep_id` came from this map
         };
-        data.push(NeededCard {
-            card: CardResponse::from(rep.card),
+        rows.push(NeededRow {
+            card: rep.card,
             needed,
             required,
             owned,
@@ -307,19 +404,19 @@ pub async fn needed_cards(
             cheapest_usd: cheapest_cents.map(format_cents),
         });
     }
-    data.sort_by(|a, b| {
+    // By name, then by the external id — the same order the wire sorts on, since
+    // `CardResponse::id` is the external id.
+    rows.sort_by(|a, b| {
         a.card
             .name
             .cmp(&b.card.name)
-            .then_with(|| a.card.id.cmp(&b.card.id))
+            .then_with(|| a.card.external_id.cmp(&b.card.external_id))
     });
 
-    let totals = fold_totals(&data);
-    Ok(Json(NeededCards {
-        data,
+    Ok(NeededResult {
         deck: scope_ref,
-        totals,
-    }))
+        rows,
+    })
 }
 
 /// Copies wanted of one printing, by finish.
