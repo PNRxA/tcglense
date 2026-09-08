@@ -813,6 +813,94 @@ mod tests {
         assert!((pack_ev.slots[0].top[0].one_in - 1.0).abs() < 1e-9);
     }
 
+    /// `priced_share` is summed card by card in floating point, so seven equal-weight
+    /// priced cards land on `0.9999999999999998` — and a caveat (or a client) testing
+    /// `< 1` would then announce that part of a fully-priced pack isn't priced. The share
+    /// is snapped to the end of its range and the caveat reads a flag, not the float.
+    #[test]
+    fn a_fully_priced_sheet_reports_exactly_one_and_earns_no_caveat() {
+        let cards: Vec<(i32, u32)> = (1..=7).map(|id| (id, 1)).collect();
+        let prices: Vec<(i32, Option<&str>, Option<&str>)> =
+            (1..=7).map(|id| (id, Some("1.00"), None)).collect();
+        let packs = vec![pack(
+            2,
+            config(
+                vec![variant(1, &[("common", 1)])],
+                vec![sheet("common", false, 7, &cards)],
+            ),
+        )];
+        let ev = evaluate_wire(&packs, &index(&prices));
+
+        assert_eq!(
+            ev.packs[0].slots[0].priced_share, 1.0,
+            "exactly 1, not 0.999…, so a client's `< 1` test agrees with the caveats"
+        );
+        assert_eq!(ev.packs[0].priced_share, 1.0);
+        assert!(
+            !ev.caveats
+                .iter()
+                .any(|c| c.contains("of the picks fall on priced cards")),
+            "nothing here is unpriced: {:?}",
+            ev.caveats
+        );
+        assert_eq!(ev.ev_usd, "2.00", "and the money is unaffected");
+    }
+
+    /// A `fixed` sheet is read by *position*, so a card the catalog doesn't hold is kept as
+    /// a placeholder rather than compacted out. Without it the third card slides into second
+    /// place, and a slot taking two cards attributes the wrong printing.
+    #[test]
+    fn a_fixed_sheets_unnameable_position_still_costs_a_pick() {
+        let prices = [(5, Some("1.00"), None), (6, Some("2.00"), None)];
+        let build = |count: u32| {
+            let mut land = sheet("land", false, 3, &[(5, 1), (UNRESOLVED_CARD_ID, 1), (6, 1)]);
+            land.fixed = true;
+            vec![pack(
+                1,
+                config(vec![variant(1, &[("land", count)])], vec![land]),
+            )]
+        };
+
+        // Two cards taken: the first card, then the position we can't name. Card 6 is third
+        // and out of reach — which is the whole point of keeping the placeholder.
+        let ev = evaluate_wire(&build(2), &index(&prices));
+        let slot = &ev.packs[0].slots[0];
+        assert_eq!(slot.ev_usd, "1.00");
+        assert!(
+            (slot.picks - 2.0).abs() < 1e-9,
+            "the placeholder costs a pick"
+        );
+        assert_eq!(slot.card_count, 2, "a placeholder is not a card");
+        assert!((slot.priced_share - 0.5).abs() < 1e-9);
+        assert_eq!(
+            slot.top
+                .iter()
+                .map(|c| c.card.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ext-5"],
+        );
+        assert!(
+            ev.caveats
+                .iter()
+                .any(|c| c.contains("50% of the picks fall on priced cards")),
+            "half the slot lands on something we can't name: {:?}",
+            ev.caveats
+        );
+
+        // All three taken: card 6 is reached, in third place.
+        let ev = evaluate_wire(&build(3), &index(&prices));
+        let slot = &ev.packs[0].slots[0];
+        assert_eq!(slot.ev_usd, "3.00");
+        assert!((slot.priced_share - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(
+            slot.top
+                .iter()
+                .map(|c| c.card.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ext-6", "ext-5"],
+        );
+    }
+
     #[test]
     fn the_caveats_are_only_the_ones_that_apply() {
         let (packs, index) = fixture();

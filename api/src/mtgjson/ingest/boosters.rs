@@ -447,6 +447,60 @@ mod tests {
     /// A sheet whose every card is missing from the catalog is still written, as an empty
     /// list: the slot that names it is real, and no row at all would read as "the pack has
     /// no such slot".
+    /// A **fixed** sheet is read by position, so a card the catalog doesn't hold is stored
+    /// as [`booster_sheet::UNRESOLVED_CARD_ID`] rather than compacted out — otherwise every
+    /// card after it slides up one and a slot taking two cards attributes, and deals, the
+    /// wrong printings. A sheet drawn by weight has no positions to protect, so there an
+    /// unresolvable card is still dropped.
+    #[tokio::test]
+    async fn a_fixed_sheets_unresolved_card_keeps_its_position() {
+        let db = migrated_memory_db().await;
+        let first = insert_card(&db, "sf-first").await;
+        let last = insert_card(&db, "sf-last").await;
+        insert_product(&db, "1001", "Pack", "tst", "play_pack", Some("4.99")).await;
+
+        let mut land = sheet(
+            "land",
+            false,
+            3,
+            &[("sf-first", 1), ("sf-ghost", 1), ("sf-last", 1)],
+        );
+        land.fixed = true;
+        let configs = vec![config(
+            "play",
+            vec![variant(1, &[("common", 1), ("land", 2)])],
+            vec![
+                sheet("common", false, 4, &[("sf-first", 3), ("sf-ghost", 1)]),
+                land,
+            ],
+        )];
+        run(&db, &configs, &[pack("1001", "play", 1)]).await;
+
+        let sheets = BoosterSheet::find()
+            .order_by_asc(booster_sheet::Column::Name)
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(
+            sheets[0].cards(),
+            vec![(first, 3)],
+            "a weighted sheet has no position to protect, so it still compacts"
+        );
+        assert_eq!(
+            sheets[1].cards(),
+            vec![
+                (first, 1),
+                (booster_sheet::UNRESOLVED_CARD_ID, 1),
+                (last, 1)
+            ],
+            "the fixed sheet keeps the gap, so `sf-last` stays third"
+        );
+        assert_eq!(
+            sheets[1].total_weight, 3,
+            "the placeholder's weight is unaccounted for, as a dropped card's is"
+        );
+    }
+
     #[tokio::test]
     async fn a_wholly_unresolved_sheet_is_still_written_empty() {
         let db = migrated_memory_db().await;

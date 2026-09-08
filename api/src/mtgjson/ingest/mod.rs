@@ -97,8 +97,11 @@ const VERSION_SEP: char = '\u{1f}';
 /// all byte-identical — the only way a pure code change takes effect, since the sync is
 /// otherwise ETag-gated. Bump it whenever any of that logic changes (including a change to
 /// how a precon slug is derived, since the slug is the browser's URL identity, or to how a
-/// pack's quantity is flattened out of nested `sealed` references).
-const DERIVATION_VERSION: &str = "booster-pool-2+precon-2+packs-1";
+/// pack's quantity is flattened out of nested `sealed` references, or to what a sheet
+/// stores for a card the catalog can't name — `packs-2` is the fixed-sheet placeholder,
+/// without which an already-synced instance would keep serving position-shifted sheets
+/// until upstream's ETag happened to move).
+const DERIVATION_VERSION: &str = "booster-pool-2+precon-2+packs-2";
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and

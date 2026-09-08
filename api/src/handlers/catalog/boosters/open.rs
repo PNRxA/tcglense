@@ -558,6 +558,44 @@ mod tests {
         }
     }
 
+    /// A `fixed` sheet's unnameable position holds its place: a two-card slot deals the
+    /// first card and nothing for the placeholder, and never reaches the third card — which
+    /// is exactly what compacting the placeholder out would get wrong.
+    #[test]
+    fn a_fixed_sheets_unnameable_position_deals_nothing_and_holds_its_place() {
+        let index = cards();
+        let build = |count: u32| {
+            let mut land = sheet("land", false, 3, &[(5, 1), (UNRESOLVED_CARD_ID, 1), (6, 1)]);
+            land.fixed = true;
+            vec![pack(
+                1,
+                config(vec![variant(1, &[("land", count)])], vec![land]),
+            )]
+        };
+        for seed in [0u32, 7, 4242] {
+            let opening = open_wire(&build(2), &index, seed, 1).expect("opens");
+            assert_eq!(
+                opening.packs[0]
+                    .cards
+                    .iter()
+                    .map(|c| c.card.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["ext-5"],
+                "the placeholder deals nothing, and card 6 is out of reach (seed {seed})"
+            );
+            let opening = open_wire(&build(3), &index, seed, 1).expect("opens");
+            assert_eq!(
+                opening.packs[0]
+                    .cards
+                    .iter()
+                    .map(|c| c.card.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["ext-5", "ext-6"],
+                "reaching the third position deals the third card (seed {seed})"
+            );
+        }
+    }
+
     #[test]
     fn the_rolled_variant_is_reported_and_follows_the_weights() {
         // A configuration that is 99-to-1 the first variant: over a handful of seeds the

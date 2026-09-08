@@ -356,7 +356,10 @@ mod tests {
                                     "cards": { "u-a": 1, "u-ghost": 8, "u-b": 3 } },
                         "rareMythic": { "cards": { "u-rare": 2, "u-mythic": 1 } },
                         "land": { "fixed": true, "totalWeight": 2,
-                                  "cards": { "u-land2": 1, "u-land": 1 } }
+                                  "cards": { "u-land2": 1, "u-land": 1 } },
+                        "wildcard": { "fixed": true, "totalWeight": 3,
+                                      "cards": { "u-land2": 1, "u-ghost-wild": 1,
+                                                 "u-land": 1 } }
                       }
                     },
                     "collector": {
@@ -572,7 +575,7 @@ mod tests {
             .find(|c| c.code == "play")
             .expect("the play configuration");
         let names: Vec<&str> = play.sheets.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["common", "land", "rareMythic"]);
+        assert_eq!(names, vec!["common", "land", "rareMythic", "wildcard"]);
 
         let land = &play.sheets[1];
         assert!(land.fixed && !land.foil && !land.allow_duplicates);
@@ -608,6 +611,37 @@ mod tests {
         assert_eq!(common.total_weight, 12, "upstream's total is kept verbatim");
         let stored: u64 = common.cards.iter().map(|&(_, w)| u64::from(w)).sum();
         assert_eq!(common.total_weight - stored, 8, "the unaccounted share");
+    }
+
+    /// A **fixed** sheet is read by *position*, so a card the document can't name keeps its
+    /// place as an empty scryfall id rather than letting every card after it slide up one.
+    /// Compacting it out is what would hand a slot taking two cards the third printing.
+    #[test]
+    fn a_fixed_sheets_unresolved_card_holds_its_position() {
+        let configs = configs_for(&["play"]);
+        let wildcard = &configs[0].sheets[3];
+        assert_eq!(wildcard.name, "wildcard");
+        assert!(wildcard.fixed);
+        assert_eq!(
+            wildcard.cards,
+            vec![
+                ("sf-land2".to_string(), 1),
+                (String::new(), 1),
+                ("sf-land".to_string(), 1),
+            ],
+            "`u-ghost-wild` names no card, but `sf-land` must stay third"
+        );
+        assert_eq!(
+            wildcard.total_weight, 3,
+            "the placeholder's weight is still unaccounted for, as a dropped card's is"
+        );
+
+        // The weighted sheet in the same configuration still compacts: there is no position
+        // to protect when the sheet is drawn by weight.
+        assert_eq!(
+            configs[0].sheets[0].cards,
+            vec![("sf-a".to_string(), 1), ("sf-b".to_string(), 3)]
+        );
     }
 
     /// A sheet upstream states no `totalWeight` for sums its parsed weights instead — the
