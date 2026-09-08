@@ -11,6 +11,7 @@ import type {
   CollectionSet,
   CollectionSubtypeGroupPage,
   CollectionSummary,
+  HoldingBreakdown,
   OwnedCountsMap,
 } from '@/lib/api'
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
@@ -83,6 +84,9 @@ export interface HoldingQueriesConfig {
     game: string,
     bulkMaxCents?: number,
   ) => Promise<{ data: CollectionSet[] }>
+  /** The breakdown read (issue #680): where the holding's value sits. The collection
+   * threads its bulk-threshold preference through, like the summary. */
+  getBreakdown: (token: string, game: string, bulkMaxCents?: number) => Promise<HoldingBreakdown>
   getEntry: (token: string, game: string, id: string) => Promise<CollectionQuantities>
   getCounts: (token: string, game: string, ids: string[]) => Promise<OwnedCountsMap>
   setEntry: (
@@ -224,6 +228,9 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     }
     reflowing([prefix, game], cfg.deferListRefetch)
     reflowing([`${prefix}-summary`, game], cfg.deferListRefetch)
+    // The breakdown panel is a summary-shaped block (bars + a top list), not a grid: it
+    // never reflows tiles, so it refetches on every write for both surfaces.
+    qc.invalidateQueries({ queryKey: [`${prefix}-breakdown`, game] })
     if (cfg.invalidateCollectionAnalytics) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
@@ -421,6 +428,30 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     return useAuthedQuery<{ data: CollectionSet[] }>(options)
   }
 
+  /** Where the holding's value sits (issue #680): copies + value by rarity, colour, card
+   * type and finish, plus the top holdings by held value — the landing's breakdown panel.
+   * For a collection, carries the bulk-threshold preference so the embedded summary's bulk
+   * slice matches the header (and refetches when the threshold changes). `enabled` lets the
+   * landing hold the (whole-holdings) scan back until something is held. */
+  function useBreakdownQuery(game: Ref<string>, opts: { enabled?: Ref<boolean> } = {}) {
+    if (cfg.withBulkThreshold) {
+      const bulkThreshold = useBulkThresholdStore()
+      const bulkMaxCents = computed(() => bulkThreshold.cents)
+      const options = {
+        queryKey: [`${prefix}-breakdown`, game, bulkMaxCents],
+        queryFn: (token: string) => cfg.getBreakdown(token, game.value, bulkMaxCents.value),
+        enabled: opts.enabled,
+      }
+      return useAuthedQuery<HoldingBreakdown>(options)
+    }
+    const options = {
+      queryKey: [`${prefix}-breakdown`, game],
+      queryFn: (token: string) => cfg.getBreakdown(token, game.value),
+      enabled: opts.enabled,
+    }
+    return useAuthedQuery<HoldingBreakdown>(options)
+  }
+
   /**
    * How many copies of one card the signed-in user holds — for the card-detail controls.
    * Options let a caller defer and refresh the fetch: `enabled` gates it (e.g. the grid
@@ -487,6 +518,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     useSubtypesQuery,
     useSummaryQuery,
     useSetsQuery,
+    useBreakdownQuery,
     useEntryQuery,
     useCounts,
     useSetEntryMutation,

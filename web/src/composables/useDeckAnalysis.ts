@@ -6,10 +6,12 @@ import {
   getPreconGoldfish,
   getPreconLegality,
   getPreconMana,
+  getPreconCombos,
   getPreconRoles,
   getPreconStats,
   getPreconTokens,
   getDeckBracket,
+  getDeckCombos,
   getDeckGoldfish,
   getDeckLegality,
   getDeckMana,
@@ -19,6 +21,7 @@ import {
   getDeckSuggestions,
   getDeckTokens,
   getPublicDeckBracket,
+  getPublicDeckCombos,
   getPublicDeckGoldfish,
   getPublicDeckLegality,
   getPublicDeckMana,
@@ -33,6 +36,7 @@ import type {
   ApiError,
   DeckAnalytics,
   DeckBracketEstimate,
+  DeckCombos,
   DeckLegality,
   DeckManaBase,
   DeckPricing,
@@ -114,6 +118,18 @@ export function useDeckTokensQuery(game: Ref<string>, deckId: Ref<number>, enabl
     placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckTokens>(options)
+}
+
+/** The Commander Spellbook combos a deck can assemble, and the ones it is one card short of
+ * (issue #683). */
+export function useDeckCombosQuery(game: Ref<string>, deckId: Ref<number>, enabled?: Ref<boolean>) {
+  const options = {
+    queryKey: ['deck-combos', game, deckId],
+    queryFn: (token: string) => getDeckCombos(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckCombos>(options)
 }
 
 /** The deckbuilding role each of a deck's cards fills. Also what the card list's role
@@ -251,6 +267,21 @@ export function usePublicDeckTokensQuery(
   })
 }
 
+/** The combos a public deck can assemble — the same two lists its owner sees. */
+export function usePublicDeckCombosQuery(
+  handle: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  return useQuery<DeckCombos, ApiError>({
+    queryKey: ['public-deck-combos', handle, deckId],
+    queryFn: () => getPublicDeckCombos(handle.value, deckId.value),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** The roles a public deck's cards fill. */
 export function usePublicDeckRolesQuery(
   handle: Ref<string>,
@@ -339,6 +370,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game],
           ['deck-bracket', game],
           ['deck-tokens', game],
+          ['deck-combos', game],
           ['deck-mana', game],
           ['deck-roles', game],
           ['deck-goldfish', game],
@@ -350,6 +382,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-legality', game, deckId],
           ['deck-bracket', game, deckId],
           ['deck-tokens', game, deckId],
+          ['deck-combos', game, deckId],
           ['deck-mana', game, deckId],
           ['deck-roles', game, deckId],
           ['deck-goldfish', game, deckId],
@@ -419,6 +452,17 @@ export function usePreconTokensQuery(game: Ref<string>, slug: Ref<string>, enabl
   return useQuery<DeckTokens, ApiError>({
     queryKey: ['precon-tokens', game, slug],
     queryFn: () => getPreconTokens(game.value, slug.value),
+    enabled,
+    retry: false,
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** The combos a published decklist can assemble, and the ones it is one card short of. */
+export function usePreconCombosQuery(game: Ref<string>, slug: Ref<string>, enabled?: Ref<boolean>) {
+  return useQuery<DeckCombos, ApiError>({
+    queryKey: ['precon-combos', game, slug],
+    queryFn: () => getPreconCombos(game.value, slug.value),
     enabled,
     retry: false,
     staleTime: PRICED_CATALOG_STALE_MS,

@@ -700,6 +700,13 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
     // Base #1 gets its own artwork identity so the art-tag seed has a second,
     // unrelated illustration to tag (`seed_art_tags`).
     cards[0].illustration_id = Some(BASE_ONE_ILLUSTRATION_ID.to_string());
+    // The first six base cards get a gameplay identity of their own (issue #683): the
+    // combo database keys its pieces by `oracle_id`, so the dummy combos
+    // (`spellbook::dummy`) need cards that carry one — a single-printing card otherwise
+    // has none here. Distinct ids, so nothing groups as a reprint.
+    for (index, card) in cards.iter_mut().take(6).enumerate() {
+        card.oracle_id = Some(format!("dummy-oracle-base-{:04}", index + 1));
+    }
     // Print details on a deterministic handful of the base set's cards (issue #673): the
     // card page renders flavour text, the Reserved List badge, the popularity ranks and the
     // story-spotlight mark off columns no listing carries, so the offline catalog needs
@@ -756,6 +763,11 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
         "foil".to_string(),
         "etched".to_string(),
     ]);
+    // …and is priced in it, so the etched price tile, the chart's third line and the
+    // alert dialog's third finish have a card to show offline (issue #676).
+    if let Some(prices) = newest_reprint.prices.as_mut() {
+        prices.usd_etched = Some("14.50".to_string());
+    }
     cards.push(newest_reprint);
 
     // A token child set hanging off the base set (exercises set grouping).
@@ -987,6 +999,25 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.usd.is_none() && p.usd_foil.is_some())),
             "expected a foil-only card (no usd, has usd_foil)",
+        );
+    }
+
+    #[test]
+    fn the_etched_card_is_priced_in_its_etched_finish() {
+        // The one card that comes etched also carries an etched price, so the price tile,
+        // the chart's third line and the alert finish picker are exercisable offline; no
+        // other card does, so the tile stays hidden everywhere else (issue #676).
+        let etched: Vec<_> = dummy_cards()
+            .into_iter()
+            .filter(|c| c.prices.as_ref().is_some_and(|p| p.usd_etched.is_some()))
+            .collect();
+        assert_eq!(etched.len(), 1, "exactly one etched-priced card");
+        assert!(
+            etched[0]
+                .finishes
+                .as_ref()
+                .is_some_and(|f| f.iter().any(|x| x == "etched")),
+            "the etched price sits on the card that comes etched",
         );
     }
 

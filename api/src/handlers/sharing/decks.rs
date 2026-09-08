@@ -20,11 +20,11 @@ use crate::entities::prelude::Deck;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
-    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckManaBase, DeckPricing,
-    DeckResponse, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
-    analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing,
-    analyse_roles, analyse_stats, analyse_tokens, deck_detail, deck_headers, load_analysis,
-    load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckCombos, DeckDetail, DeckLegality, DeckManaBase,
+    DeckPricing, DeckResponse, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_combos, analyse_goldfish, analyse_legality, analyse_mana,
+    analyse_pricing, analyse_roles, analyse_stats, analyse_tokens, deck_detail, deck_headers,
+    load_analysis, load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -333,6 +333,36 @@ pub async fn public_deck_mana(
     let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
     let input = load_analysis(&state, deck.id).await?;
     Ok(Json(analyse_mana(deck.format.as_deref(), &input)))
+}
+
+/// Combos in a public deck
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/combos` -> the Commander Spellbook combos a public
+/// deck can assemble and the ones it is one card short of, through the same core as the
+/// owner's read (issue #683). `404` when the handle is unknown or the deck is
+/// private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/combos",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The combos the deck can assemble, and the ones it is one card short of.", body = DeckCombos),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_combos(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckCombos>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(
+        analyse_combos(&state, &deck.game, deck.format.as_deref(), &input).await?,
+    ))
 }
 
 /// Public deck pricing breakdown

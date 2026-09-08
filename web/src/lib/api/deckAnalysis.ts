@@ -2,6 +2,7 @@ import { request } from './client'
 import type {
   DeckAnalytics,
   DeckBracketEstimate,
+  DeckCombos,
   DeckFormat,
   DeckLegality,
   DeckManaBase,
@@ -34,6 +35,11 @@ export type {
   DeckBracketSignal,
   DeckCardOdds,
   DeckCheapestPrinting,
+  DeckCombo,
+  DeckComboMissing,
+  DeckComboMissingKind,
+  DeckComboPiece,
+  DeckCombos,
   DeckComposition,
   DeckDrawOdds,
   DeckFormat,
@@ -204,6 +210,21 @@ export function getPublicDeckTokens(handle: string, deckId: number): Promise<Dec
   return request<DeckTokens>(`${publicBase(handle, deckId)}/tokens`)
 }
 
+// ----- Combos -----
+
+/** The Commander Spellbook combos a deck can assemble, and the ones it is one card short of
+ * (issue #683). `available: false` means no combo data has been synced at all — an empty
+ * `combos` is then "unknown", never "none"; `source`/`source_url` carry the attribution the
+ * source's terms ask for. */
+export function getDeckCombos(token: string, game: string, deckId: number): Promise<DeckCombos> {
+  return request<DeckCombos>(`${deckBase(game, deckId)}/combos`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckCombos(handle: string, deckId: number): Promise<DeckCombos> {
+  return request<DeckCombos>(`${publicBase(handle, deckId)}/combos`)
+}
+
 // ----- Roles -----
 
 /** What each of a deck's cards does — ramp, draw, removal and the rest — read off its rules
@@ -324,6 +345,11 @@ export function getPreconBracket(
 /** The tokens a published decklist makes — the ones its product's token sheet holds. */
 export function getPreconTokens(game: string, slug: string): Promise<DeckTokens> {
   return request<DeckTokens>(`${preconBase(game, slug)}/tokens`)
+}
+
+/** The combos a published decklist can assemble, and the ones it is one card short of. */
+export function getPreconCombos(game: string, slug: string): Promise<DeckCombos> {
+  return request<DeckCombos>(`${preconBase(game, slug)}/combos`)
 }
 
 /** The roles a published decklist's cards fill. */

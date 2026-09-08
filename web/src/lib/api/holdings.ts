@@ -8,7 +8,12 @@ import type {
   CollectionSubtypeGroupPage,
   OwnedCountsMap,
 } from './collection'
-import type { CollectionQuantities, CollectionSet, CollectionSummary } from './generated'
+import type {
+  CollectionQuantities,
+  CollectionSet,
+  CollectionSummary,
+  HoldingBreakdown,
+} from './generated'
 
 // ---------- Shared holdings API factory ----------
 //
@@ -107,6 +112,21 @@ export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'own
     )
   }
 
+  /** Relative `/api/{base}/{game}/breakdown` path (issue #680). `bulkMaxCents` is the
+   * cutoff the embedded summary splits its bulk slice at, matching the summary call. */
+  const breakdownPath = (game: string, bulkMaxCents?: number): string =>
+    `/api/${base}/${encodeURIComponent(game)}/breakdown${listQuery({ bulkMaxCents })}`
+
+  /** Where the holding's value sits: copies + value by rarity, colour identity, card type
+   * and finish, plus the top holdings by held value (price × copies). The embedded
+   * `summary` is the summary endpoint's own answer over the same rows. */
+  const breakdown = (
+    token: string,
+    game: string,
+    bulkMaxCents?: number,
+  ): Promise<HoldingBreakdown> =>
+    request<HoldingBreakdown>(breakdownPath(game, bulkMaxCents), { token })
+
   /** Relative `/api/{base}/{game}/sets/{code}/drops` path (paginated by drop). */
   const setDropsPath = (game: string, code: string, params: CollectionDropsParams = {}): string => {
     const g = encodeURIComponent(game)
@@ -187,6 +207,8 @@ export function makeHoldingApi(base: 'collection' | 'wishlist', countsLeaf: 'own
     list,
     summary,
     sets,
+    breakdownPath,
+    breakdown,
     setDropsPath,
     getSetDrops,
     setSubtypesPath,

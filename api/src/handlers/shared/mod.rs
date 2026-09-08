@@ -8,8 +8,10 @@
 //! Nothing here may import from `handlers::catalog`, `handlers::collection`, or
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
+pub(crate) mod breakdown;
 pub(crate) mod card_export;
 pub(crate) mod cheapest;
+pub(crate) mod combos;
 pub(crate) mod download;
 pub(crate) mod dto;
 pub(crate) mod grouping;
@@ -21,9 +23,11 @@ pub(crate) mod product_holdings;
 pub(crate) mod rng;
 pub(crate) mod search;
 pub(crate) mod sort;
+pub(crate) mod type_line;
 pub(crate) mod validate;
 pub(crate) mod valuation;
 
+pub(crate) use breakdown::{HoldingBreakdown, HoldingBreakdownRow};
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
 pub(crate) use cheapest::{PricedPrinting, load_cheapest_by_oracle, priced_printings_by_oracle};
 pub(crate) use download::{csv_download, text_download};
@@ -53,6 +57,7 @@ pub(crate) use search::{
     every_word_matches, every_word_matches_with, search_condition, starts_with_rank,
 };
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
+pub(crate) use type_line::split_type_line;
 pub(crate) use validate::{validate_name, validate_optional};
 #[cfg(test)]
 pub(crate) use valuation::BULK_THRESHOLD_CENTS;

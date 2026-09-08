@@ -22,6 +22,9 @@
 //! * **Pricing** ([`pricing`]) — where the money is: every row priced as held, the cheapest
 //!   printing of its card at the row's own finish split, and what swapping would save. The
 //!   other read that goes back to the catalog (for the sibling printings).
+//! * **Combos** ([`combos`]) — which Commander Spellbook combos the deck can assemble and
+//!   which it is one card short of, read off the synced combo database by oracle id
+//!   (issue #683). A third read that goes back to the DB, for the combo tables.
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -60,6 +63,7 @@ use crate::state::AppState;
 use super::DeckSectionResponse;
 
 pub(crate) mod bracket;
+pub(crate) mod combos;
 pub(crate) mod formats;
 pub(crate) mod goldfish;
 pub(crate) mod legality;
@@ -75,15 +79,16 @@ pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
-    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
-    __path_deck_pricing, __path_deck_roles, __path_deck_stats, __path_deck_suggestions,
-    __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing,
-    deck_roles, deck_stats, deck_suggestions, deck_tokens,
+    __path_deck_bracket, __path_deck_combos, __path_deck_goldfish, __path_deck_legality,
+    __path_deck_mana, __path_deck_pricing, __path_deck_roles, __path_deck_stats,
+    __path_deck_suggestions, __path_deck_tokens, deck_bracket, deck_combos, deck_goldfish,
+    deck_legality, deck_mana, deck_pricing, deck_roles, deck_stats, deck_suggestions, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
 // a shared deck's analysis is the identical computation the owner sees.
 pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
+pub(crate) use combos::{DeckCombos, analyse_combos};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
 pub(crate) use mana::{DeckManaBase, analyse_mana};
@@ -106,6 +111,9 @@ pub(crate) use tokens::{DeckTokens, analyse_tokens};
 pub(crate) struct CardFacts {
     /// Provider external id — what the wire and the goldfish `bottom` list address.
     pub id: String,
+    /// Gameplay identity shared across printings (Scryfall `oracle_id`) — what the combo
+    /// database keys its pieces by; `None` on a row that has none (a token).
+    pub oracle_id: Option<String>,
     pub name: String,
     /// The stored top-level type line, untouched (composition splits this itself).
     pub type_line: Option<String>,
@@ -154,6 +162,7 @@ impl CardFacts {
     pub(crate) fn empty() -> Self {
         Self {
             id: String::new(),
+            oracle_id: None,
             name: String::new(),
             type_line: None,
             front_type_line: String::new(),
@@ -199,6 +208,7 @@ impl From<&card::Model> for CardFacts {
 
         Self {
             id: m.external_id.clone(),
+            oracle_id: m.oracle_id.clone(),
             name: m.name.clone(),
             type_line: m.type_line.clone(),
             front_type_line,
@@ -435,6 +445,7 @@ pub(crate) mod test_fixtures {
     pub(crate) fn card(id: &str, name: &str) -> CardFacts {
         CardFacts {
             id: id.to_string(),
+            oracle_id: None,
             name: name.to_string(),
             ..CardFacts::empty()
         }

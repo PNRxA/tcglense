@@ -43,10 +43,10 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::DeckSectionResponse;
 use crate::handlers::decks::{
-    AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
-    DeckManaBase, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
-    analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana, analyse_roles,
-    analyse_stats, analyse_tokens,
+    AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckCombos,
+    DeckLegality, DeckManaBase, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_combos, analyse_goldfish, analyse_legality, analyse_mana,
+    analyse_roles, analyse_stats, analyse_tokens,
 };
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
@@ -294,6 +294,36 @@ pub async fn precon_tokens(
 ) -> Result<Json<DeckTokens>, AppError> {
     let (_, input, _) = load(&state, &game, &slug).await?;
     Ok(Json(analyse_tokens(&state, &game, &input).await?))
+}
+
+/// Preconstructed deck combos
+///
+/// `GET /api/games/{game}/precons/{slug}/combos` -> the Commander Spellbook combos the
+/// published decklist can assemble and the ones it is one card short of, through the same
+/// core a deck page uses (issue #683) — judged against the format its deck type states, so
+/// a Commander precon's command zone counts as such.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/precons/{slug}/combos",
+    tag = "Preconstructed decks",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("slug" = String, Path, description = "Precon slug, e.g. `turtle-power-tmc`"),
+    ),
+    responses(
+        (status = 200, description = "The combos the decklist can assemble, and the ones it is one card short of.", body = DeckCombos),
+        (status = 404, description = "Unknown game or precon."),
+    ),
+)]
+pub async fn precon_combos(
+    State(state): State<AppState>,
+    Path((game, slug)): Path<(String, String)>,
+) -> Result<Json<DeckCombos>, AppError> {
+    let (precon, input, _) = load(&state, &game, &slug).await?;
+    let format = precon_format(&precon.deck_type);
+    Ok(Json(
+        analyse_combos(&state, &game, format.as_deref(), &input).await?,
+    ))
 }
 
 /// Preconstructed deck mana base

@@ -12,9 +12,15 @@ import type {
 } from '@/lib/api'
 import CollectionMovers from '../CollectionMovers.vue'
 
-const h = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
+const h = vi.hoisted(() => ({
+  query: {} as Record<string, unknown>,
+  opts: undefined as { enabled?: { value: boolean } } | undefined,
+}))
 vi.mock('@/composables/useCollection', () => ({
-  useCollectionMoversQuery: () => h.query,
+  useCollectionMoversQuery: (_game: unknown, _window: unknown, opts?: typeof h.opts) => {
+    h.opts = opts
+    return h.query
+  },
 }))
 
 const cardMover: CollectionMover = {
@@ -76,8 +82,8 @@ function asOfLabel(iso: string) {
   )
 }
 
-describe('CollectionMovers holding-kind switch', () => {
-  it('switches the shared gainers/losers panel between singles and sealed products', async () => {
+describe('CollectionMovers', () => {
+  it('rests collapsed, then switches the gainers/losers panel between singles and sealed', async () => {
     h.query = {
       data: ref(movers),
       isPending: ref(false),
@@ -95,6 +101,15 @@ describe('CollectionMovers holding-kind switch', () => {
         },
       },
     })
+
+    // Collapsed by default: the disclosure header alone, and the query held back.
+    expect(wrapper.text()).toContain('Biggest movers')
+    expect(wrapper.text()).not.toContain('Singles winner')
+    expect(h.opts?.enabled?.value).toBe(false)
+    const disclosure = wrapper.find('button[aria-expanded]')
+    expect(disclosure.attributes('aria-expanded')).toBe('false')
+    await disclosure.trigger('click')
+    expect(h.opts?.enabled?.value).toBe(true)
 
     expect(wrapper.text()).toContain('Singles winner')
     expect(wrapper.text()).not.toContain('Sealed winner')

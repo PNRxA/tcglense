@@ -35,7 +35,8 @@ pub(super) enum UserRoute {
     /// batch owned-count lookups, `me`. A generous ceiling for a signed-in human.
     General,
     /// The whole-collection analytics reads that scan every held card/product
-    /// against its full captured daily price history (`value-history`, `movers`) or
+    /// against its full captured daily price history (`value-history`, `movers`), fold
+    /// every held card into the `breakdown` (the wish-list twin included), or
     /// stream the entire holding as a file (the CSV `export` and the uncapped
     /// card-list `cards/export` drains, the wish-list twin included). Each is far
     /// heavier than a page read and un-cacheable (`no-store`, per-user), so it gets a
@@ -62,10 +63,14 @@ impl UserRoute {
             if matches!(tail, "import" | "import/csv" | "import/text") {
                 return Self::Import;
             }
-            // Whole-collection × full-history scans (+ the CSV and card-list export
-            // streams): heavy and un-cacheable, so tighter than General but not as
-            // tight as Import.
-            if matches!(tail, "value-history" | "movers" | "export" | "cards/export") {
+            // Whole-collection × full-history scans, the whole-collection breakdown
+            // (issue #680) and the CSV and card-list export streams: heavy and
+            // un-cacheable at the HTTP layer, so tighter than General but not as tight
+            // as Import.
+            if matches!(
+                tail,
+                "value-history" | "movers" | "breakdown" | "export" | "cards/export"
+            ) {
                 return Self::Analytics;
             }
         }
@@ -81,10 +86,10 @@ impl UserRoute {
             return Self::Import;
         }
 
-        // The wish list's card-list export is the collection export's twin: the same
-        // uncapped whole-holdings drain, so the same tighter bucket.
+        // The wish list's card-list export and breakdown are the collection ones' twins:
+        // the same uncapped whole-holdings drain / scan, so the same tighter bucket.
         if let Some(rest) = path.strip_prefix("/api/wishlist/")
-            && let Some((_game, "cards/export")) = rest.split_once('/')
+            && let Some((_game, "cards/export" | "breakdown")) = rest.split_once('/')
         {
             return Self::Analytics;
         }
@@ -122,6 +127,7 @@ impl UserRoute {
                         | "roles"
                         | "goldfish"
                         | "pricing"
+                        | "combos"
                         | "suggestions"
                 )
             ) {
@@ -457,6 +463,8 @@ mod tests {
         for analytics in [
             "/api/collection/mtg/value-history",
             "/api/collection/mtg/movers",
+            "/api/collection/mtg/breakdown",
+            "/api/wishlist/mtg/breakdown",
             "/api/collection/mtg/export",
             "/api/collection/mtg/cards/export",
             "/api/wishlist/mtg/cards/export",
@@ -469,6 +477,7 @@ mod tests {
             "/api/decks/mtg/7/roles",
             "/api/decks/mtg/7/goldfish",
             "/api/decks/mtg/7/pricing",
+            "/api/decks/mtg/7/combos",
             "/api/decks/mtg/7/suggestions",
         ] {
             assert_eq!(

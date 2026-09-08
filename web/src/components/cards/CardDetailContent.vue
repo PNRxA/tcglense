@@ -10,6 +10,7 @@ import SetPriceAlertButton from '@/components/alerts/SetPriceAlertButton.vue'
 import CardLegalities from '@/components/cards/CardLegalities.vue'
 import CardArtTags from '@/components/cards/CardArtTags.vue'
 import CardPrints from '@/components/cards/CardPrints.vue'
+import CardCombos from '@/components/cards/CardCombos.vue'
 import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardDecks from '@/components/decks/CardDecks.vue'
@@ -18,6 +19,7 @@ import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCardQuery } from '@/composables/useCatalog'
 import { getPriceHistory, type AlertFinish } from '@/lib/api'
+import { cardAlertFinishes } from '@/lib/alertFinishes'
 import { formatReleaseLabel } from '@/lib/releaseDate'
 
 // The body of a card's detail — image(s), rules text, prices + history, collection and
@@ -85,17 +87,10 @@ const rarityChipClass = computed(
   () => RARITY_CHIP_CLASSES[card.value?.rarity ?? ''] ?? 'bg-muted text-foreground/80',
 )
 
-// The finishes this card is actually priced in, so the price-alert dialog offers only those
-// (a regular-only card shows no finish picker). Etched isn't surfaced in CardPrices — like the
-// price summary and the toggleable chart, this is regular/foil only; a fully unpriced card
-// falls back to regular so an alert can still be armed for when a price arrives.
-const alertFinishes = computed<AlertFinish[]>(() => {
-  const prices = card.value?.prices
-  const finishes: AlertFinish[] = []
-  if (prices?.usd != null) finishes.push('nonfoil')
-  if (prices?.usd_foil != null) finishes.push('foil')
-  return finishes.length ? finishes : ['nonfoil']
-})
+// The finishes this card is actually priced in — regular, foil and, since issue #676, etched —
+// so the price-alert dialog offers only those (a regular-only card shows no finish picker).
+// The rule lives in lib/alertFinishes.ts, the client mirror of the API's finish vocabulary.
+const alertFinishes = computed<AlertFinish[]>(() => cardAlertFinishes(card.value?.prices))
 </script>
 
 <template>
@@ -330,8 +325,9 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         <CardArtTags :game="game" :id="id" />
 
         <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
-          parallel with the card query above. `toggleable` adds the regular/foil key so
-          either line can be switched off; `game` overlays set-release markers. -->
+          parallel with the card query above. `toggleable` adds the legend key — regular, foil
+          and, on a printing priced in it, etched — so any line can be switched off; `game`
+          overlays set-release markers. -->
         <PriceChart
           :query-key="['card-prices', game, id]"
           :fetcher="(range) => getPriceHistory(game, id, range)"
@@ -351,6 +347,11 @@ const alertFinishes = computed<AlertFinish[]>(() => {
           note when it's a different printing) and the published precons. Renders nothing
           when both are empty. -->
         <CardDecks :game="game" :id="id" />
+
+        <!-- The combos this card is a piece of (issue #683) — curated interactions, not
+          anything read off its rules text. Keyed off the route id like the rulings below;
+          renders nothing when the card is in none. -->
+        <CardCombos :game="game" :id="id" />
 
         <!-- The card's "Notes and Rules Information" (rulings, issue #522), last on the page.
           Keyed off the route id so it mounts before the card loads; renders nothing when

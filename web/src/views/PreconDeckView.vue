@@ -20,6 +20,7 @@ import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
+import DeckCombos from '@/components/decks/DeckCombos.vue'
 import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
@@ -471,6 +472,9 @@ usePageMeta({
           </section>
         </div>
       </div>
+
+      <!-- The combos this published list can assemble, and the ones it is one card from. -->
+      <DeckCombos v-if="entries.length > 0" :game="game" :precon-slug="slug" />
 
       <!-- The tokens this published list makes — the ones its product's token sheet holds. -->
       <DeckTokens v-if="entries.length > 0" :game="game" :precon-slug="slug" />

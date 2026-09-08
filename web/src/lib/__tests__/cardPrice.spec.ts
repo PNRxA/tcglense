@@ -4,7 +4,7 @@ import type { CardPrices } from '../api'
 import { displayUsdPrice, finishUsdPrice } from '../cardPrice'
 
 function prices(p: Partial<CardPrices>): CardPrices {
-  return { usd: null, usd_foil: null, eur: null, tix: null, ...p }
+  return { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null, ...p }
 }
 
 describe('displayUsdPrice', () => {

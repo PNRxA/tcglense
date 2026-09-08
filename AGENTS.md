@@ -185,7 +185,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   CDN-cached catalog listing and must not learn per-user state (`is:foil` matches the
   catalog's finishes, not the user's). Landing in the seam is what lets the `.txt` export and
   the grouped views inherit it, and the SPA mirrors the one URL grammar for it in
-  `lib/holdingsFilter.ts`. Both surfaces
+  `lib/holdingsFilter.ts`. **The breakdown** (`GET /api/{collection,wishlist}/{game}/breakdown`,
+  issue #680 — value by rarity / colour / type / finish + the top holdings by *held* value) is
+  the twins' third analytics read and lives in the seam too: `handlers/shared/breakdown.rs`
+  folds a `BreakdownRow` (the `SummaryRow` widened by four facet columns, projected through
+  `narrow_breakdown_rows` on top of the summary's own column list) and embeds
+  `summarize_holdings` over the same rows, so its `summary` **is** the header's; each twin
+  contributes only its entity query. It rides `analytics_cache` like value history and movers,
+  but keyed per **surface** (`HoldingsSurface::{Collection,Wishlist}`) — every wish-list card
+  write must `bump_surface_holdings(Wishlist, …)`, or the cached wish-list breakdown outlives
+  the edit — and the per-user `analytics` bucket. The type bucket reads the type line's *first
+  card type* through `shared::type_line::primary_type` (the same supertype table the Archidekt
+  CSV export splits on). Both surfaces
   also hold sealed products in independent `collection_product_items` /
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
@@ -465,6 +476,25 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   in one place. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`, `['deck-pricing', …]` included); it doesn't sit under
   the `['deck', …]` key.
+  **Combos are a dataset, not a grammar** (`/combos`, issue #683 — the ninth analysis read, three
+  route mirrors like the rest): which cards go infinite together is a fact about *several* cards,
+  so it is read off the synced Commander Spellbook database (`combos` + `combo_pieces`, keyed by
+  **oracle id** — `CardFacts::oracle_id`, any printing matches), never a grammar over rules text.
+  The provider is `spellbook/` and **only the mirror origin fetches upstream** (a ~650 MB JSON
+  document, streamed through `spellbook::stream`'s splitter, never buffered); every other
+  instance imports the origin's compact gzipped-JSONL re-serve (`/api/mirror/spellbook/combos`,
+  `COMBOS_SYNC_ENABLED`); the origin itself asks upstream only every
+  `COMBOS_UPSTREAM_INTERVAL_DAYS` (30 — their terms say sparse), a failed run retrying sooner — the Secret Lair stance, and like those two it is **never fatal to the
+  sync tick** (the mirror answers 404 until its origin has imported once). Both paths write
+  through the one `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
+  maybeboards out, sideboard + command zone in; a `must_be_commander` piece counts only from the
+  command zone of a format that leads with one (the same two `rules` answers the facets borrow — in a format without one such a combo is unreachable and never listed);
+  a **template** ("any sac outlet") is always one missing card, so such a combo is never
+  "complete"; `almost` (one card short) is filtered to the commander's colours. `available: false`
+  is "no data synced", never "no combos" — the `token_parts` NULL stance. The bracket estimate
+  deliberately does **not** read the table (its floor-not-verdict contract, `docs/tradeoffs.md`).
+  Attribution is a term of use: every combo carries its `url`, every response its `source` +
+  `source_url`, and the SPA panels name and link Commander Spellbook.
   **Suggestions are the analysis read with no public mirror** (`/suggestions`,
   issue #684): the cards the caller already owns that the deck could play — collection ∩ colour
   identity ∩ format legality ∩ not already in the deck — ranked by `cards.edhrec_rank` and grouped
@@ -779,6 +809,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   of `ingest::flush_cards` — the
   `update_columns` list *and* `upsert_changed_guard` — or every sync wipes it and mass-bumps
   `updated_at`, the cursor the price-alert narrowing reads.
+- **Etched foil is a first-class *price*, not a holding** (issue #676). `PricesResponse.usd_etched`,
+  `card_price_history.price_usd_etched` (`m..081`, snapshotted since, `NULL` before — no backfill,
+  a past day's price isn't recoverable) and the `etched` alert finish all read `cards.price_usd_etched`,
+  the column the Scryfall map has always written — so an etched alert is unpriced, never priced at
+  the foil, when that column is `NULL`. But `collection_items` has no etched bucket: an etched copy is
+  held and valued as **foil** until holding lots (#594), which is why the price tile carries that
+  note and nothing in the valuation seams reads the etched price. USD only — Scryfall has no
+  `eur_etched`; don't invent one. The alert finish vocabulary is `handlers::alerts::validate_finish`
+  server-side and `web/src/lib/alertFinishes.ts` client-side, tests pinning both.
 - **The shared `Card` DTO is not where per-printing detail goes.** `CardResponse` rides
   every listing (a catalog page is up to 200 rows, CDN/ETag-cached, and the deck/holdings
   payloads carry hundreds more), so print + collector columns — artist, flavour text,

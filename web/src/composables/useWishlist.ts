@@ -1,5 +1,6 @@
 import {
   getWishlist,
+  getWishlistBreakdown,
   getWishlistCounts,
   getWishlistEntry,
   getWishlistProductCounts,
@@ -35,6 +36,7 @@ const queries = makeHoldingQueries({
   getSetSubtypes: getWishlistSetSubtypes,
   getSummary: getWishlistSummary,
   getSets: getWishlistSets,
+  getBreakdown: getWishlistBreakdown,
   getEntry: getWishlistEntry,
   getCounts: getWishlistCounts,
   setEntry: setWishlistEntry,
@@ -66,6 +68,10 @@ export const useWishlistSummaryQuery = queries.useSummaryQuery
 
 /** The sets the user has wishlisted cards in (newest first) — the per-set wish-list landing. */
 export const useWishlistSetsQuery = queries.useSetsQuery
+
+/** Where the wish list's cost sits — by rarity, colour, card type and finish, plus the
+ * most valuable wanted lines (issue #680). */
+export const useWishlistBreakdownQuery = queries.useBreakdownQuery
 
 /** How many copies of one card the signed-in user wants — for the card-detail controls. */
 export const useWishlistEntryQuery = queries.useEntryQuery

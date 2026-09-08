@@ -333,6 +333,65 @@ pub async fn scryfall_sld_drops(headers: HeaderMap) -> Result<Response, AppError
     Ok(response)
 }
 
+/// `GET /api/mirror/spellbook/combos` — the combo database (issue #683) as this origin
+/// holds it: every stored combo as one gzipped JSONL line of `spellbook::model::ComboRecord`,
+/// streamed out of the tables ([`crate::spellbook::snapshot`]). Every other instance imports
+/// this instead of fetching Commander Spellbook's ~650 MB export itself — the Secret Lair
+/// stance: one origin talks to the source.
+///
+/// Touches **no upstream**. Version-gated by a strong `ETag` derived from the upstream
+/// document's own tag (what the origin's last completed import recorded in `ingest_state`
+/// — and kept there through a later `running` or `error` state, so the tables still held
+/// under it keep serving during the next import window), so a consumer whose tables are
+/// current gets a bodyless `304`, and the tag it stores is stable across origin restarts.
+/// `404` until the origin has completed an import — a consumer treats that as a failed
+/// sync and retries next tick, rather than importing an empty snapshot. Shared-cacheable
+/// like the other metadata, but the body has no size hint, so the conditional layer never
+/// buffers it to hash.
+pub async fn spellbook_combos(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    use crate::catalog::ingest_state;
+    use crate::spellbook;
+    // The tag is written only by a completed import and preserved by every later state
+    // (`spellbook::ingest`), so its presence *is* "an import has completed".
+    let version = ingest_state::load(&state.db, spellbook::GAME, spellbook::DATASET)
+        .await?
+        .and_then(|row| row.source_updated_at)
+        .ok_or_else(|| AppError::NotFound("mirror: no combo snapshot imported yet".to_string()))?;
+    // The upstream tag is an opaque quoted string; hash it so ours is header-safe whatever
+    // upstream sends, and distinct from the upstream tag a direct consumer would store.
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(version.as_bytes());
+        hex::encode(&hasher.finalize()[..16])
+    };
+    let etag = format!("\"combos-{digest}\"");
+    let etag_value = HeaderValue::from_str(&etag)
+        .map_err(|_| AppError::Internal("combos etag not header-safe".to_string()))?;
+
+    if let Some(inm) = headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok())
+        && inm == etag
+    {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        let out = response.headers_mut();
+        out.insert(ETAG, etag_value);
+        out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+        return Ok(response);
+    }
+
+    let mut response = Response::new(spellbook::snapshot::stream_snapshot(state.db.clone()));
+    let out = response.headers_mut();
+    // The bytes are gzip; the consumer sniffs the magic byte, so the type names the payload.
+    out.insert(CONTENT_TYPE, HeaderValue::from_static("application/gzip"));
+    out.insert(ETAG, etag_value);
+    out.insert(CACHE_CONTROL, HeaderValue::from_static(MIRROR_META_CACHE));
+    Ok(response)
+}
+
 /// `GET /api/mirror/mtgjson/AllPrintings.json.gz` — MTGJSON's sealed-contents dump,
 /// forwarding `If-None-Match`/`ETag` so the consumer's ETag version-gate (its cheap
 /// unchanged-file `304`) still works through the mirror.
