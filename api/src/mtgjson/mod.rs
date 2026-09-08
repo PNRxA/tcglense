@@ -38,6 +38,15 @@
 //! with the sealed contents, and the deck references the contents walk already follows are
 //! the very same lists.
 //!
+//! The same `booster` maps the contents walk flattens into "these cards can be pulled" also
+//! state the **odds**: each configuration's pack variants and its weighted print sheets.
+//! [`boosters`] keeps them — one `(product, booster)` link per pack a copy opens, with
+//! nested box → pack references multiplied out, plus the configurations those links name —
+//! and [`ingest::boosters`] rebuilds the `booster_configs` / `booster_sheets` /
+//! `sealed_packs` tables behind a sealed product's expected value and its pack opener
+//! (issue #682). Same fetch, same parse, same [`model::Indexes`] as the other three passes;
+//! only configurations a catalog product actually opens are stored.
+//!
 //! Secret Lair Drop (`SLD`) products are the same gap with a twist: a drop's real contents
 //! is the *cards in that drop*, which the app already tracks ([`crate::scryfall::drops`]),
 //! so rather than hand-author them [`sld`] **derives** each null-contents drop product's
@@ -52,6 +61,7 @@
 //! catalog ids before the walk so it emits internal-id rows directly is possible future
 //! work to bound that further.
 
+pub mod boosters;
 pub mod client;
 mod error;
 mod fallback;
