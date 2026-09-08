@@ -14,7 +14,9 @@ use crate::entities::prelude::{Card, CollectionItem};
 use crate::entities::{card, collection_item};
 
 use super::consolidate::{self, FOIL_STAR};
-use super::{FetchedHolding, ImportError, ImportSummary, Provider, ReconcileMode};
+use super::{
+    FetchedHolding, ImportError, ImportSummary, Provider, ReconcileMode, ReconcileOutcome,
+};
 use super::{IN_CHUNK, UNMATCHED_SAMPLE_CAP};
 
 /// Regular + foil copies owned of a single card. Held as `i64` during aggregation so a
@@ -214,8 +216,9 @@ async fn existing_counts_by_card(
 }
 
 /// Resolve the aggregated holdings to local cards, reconcile against the user's current
-/// collection, and apply. Split from [`execute_import`] so it can be unit-tested against
-/// an in-memory DB without any provider network calls.
+/// collection, and apply — then label the outcome with the provider it came from. Split from
+/// [`execute_import`] so it can be unit-tested against an in-memory DB without any provider
+/// network calls.
 pub(super) async fn reconcile_holdings(
     db: &DatabaseConnection,
     user_id: i32,
@@ -224,6 +227,26 @@ pub(super) async fn reconcile_holdings(
     mode: ReconcileMode,
     holdings: Vec<FetchedHolding>,
 ) -> Result<ImportSummary, ImportError> {
+    Ok(reconcile(db, user_id, game, mode, holdings)
+        .await?
+        .into_summary(provider))
+}
+
+/// The provider-agnostic reconcile: fold foil-★ variants, aggregate, resolve external ids,
+/// plan per `mode` against the user's current holdings, and apply atomically.
+///
+/// This is the whole engine; [`reconcile_holdings`] only stamps a provider on the result.
+/// It is `pub(crate)` for the one caller that has holdings but no provider — adding a deck's
+/// or a precon's cards to the collection ([`super::merge_holdings`]) — so that write is
+/// **the same write an import does**: the star fold, the aggregation, the clamp and the
+/// single transaction are all stated once, here.
+pub(crate) async fn reconcile(
+    db: &DatabaseConnection,
+    user_id: i32,
+    game: &str,
+    mode: ReconcileMode,
+    holdings: Vec<FetchedHolding>,
+) -> Result<ReconcileOutcome, ImportError> {
     // Fold separately-modelled foil printings (`…★`) onto their base card as foil copies
     // (issue #209), so aggregation, id resolution, and reconcile all see a straight 1:1
     // external-id→card mapping. Remap the incoming holdings up front (pure, no DB); the
@@ -288,8 +311,7 @@ pub(super) async fn reconcile_holdings(
         .await
         .map_err(ImportError::Db)?;
 
-    Ok(ImportSummary {
-        provider: provider.as_str(),
+    Ok(ReconcileOutcome {
         mode,
         total_rows,
         distinct_cards,

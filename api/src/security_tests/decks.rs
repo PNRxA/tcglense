@@ -45,7 +45,7 @@ async fn create_deck(app: &TestApp, token: &str, name: &str) -> Value {
 }
 
 /// Mint a scoped API key for a signed-in user.
-async fn create_key(app: &TestApp, access: &str, scope: &str) -> String {
+pub(super) async fn create_key(app: &TestApp, access: &str, scope: &str) -> String {
     let (status, _, body) = send(
         app,
         json_with_bearer(
@@ -2367,5 +2367,290 @@ async fn the_deck_list_values_a_deck_like_its_own_page() {
     assert!(
         header["value_usd"].is_null(),
         "an unpriced deck answers null, not $0.00: {header:?}"
+    );
+}
+
+// ---------- Add a deck to the collection ----------
+
+/// The caller's owned counts for one card, `(regular, foil)`, through the collection entry
+/// read (which answers zeros for a card not held).
+async fn owned(app: &TestApp, token: &str, card: &str) -> (i64, i64) {
+    let (status, _, body) = send(
+        app,
+        get_with_bearer(&format!("/api/collection/mtg/cards/{card}"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owned read failed: {body:?}");
+    (
+        body["quantity"].as_i64().expect("quantity"),
+        body["foil_quantity"].as_i64().expect("foil_quantity"),
+    )
+}
+
+/// "I bought this deck": every card outside the maybeboards is added ON TOP of what the
+/// caller already owns, a printing in two sections is one holding, and buying a second copy
+/// of the deck adds a second copy of everything — the write is additive by design.
+#[tokio::test]
+async fn adding_a_deck_to_the_collection_sums_on_top_of_what_is_owned() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "deck-buyer@example.com", PW).await;
+    let cards = sample_card_ids(&app, 3).await;
+    // Alice already owns two of card A before the deck arrives.
+    own_card(&app, &alice, &cards[0], 2).await;
+
+    let deck = create_deck(&app, &alice, "Bought Brew").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let creatures = deck["sections"][0]["id"].as_i64().expect("section id");
+    let maybeboard = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("the seeded maybeboard");
+    let sideboard = add_section(&app, &alice, deck_id, "Sideboard").await;
+    // The maybeboard is a FLAG, not a name (issue #570): rename the flagged section to
+    // something that doesn't sound like one, and add an unflagged section that does — a
+    // name-based skip would get both wrong, in opposite directions.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/sections/{maybeboard}"),
+            &alice,
+            json!({ "name": "Cut candidates" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rename maybeboard failed: {body:?}");
+    let considering = add_section(&app, &alice, deck_id, "Considering").await;
+    // A: 3 regular + 1 foil. B: 2 in the deck proper and 1 more in the sideboard (a real
+    // card in the box). C: 4 under consideration in the (renamed) maybeboard, and 1 in the
+    // unflagged "Considering" section, which IS part of the deck.
+    for (card, qty, foil, section) in [
+        (&cards[0], 3, 1, creatures),
+        (&cards[1], 2, 0, creatures),
+        (&cards[1], 1, 0, sideboard),
+        (&cards[2], 4, 0, maybeboard),
+        (&cards[2], 1, 0, considering),
+    ] {
+        let (status, _, body) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+                &alice,
+                json!({ "quantity": qty, "foil_quantity": foil, "section_id": section }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "add deck card failed: {body:?}");
+    }
+
+    let uri = format!("/api/decks/mtg/{deck_id}/collection");
+    let (status, headers, summary) =
+        send(&app, json_with_bearer("POST", &uri, &alice, json!({}))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "add to collection failed: {summary:?}"
+    );
+    // A per-user write: never shared-cached.
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(
+        summary["cards"], 3,
+        "three printings outside the maybeboard"
+    );
+    assert_eq!(
+        summary["regular_copies"], 7,
+        "3 + 2 + 1 (the sideboard copy counts) + 1 (the unflagged section counts)"
+    );
+    assert_eq!(summary["foil_copies"], 1);
+    assert_eq!(summary["skipped_cards"], 0);
+
+    // Added on top of the two she owned; B's two sections folded into one holding; C's four
+    // copies under the flagged (renamed) maybeboard were never bought — only the one in the
+    // unflagged section that merely sounds like a maybeboard.
+    assert_eq!(owned(&app, &alice, &cards[0]).await, (5, 1));
+    assert_eq!(owned(&app, &alice, &cards[1]).await, (3, 0));
+    assert_eq!(owned(&app, &alice, &cards[2]).await, (1, 0));
+
+    // The deck itself is untouched — this is a read of it, not an edit.
+    let (status, _, after) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["cards"].as_array().expect("cards").len(), 5);
+
+    // Not idempotent, on purpose: a second copy of the deck is a second copy of every card.
+    let (status, _, again) = send(&app, json_with_bearer("POST", &uri, &alice, json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "second add failed: {again:?}");
+    assert_eq!(owned(&app, &alice, &cards[0]).await, (8, 2));
+    assert_eq!(owned(&app, &alice, &cards[1]).await, (6, 0));
+    assert_eq!(owned(&app, &alice, &cards[2]).await, (2, 0));
+}
+
+/// The write is gated like every other deck write: a credential that can write, on a deck
+/// that is the caller's (a foreign deck is the same 404 an unknown one gets), with something
+/// to add.
+#[tokio::test]
+async fn adding_a_deck_to_the_collection_is_owner_scoped_and_needs_a_writable_credential() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "deck-buyer-guard@example.com", PW).await;
+    let card = sample_card_ids(&app, 1).await.remove(0);
+    let deck = create_deck(&app, &alice, "Guarded Purchase").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    let uri = format!("/api/decks/mtg/{deck_id}/collection");
+
+    // An empty deck has nothing to add: refused, nothing written.
+    let (status, _, body) = send(&app, json_with_bearer("POST", &uri, &alice, json!({}))).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an empty deck: {body:?}"
+    );
+
+    // …and so has a deck whose only cards sit in a maybeboard.
+    let maybeboard = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("the seeded maybeboard");
+    add_deck_card(&app, &alice, deck_id, maybeboard, &card, 1).await;
+    let (status, _, body) = send(&app, json_with_bearer("POST", &uri, &alice, json!({}))).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a maybeboard-only deck: {body:?}"
+    );
+    assert_eq!(owned(&app, &alice, &card).await, (0, 0));
+
+    add_deck_card(&app, &alice, deck_id, section_id, &card, 1).await;
+
+    // Unauthenticated -> 401, no-store (a write, never shared-cached).
+    let (status, headers, _) = send(&app, json_post(&uri, json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // A read-only API key is a valid credential but the wrong scope -> 403.
+    let ro = create_key(&app, &alice, "read").await;
+    let (status, _, _) = send(&app, json_with_bearer("POST", &uri, &ro, json!({}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Another user can't add Alice's deck to *their* collection: a uniform 404 (the same body
+    // an unknown deck id gets — no existence oracle), and nothing lands in Bob's holdings.
+    let (bob, _) = register(&app, "deck-buyer-other@example.com", PW).await;
+    let (status, headers, foreign) =
+        send(&app, json_with_bearer("POST", &uri, &bob, json!({}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let (status, _, unknown) = send(
+        &app,
+        json_with_bearer("POST", "/api/decks/mtg/999999/collection", &bob, json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(foreign["error"], unknown["error"]);
+    assert_eq!(owned(&app, &bob, &card).await, (0, 0));
+
+    // None of the refused attempts touched Alice's collection either.
+    assert_eq!(owned(&app, &alice, &card).await, (0, 0));
+}
+
+/// "I bought the singles for this list": a visitor adds someone's PUBLIC deck to their own
+/// collection — the owner's holdings are untouched, a private deck is the same 404 an unknown
+/// handle gets, and the credential gates are the copy's.
+#[tokio::test]
+async fn a_public_deck_can_be_added_to_the_visitors_collection() {
+    let app = test_app_with_catalog().await;
+    let (alice, _) = register(&app, "public-deck-seller@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+    let deck = create_deck(&app, &alice, "Alice's List").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    let maybeboard = section_named(&deck, "Maybeboard")["id"]
+        .as_i64()
+        .expect("the seeded maybeboard");
+    // A: 3 regular + 1 foil in the deck proper; B only under consideration.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{}", cards[0]),
+            &alice,
+            json!({ "quantity": 3, "foil_quantity": 1, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    add_deck_card(&app, &alice, deck_id, maybeboard, &cards[1], 2).await;
+
+    let (bob, _) = register(&app, "public-deck-buyer@example.com", PW).await;
+
+    // Still private: a uniform 404, the same body an unknown handle gets, nothing written.
+    let (status, headers, private_miss) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/u/nobody-0001/decks/{deck_id}/collection"),
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let handle = publish_deck(&app, &alice, "seller", deck_id).await;
+    let uri = format!("/api/u/{handle}/decks/{deck_id}/collection");
+
+    // Unauthenticated -> 401; a read-only key -> 403.
+    let (status, headers, _) = send(&app, json_post(&uri, json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let ro = create_key(&app, &bob, "read").await;
+    let (status, _, _) = send(&app, json_with_bearer("POST", &uri, &ro, json!({}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Bob adds Alice's public list to HIS collection.
+    let (status, headers, summary) =
+        send(&app, json_with_bearer("POST", &uri, &bob, json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "add failed: {summary:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(
+        summary["cards"], 1,
+        "the maybeboard card is not part of the list"
+    );
+    assert_eq!(summary["regular_copies"], 3);
+    assert_eq!(summary["foil_copies"], 1);
+    assert_eq!(owned(&app, &bob, &cards[0]).await, (3, 1));
+    assert_eq!(owned(&app, &bob, &cards[1]).await, (0, 0));
+    // Alice's collection is not the target — and her deck is unchanged.
+    assert_eq!(owned(&app, &alice, &cards[0]).await, (0, 0));
+    let (status, _, after) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["cards"].as_array().expect("cards").len(), 2);
+
+    // Alice makes it private again: the same 404 body as the unknown handle, nothing added.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/visibility"),
+            &alice,
+            json!({ "public": false }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, now_private) =
+        send(&app, json_with_bearer("POST", &uri, &bob, json!({}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(now_private["error"], private_miss["error"]);
+    assert_eq!(
+        owned(&app, &bob, &cards[0]).await,
+        (3, 1),
+        "still exactly one add"
     );
 }

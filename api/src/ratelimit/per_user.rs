@@ -70,6 +70,17 @@ impl UserRoute {
             }
         }
 
+        // Adding someone's public deck to the caller's collection is the owner-deck write
+        // below addressed by handle (`/api/u/{handle}/decks/{id}/collection`): the same
+        // import-engine work, so the same bucket.
+        if let Some(rest) = path.strip_prefix("/api/u/")
+            && let Some((_handle, tail)) = rest.split_once('/')
+            && tail.starts_with("decks/")
+            && tail.rsplit('/').next() == Some("collection")
+        {
+            return Self::Import;
+        }
+
         // The wish list's card-list export is the collection export's twin: the same
         // uncapped whole-holdings drain, so the same tighter bucket.
         if let Some(rest) = path.strip_prefix("/api/wishlist/")
@@ -82,6 +93,14 @@ impl UserRoute {
             && let Some((_game, tail)) = rest.split_once('/')
         {
             if tail == "import" {
+                return Self::Import;
+            }
+            // "Add to collection" (`{deck_id}/collection` and `precons/{slug}/collection`):
+            // the deck's or precon's rows through the collection importer's own `merge` —
+            // the foil-★ pair scan, a full read of the caller's holdings and one upsert per
+            // card in a transaction — i.e. exactly the work the CSV/paste import does inline,
+            // so it takes that write's bucket rather than General's 300/min.
+            if tail.rsplit('/').next() == Some("collection") {
                 return Self::Import;
             }
             // Deck analysis (issue #596): each of these folds every card in the deck, the
@@ -403,6 +422,20 @@ mod tests {
             UserRoute::from_path("/api/decks/mtg/import"),
             UserRoute::Import
         );
+        // Adding a deck or a precon to the collection runs the same reconcile engine the
+        // CSV/paste import does, so it shares its bucket.
+        assert_eq!(
+            UserRoute::from_path("/api/decks/mtg/7/collection"),
+            UserRoute::Import
+        );
+        assert_eq!(
+            UserRoute::from_path("/api/decks/mtg/precons/turtle-power-tmc/collection"),
+            UserRoute::Import
+        );
+        assert_eq!(
+            UserRoute::from_path("/api/u/alice-0001/decks/7/collection"),
+            UserRoute::Import
+        );
 
         // The whole-collection × full-history analytics reads + the export streams
         // (CSV and the uncapped card-list drains, the wish-list twin included) are the
@@ -438,6 +471,7 @@ mod tests {
             "/api/collection/mtg/import/jobs/1",
             "/api/decks/mtg",
             "/api/decks/mtg/1/export",
+            "/api/u/alice-0001/decks/7/copy",
             "/api/wishlist/mtg",
             "/api/wishlist/mtg/counts",
             "/api/wishlist/mtg/cards/some-external-id",

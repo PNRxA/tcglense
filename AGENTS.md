@@ -351,6 +351,20 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   of being mirrored client-side like the format table above: the panel that draws them doesn't
   exist until the response lands, so a mirror would buy nothing and could drift. Deck writes must invalidate the analysis query family
   client-side (`invalidateDeckAnalysis`); it doesn't sit under the `['deck', …]` key.
+  **Adding a deck or a precon to the collection** (`POST /api/decks/{game}/{deck_id}/collection`,
+  `POST /api/decks/{game}/precons/{slug}/collection`, and someone's public deck at
+  `POST /api/u/{handle}/decks/{deck_id}/collection`) is the bridge *back* to the holdings
+  surface — "I bought this" — and it is the collection importer's `merge`
+  (`collection_import::merge_holdings`, the provider-less half of `reconcile_holdings`), never a
+  loop over the per-card `PUT`: the foil-★ fold, the by-card aggregation and the one-transaction
+  apply are stated once. It is **additive and not idempotent on purpose** (a second call is a
+  second copy of the deck; the SPA's `AddToCollectionButton` confirms first — `docs/tradeoffs.md`
+  §Decks has the rejected alternatives), skips a deck's maybeboards (the `needed`/`summary`
+  split — the public-deck route through the same `deck_rows` read as the owner's), takes every
+  board of a precon, and all three entry points share
+  `decks::to_collection::add_rows_to_collection` — a fourth source belongs there, and lands in
+  the per-user **`Import`** rate-limit class (`ratelimit/per_user.rs`'s `from_path` keys on the
+  `…/collection` tail; its classification test pins both paths), because it does the import's work.
   Deck **import/export** (issue #389) lives in the sibling
   `deck_import/` pipeline: categories/boards become exact sections and a new deck is written
   whole, never through the `collection_items` reconcile engine. It reuses the lower provider
@@ -361,8 +375,9 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   sealed sync (`mtgjson::precons` — the same fetch, the same parse, and the same
   `model::Indexes` the membership + composition passes use; a fourth copy of any of the three
   would re-walk a 600 MB document for data that already arrived). So the three reads are
-  anonymous and live in the router's **`public`** group beside `products`, and the one write —
-  copying one into your decks — is authed under `/api/decks/{game}/precons/{slug}/copy`.
+  anonymous and live in the router's **`public`** group beside `products`, and the writes —
+  copying one into your decks, and adding its cards to your collection — are authed under
+  `/api/decks/{game}/precons/{slug}/{copy,collection}`.
   The tables are **rebuilt wholesale** every sync, so a row id is not stable and never reaches
   the wire: **`slug` is the identity**, derived deterministically (sets walked in sorted order,
   numeric suffix on collision) — a change to how it's derived needs a `DERIVATION_VERSION` bump,

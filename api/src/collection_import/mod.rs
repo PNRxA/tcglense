@@ -181,6 +181,29 @@ pub async fn execute_file_import(
     reconcile_holdings(db, user_id, game, provider, mode, holdings).await
 }
 
+/// Add holdings **on top of** the caller's collection — the `merge` reconcile, for a caller
+/// that already holds the rows and has no provider to name.
+///
+/// This is the write behind "add this deck / preconstructed deck to my collection"
+/// (`handlers::decks::to_collection`). It is deliberately the import engine's own `merge`
+/// rather than a loop over the single-card upsert: the foil-★ variant fold, the by-card
+/// aggregation, the count clamp and the one all-or-nothing transaction are exactly what a
+/// bulk collection write needs, and they are stated once, in [`reconcile`]. Additive by
+/// definition — `Overwrite` would silently *lower* the count of a card the user already owned
+/// more of, and `Replace` would wipe everything else — so the mode is not a parameter.
+///
+/// An empty `holdings` is not refused here: the caller knows what "nothing to add" means for
+/// its source (an empty deck, a precon whose cards have all left the catalog) and words the
+/// `422` itself.
+pub async fn merge_holdings(
+    db: &DatabaseConnection,
+    user_id: i32,
+    game: &str,
+    holdings: Vec<FetchedHolding>,
+) -> Result<ReconcileOutcome, ImportError> {
+    reconcile::reconcile(db, user_id, game, ReconcileMode::Merge, holdings).await
+}
+
 /// Read the content as a plain-text card list (one `1 Sol Ring (C21) 263 *F*` line per
 /// holding). Every line resolves by printing key or by name, so the rows all land in the
 /// `printings` bucket.

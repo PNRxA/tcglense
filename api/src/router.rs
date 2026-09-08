@@ -54,11 +54,12 @@ use crate::{
         config::public_config,
         currency::currency_rates,
         decks::{
-            MAX_DECK_UPLOAD_BYTES, change_deck_card_printing, copy_public_deck, create_deck,
-            create_folder, create_section, deck_bracket, deck_goldfish, deck_legality, deck_stats,
-            deck_tokens, decks_containing_card, delete_deck, delete_folder, delete_section,
-            export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
-            move_deck_card, move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
+            MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
+            change_deck_card_printing, copy_public_deck, create_deck, create_folder,
+            create_section, deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens,
+            decks_containing_card, delete_deck, delete_folder, delete_section, export_deck,
+            get_deck, import_deck, list_deck_formats, list_decks, list_folders, move_deck_card,
+            move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
             set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
@@ -68,9 +69,9 @@ use crate::{
         },
         openapi::openapi_json,
         precons::{
-            card_precons, copy_precon_deck, get_precon, list_precon_groups, list_precons,
-            precon_bracket, precon_facets, precon_goldfish, precon_legality, precon_stats,
-            precon_tokens,
+            add_precon_to_collection, card_precons, copy_precon_deck, get_precon,
+            list_precon_groups, list_precons, precon_bracket, precon_facets, precon_goldfish,
+            precon_legality, precon_stats, precon_tokens,
         },
         search::universal_search,
         sharing::{
@@ -419,6 +420,14 @@ pub fn build_router(state: AppState) -> Router {
             put(set_deck_visibility),
         )
         .route("/api/decks/{game}/{deck_id}/export", get(export_deck))
+        // Add the deck's cards to the caller's collection, on top of what they own ("I bought
+        // this"). A write on the collection addressed by the deck it reads — filed here with
+        // the deck's other actions (`export`, `visibility`, `copy`) rather than under
+        // `/api/collection`, which has no deck axis; `WritableUser`, like every deck write.
+        .route(
+            "/api/decks/{game}/{deck_id}/collection",
+            post(add_deck_to_collection),
+        )
         // Deck analysis (issue #596): composition + draw odds, the legality verdict, the
         // estimated Commander bracket, the tokens the deck makes, and a seeded goldfish
         // hand. All are reads of a deck
@@ -457,6 +466,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/decks/{deck_id}/copy",
             post(copy_public_deck),
         )
+        // …and add that public deck's cards to the caller's own collection ("I bought the
+        // singles for this list"): the same handle + id addressing and the same private,
+        // no-store home as the copy, writing through the deck's `to_collection` seam.
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/collection",
+            post(add_public_deck_to_collection),
+        )
         // Copy a published preconstructed deck into the caller's own decks. The source is a
         // public catalog row (read at `/api/games/{game}/precons/{slug}`), but this is an
         // authenticated write, so it sits in this `private`, no-store group like the public
@@ -466,6 +482,12 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/decks/{game}/precons/{slug}/copy",
             post(copy_precon_deck),
+        )
+        // The precon's other bridge back to the user's surfaces: add every card it ships to
+        // the caller's collection (the deck route's twin above, same `to_collection` seam).
+        .route(
+            "/api/decks/{game}/precons/{slug}/collection",
+            post(add_precon_to_collection),
         )
         // Tools (`/api/tools/{game}/...`): the play aids that sit beside the catalog rather
         // than inside it. Grouped under a `tools` namespace so a second tool adds a path

@@ -12,6 +12,16 @@ const copyMutateAsync = vi.hoisted(() =>
   vi.fn<(vars: unknown) => Promise<unknown>>(async () => ({ game: 'mtg', id: 42 })),
 )
 
+// The add-to-collection twin (the same shape, asserted apart so the two can't be confused).
+const addMutateAsync = vi.hoisted(() =>
+  vi.fn<(vars: unknown) => Promise<unknown>>(async () => ({
+    cards: 1,
+    regular_copies: 3,
+    foil_copies: 0,
+    skipped_cards: 0,
+  })),
+)
+
 // Mutable auth state the mocked store returns; each test sets it before mounting.
 const authState = vi.hoisted(() => ({
   sessionResolved: true,
@@ -59,6 +69,10 @@ vi.mock('@/composables/useDecks', async () => {
     }),
     useCopyPublicDeckMutation: () => ({
       mutateAsync: copyMutateAsync,
+      isPending: vueRef(false),
+    }),
+    useAddPublicDeckToCollectionMutation: () => ({
+      mutateAsync: addMutateAsync,
       isPending: vueRef(false),
     }),
   }
@@ -130,11 +144,60 @@ function copyButton(wrapper: ReturnType<typeof mountView>['wrapper']) {
   return wrapper.findAll('button').find((b) => b.text().includes('Copy to my decks'))
 }
 
+/** The add-to-collection button's trigger. The component is real (its dialog only mounts
+ * content once opened), so this finds the trigger the visitor sees. */
+function addButton(wrapper: ReturnType<typeof mountView>['wrapper']) {
+  return wrapper.findAll('button').find((b) => b.text().includes('Add to collection'))
+}
+
+describe('PublicDeckView add-to-collection', () => {
+  it('offers a signed-in visitor the deck for their own collection, keyed by handle + game', () => {
+    authState.isAuthenticated = true
+    authState.user = { handle: 'bob-0002' }
+    addMutateAsync.mockClear()
+
+    const { wrapper } = mountView()
+    expect(addButton(wrapper), 'add button should be shown').toBeTruthy()
+    // The write itself is the view's: handle-addressed, and the deck's game rides along so
+    // the right collection family is refreshed.
+    const button = wrapper.findComponent({ name: 'AddToCollectionButton' })
+    const submit = button.props('submit') as () => Promise<unknown>
+    void submit()
+    expect(addMutateAsync).toHaveBeenCalledExactlyOnceWith({
+      handle: 'alice-0001',
+      deckId: 7,
+      game: 'mtg',
+    })
+    expect(button.props('copies')).toBe(3)
+    wrapper.unmount()
+  })
+
+  it('still offers it on the viewer’s own deck, where the copy is hidden', () => {
+    authState.isAuthenticated = true
+    authState.user = { handle: 'alice-0001' }
+
+    const { wrapper } = mountView()
+    expect(addButton(wrapper)).toBeTruthy()
+    expect(copyButton(wrapper)).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('hides it from anonymous visitors', () => {
+    authState.isAuthenticated = false
+    authState.user = null
+
+    const { wrapper } = mountView()
+    expect(addButton(wrapper)).toBeFalsy()
+    wrapper.unmount()
+  })
+})
+
 describe('PublicDeckView copy-to-my-decks', () => {
   it('lets a signed-in visitor copy the deck and routes to the new one', async () => {
     authState.isAuthenticated = true
     authState.user = { handle: 'bob-0002' }
     copyMutateAsync.mockClear()
+    addMutateAsync.mockClear()
 
     const { wrapper, push } = mountView()
     const button = copyButton(wrapper)

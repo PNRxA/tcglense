@@ -6,6 +6,7 @@
 //! small all-foil deck with no command zone, a starter deck with a sideboard, and two Jumpstart
 //! themes), so the reads answer in the real wire shapes and the copy lands real cards.
 
+use super::decks::create_key;
 use super::harness::*;
 
 const PW: &str = "correct-horse-battery-staple";
@@ -996,4 +997,187 @@ async fn grouped_precons_sort_by_price_within_each_group() {
             }
         }
     }
+}
+
+// ---------- Add a precon to the collection ----------
+
+/// The caller's owned counts for one card, `(regular, foil)`, through the collection entry
+/// read (zeros for a card not held).
+async fn owned(app: &TestApp, token: &str, card: &str) -> (i64, i64) {
+    let (status, _, body) = send(
+        app,
+        get_with_bearer(&format!("/api/collection/mtg/cards/{card}"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owned read failed: {body:?}");
+    (
+        body["quantity"].as_i64().expect("quantity"),
+        body["foil_quantity"].as_i64().expect("foil_quantity"),
+    )
+}
+
+/// What a precon's page states, folded the way a collection row holds it: per printing,
+/// `(regular, foil)` summed over every board.
+fn expected_holdings(precon: &Value) -> std::collections::BTreeMap<String, (i64, i64)> {
+    let mut expected = std::collections::BTreeMap::new();
+    for row in precon["cards"].as_array().expect("cards") {
+        let id = row["card"]["id"].as_str().expect("card id").to_string();
+        let quantity = row["quantity"].as_i64().expect("quantity");
+        let entry: &mut (i64, i64) = expected.entry(id).or_default();
+        if row["foil"] == true {
+            entry.1 += quantity;
+        } else {
+            entry.0 += quantity;
+        }
+    }
+    expected
+}
+
+/// "I bought this precon": every board goes into the collection in exactly the counts the
+/// page states — the command zone, the sideboard, and a printing listed in both finishes as
+/// ONE owned row holding both — on top of what was already owned.
+#[tokio::test]
+async fn adding_a_precon_to_the_collection_records_every_board_by_finish() {
+    let app = test_app_with_catalog().await;
+
+    // The Commander precon carries a command zone and the seeded printing listed in both
+    // finishes; the starter carries a sideboard. Each into a fresh user's collection so the
+    // two lists (which share basic lands) can't sum into each other.
+    for (slug, email, board) in [
+        (COMMANDER_SLUG, "precon-buyer-cmd@example.com", "commander"),
+        (STARTER_SLUG, "precon-buyer-starter@example.com", "side"),
+    ] {
+        let (access, _) = register(&app, email, PW).await;
+        let (status, _, precon) = send(&app, get(&format!("/api/games/mtg/precons/{slug}"))).await;
+        assert_eq!(status, StatusCode::OK, "{slug}: {precon:?}");
+        let expected = expected_holdings(&precon);
+        let on_board: Vec<&Value> = precon["cards"]
+            .as_array()
+            .expect("cards")
+            .iter()
+            .filter(|row| row["board"] == board)
+            .collect();
+        assert!(!on_board.is_empty(), "{slug} seeds a `{board}` board");
+
+        let (status, headers, summary) = send(
+            &app,
+            json_with_bearer(
+                "POST",
+                &format!("/api/decks/mtg/precons/{slug}/collection"),
+                &access,
+                json!({}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{slug}: {summary:?}");
+        assert_eq!(cache_control(&headers), Some("no-store"));
+        assert_eq!(
+            summary["cards"].as_u64(),
+            Some(expected.len() as u64),
+            "{slug}"
+        );
+        let regular: i64 = expected.values().map(|c| c.0).sum();
+        let foil: i64 = expected.values().map(|c| c.1).sum();
+        assert_eq!(summary["regular_copies"].as_i64(), Some(regular), "{slug}");
+        assert_eq!(summary["foil_copies"].as_i64(), Some(foil), "{slug}");
+        assert_eq!(summary["skipped_cards"], 0, "{slug}");
+
+        for (id, counts) in &expected {
+            assert_eq!(owned(&app, &access, id).await, *counts, "{slug}: {id}");
+        }
+        // The board this list was chosen for is in the box too.
+        let id = on_board[0]["card"]["id"].as_str().expect("card id");
+        assert_ne!(
+            owned(&app, &access, id).await,
+            (0, 0),
+            "{slug}: the `{board}` board"
+        );
+    }
+}
+
+/// The both-finish printing is the load-bearing case: MTGJSON lists it as two rows, and the
+/// collection must hold it as one row with both counts — never two rows, never one finish —
+/// added ON TOP of the copies already owned, in both finishes.
+#[tokio::test]
+async fn a_printing_in_both_finishes_lands_as_one_holding_with_both_counts() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "precon-buyer-foil@example.com", PW).await;
+    let (_, _, precon) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}")),
+    )
+    .await;
+    let expected = expected_holdings(&precon);
+    let (regular, foil) = expected["dummy-dmb-0001"];
+    assert!(
+        regular > 0 && foil > 0,
+        "the seeded precon lists this printing in both finishes: {expected:?}"
+    );
+
+    // Already owned before the box arrives: 5 regular + 2 foil. The add must never lower
+    // either — an absolute write of the list's counts would.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/cards/dummy-dmb-0001",
+            &access,
+            json!({ "quantity": 5, "foil_quantity": 2 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            &format!("/api/decks/mtg/precons/{COMMANDER_SLUG}/collection"),
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        owned(&app, &access, "dummy-dmb-0001").await,
+        (regular + 5, foil + 2),
+        "the list's counts on top of the owned ones, per finish"
+    );
+}
+
+#[tokio::test]
+async fn adding_a_precon_to_the_collection_requires_authentication_and_a_real_precon() {
+    let app = test_app_with_catalog().await;
+    let uri = format!("/api/decks/mtg/precons/{COMMANDER_SLUG}/collection");
+
+    // Unauthenticated -> 401, no-store.
+    let (status, headers, _) = send(&app, json_post(&uri, json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // A read-only API key is a valid credential but the wrong scope -> 403: the precon is
+    // public to read, but this writes the key owner's collection.
+    let (access, _) = register(&app, "precon-buyer-miss@example.com", PW).await;
+    let ro = create_key(&app, &access, "read").await;
+    let (status, headers, _) = send(&app, json_with_bearer("POST", &uri, &ro, json!({}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    // An unknown slug -> 404, and nothing lands.
+    let (status, headers, _) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg/precons/no-such-deck-xyz/collection",
+            &access,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let (status, _, list) = send(&app, get_with_bearer("/api/collection/mtg", &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 0, "{list:?}");
 }
