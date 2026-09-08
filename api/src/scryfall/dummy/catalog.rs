@@ -141,7 +141,7 @@ const SECRET_LAIR_PAST_RELEASE: &str = "2024-10-04";
 
 /// Number of plain numbered cards in the base set. Kept above `DEFAULT_PAGE_SIZE`
 /// (60) so the set view exercises pagination / `has_more`.
-const BASE_NUMBERED: i32 = 75;
+pub(super) const BASE_NUMBERED: i32 = 75;
 
 /// Stable per-card external id, e.g. `dummy-dmb-0007`. Embeds the set code so ids are
 /// unique across sets and fixed across reboots (the upsert conflict key).

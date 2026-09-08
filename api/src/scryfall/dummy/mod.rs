@@ -19,6 +19,7 @@
 //! The fabricated data lives in [`catalog`]; the price random walk in [`prices`];
 //! this module orchestrates seeding it into the database.
 
+mod boosters;
 mod catalog;
 mod precons;
 mod prices;
@@ -47,6 +48,7 @@ use crate::entities::{
     art_tag, card, card_art_tag, card_price_history, card_ruling, product, product_price_history,
     sealed_component, sealed_content,
 };
+use boosters::seed_boosters;
 use catalog::{dummy_cards, dummy_sets};
 use precons::seed_precons;
 use prices::price_walk;
@@ -880,6 +882,12 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = component_rows,
         "seeded dummy sealed-product components"
     );
+
+    // Booster configurations + the product links that open them, so a sealed product's
+    // expected value and its pack opener have data offline. Joins cards *and* products
+    // (and rebuilds wholesale, like the real ingest), so it runs after both.
+    let booster_rows = seed_boosters(db).await?;
+    tracing::info!(rows = booster_rows, "seeded dummy booster configurations");
 
     // Preconstructed decks (the precon browser), so the list / facets / detail / copy
     // routes have data offline. Joins cards *and* products, so it runs after both.
