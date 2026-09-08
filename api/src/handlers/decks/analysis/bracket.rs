@@ -25,7 +25,7 @@
 
 use serde::Serialize;
 
-use super::{AnalysisEntry, CardFacts, DeckAnalysisInput};
+use super::{CardFacts, DeckAnalysisInput, NameFold, fold_by_name};
 
 mod signals;
 
@@ -208,38 +208,6 @@ pub struct DeckBracketEstimate {
 }
 
 // ---------- Evaluation ----------
-
-/// One card name folded across every section and printing it appears in — the same fold
-/// the legality verdict does, so a card in two arts is one Game Changer rather than two.
-struct NameFold<'a> {
-    facts: &'a CardFacts,
-    card_id: String,
-    copies: i64,
-}
-
-fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a>> {
-    let mut folds: Vec<NameFold<'a>> = Vec::new();
-    let mut index_by_name: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
-    for entry in entries {
-        let copies = entry.copies();
-        if copies == 0 {
-            continue;
-        }
-        match index_by_name.get(entry.facts.name.as_str()) {
-            Some(&index) => folds[index].copies += copies,
-            None => {
-                index_by_name.insert(entry.facts.name.as_str(), folds.len());
-                folds.push(NameFold {
-                    facts: &entry.facts,
-                    card_id: entry.facts.id.clone(),
-                    copies,
-                });
-            }
-        }
-    }
-    folds
-}
 
 /// "Armageddon", "Armageddon and Ravages of War", "A, B and 4 more".
 ///
@@ -444,6 +412,7 @@ pub(crate) fn analyse_bracket(
 
 #[cfg(test)]
 mod tests {
+    use super::super::AnalysisEntry;
     use super::*;
     use crate::handlers::decks::analysis::test_fixtures::{deck, entry, section};
 

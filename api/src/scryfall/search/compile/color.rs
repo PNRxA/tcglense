@@ -142,9 +142,12 @@ pub(super) fn color(
     value: &str,
 ) -> Result<Condition, SearchError> {
     match parse_color_operand(key, value)? {
+        // `produced_mana` stores "produces nothing" as `""` (a NULL there is "not checked
+        // yet" — see `scryfall::map`); the colour columns store it as NULL. Both spellings
+        // read as colourless here so the leaf means the same thing on every column.
         ColorOperand::Colorless => Ok(match op {
-            Op::Colon | Op::Eq | Op::Le => raw(format!("{col} IS NULL")),
-            Op::Ne | Op::Gt => raw(format!("{col} IS NOT NULL")),
+            Op::Colon | Op::Eq | Op::Le => raw(format!("({col} IS NULL OR {col} = '')")),
+            Op::Ne | Op::Gt => raw(format!("({col} IS NOT NULL AND {col} <> '')")),
             Op::Ge => Condition::all(),
             Op::Lt => raw("1 = 0"),
         }),

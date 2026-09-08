@@ -696,6 +696,13 @@ fn print_detail_filters_compile() {
     let f = sql("frame:showcase");
     assert!(f.contains("frame_effects"), "{f}");
     assert!(sql("produces:wu").contains("produced_mana"));
+    // "Produces nothing" is stored as `""` (a NULL is "not checked yet"), so the colourless
+    // operand must read both spellings — see `scryfall::map`.
+    let none = sql("produces:c");
+    assert!(
+        none.contains("produced_mana IS NULL OR produced_mana = ''"),
+        "{none}"
+    );
     assert!(sql("artists>1").contains("artist_ids"));
 }
 

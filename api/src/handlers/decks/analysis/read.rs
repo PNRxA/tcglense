@@ -13,9 +13,9 @@ use crate::state::AppState;
 
 use super::super::load_deck;
 use super::{
-    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckTokens, GoldfishHand, GoldfishParams,
-    StatsParams, analyse_bracket, analyse_goldfish, analyse_legality, analyse_stats,
-    analyse_tokens, load_analysis, load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckLegality, DeckManaBase, DeckTokens, GoldfishHand,
+    GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana,
+    analyse_stats, analyse_tokens, load_analysis, load_analysis_with_cards,
 };
 
 /// Deck analytics
@@ -154,6 +154,40 @@ pub async fn deck_tokens(
     let deck = load_deck(&state, user.id, &game, deck_id).await?;
     let input = load_analysis(&state, deck.id).await?;
     Ok(Json(analyse_tokens(&state, &game, &input).await?))
+}
+
+/// Deck mana base
+///
+/// `GET /api/decks/{game}/{deck_id}/mana` -> the deck's colour requirements against its
+/// sources: per colour, the pips its spells demand (with the most colour-hungry cards), the
+/// sources its library produces (lands and nonland producers, each listed), the number Frank
+/// Karsten's 2022 tables say a deck this size needs for the hungriest spell, and a plain
+/// verdict ("Short 2 black sources"). Demand is the library plus the command zone; supply is
+/// the library alone. `404` if the deck isn't the caller's.
+#[utoipa::path(
+    get,
+    path = "/api/decks/{game}/{deck_id}/mana",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "Deck id"),
+    ),
+    responses(
+        (status = 200, description = "Per-colour pips, sources, Karsten's threshold and the verdict.", body = DeckManaBase),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+    ),
+)]
+pub async fn deck_mana(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckManaBase>, AppError> {
+    require_game(&game)?;
+    let deck = load_deck(&state, user.id, &game, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_mana(deck.format.as_deref(), &input)))
 }
 
 /// Goldfish a sample hand
