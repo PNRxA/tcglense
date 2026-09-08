@@ -75,6 +75,14 @@ vi.mock('@/composables/useWishlist', async () => {
   const { ref } = await import('vue')
   return { useWishlistCounts: () => ({ ownership: ref({}) }) }
 })
+// The editor fetches the deck's card roles (issue #671) for the role filter; this spec
+// drives the engine outside a component, so the vue-query hook is stubbed away.
+vi.mock('@/composables/useDeckAnalysis', async () => {
+  const { ref } = await import('vue')
+  return {
+    useDeckRolesQuery: () => ({ data: ref(undefined), isPending: ref(false), isError: ref(false) }),
+  }
+})
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({}) }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<() => void>() }) }))
 

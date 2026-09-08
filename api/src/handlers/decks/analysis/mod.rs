@@ -13,6 +13,9 @@
 //! * **Tokens** ([`tokens`]) — the tokens and emblems the deck's cards make, which is what a
 //!   player has to bring to a game *besides* the deck. Consults the catalog again rather
 //!   than folding what the deck already loaded.
+//! * **Roles** ([`roles`]) — how many pieces of ramp, draw, removal, wipes, counters, tutors,
+//!   recursion and protection the deck holds, read off each card's rules text through the
+//!   same clause grammar the bracket's signals use ([`signals`]), issue #671.
 //! * **Mana base** ([`mana`]) — the colour pips the deck's spells ask for against the
 //!   sources its library holds, judged by Frank Karsten's source counts, so "do I have
 //!   enough blue for `UU` on turn two" is answered rather than guessed.
@@ -63,15 +66,17 @@ pub(crate) mod legality;
 pub(crate) mod mana;
 pub(crate) mod pricing;
 pub(crate) mod read;
+pub(crate) mod roles;
 pub(crate) mod rules;
+pub(super) mod signals;
 pub(crate) mod stats;
 pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
     __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
-    __path_deck_pricing, __path_deck_stats, __path_deck_tokens, deck_bracket, deck_goldfish,
-    deck_legality, deck_mana, deck_pricing, deck_stats, deck_tokens,
+    __path_deck_pricing, __path_deck_roles, __path_deck_stats, __path_deck_tokens, deck_bracket,
+    deck_goldfish, deck_legality, deck_mana, deck_pricing, deck_roles, deck_stats, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -81,6 +86,7 @@ pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
 pub(crate) use mana::{DeckManaBase, analyse_mana};
 pub(crate) use pricing::{DeckPricing, analyse_pricing};
+pub(crate) use roles::{DeckRoles, analyse_roles};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
 pub(crate) use tokens::{DeckTokens, analyse_tokens};
 
@@ -220,11 +226,14 @@ impl AnalysisEntry {
 }
 
 /// One card **name** folded across every section and printing it appears in — the identity
-/// the copy limit, the bracket and the mana base all count by, so a card held in two arts is
-/// one Game Changer, one source, one spell to cast, rather than two.
+/// the copy limit, the bracket, the mana base and the role counts all count by, so a card
+/// held in two arts is one Game Changer, one source, one spell to cast, one piece of removal,
+/// rather than two.
 pub(super) struct NameFold<'a> {
     pub facts: &'a CardFacts,
-    /// The first printing the deck holds the card under, for keys and links.
+    /// The **smallest** external id among the name's printings, for keys and links — not the
+    /// first in row order: a precon and the deck copied from it load their rows in different
+    /// orders, and the two must answer byte-identically (the rule the token fold applies).
     pub card_id: String,
     /// Copies across every folded row.
     pub copies: i64,
@@ -241,7 +250,12 @@ pub(super) fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a
             continue;
         }
         match index_by_name.get(entry.facts.name.as_str()) {
-            Some(&index) => folds[index].copies += copies,
+            Some(&index) => {
+                folds[index].copies += copies;
+                if entry.facts.id < folds[index].card_id {
+                    folds[index].card_id = entry.facts.id.clone();
+                }
+            }
             None => {
                 index_by_name.insert(entry.facts.name.as_str(), folds.len());
                 folds.push(NameFold {
