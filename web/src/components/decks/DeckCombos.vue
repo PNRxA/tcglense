@@ -105,15 +105,16 @@ const plural = (n: number) => (n === 1 ? '' : 's')
 /** The header's one-line answer, counted from the exact totals rather than the capped
  *  lists — a deck of staples is one card from thousands of combos. */
 const subline = computed(() => {
-  if (!available.value) return 'Card interactions, from a curated combo database.'
+  const from = `(${source.value})`
+  if (!available.value) return `Card interactions, from a curated combo database ${from}.`
   const can = comboCount.value
   const short = almostCount.value
   if (can > 0 && short > 0) {
-    return `This deck can assemble ${can} combo${plural(can)} and is one card short of ${short} more.`
+    return `This deck can assemble ${can} combo${plural(can)} and is one card short of ${short} more ${from}.`
   }
-  if (can > 0) return `This deck can assemble ${can} combo${plural(can)}.`
-  if (short > 0) return `This deck is one card short of ${short} combo${plural(short)}.`
-  return 'Card interactions, from a curated combo database.'
+  if (can > 0) return `This deck can assemble ${can} combo${plural(can)} ${from}.`
+  if (short > 0) return `This deck is one card short of ${short} combo${plural(short)} ${from}.`
+  return `Card interactions, from a curated combo database ${from}.`
 })
 
 /** A piece's chip: muted and dashed when the deck doesn't hold it (the point of the
@@ -131,6 +132,13 @@ const cardMisses = (combo: DeckCombo): DeckComboMissing[] =>
 const templateMisses = (combo: DeckCombo): DeckComboMissing[] =>
   combo.missing.filter((m) => m.kind === 'template')
 
+/** The panel itself is collapsed by default, like the roles and mana panels beside it: the
+ *  header's one-line answer (counted from the exact totals) is what most visits want, and
+ *  the combos themselves — pieces, results, steps — open behind "Details". The credit the
+ *  source asks for stays in the subline so it is never hidden with the lists. */
+const panelOpen = ref(false)
+const panelId = useId()
+
 /** One combo's steps, open on demand: the description is several lines of rules work, and
  *  a page of them unfolded is a wall rather than a list of combos. */
 const expanded = ref(new Set<string>())
@@ -147,17 +155,38 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
 
 <template>
   <Card class="mt-8 gap-3 py-4" :aria-busy="updating || undefined">
-    <CardHeader class="pb-0">
-      <CardTitle class="flex items-center gap-2 text-base">
-        <InfinityIcon class="size-4" aria-hidden="true" /> Combos
-      </CardTitle>
-      <p class="text-muted-foreground text-xs" aria-live="polite">
-        <template v-if="updating"><UpdatingCue label="Rechecking…" /></template>
-        <template v-else>{{ subline }}</template>
-      </p>
+    <CardHeader class="flex flex-row items-start justify-between gap-3 space-y-0 pb-0">
+      <div class="min-w-0">
+        <CardTitle class="flex items-center gap-2 text-base">
+          <InfinityIcon class="size-4" aria-hidden="true" /> Combos
+        </CardTitle>
+        <p class="text-muted-foreground text-xs" aria-live="polite">
+          <template v-if="pending"><UpdatingCue label="Reading the deck…" /></template>
+          <template v-else-if="updating"><UpdatingCue label="Rechecking…" /></template>
+          <template v-else>{{ subline }}</template>
+        </p>
+      </div>
+      <!-- `aria-label` because this page carries several other buttons reading exactly
+        "Details" (the roles', the mana base's, the bracket's). -->
+      <button
+        type="button"
+        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex shrink-0 items-center gap-1 rounded-sm text-xs font-medium outline-none focus-visible:ring-3 disabled:opacity-50"
+        aria-label="Details for combos"
+        :aria-expanded="panelOpen"
+        :aria-controls="panelOpen ? panelId : undefined"
+        :disabled="pending"
+        @click="panelOpen = !panelOpen"
+      >
+        Details
+        <ChevronDown
+          class="size-3.5 transition-transform"
+          :class="panelOpen ? 'rotate-180' : ''"
+          aria-hidden="true"
+        />
+      </button>
     </CardHeader>
 
-    <CardContent class="space-y-4">
+    <CardContent v-if="panelOpen" :id="panelId" class="space-y-4 border-t pt-4">
       <div v-if="pending" class="space-y-2">
         <Skeleton v-for="n in 3" :key="n" class="h-16 w-full rounded-lg" />
       </div>

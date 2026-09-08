@@ -122,9 +122,31 @@ function mountPanel(props: Record<string, unknown> = {}) {
   })
 }
 
+/** The panel mounts collapsed; most of the suite reads what is behind "Details". */
+async function mountOpen(props: Record<string, unknown> = {}) {
+  const wrapper = mountPanel(props)
+  await wrapper.get('button[aria-label="Details for combos"]').trigger('click')
+  return wrapper
+}
+
 describe('DeckCombos', () => {
-  it('lists an assembled combo by its pieces and what it makes', () => {
+  it('is collapsed by default, with the answer and the credit in the header', async () => {
     const wrapper = mountPanel()
+
+    // The one-line answer and the source are readable without opening anything.
+    expect(wrapper.text()).toContain('This deck can assemble 1 combo (Commander Spellbook).')
+    expect(wrapper.text()).not.toContain('In this deck')
+    expect(wrapper.text()).not.toContain('Basalt Monolith')
+    const toggle = wrapper.get('button[aria-label="Details for combos"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.text()).toContain('Basalt Monolith')
+  })
+
+  it('lists an assembled combo by its pieces and what it makes', async () => {
+    const wrapper = await mountOpen()
 
     expect(wrapper.text()).toContain('Combos')
     expect(wrapper.text()).toContain('In this deck')
@@ -141,16 +163,18 @@ describe('DeckCombos', () => {
   })
 
   it('shows the steps only once the disclosure is opened', async () => {
-    const wrapper = mountPanel()
+    const wrapper = await mountOpen()
     expect(wrapper.text()).not.toContain('Both on the battlefield.')
 
-    await wrapper.get('button[aria-expanded]').trigger('click')
+    await wrapper
+      .get('button[aria-expanded]:not([aria-label="Details for combos"])')
+      .trigger('click')
 
     expect(wrapper.text()).toContain('Both on the battlefield.')
     expect(wrapper.text()).toContain('Untap it with the second.')
   })
 
-  it('says what a one-card-short combo still needs', () => {
+  it('says what a one-card-short combo still needs', async () => {
     query.data = makePayload({
       combos: [],
       combo_count: 0,
@@ -184,7 +208,7 @@ describe('DeckCombos', () => {
       almost_count: 1,
     })
 
-    const text = mountPanel().text()
+    const text = (await mountOpen()).text()
 
     expect(text).toContain('One card short')
     expect(text).toContain('This deck is one card short of 1 combo')
@@ -196,7 +220,7 @@ describe('DeckCombos', () => {
     expect(text).not.toMatch(/you (already )?have it/i)
   })
 
-  it('names a piece that has to be the commander as such', () => {
+  it('names a piece that has to be the commander as such', async () => {
     query.data = makePayload({
       combos: [],
       combo_count: 0,
@@ -209,65 +233,67 @@ describe('DeckCombos', () => {
       almost_count: 1,
     })
 
-    expect(mountPanel().text()).toContain('in the command zone')
+    expect((await mountOpen()).text()).toContain('in the command zone')
   })
 
-  it('says how many combos a capped list left out', () => {
+  it('says how many combos a capped list left out', async () => {
     query.data = makePayload({ combo_count: 137, almost: [combo({ id: 'a-1' })], almost_count: 9 })
-    const text = mountPanel().text()
+    const text = (await mountOpen()).text()
 
     expect(text).toContain('…and 136 more')
     expect(text).toContain('…and 8 more')
-    expect(text).toContain('This deck can assemble 137 combos and is one card short of 9 more.')
+    expect(text).toContain(
+      'This deck can assemble 137 combos and is one card short of 9 more (Commander Spellbook).',
+    )
   })
 
-  it('reports unsynced combo data as unknown, never as "no combos"', () => {
+  it('reports unsynced combo data as unknown, never as "no combos"', async () => {
     query.data = makePayload({ combos: [], combo_count: 0, almost: [], almost_count: 0 })
     query.data.available = false
 
-    const text = mountPanel().text()
+    const text = (await mountOpen()).text()
 
     expect(text).toContain("Combo data hasn't been synced yet")
     // The one wording that would be a confident wrong answer.
     expect(text).not.toContain('None')
   })
 
-  it('says a deck has no combos only when the data is there to say it', () => {
+  it('says a deck has no combos only when the data is there to say it', async () => {
     query.data = makePayload({ combos: [], combo_count: 0, almost: [], almost_count: 0 })
 
-    const text = mountPanel().text()
+    const text = (await mountOpen()).text()
 
     expect(text).toContain("None of Commander Spellbook's combos are in this deck")
     expect(text).not.toContain("hasn't been synced")
   })
 
-  it('credits the source with a link, whatever it is showing', () => {
-    const link = mountPanel().get('a[href="https://commanderspellbook.com"]')
+  it('credits the source with a link, whatever it is showing', async () => {
+    const link = (await mountOpen()).get('a[href="https://commanderspellbook.com"]')
     expect(link.text()).toContain('Commander Spellbook')
     expect(link.attributes('target')).toBe('_blank')
     expect(link.attributes('rel')).toBe('noopener noreferrer')
 
     query.data = makePayload({ combos: [], combo_count: 0 })
     query.data.available = false
-    expect(mountPanel().find('a[href="https://commanderspellbook.com"]').exists()).toBe(true)
+    expect((await mountOpen()).find('a[href="https://commanderspellbook.com"]').exists()).toBe(true)
   })
 
-  it('keeps the list on screen when a background refetch fails', () => {
+  it('keeps the list on screen when a background refetch fails', async () => {
     // query-core flips `status` to 'error' on ANY failed fetch while keeping `data`, so
     // gating the destructive branch on bare `isError` would swap a good list for "couldn't
     // work out" the first time a refetch hiccups (issue #622).
     query.refetchError = true
-    const wrapper = mountPanel()
+    const wrapper = await mountOpen()
 
     expect(wrapper.text()).toContain('Basalt Monolith')
     expect(wrapper.text()).not.toContain("Couldn't work out")
     expect(wrapper.text()).toContain("Couldn't refresh")
   })
 
-  it('says it couldn’t work them out only when nothing ever loaded', () => {
+  it('says it couldn’t work them out only when nothing ever loaded', async () => {
     query.loadingError = true
     query.data = null
-    const text = mountPanel().text()
+    const text = (await mountOpen()).text()
 
     expect(text).toContain("Couldn't work out")
     expect(text).not.toContain('None of')
