@@ -223,8 +223,12 @@ describe('CardMetaList print details (issue #673)', () => {
       ],
     })
     const wrapper = mountMeta(battle)
-    expect(wrapper.text()).toContain('Defense')
-    expect(wrapper.text()).toContain('5')
+    // Read the Defense row's own value: the fixture's release date also contains a "5", so
+    // a whole-text `toContain('5')` would pass with the box rendering nothing.
+    const labels = wrapper.findAll('dt')
+    const row = labels.findIndex((dt) => dt.text() === 'Defense')
+    expect(row, 'the Defense row should render for a Battle').toBeGreaterThan(-1)
+    expect(wrapper.findAll('dd')[row]!.text()).toBe('5')
     // P/T stays per-face for a multi-faced card, so its row is absent either way.
     expect(wrapper.text()).not.toContain('Power / Toughness')
   })

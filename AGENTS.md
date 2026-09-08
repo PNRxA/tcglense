@@ -609,9 +609,13 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   finishes, frame/border/stamp/promo types, Reserved List, produced mana, a Battle's
   defense, the EDHREC/Penny ranks — live on `CardDetailResponse` (ts `CardDetail`, issue
   #673), which `#[serde(flatten)]`s `Card` and is returned by the **single-card route
-  alone**, so a client typed against `Card` keeps working. Nothing there is derived (each
-  field is the column as stored) and a NULL provider boolean reads as `false`, a NULL
-  comma-joined column as `[]`.
+  alone**, so a client typed against `Card` keeps working. Each field is the column as
+  stored — except that `finishes` + `promo_types` **union in a folded foil-★ star's**
+  (`CardDetailResponse::with_folded_variants`, fed by a `folded_onto_id` probe in
+  `get_card`): the base's stored `finishes` must stay `nonfoil`-exactly (the pairing rule),
+  yet its page is the only page the folded star has and carries the star's foil price, so
+  the stored column alone would say "Regular only" beside a foil price. A NULL provider
+  boolean reads as `false`, a NULL comma-joined column as `[]`.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard). Every
   collection import is **one-off** — there is no saved link and no re-sync (the
   `collection_sources` table and the incremental "smart" sync went with them, `m..072`),

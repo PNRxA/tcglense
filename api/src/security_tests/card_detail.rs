@@ -108,6 +108,85 @@ async fn insert_bare_card(db: &sea_orm::DatabaseConnection, external_id: &str, o
     .expect("insert bare card");
 }
 
+/// A printing whose foil is a separate `…★` object folded onto it: the base's stored
+/// `finishes` is `nonfoil` exactly (the pairing rule) and its foil price is the star's.
+async fn insert_folded_pair(db: &sea_orm::DatabaseConnection) {
+    let now = Utc::now();
+    let base = card::ActiveModel {
+        game: Set(crate::scryfall::GAME.to_string()),
+        external_id: Set("folded-base".to_string()),
+        oracle_id: Set(Some("oracle-folded".to_string())),
+        name: Set("Folded Relic".to_string()),
+        set_code: Set("sld".to_string()),
+        set_name: Set("Secret Lair Drop".to_string()),
+        collector_number: Set("1587".to_string()),
+        collector_number_int: Set(Some(1587)),
+        lang: Set("en".to_string()),
+        finishes: Set(Some("nonfoil".to_string())),
+        promo_types: Set(Some("boosterfun".to_string())),
+        price_usd: Set(Some("10.00".to_string())),
+        // Copied on from the star by `enrich_foil_variant_prices`.
+        price_usd_foil: Set(Some("25.00".to_string())),
+        digital: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert folded base");
+    card::ActiveModel {
+        game: Set(crate::scryfall::GAME.to_string()),
+        external_id: Set("folded-star".to_string()),
+        oracle_id: Set(Some("oracle-folded".to_string())),
+        name: Set("Folded Relic".to_string()),
+        set_code: Set("sld".to_string()),
+        set_name: Set("Secret Lair Drop".to_string()),
+        collector_number: Set("1587★".to_string()),
+        collector_number_int: Set(Some(1587)),
+        lang: Set("en".to_string()),
+        finishes: Set(Some("foil".to_string())),
+        promo_types: Set(Some("boosterfun,rainbowfoil".to_string())),
+        price_usd_foil: Set(Some("25.00".to_string())),
+        folded_onto_id: Set(Some(base.id)),
+        digital: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert folded star");
+}
+
+#[tokio::test]
+async fn a_folded_foil_variant_lends_its_finish_and_treatment_to_its_base() {
+    let app = test_app().await;
+    insert_folded_pair(&app.state.db).await;
+
+    // The base's page is the only page the folded star has, and it already shows the
+    // star's foil price — so its finishes must say foil too, and carry the star's
+    // foil-treatment tag, without the stored columns being rewritten.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards/folded-base")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["prices"]["usd_foil"], "25.00");
+    assert_eq!(body["finishes"], serde_json::json!(["nonfoil", "foil"]));
+    assert_eq!(
+        body["promo_types"],
+        serde_json::json!(["boosterfun", "rainbowfoil"])
+    );
+
+    // The star itself still answers its own columns by id (the fold is a listing
+    // presentation, not a deletion), and it lends nothing to itself.
+    let (status, _, body) = send(&app, get("/api/games/mtg/cards/folded-star")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["finishes"], serde_json::json!(["foil"]));
+    assert_eq!(
+        body["promo_types"],
+        serde_json::json!(["boosterfun", "rainbowfoil"])
+    );
+}
+
 #[tokio::test]
 async fn card_detail_flattens_the_shared_card_and_adds_the_print_details() {
     let app = test_app().await;

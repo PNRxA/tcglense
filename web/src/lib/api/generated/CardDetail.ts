@@ -11,9 +11,13 @@ import type { CardPrices } from "./CardPrices";
  *
  * Detail-only on purpose: `CardResponse` rides every list payload (a grid page is up to 200
  * of them, CDN/ETag-cached), so these ~20 columns stay off it and live here, on the one
- * route that answers for a single card. Nothing here is derived — every field is the
- * catalog column as stored (`defense` is the printed box, rendered like P/T), so the
- * response stays a pure function of its URL and the public cache rules are unchanged.
+ * route that answers for a single card. Every field is the catalog column as stored
+ * (`defense` is the printed box, rendered like P/T) — with **one** derived pair:
+ * `finishes` and `promo_types` union in a folded foil-★ variant's through
+ * [`CardDetailResponse::with_folded_variants`], because the base's own columns are kept
+ * `nonfoil`-exactly by the pairing rule (see `scryfall::foil_variants`) while the star it
+ * stands for is hidden from every listing. The response is still a pure function of its
+ * URL, so the public cache rules are unchanged.
  */
 export type CardDetail = { 
 /**
@@ -39,7 +43,10 @@ flavor_text: string | null,
  */
 watermark: string | null, 
 /**
- * The finishes this printing exists in — `nonfoil` / `foil` / `etched`.
+ * The finishes this printing exists in — `nonfoil` / `foil` / `etched`. For a base whose
+ * foil-★ variant was folded onto it this includes the star's (`with_folded_variants`):
+ * the base's stored column says `nonfoil` alone, but the foil price on this very
+ * response is the star's, and the star has no page of its own in any listing.
  */
 finishes: Array<string>, 
 /**
@@ -59,7 +66,9 @@ border_color: string | null,
  */
 security_stamp: string | null, 
 /**
- * Scryfall's promo-type tags (`prerelease`, `buyabox`, `sldbonus`, …).
+ * Scryfall's promo-type tags (`prerelease`, `buyabox`, `sldbonus`, …), plus a folded
+ * foil-★ variant's foil-treatment tags (`rainbowfoil`, `surgefoil`, …) — the only tokens a
+ * star can carry that its base doesn't (`with_folded_variants`).
  */
 promo_types: Array<string>, 
 /**

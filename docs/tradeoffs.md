@@ -632,9 +632,13 @@ catalog) is planned but not implemented.
   `CardResponse` rather than nesting it, so the addition is backwards-compatible for a
   client typed against `Card` (the alternative — a sibling `/cards/{id}/details` endpoint —
   was rejected: the page already fetches the card, and a second round trip for fields that
-  are on the row the first query selected buys nothing). The wrapper is a pure projection:
-  no derivation, NULL booleans read as `false` (they are provider flags every card carries,
-  so NULL only ever means a row the sync predates), NULL CSV columns read as `[]`.
+  are on the row the first query selected buys nothing). The wrapper is a projection with
+  one derived pair: `finishes`/`promo_types` union in a folded foil-★ star's, since the
+  fold hides the star from every listing and copies its foil price onto the base while the
+  pairing rule forbids widening the base's stored `finishes` — publishing the column verbatim
+  put "Regular" only beside a foil price on ~500 pages (caught in review). Otherwise NULL
+  booleans read as `false` (they are provider flags every card carries, so NULL only ever
+  means a row the sync predates), NULL CSV columns read as `[]`.
 - **Deck-construction rules are derived from the card payload, not a curated table
   (`web/src/lib/deckRules.ts`).** The per-card ban list only answers "may this card be in
   the format" — the questions players actually get wrong are deck-wide: 101 cards, two

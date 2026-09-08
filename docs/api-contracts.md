@@ -291,11 +291,16 @@ level of the same object, so a client typed against `Card` reads the detail resp
 unchanged and simply ignores the extra keys. Those extras are **detail-only on purpose** —
 `Card` rides every *listing* (a grid page is up to 200 rows, CDN/ETag-cached, and the deck
 and holdings payloads carry hundreds more), so ~20 columns nobody reads in a grid stay off
-it and live on the one route that answers for a single card. Nothing here is derived: each
-field is the catalog column as stored, so `defense` is the Battle's printed box rendered
-like power/toughness (a string, `null` on everything that isn't a Battle), and a
-multi-faced card's `flavor_text` is its faces joined by `\n//\n` — the same join
-`oracle_text` gets, so `ft:` matches either face. The booleans are provider flags every
+it and live on the one route that answers for a single card. Each field is the catalog
+column as stored, so `defense` is the Battle's printed box rendered like power/toughness (a
+string, `null` on everything that isn't a Battle), and a multi-faced card's `flavor_text` is
+its faces joined by `\n//\n` — the same join `oracle_text` gets, so `ft:` matches either
+face. The **one derived pair** is `finishes` + `promo_types`: for a base whose foil-★ variant
+was folded onto it (next section) they union in the star's finish and its foil-treatment tag
+(`rainbowfoil`, `surgefoil`, …), because the base's stored column stays `nonfoil`-exactly by
+the pairing rule while the star has no page in any listing and its foil price already rides
+this very response — the same read-side answer `is:foil` gives. The stored columns are never
+rewritten. The booleans are provider flags every
 card carries, so a NULL column reads as **`false`**, never `null`; the comma-joined
 columns (`artist_ids`, `finishes`, `frame_effects`, `promo_types`, `produced_mana`) come
 back as arrays, **empty rather than null**. The response is still a pure function of its

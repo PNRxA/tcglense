@@ -100,9 +100,13 @@ pub(crate) struct CardResponse {
 ///
 /// Detail-only on purpose: `CardResponse` rides every list payload (a grid page is up to 200
 /// of them, CDN/ETag-cached), so these ~20 columns stay off it and live here, on the one
-/// route that answers for a single card. Nothing here is derived — every field is the
-/// catalog column as stored (`defense` is the printed box, rendered like P/T), so the
-/// response stays a pure function of its URL and the public cache rules are unchanged.
+/// route that answers for a single card. Every field is the catalog column as stored
+/// (`defense` is the printed box, rendered like P/T) — with **one** derived pair:
+/// `finishes` and `promo_types` union in a folded foil-★ variant's through
+/// [`CardDetailResponse::with_folded_variants`], because the base's own columns are kept
+/// `nonfoil`-exactly by the pairing rule (see `scryfall::foil_variants`) while the star it
+/// stands for is hidden from every listing. The response is still a pure function of its
+/// URL, so the public cache rules are unchanged.
 #[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardDetail"))]
 pub(crate) struct CardDetailResponse {
@@ -121,7 +125,10 @@ pub(crate) struct CardDetailResponse {
     pub flavor_text: Option<String>,
     /// The printed watermark (a guild or faction mark, a Universes Beyond logo), if any.
     pub watermark: Option<String>,
-    /// The finishes this printing exists in — `nonfoil` / `foil` / `etched`.
+    /// The finishes this printing exists in — `nonfoil` / `foil` / `etched`. For a base whose
+    /// foil-★ variant was folded onto it this includes the star's (`with_folded_variants`):
+    /// the base's stored column says `nonfoil` alone, but the foil price on this very
+    /// response is the star's, and the star has no page of its own in any listing.
     pub finishes: Vec<String>,
     /// The frame layout (`1993`, `2003`, `2015`, `future`, …).
     pub frame: Option<String>,
@@ -131,7 +138,9 @@ pub(crate) struct CardDetailResponse {
     pub border_color: Option<String>,
     /// The holofoil security stamp (`oval`, `triangle`, `acorn`, `arena`, …), if any.
     pub security_stamp: Option<String>,
-    /// Scryfall's promo-type tags (`prerelease`, `buyabox`, `sldbonus`, …).
+    /// Scryfall's promo-type tags (`prerelease`, `buyabox`, `sldbonus`, …), plus a folded
+    /// foil-★ variant's foil-treatment tags (`rainbowfoil`, `surgefoil`, …) — the only tokens a
+    /// star can carry that its base doesn't (`with_folded_variants`).
     pub promo_types: Vec<String>,
     /// The colours of mana this card can produce.
     pub produced_mana: Vec<String>,
@@ -290,6 +299,51 @@ impl From<card::Model> for CardResponse {
     }
 }
 
+/// The order the finishes list is spelled in on the wire (Scryfall's own), so a finish
+/// unioned in from a folded star lands where a native one would.
+const FINISH_ORDER: [&str; 3] = ["nonfoil", "foil", "etched"];
+
+impl CardDetailResponse {
+    /// Union the finishes and promo-type tags of the foil-★ variants folded onto this card
+    /// (`cards.folded_onto_id` = this row, each given as its raw `(finishes, promo_types)`
+    /// columns) into the response.
+    ///
+    /// A folded star is hidden from every listing and its foil price is already copied onto
+    /// the base, so the base's page is the only page that printing has — and its stored
+    /// `finishes` must stay `nonfoil`-exactly (the pairing rule's load-bearing half, see
+    /// `scryfall::foil_variants::has_folded_foil_variant`). Answering the stored column
+    /// verbatim would put "Regular only" beside a foil price; this is the read-side union
+    /// `is:foil` already performs. The stored columns are never rewritten. A card with no
+    /// folded star passes through unchanged, so the method is safe to call unconditionally.
+    pub(crate) fn with_folded_variants<I>(mut self, folded: I) -> Self
+    where
+        I: IntoIterator<Item = (Option<String>, Option<String>)>,
+    {
+        for (finishes, promo_types) in folded {
+            for finish in split_csv(finishes) {
+                if !self.finishes.contains(&finish) {
+                    self.finishes.push(finish);
+                }
+            }
+            for token in split_csv(promo_types) {
+                if !self.promo_types.contains(&token) {
+                    self.promo_types.push(token);
+                }
+            }
+        }
+        // Keep the known finishes in their canonical order (a star's `foil` must not trail an
+        // `etched` the base already had); anything unknown keeps its arrival order after them.
+        let rank = |f: &String| {
+            FINISH_ORDER
+                .iter()
+                .position(|known| known == f)
+                .unwrap_or(FINISH_ORDER.len())
+        };
+        self.finishes.sort_by_key(rank);
+        self
+    }
+}
+
 /// Whether a card's comma-joined `promo_types` marks it as a Secret Lair chase/bonus
 /// card. `sldbonus` is Scryfall's explicit tag for the optional card given with a
 /// qualifying Secret Lair purchase, so this is an exact-token match, not a substring
@@ -386,6 +440,36 @@ mod tests {
         assert_eq!(detail.card.id, plain.id);
         assert_eq!(detail.card.name, plain.name);
         assert_eq!(detail.card.set_code, plain.set_code);
+    }
+
+    #[test]
+    fn folded_variants_union_finishes_and_foil_treatments_only_when_present() {
+        let base = || {
+            let mut m = crate::test_support::card_model(1);
+            m.finishes = Some("nonfoil".to_string());
+            m.promo_types = Some("boosterfun".to_string());
+            CardDetailResponse::from(m)
+        };
+        // No folded star: the stored columns pass through untouched.
+        let plain = base().with_folded_variants(std::iter::empty());
+        assert_eq!(plain.finishes, vec!["nonfoil"]);
+        assert_eq!(plain.promo_types, vec!["boosterfun"]);
+
+        // A folded rainbow-foil star: its finish and its treatment token join the base's,
+        // deduplicated, finishes in canonical order.
+        let folded = base().with_folded_variants([(
+            Some("foil".to_string()),
+            Some("boosterfun,rainbowfoil".to_string()),
+        )]);
+        assert_eq!(folded.finishes, vec!["nonfoil", "foil"]);
+        assert_eq!(folded.promo_types, vec!["boosterfun", "rainbowfoil"]);
+
+        // Canonical order survives whatever order the stars arrive in.
+        let mut etched = crate::test_support::card_model(2);
+        etched.finishes = Some("etched".to_string());
+        let reordered = CardDetailResponse::from(etched)
+            .with_folded_variants([(Some("foil".to_string()), None)]);
+        assert_eq!(reordered.finishes, vec!["foil", "etched"]);
     }
 
     #[test]

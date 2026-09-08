@@ -2,7 +2,9 @@
 //! detail, and a card's other printings.
 
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter, QuerySelect, Select};
+use sea_orm::{
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+};
 
 use crate::entities::card;
 use crate::error::AppError;
@@ -227,7 +229,24 @@ pub async fn get_card(
 ) -> Result<Json<CardDetailResponse>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
-    Ok(Json(CardDetailResponse::from(card)))
+    // The foil-★ variants folded onto this row (`folded_onto_id`, the `m..076` partial index
+    // — ~500 rows catalog-wide): their finishes and foil-treatment tags are unioned into the
+    // response, since the star is hidden from every listing and its foil price already
+    // rides this card. The spelled-out `IS NOT NULL` keeps SQLite on that partial index
+    // (see `foil_variants::has_folded_foil_variant`). Two narrow columns, never the row.
+    let folded: Vec<(Option<String>, Option<String>)> = card::Entity::find()
+        .select_only()
+        .column(card::Column::Finishes)
+        .column(card::Column::PromoTypes)
+        .filter(card::Column::FoldedOntoId.is_not_null())
+        .filter(card::Column::FoldedOntoId.eq(card.id))
+        .order_by_asc(card::Column::Id)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    Ok(Json(
+        CardDetailResponse::from(card).with_folded_variants(folded),
+    ))
 }
 
 /// List card printings
