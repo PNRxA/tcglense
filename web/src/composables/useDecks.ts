@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/vue-query'
 import type { MaybeRefOrGetter, Ref } from 'vue'
 import {
+  addDeckToCollection,
+  addPublicDeckToCollection,
   changeDeckCardPrinting,
   copyPublicDeck,
   createDeck,
@@ -30,6 +32,7 @@ import {
 import type {
   ApiError,
   CardDeckRef,
+  CollectionAddSummary,
   CollectionQuantities,
   CreateDeckRequest,
   Deck,
@@ -43,6 +46,7 @@ import type {
   UpdateDeckRequest,
 } from '@/lib/api'
 import { invalidateDeckAnalysis } from '@/composables/useDeckAnalysis'
+import { invalidateCollectionData } from '@/composables/useCollection'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 
 // ---------- Deck query + mutation composables (issue #363) ----------
@@ -157,6 +161,16 @@ export function invalidateDeck(qc: QueryClient, game: string, deckId?: number) {
   invalidateDeckAnalysis(qc, game, deckId)
 }
 
+/** Refresh everything that reads the collection after a deck or precon was added to it: the
+ * whole collection family (grid, summary, per-card entries, the owned-count badges the deck
+ * page overlays on its tiles, value history, movers) plus the "cards needed" list, which
+ * subtracts the collection from the decks' demand. The deck itself is unchanged, so its own
+ * detail is not touched. Shared with `usePrecons`' twin mutation so both invalidate alike. */
+export function invalidateAfterCollectionAdd(qc: QueryClient, game: string) {
+  invalidateCollectionData(qc, game)
+  qc.invalidateQueries({ queryKey: ['deck-needed', game] })
+}
+
 // ----- Mutation variable shapes -----
 
 export interface CreateDeckVars {
@@ -170,6 +184,17 @@ export interface ImportDeckVars {
 export interface CopyPublicDeckVars {
   handle: string
   deckId: number
+}
+export interface AddDeckToCollectionVars {
+  game: string
+  deckId: number
+}
+export interface AddPublicDeckToCollectionVars {
+  handle: string
+  deckId: number
+  /** The source deck's game — the write is handle-addressed, but the collection family to
+   * refresh is per game, and the caller already holds it on the loaded deck. */
+  game: string
 }
 export interface UpdateDeckVars {
   game: string
@@ -285,6 +310,38 @@ export function useCopyPublicDeckMutation() {
     },
   }
   return useAuthedMutation<DeckDetail, CopyPublicDeckVars>(options)
+}
+
+/** Add a deck's cards to the caller's collection, on top of what they own ("I bought this").
+ * Additive and not idempotent — the button confirms before calling it. */
+export function useAddDeckToCollectionMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: AddDeckToCollectionVars) =>
+      addDeckToCollection(token, vars.game, vars.deckId),
+    onSettled: (
+      _d: CollectionAddSummary | undefined,
+      _e: ApiError | null,
+      vars: AddDeckToCollectionVars,
+    ) => invalidateAfterCollectionAdd(qc, vars.game),
+  }
+  return useAuthedMutation<CollectionAddSummary, AddDeckToCollectionVars>(options)
+}
+
+/** Add someone's public deck to the caller's collection ("I bought the singles"). Additive
+ * and not idempotent, like the owner-deck twin — the button confirms first. */
+export function useAddPublicDeckToCollectionMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: AddPublicDeckToCollectionVars) =>
+      addPublicDeckToCollection(token, vars.handle, vars.deckId),
+    onSettled: (
+      _d: CollectionAddSummary | undefined,
+      _e: ApiError | null,
+      vars: AddPublicDeckToCollectionVars,
+    ) => invalidateAfterCollectionAdd(qc, vars.game),
+  }
+  return useAuthedMutation<CollectionAddSummary, AddPublicDeckToCollectionVars>(options)
 }
 
 export function useUpdateDeckMutation() {

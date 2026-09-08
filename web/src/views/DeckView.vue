@@ -41,6 +41,7 @@ import CardSearchBox from '@/components/cards/CardSearchBox.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardTile from '@/components/cards/CardTile.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
+import AddToCollectionButton from '@/components/decks/AddToCollectionButton.vue'
 import DeckAddCard from '@/components/decks/DeckAddCard.vue'
 import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
@@ -90,6 +91,7 @@ const {
   totalCount,
   ownedInCollection,
   wantedInWishlist,
+  addDeckToCollection,
   folders,
   renameOpen,
   editName,
@@ -259,6 +261,17 @@ function copyDeckList() {
             </PopoverContent>
           </Popover>
           <SetUsernameDialog v-model:open="usernameDialogOpen" @saved="onUsernameSaved" />
+
+          <!-- "I bought this": every card of the deck proper and its sideboard into the
+            collection, on top of what's owned (the maybeboards stay out, as in the totals
+            above). Hidden for an empty deck — there is nothing to add. -->
+          <AddToCollectionButton
+            v-if="deck.summary.total_cards > 0"
+            :game="game"
+            :copies="deck.summary.total_cards"
+            note="Every card in this deck, from every section except its maybeboards."
+            :submit="addDeckToCollection"
+          />
 
           <DropdownMenu>
             <DropdownMenuTrigger as-child>

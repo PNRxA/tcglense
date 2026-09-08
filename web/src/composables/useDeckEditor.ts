@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  useAddDeckToCollectionMutation,
   useCreateSectionMutation,
   useDeckQuery,
   useDeleteDeckMutation,
@@ -67,6 +68,14 @@ export function useDeckEditor(props: DeckEditorProps) {
   function wantedInWishlist(cardId: string): number {
     const counts = wishlistWanted.value[cardId]
     return counts ? counts.quantity + counts.foil_quantity : 0
+  }
+
+  // "I bought this": every card outside the maybeboards into the collection, on top of what
+  // is already owned. The button that calls this confirms first — the write is additive, so
+  // a second call records a second copy of everything.
+  const addToCollection = useAddDeckToCollectionMutation()
+  function addDeckToCollection() {
+    return addToCollection.mutateAsync({ game: props.game, deckId: deckId.value })
   }
 
   // Deck metadata and folder actions.
@@ -320,6 +329,7 @@ export function useDeckEditor(props: DeckEditorProps) {
     totalCount,
     ownedInCollection,
     wantedInWishlist,
+    addDeckToCollection,
     folders,
     renameOpen,
     editName,

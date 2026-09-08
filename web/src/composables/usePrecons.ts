@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
+  addPreconToCollection,
   copyPrecon,
   getCardPrecons,
   getPrecon,
@@ -11,6 +12,7 @@ import {
 import type {
   ApiError,
   CardPreconRef,
+  CollectionAddSummary,
   DeckDetail,
   Page,
   PreconDeckDetail,
@@ -20,7 +22,7 @@ import type {
   PreconPage,
 } from '@/lib/api'
 import { useAuthedMutation } from '@/lib/queries'
-import { invalidateDeck } from '@/composables/useDecks'
+import { invalidateAfterCollectionAdd, invalidateDeck } from '@/composables/useDecks'
 import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
 
 /**
@@ -28,8 +30,9 @@ import { PRICED_CATALOG_STALE_MS } from '@/lib/queryClient'
  * is game data, like a card or a sealed product), so they use plain `useQuery` rather than
  * `useAuthedQuery`, with the reactive params inside the key so a change refetches.
  *
- * The one write — copying a precon into your own decks — is authed and invalidates the deck
- * family, exactly as the public-deck copy does.
+ * The two writes — copying a precon into your own decks, and adding its cards to your
+ * collection — are authed and invalidate the deck family / the collection family, exactly as
+ * the public-deck copy and the deck's own add-to-collection do.
  */
 
 /** Precons per page in the flat browse grid. */
@@ -178,4 +181,26 @@ export function useCopyPreconMutation() {
       invalidateDeck(qc, d?.game ?? vars.game),
   }
   return useAuthedMutation<DeckDetail, CopyPreconVars>(options)
+}
+
+interface AddPreconToCollectionVars {
+  game: string
+  slug: string
+}
+
+/** Add every card the precon ships to the caller's collection, on top of what they own ("I
+ *  bought this precon"). Additive and not idempotent — the button confirms first. Invalidates
+ *  the collection family through the same helper the deck's own add uses. */
+export function useAddPreconToCollectionMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: AddPreconToCollectionVars) =>
+      addPreconToCollection(token, vars.game, vars.slug),
+    onSettled: (
+      _d: CollectionAddSummary | undefined,
+      _e: ApiError | null,
+      vars: AddPreconToCollectionVars,
+    ) => invalidateAfterCollectionAdd(qc, vars.game),
+  }
+  return useAuthedMutation<CollectionAddSummary, AddPreconToCollectionVars>(options)
 }

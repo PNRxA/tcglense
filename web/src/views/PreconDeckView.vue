@@ -10,6 +10,7 @@ import LoadingRow from '@/components/cards/LoadingRow.vue'
 import ManaSymbols from '@/components/cards/ManaSymbols.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import AddToCollectionButton from '@/components/decks/AddToCollectionButton.vue'
 import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
@@ -25,14 +26,18 @@ import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
 import { usePreconLegalityQuery } from '@/composables/useDeckAnalysis'
 import { useGameName } from '@/composables/useCatalog'
-import { useCopyPreconMutation, usePreconQuery } from '@/composables/usePrecons'
+import {
+  useAddPreconToCollectionMutation,
+  useCopyPreconMutation,
+  usePreconQuery,
+} from '@/composables/usePrecons'
 import { ApiError } from '@/lib/api'
 import { DECK_CARD_SIZE_GRID_CLASS } from '@/lib/cardSize'
 import { deckListText } from '@/lib/deckText'
 import { deckSectionTargetId } from '@/lib/deckSectionNav'
 import { colorLettersToText } from '@/lib/mana'
 import { formatReleaseLabel } from '@/lib/releaseDate'
-import { preconBoards } from '@/lib/precons'
+import { PRECON_BOARDS, preconBoards } from '@/lib/precons'
 import { productTypeLabel } from '@/lib/productType'
 import { usePageMeta } from '@/lib/seo'
 import { graph, breadcrumbList, preconCrumbs, sealedProductNode } from '@/lib/structuredData'
@@ -134,6 +139,30 @@ async function copyToMyDecks() {
       error instanceof ApiError ? error.message : 'The deck could not be copied. Please retry.'
   }
 }
+
+// "I bought this precon": every card in the box into the visitor's collection, on top of what
+// they own. Shares the copy button's sign-in gate; the button itself confirms first, since the
+// write is additive. The copies named are the whole box — deck proper plus sideboard — which
+// is what the server adds (a precon has no maybeboard to leave out).
+const addMutation = useAddPreconToCollectionMutation()
+function addToCollection() {
+  return addMutation.mutateAsync({ game: game.value, slug: slug.value })
+}
+const boxCopies = computed(() =>
+  precon.value ? precon.value.card_count + precon.value.sideboard_count : 0,
+)
+// Name only the boards this deck actually ships: most precons have no sideboard, and a
+// 60-card starter has no command zone, so a fixed "including its command zone and sideboard"
+// would describe a box the reader isn't holding. The board key is the API's vocabulary,
+// mirrored in `lib/precons`.
+const boxNote = computed(() => {
+  const cards = precon.value?.cards ?? []
+  const extras: string[] = []
+  if (cards.some((entry) => entry.board === PRECON_BOARDS[0])) extras.push('command zone')
+  if ((precon.value?.sideboard_count ?? 0) > 0) extras.push('sideboard')
+  const including = extras.length ? `, including its ${extras.join(' and ')}` : ''
+  return `Every card the deck ships with${including}.`
+})
 
 // The set a deck shipped with, as the title and description word it.
 const setLabel = computed(() =>
@@ -272,6 +301,13 @@ usePageMeta({
               </span>
               <span v-else>Sealed product</span>
             </RouterLink>
+            <AddToCollectionButton
+              v-if="canCopy && boxCopies > 0"
+              :game="game"
+              :copies="boxCopies"
+              :note="boxNote"
+              :submit="addToCollection"
+            />
             <Button
               v-if="canCopy"
               size="sm"

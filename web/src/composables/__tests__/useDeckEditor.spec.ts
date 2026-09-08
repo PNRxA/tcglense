@@ -55,6 +55,7 @@ vi.mock('@/composables/useDecks', async () => {
   return {
     useDeckQuery: () => ({ data: ref(deck), isPending: ref(false), isError: ref(false) }),
     useFoldersQuery: () => ({ data: ref({ data: [] }) }),
+    useAddDeckToCollectionMutation: mutation,
     useCreateSectionMutation: mutation,
     useDeleteDeckMutation: mutation,
     useDeleteSectionMutation: mutation,

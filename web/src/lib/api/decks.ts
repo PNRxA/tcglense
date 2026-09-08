@@ -2,6 +2,7 @@ import { request, requestBlob } from './client'
 import type {
   CardDeckRef,
   ChangeDeckCardPrintingRequest,
+  CollectionAddSummary,
   CollectionQuantities,
   CreateDeckRequest,
   Deck,
@@ -29,6 +30,7 @@ import type {
 export type {
   CardDeckPrintingRef,
   CardDeckRef,
+  CollectionAddSummary,
   CreateDeckRequest,
   Deck,
   DeckCardEntry,
@@ -287,6 +289,23 @@ export function changeDeckCardPrinting(
   )
 }
 
+// ----- Collection -----
+
+/** Add every card of one of the caller's decks to their collection, **on top of** what they
+ * already own — "I bought this" (the deck proper plus its sideboard; maybeboards are skipped).
+ * Additive by design: a second call records a second copy of every card, which is why the
+ * button that fires it confirms first. Returns what was added. */
+export function addDeckToCollection(
+  token: string,
+  game: string,
+  deckId: number,
+): Promise<CollectionAddSummary> {
+  return request<CollectionAddSummary>(`${deckBase(game, deckId)}/collection`, {
+    method: 'POST',
+    token,
+  })
+}
+
 // ----- Import/export -----
 
 export type DeckExportFormat = 'archidekt' | 'moxfield' | 'moxfield-text'
@@ -317,6 +336,20 @@ export function getPublicDecks(handle: string): Promise<{ data: Deck[] }> {
 /** One public deck's full detail, by handle + deck id. Token-less; CDN-cacheable. */
 export function getPublicDeck(handle: string, deckId: number): Promise<DeckDetail> {
   return request<DeckDetail>(`${publicBase(handle)}/${deckId}`)
+}
+
+/** Add every card of someone's public deck (by handle + deck id) to the caller's own
+ * collection, on top of what they own — "I bought the singles for this list". The same
+ * additive, non-idempotent write as `addDeckToCollection`, addressed like the copy. */
+export function addPublicDeckToCollection(
+  token: string,
+  handle: string,
+  deckId: number,
+): Promise<CollectionAddSummary> {
+  return request<CollectionAddSummary>(`${publicBase(handle)}/${deckId}/collection`, {
+    method: 'POST',
+    token,
+  })
 }
 
 /** Copy a public deck (by handle + deck id) into the caller's own decks and return the new
