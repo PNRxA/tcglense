@@ -20,9 +20,11 @@ import type { DeckManaColor, DeckManaDemandCard, DeckManaStatus } from '@/lib/ap
 // (`GET /api/decks/{game}/{deck_id}/mana`, or its public and precon mirrors), so a CLI asking
 // "do I have enough blue for UU on turn two" gets the same answer this panel draws.
 //
-// Like `DeckStats` and `DeckBracket` beside it, the panel **rests collapsed**: one row per
-// colour — the pip, sources against the number needed, and the verdict as a chip — which is
-// the whole question answered at a glance. Behind "Details" sit the evidence and the model:
+// Like `DeckStats` and `DeckBracket` beside it, the panel **rests collapsed**, on two short
+// rows: one chip per colour — the pip, sources against the number needed, and the verdict as
+// a badge — and the one-line model the numbers are judged against. That is the whole question
+// answered at a glance in the height of the bracket panel; the pip counts, the hybrid pips and
+// the verdict sentence ride each chip's tooltip. Behind "Details" sit the evidence and the model:
 // which spells set each colour's requirement (the number can be audited against the cards
 // it was made of, as the bracket's can), which cards were counted as sources, and the caveats
 // that say what Karsten's table assumes. The chip and the detail heading read the same
@@ -75,12 +77,27 @@ const STATUS_TONE: Record<DeckManaStatus, string> = {
   undecided: 'bg-muted text-muted-foreground',
 }
 
-/** The chip's word. "Short 2" carries the number because that is the thing to fix. */
+/** The badge's word. "Short 2" carries the number because that is the thing to fix; a colour
+ * only hybrid pips ask for says so, since a bare "No demand" would hide the one thing worth
+ * knowing about it. */
 function statusLabel(color: DeckManaColor): string {
   if (color.status === 'enough') return 'Enough'
   if (color.status === 'short') return `Short ${color.shortfall}`
   if (color.status === 'undecided') return 'Depends on X'
-  return 'No demand'
+  return color.hybrid_pips > 0 ? 'Hybrid only' : 'No demand'
+}
+
+/** A chip's tooltip: the verdict sentence plus the demand the chip has no room for. */
+function chipTitle(color: DeckManaColor): string {
+  const parts = [color.verdict]
+  if (color.pips > 0) {
+    parts.push(`${color.pips} ${color.label.toLowerCase()} ${plural(color.pips, 'pip', 'pips')}`)
+  }
+  if (color.hybrid_pips > 0) {
+    parts.push(`${color.hybrid_pips} hybrid ${plural(color.hybrid_pips, 'pip', 'pips')}`)
+  }
+  parts.push(`${color.sources} ${plural(color.sources, 'source', 'sources')} in the library`)
+  return parts.join(' · ')
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -120,10 +137,10 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
     nothing is not an answer. -->
   <Card
     v-if="pending || failed || colors.length > 0"
-    class="mb-6"
+    class="mb-6 gap-3 py-4"
     :aria-busy="pending || updating || undefined"
   >
-    <CardHeader class="flex flex-row items-center justify-between gap-3 space-y-0">
+    <CardHeader class="flex flex-row items-center justify-between gap-3 space-y-0 pb-0">
       <CardTitle class="text-base">Mana base</CardTitle>
       <div class="flex shrink-0 items-center gap-3">
         <span class="text-muted-foreground text-xs" aria-live="polite">
@@ -156,54 +173,35 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
       <p class="text-destructive text-sm">The mana base couldn't be worked out. Please retry.</p>
     </CardContent>
 
-    <!-- The resting shape: a few colour rows' worth of skeleton. -->
+    <!-- The resting shape: a chip row and the model line. -->
     <CardContent v-else-if="pending" class="space-y-2">
-      <Skeleton v-for="n in 3" :key="n" class="h-5 w-64 max-w-full" />
+      <Skeleton class="h-6 w-80 max-w-full" />
+      <Skeleton class="h-3.5 w-64 max-w-full" />
     </CardContent>
 
-    <CardContent v-else-if="base" class="space-y-4">
+    <CardContent v-else-if="base" class="space-y-2">
       <StaleNotice
         v-if="manaQuery.isRefetchError.value"
         label="Couldn't refresh — showing the mana base as it last loaded."
       />
 
-      <!-- The resting rows: one per colour, the whole question at a glance. -->
-      <ul class="space-y-1.5">
+      <!-- The resting row: one chip per colour, the whole question at a glance — the idiom of
+        DeckBracket's category chips, so the two panels stacked on the page read as one. -->
+      <ul class="flex flex-wrap items-center gap-1.5">
         <li
           v-for="color in colors"
           :key="color.color"
-          class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-          :title="color.verdict"
+          class="inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs"
+          :title="chipTitle(color)"
         >
-          <span class="inline-flex w-24 items-center gap-1.5">
-            <ManaSymbols :text="`{${color.color}}`" class="leading-none" aria-hidden="true" />
-            <span>{{ color.label }}</span>
-          </span>
+          <ManaSymbols :text="`{${color.color}}`" class="leading-none" aria-hidden="true" />
+          <span class="sr-only">{{ color.label }}:</span>
+          <span class="font-semibold tabular-nums">{{ sourcesLabel(color) }}</span>
           <span
-            class="tabular-nums"
-            :title="`${color.sources} ${plural(color.sources, 'source', 'sources')} in the library`"
-          >
-            <span class="text-muted-foreground">Sources</span>
-            <span class="ml-1.5 font-semibold">{{ sourcesLabel(color) }}</span>
-          </span>
-          <span
-            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+            class="inline-flex items-center rounded-md px-1 font-semibold tabular-nums"
             :class="STATUS_TONE[color.status]"
             >{{ statusLabel(color) }}</span
           >
-          <span
-            v-if="color.pips > 0 || color.hybrid_pips > 0"
-            class="text-muted-foreground text-xs tabular-nums"
-            :title="`${color.pips} ${color.label.toLowerCase()} ${plural(color.pips, 'pip', 'pips')} across the deck's costs`"
-          >
-            <template v-if="color.pips > 0">
-              {{ color.pips }} {{ plural(color.pips, 'pip', 'pips') }}
-            </template>
-            <!-- A hybrid-only colour would otherwise read as a bare "No demand". -->
-            <template v-if="color.hybrid_pips > 0">
-              <template v-if="color.pips > 0"> · </template>{{ color.hybrid_pips }} hybrid
-            </template>
-          </span>
         </li>
       </ul>
 

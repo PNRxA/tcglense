@@ -5,6 +5,8 @@ import type {
   DeckFormat,
   DeckLegality,
   DeckManaBase,
+  DeckPricing,
+  DeckRoles,
   DeckTokens,
   GoldfishHand,
 } from './generated'
@@ -30,6 +32,7 @@ export type {
   DeckBracketLevel,
   DeckBracketSignal,
   DeckCardOdds,
+  DeckCheapestPrinting,
   DeckComposition,
   DeckDrawOdds,
   DeckFormat,
@@ -42,6 +45,12 @@ export type {
   DeckManaDemandCard,
   DeckManaSource,
   DeckManaStatus,
+  DeckPricing,
+  DeckPricingLine,
+  DeckRole,
+  DeckRoleCard,
+  DeckRoleGroup,
+  DeckRoles,
   DeckRuleCardStatus,
   DeckRuleId,
   DeckRuleSeverity,
@@ -191,6 +200,34 @@ export function getPublicDeckTokens(handle: string, deckId: number): Promise<Dec
   return request<DeckTokens>(`${publicBase(handle, deckId)}/tokens`)
 }
 
+// ----- Roles -----
+
+/** What each of a deck's cards does — ramp, draw, removal and the rest — read off its rules
+ * text server-side, so a CLI gets the same eight buckets the deck page draws. */
+export function getDeckRoles(token: string, game: string, deckId: number): Promise<DeckRoles> {
+  return request<DeckRoles>(`${deckBase(game, deckId)}/roles`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckRoles(handle: string, deckId: number): Promise<DeckRoles> {
+  return request<DeckRoles>(`${publicBase(handle, deckId)}/roles`)
+}
+
+// ----- Pricing -----
+
+/** Where a deck's value is (issue #672): every row of the deck proper priced as held, most
+ * expensive first, each with the cheapest priced printing of its card at the row's own finish
+ * split and the saving a swap would make; plus the totals. `total_usd` is the detail's own
+ * `summary.total_value_usd`; `null` anywhere means unpriced, never `$0.00`. */
+export function getDeckPricing(token: string, game: string, deckId: number): Promise<DeckPricing> {
+  return request<DeckPricing>(`${deckBase(game, deckId)}/pricing`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckPricing(handle: string, deckId: number): Promise<DeckPricing> {
+  return request<DeckPricing>(`${publicBase(handle, deckId)}/pricing`)
+}
+
 // ----- Mana base -----
 
 /** The deck's colour pips against its sources, judged by Karsten's source counts (issue
@@ -239,7 +276,7 @@ export function getDeckFormats(game: string): Promise<{ data: DeckFormat[] }> {
 
 // ----- Preconstructed decks -----
 //
-// The third address for the same four reads. The server computes them with the very same
+// The third address for the same reads. The server computes them with the very same
 // core it uses for a deck, so these return byte-identical payloads to the two above — which
 // is what lets the deck panels render a precon unchanged.
 
@@ -272,6 +309,11 @@ export function getPreconBracket(
 /** The tokens a published decklist makes — the ones its product's token sheet holds. */
 export function getPreconTokens(game: string, slug: string): Promise<DeckTokens> {
   return request<DeckTokens>(`${preconBase(game, slug)}/tokens`)
+}
+
+/** The roles a published decklist's cards fill. */
+export function getPreconRoles(game: string, slug: string): Promise<DeckRoles> {
+  return request<DeckRoles>(`${preconBase(game, slug)}/roles`)
 }
 
 /** A published decklist's mana base — judged against the deck size its type states. */

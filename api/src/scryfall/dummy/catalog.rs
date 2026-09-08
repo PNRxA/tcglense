@@ -63,6 +63,18 @@ const TYPES: &[&str] = &[
     "Artifact",
     "Creature — Spirit",
 ];
+/// Rules text per [`TYPES`] slot (same cycle length, so a card's text suits its type): one
+/// deckbuilding role each — a mana dork, a counterspell, a wrath, a draw engine, a mana rock,
+/// and spot removal — so the deck-role read (issue #671) has something real to count over the
+/// offline catalog and the e2e deck page shows bars rather than eight zeroes.
+const ORACLE_TEXTS: &[&str] = &[
+    "{T}: Add {C}.",
+    "Counter target spell.",
+    "Destroy all creatures. They can't be regenerated.",
+    "At the beginning of your upkeep, draw a card.",
+    "{T}: Add {C}{C}.",
+    "When this creature enters, exile target creature an opponent controls.",
+];
 
 /// The illustrators the seed credits (display name + Scryfall-style artist id). Two of
 /// them, alternating deterministically per card, so the card page's artist link
@@ -257,6 +269,8 @@ struct SeedCard {
     mana_cost: Option<String>,
     cmc: Option<f64>,
     type_line: Option<String>,
+    /// Rules text; `None` for the special cards, whose point is a printing quirk.
+    oracle_text: Option<String>,
     colors: Vec<String>,
     prices: Prices,
     card_faces: Option<Vec<CardFace>>,
@@ -292,7 +306,7 @@ impl SeedCard {
             mana_cost: self.mana_cost,
             cmc: self.cmc,
             type_line: self.type_line,
-            oracle_text: None,
+            oracle_text: self.oracle_text,
             power: None,
             toughness: None,
             loyalty: None,
@@ -324,11 +338,13 @@ fn numbered_card(set: &SetDef, n: i32) -> ScryfallCard {
     let rarity = RARITIES[idx % RARITIES.len()];
     let noun = NOUNS[idx % NOUNS.len()];
     let type_line = TYPES[idx % TYPES.len()];
+    let oracle_text = ORACLE_TEXTS[idx % ORACLE_TEXTS.len()];
     let generic = (idx % 4) as i64 + 1;
     SeedCard {
         external_id: card_id(set.code, n),
         oracle_id: None,
         name: format!("Dummy {} {}", color.name, noun),
+        oracle_text: Some(oracle_text.to_string()),
         set_code: set.code,
         set_name: set.name,
         released: set.released,
@@ -362,6 +378,7 @@ fn transform_card(set: &SetDef, n: i32) -> ScryfallCard {
         mana_cost: None,
         cmc: Some(3.0),
         type_line: Some("Creature — Human Werewolf // Creature — Werewolf".to_string()),
+        oracle_text: None,
         colors: vec!["G".to_string()],
         prices: dummy_prices(n),
         card_faces: Some(vec![
@@ -413,6 +430,7 @@ fn special_card(set: &SetDef, n: i32, collector_number: &str, name: &str) -> Scr
         mana_cost: Some("{3}{W}".to_string()),
         cmc: Some(4.0),
         type_line: Some("Legendary Creature — Avatar".to_string()),
+        oracle_text: None,
         colors: vec!["W".to_string()],
         prices: dummy_prices(n),
         card_faces: None,
@@ -441,6 +459,7 @@ fn foil_only_card(set: &SetDef, n: i32) -> ScryfallCard {
         mana_cost: Some("{2}{R}".to_string()),
         cmc: Some(3.0),
         type_line: Some("Creature — Dragon".to_string()),
+        oracle_text: None,
         colors: vec!["R".to_string()],
         prices: Prices {
             usd: None,
@@ -483,6 +502,7 @@ fn battle_card(set: &SetDef, n: i32) -> ScryfallCard {
         mana_cost: None,
         cmc: Some(4.0),
         type_line: Some("Battle — Siege // Creature — Angel".to_string()),
+        oracle_text: None,
         colors: vec!["W".to_string()],
         prices: dummy_prices(n),
         card_faces: Some(vec![
@@ -526,6 +546,7 @@ fn token_card(set: &SetDef, n: i32) -> ScryfallCard {
         mana_cost: None,
         cmc: Some(0.0),
         type_line: Some(format!("Token Creature — {noun}")),
+        oracle_text: None,
         colors: vec![color.code.to_string()],
         prices: Prices {
             usd: None,
@@ -569,6 +590,7 @@ fn reprint_card(set: &SetDef, n: i32) -> ScryfallCard {
         mana_cost: Some("{2}".to_string()),
         cmc: Some(2.0),
         type_line: Some("Artifact".to_string()),
+        oracle_text: None,
         colors: vec![],
         prices: dummy_prices(n),
         card_faces: None,
