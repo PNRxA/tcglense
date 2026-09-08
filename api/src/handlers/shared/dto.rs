@@ -21,6 +21,12 @@ use crate::scryfall::model::StoredFace;
 pub(crate) struct PricesResponse {
     pub usd: Option<String>,
     pub usd_foil: Option<String>,
+    /// The **etched-foil** price (Scryfall `usd_etched`, issue #676) — a separately priced
+    /// printing on the sets that ship one (Commander Legends, LOTR, Double Masters). USD
+    /// only: Scryfall publishes no `eur_etched`, so none is invented here. Holdings still
+    /// count an etched copy as `foil` (`collection_items` has no etched bucket, issue #594),
+    /// so this is a *catalog* price, never a valuation of what the caller holds.
+    pub usd_etched: Option<String>,
     pub eur: Option<String>,
     pub tix: Option<String>,
 }
@@ -318,6 +324,7 @@ impl From<card::Model> for CardResponse {
             prices: PricesResponse {
                 usd: m.price_usd,
                 usd_foil: m.price_usd_foil,
+                usd_etched: m.price_usd_etched,
                 eur: m.price_eur,
                 tix: m.price_tix,
             },

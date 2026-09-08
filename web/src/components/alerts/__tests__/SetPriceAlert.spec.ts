@@ -182,6 +182,27 @@ describe('CreateAlertDialog finish picker', () => {
     wrapper.unmount()
   })
 
+  it('offers Etched as a third finish when the card is priced in it (issue #676)', async () => {
+    const wrapper = await mountDialog({ authed: true, finishes: ['nonfoil', 'foil', 'etched'] })
+    expect(wrapper.text()).toContain('Finish')
+    expect(wrapper.text()).toContain('Etched')
+    wrapper.unmount()
+  })
+
+  it('submits an etched alert implicitly for an etched-only card', async () => {
+    // The evaluator reads `price_usd_etched` for this finish and nothing else, so the finish
+    // the dialog arms must be the one the card is actually priced in.
+    const wrapper = await mountDialog({ authed: true, finishes: ['etched'] })
+    expect(wrapper.text()).not.toContain('Finish')
+    await wrapper.find('#alert-threshold').setValue('12.00')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ target_kind: 'card', finish: 'etched', threshold: '12.00' }),
+    )
+    wrapper.unmount()
+  })
+
   it('treats a finish-less sealed product as a single implicit finish (no picker)', async () => {
     const wrapper = await mountDialog({
       authed: true,

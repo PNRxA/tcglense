@@ -37,6 +37,7 @@ async fn insert_detailed_card(db: &sea_orm::DatabaseConnection) {
         colors: Set(Some("W".to_string())),
         price_usd: Set(Some("1.50".to_string())),
         price_usd_foil: Set(Some("9.99".to_string())),
+        price_usd_etched: Set(Some("14.50".to_string())),
         price_eur: Set(Some("1.20".to_string())),
         price_tix: Set(Some("0.03".to_string())),
         legalities: Set(Some(
@@ -222,6 +223,9 @@ async fn card_detail_flattens_the_shared_card_and_adds_the_print_details() {
     assert_eq!(body["color_identity"], json!(["W"]));
     assert_eq!(body["prices"]["usd"], "1.50");
     assert_eq!(body["prices"]["usd_foil"], "9.99");
+    // The etched-foil price rides the shared `prices` object (issue #676) — the one wire
+    // surface a card's third finish is priced on.
+    assert_eq!(body["prices"]["usd_etched"], "14.50");
     assert_eq!(body["prices"]["eur"], "1.20");
     assert_eq!(body["prices"]["tix"], "0.03");
     assert_eq!(body["has_image"], false);

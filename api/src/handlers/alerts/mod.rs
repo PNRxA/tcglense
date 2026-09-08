@@ -370,3 +370,26 @@ fn orphan_target(kind: &str) -> AlertTarget {
         current_price: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_finish;
+
+    /// The finish vocabulary the create/update routes accept — mirrored client-side in
+    /// `web/src/lib/alertFinishes.ts` (issue #676), whose spec pins the same table: cards
+    /// take all three finishes, sealed products only the two TCGCSV prices.
+    #[test]
+    fn finish_vocabulary_is_three_for_cards_and_two_for_products() {
+        assert_eq!(validate_finish("card", "nonfoil").unwrap(), "nonfoil");
+        assert_eq!(validate_finish("card", "foil").unwrap(), "foil");
+        assert_eq!(validate_finish("card", "etched").unwrap(), "etched");
+        assert_eq!(validate_finish("product", "nonfoil").unwrap(), "nonfoil");
+        assert_eq!(validate_finish("product", "foil").unwrap(), "foil");
+        assert!(
+            validate_finish("product", "etched").is_err(),
+            "sealed products have no etched price"
+        );
+        assert!(validate_finish("card", "gilded").is_err());
+        assert!(validate_finish("card", "").is_err());
+    }
+}

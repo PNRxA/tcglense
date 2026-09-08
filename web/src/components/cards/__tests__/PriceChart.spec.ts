@@ -8,6 +8,7 @@ interface Pt {
   date: string
   usd: string | null
   usd_foil: string | null
+  usd_etched?: string | null
 }
 
 // Mount with a fetcher that resolves to a fixed series. PriceChartInner (unovis) is stubbed
@@ -69,6 +70,20 @@ describe('PriceChart empty state', () => {
       { date: '2024-01-01', usd: null, usd_foil: null },
       { date: '2024-01-02', usd: '12.34', usd_foil: null },
     ])
+    expect(wrapper.text()).not.toContain('NOTHING PLOTTABLE')
+    expect(wrapper.findComponent({ name: 'PriceChartInner' }).exists()).toBe(true)
+  })
+
+  it('renders the chart when only the etched-foil line is priced (issue #676)', async () => {
+    // An etched-only day (an old series whose regular/foil quotes lapsed, or a printing sold
+    // only etched) is plottable: the empty state must key off all three USD fields.
+    const wrapper = await mountChart(
+      [
+        { date: '2024-01-01', usd: null, usd_foil: null, usd_etched: null },
+        { date: '2024-01-02', usd: null, usd_foil: null, usd_etched: '14.50' },
+      ],
+      { toggleable: true },
+    )
     expect(wrapper.text()).not.toContain('NOTHING PLOTTABLE')
     expect(wrapper.findComponent({ name: 'PriceChartInner' }).exists()).toBe(true)
   })

@@ -684,7 +684,7 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   have applied, so re-sending could double the loss.
 - **External ids are per-printing provider data, and a bulk-buy link is rows, not a URL**
   (issues #686/#292). `cards` holds Scryfall's `tcgplayer_id`/`tcgplayer_etched_id` (the TCGCSV
-  join key) and, since `m..081`, `multiverse_ids` (comma-joined, one per face), `mtgo_id`,
+  join key) and, since `m..082`, `multiverse_ids` (comma-joined, one per face), `mtgo_id`,
   `mtgo_foil_id`, `arena_id`, `cardmarket_id` — all provider columns, so `flush_cards`' deny-lists
   stay untouched and a NULL means "no mapping" (an Arena id exists only for an Arena printing).
   They ride **`CardDetailResponse` only**, never the shared `Card`, and are never unioned from a
@@ -785,6 +785,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   of `ingest::flush_cards` — the
   `update_columns` list *and* `upsert_changed_guard` — or every sync wipes it and mass-bumps
   `updated_at`, the cursor the price-alert narrowing reads.
+- **Etched foil is a first-class *price*, not a holding** (issue #676). `PricesResponse.usd_etched`,
+  `card_price_history.price_usd_etched` (`m..081`, snapshotted since, `NULL` before — no backfill,
+  a past day's price isn't recoverable) and the `etched` alert finish all read `cards.price_usd_etched`,
+  the column the Scryfall map has always written — so an etched alert is unpriced, never priced at
+  the foil, when that column is `NULL`. But `collection_items` has no etched bucket: an etched copy is
+  held and valued as **foil** until holding lots (#594), which is why the price tile carries that
+  note and nothing in the valuation seams reads the etched price. USD only — Scryfall has no
+  `eur_etched`; don't invent one. The alert finish vocabulary is `handlers::alerts::validate_finish`
+  server-side and `web/src/lib/alertFinishes.ts` client-side, tests pinning both.
 - **The shared `Card` DTO is not where per-printing detail goes.** `CardResponse` rides
   every listing (a catalog page is up to 200 rows, CDN/ETag-cached, and the deck/holdings
   payloads carry hundreds more), so print + collector columns — artist, flavour text,

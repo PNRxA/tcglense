@@ -6,4 +6,9 @@
  * [`PricesResponse`](crate::handlers::shared::dto::PricesResponse)); `date` is a
  * `"YYYY-MM-DD"` string.
  */
-export type PricePoint = { date: string, usd: string | null, usd_foil: string | null, eur: string | null, tix: string | null, };
+export type PricePoint = { date: string, usd: string | null, usd_foil: string | null, 
+/**
+ * The etched-foil price that day (issue #676); `null` on rows captured before the
+ * history table grew the column, so an old series gaps rather than reads as zero.
+ */
+usd_etched: string | null, eur: string | null, tix: string | null, };
