@@ -226,13 +226,23 @@ const alertFinishes = computed<AlertFinish[]>(() => {
         Spans both rail rows on md+, so the buy links slot under the rail beside it. -->
       <div class="min-w-0 space-y-6 md:col-start-2 md:row-span-2 md:row-start-1">
         <template v-if="card">
-          <!-- Oracle text (single-faced cards; multi-faced show text per face below). -->
+          <!-- Oracle text (single-faced cards; multi-faced show text per face below).
+            The block also stands for a vanilla creature with nothing but flavour text,
+            hence the either-or gate. -->
           <div
-            v-if="!isMultiFace && card.oracle_text"
+            v-if="!isMultiFace && (card.oracle_text || card.flavor_text)"
             class="bg-card rounded-xl border p-4 shadow-sm"
           >
-            <p class="text-sm leading-relaxed whitespace-pre-line">
+            <p v-if="card.oracle_text" class="text-sm leading-relaxed whitespace-pre-line">
               <ManaSymbols :text="card.oracle_text" keywords :game="game" :card-name="card.name" />
+            </p>
+            <!-- Flavour text sits in italics beneath the rules, as it's printed (#673). -->
+            <p
+              v-if="card.flavor_text"
+              class="text-muted-foreground mt-3 text-sm italic whitespace-pre-line"
+              :class="{ 'mt-0': !card.oracle_text }"
+            >
+              {{ card.flavor_text }}
             </p>
           </div>
 
@@ -271,6 +281,16 @@ const alertFinishes = computed<AlertFinish[]>(() => {
               </p>
             </div>
           </div>
+
+          <!-- Flavour text for a multi-faced card. There's no per-face flavour on the wire —
+            the faces arrive joined by "\n//\n" (the same join `oracle_text` uses) — so the
+            whole string renders once beneath the face grid rather than inside a face. -->
+          <p
+            v-if="isMultiFace && card.flavor_text"
+            class="text-muted-foreground text-sm italic whitespace-pre-line"
+          >
+            {{ card.flavor_text }}
+          </p>
 
           <!-- The full details list — everything the chips summarise and more. -->
           <div class="bg-card rounded-xl border p-4 shadow-sm">
