@@ -21,7 +21,9 @@ mana_cost: string,
  */
 pips: number, 
 /**
- * The mana value of that cost, which is the turn the spell is meant to be cast on.
+ * The mana value of that cost — the turn the spell is meant to be cast on, unless
+ * `x_cost` (then it is the value with `X` at zero) or `clamped` (then the table row it
+ * was judged as sits below it).
  */
 turn: number, 
 /**
@@ -36,4 +38,17 @@ gold: boolean,
 /**
  * Sources of this colour a deck this size needs to cast it on curve.
  */
-sources_needed: number, };
+sources_needed: number, 
+/**
+ * Whether the cost holds an `{X}`. Listed with the number its fixed pips alone imply,
+ * but **never** the card that sets the colour's requirement: how much mana it is cast
+ * for is the player's choice, which is also Karsten's advice for one.
+ */
+x_cost: boolean, 
+/**
+ * Whether the spell had to be clamped onto the table to be judged: more than four pips
+ * of the colour (judged as four — a floor), or a mana value past its pip group's last
+ * row (judged as that row — an over-estimate). `cost_key` is then not the cost's own
+ * row, and a client must not present it as one.
+ */
+clamped: boolean, };

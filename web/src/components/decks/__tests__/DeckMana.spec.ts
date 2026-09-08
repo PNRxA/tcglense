@@ -71,6 +71,8 @@ function color(over: Partial<DeckManaColor> = {}): DeckManaColor {
         cost_key: 'CCC',
         gold: false,
         sources_needed: 36,
+        x_cost: false,
+        clamped: false,
       },
       {
         card_id: 'zur',
@@ -82,6 +84,8 @@ function color(over: Partial<DeckManaColor> = {}): DeckManaColor {
         cost_key: '3C',
         gold: true,
         sources_needed: 17,
+        x_cost: false,
+        clamped: false,
       },
     ],
     sources: 21,
@@ -123,6 +127,8 @@ function makeBase(over: Partial<DeckManaBase> = {}): DeckManaBase {
             cost_key: '2C',
             gold: false,
             sources_needed: 18,
+            x_cost: false,
+            clamped: false,
           },
         ],
         sources: 20,
@@ -201,6 +207,31 @@ describe('DeckMana', () => {
     const chips = wrapper.findAll('ul > li span.rounded-md')
     expect(chips[0]!.classes()).toContain('text-success')
     expect(chips[1]!.classes()).toContain('text-warning')
+
+    query.data = makeBase({
+      colors: [
+        color({
+          status: 'no_demand',
+          sources_needed: null,
+          shortfall: 0,
+          pips: 0,
+          demand: [],
+          demand_count: 0,
+        }),
+        color({
+          color: 'R',
+          label: 'Red',
+          status: 'undecided',
+          sources_needed: null,
+          shortfall: 0,
+        }),
+      ],
+    })
+    const muted = mountPanel().findAll('ul > li span.rounded-md')
+    expect(muted[0]!.text()).toBe('No demand')
+    expect(muted[0]!.classes()).toContain('text-muted-foreground')
+    expect(muted[1]!.text()).toBe('Depends on X')
+    expect(muted[1]!.classes()).toContain('text-muted-foreground')
   })
 
   it('opens the evidence on demand: the spells that set the number and the counted sources', async () => {
@@ -209,13 +240,15 @@ describe('DeckMana', () => {
     expect(toggle.attributes('aria-expanded')).toBe('true')
     expect(wrapper.find(`#${toggle.attributes('aria-controls')}`).exists()).toBe(true)
 
-    const black = wrapper.get('section[aria-label="Black mana"]')
+    const black = wrapper.findAll('section').find((s) => s.text().startsWith('Black'))!
     expect(black.text()).toContain('Short 15 black sources: 21 of 36 needed for Necropotence.')
     // Hungriest first, each with the number it needs and the row it was judged as.
     const demand = black.findAll('a').slice(0, 2)
     expect(demand[0]!.text()).toContain('Necropotence')
     expect(demand[0]!.text()).toContain('→ 36')
     expect(demand[0]!.attributes('title')).toBe('CCC on turn 3: 36 black sources needed')
+    // No region landmarks: the sections stay unnamed, as the sibling panels' are.
+    expect(wrapper.findAll('section[aria-label]')).toHaveLength(0)
     expect(demand[0]!.attributes('href')).toBe('/cards/mtg/cards/necro')
     expect(demand[1]!.text()).toContain('Zur the Enchanter')
     // The counted sources, with the land/nonland split stated.
@@ -260,6 +293,8 @@ describe('DeckMana', () => {
     expect(wrapper.get('ul > li').text()).toMatch(/Sources\s*10/)
     expect(wrapper.get('ul > li').text()).not.toContain('/')
     expect(wrapper.get('ul > li').text()).toContain('No demand')
+    // …and the reason is visible in the row, not only on hover.
+    expect(wrapper.get('ul > li').text()).toContain('8 hybrid')
     // The verdict already says it, so the note that would repeat it stays out…
     expect(wrapper.text()).toContain('Only hybrid pips ask for white')
     expect(wrapper.text()).not.toContain('Plus 8 hybrid pips')
@@ -270,6 +305,53 @@ describe('DeckMana', () => {
     })
     const mixed = await mountExpanded()
     expect(mixed.text()).toContain('Plus 3 hybrid pips this colour could pay — not counted')
+  })
+
+  it("never presents a clamped row or an X cost as the cost's own turn", async () => {
+    query.data = makeBase({
+      colors: [
+        color({
+          demand: [
+            {
+              card_id: 'ex',
+              name: 'Exsanguinate',
+              quantity: 1,
+              mana_cost: '{X}{B}{B}',
+              pips: 2,
+              turn: 2,
+              cost_key: 'CC',
+              gold: false,
+              sources_needed: 30,
+              x_cost: true,
+              clamped: false,
+            },
+            {
+              card_id: 'surge',
+              name: 'Primal Surge',
+              quantity: 1,
+              mana_cost: '{8}{B}{B}',
+              pips: 2,
+              turn: 10,
+              cost_key: '5CC',
+              gold: false,
+              sources_needed: 20,
+              x_cost: false,
+              clamped: true,
+            },
+          ],
+        }),
+      ],
+    })
+    const wrapper = await mountExpanded()
+    const chips = wrapper.findAll('a')
+    expect(chips[0]!.attributes('title')).toBe(
+      'X spell: 30 black sources needed with X at zero — listed, never the card that sets the number',
+    )
+    expect(chips[0]!.text()).toContain('→ 30 at X=0')
+    expect(chips[1]!.attributes('title')).toBe(
+      "Mana value 10, judged as Karsten's 5CC row: 20 black sources needed",
+    )
+    expect(chips[1]!.text()).toContain('→ 20*')
   })
 
   it('words an unchecked card as syncing, never as producing nothing', () => {

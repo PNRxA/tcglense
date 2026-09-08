@@ -25,7 +25,7 @@
 
 use serde::Serialize;
 
-use super::{AnalysisEntry, CardFacts, DeckAnalysisInput, NameFold, fold_by_name};
+use super::{CardFacts, DeckAnalysisInput, NameFold, fold_by_name};
 
 mod signals;
 
@@ -412,6 +412,7 @@ pub(crate) fn analyse_bracket(
 
 #[cfg(test)]
 mod tests {
+    use super::super::AnalysisEntry;
     use super::*;
     use crate::handlers::decks::analysis::test_fixtures::{deck, entry, section};
 

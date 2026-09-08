@@ -12,7 +12,7 @@ import {
   usePublicDeckManaQuery,
 } from '@/composables/useDeckAnalysis'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
-import type { DeckManaColor, DeckManaStatus } from '@/lib/api'
+import type { DeckManaColor, DeckManaDemandCard, DeckManaStatus } from '@/lib/api'
 
 // The deck page's **mana base**: per colour, the pips the deck's spells ask for against the
 // sources its library produces, and whether that's enough — Frank Karsten's source counts,
@@ -28,9 +28,11 @@ import type { DeckManaColor, DeckManaStatus } from '@/lib/api'
 // that say what Karsten's table assumes. The chip and the detail heading read the same
 // `status` off the same response, so the two can never make different claims.
 //
-// Two silences are the response's, kept here: a hybrid pip is listed but never counted
-// against a colour, and "not checked yet" (a catalog row that predates the produced-mana
-// convention) is worded as syncing rather than letting a source count read as complete.
+// Three silences are the response's, kept here: a hybrid pip is listed but never counted
+// against a colour, an X-cost spell is listed but never the card that sets a colour's number
+// (and a row the server clamped onto the table is never presented as the cost's own), and
+// "not checked yet" (a catalog row that predates the produced-mana convention) is worded as
+// syncing rather than letting a source count read as complete.
 //
 // `handle` / `preconSlug` pick the surface, chosen ONCE at mount exactly as the siblings do.
 const props = defineProps<{
@@ -70,13 +72,19 @@ const STATUS_TONE: Record<DeckManaStatus, string> = {
   enough: 'bg-success/15 text-success',
   short: 'bg-warning/15 text-warning',
   no_demand: 'bg-muted text-muted-foreground',
+  undecided: 'bg-muted text-muted-foreground',
 }
 
 /** The chip's word. "Short 2" carries the number because that is the thing to fix. */
 function statusLabel(color: DeckManaColor): string {
   if (color.status === 'enough') return 'Enough'
   if (color.status === 'short') return `Short ${color.shortfall}`
+  if (color.status === 'undecided') return 'Depends on X'
   return 'No demand'
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many
 }
 
 /** "21 / 36" — sources against the number needed, or the sources alone when nothing sets a
@@ -87,9 +95,19 @@ function sourcesLabel(color: DeckManaColor): string {
     : `${color.sources} / ${color.sources_needed}`
 }
 
-/** What a demand chip says on hover: the row it was judged as and what it needs. */
-function demandTitle(color: DeckManaColor, needed: number, key: string, turn: number): string {
-  return `${key} on turn ${turn}: ${needed} ${color.label.toLowerCase()} sources needed`
+/** What a demand chip says on hover: the row it was judged as and what it needs. The server
+ * clamps `cost_key` onto the table for a cost past it while `turn` stays the real mana value,
+ * so the two are only ever stated as one row when they are one; an X spell's number is the
+ * one its fixed pips imply, said as such. */
+function demandTitle(color: DeckManaColor, card: DeckManaDemandCard): string {
+  const need = `${card.sources_needed} ${color.label.toLowerCase()} sources needed`
+  if (card.x_cost) {
+    return `X spell: ${need} with X at zero — listed, never the card that sets the number`
+  }
+  if (card.clamped) {
+    return `Mana value ${card.turn}, judged as Karsten's ${card.cost_key} row: ${need}`
+  }
+  return `${card.cost_key} on turn ${card.turn}: ${need}`
 }
 
 const { hrefFor, onActivate, warm } = useDetailModalLink()
@@ -161,7 +179,10 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
             <ManaSymbols :text="`{${color.color}}`" class="leading-none" aria-hidden="true" />
             <span>{{ color.label }}</span>
           </span>
-          <span class="tabular-nums" :title="`${color.sources} sources in the library`">
+          <span
+            class="tabular-nums"
+            :title="`${color.sources} ${plural(color.sources, 'source', 'sources')} in the library`"
+          >
             <span class="text-muted-foreground">Sources</span>
             <span class="ml-1.5 font-semibold">{{ sourcesLabel(color) }}</span>
           </span>
@@ -171,11 +192,17 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
             >{{ statusLabel(color) }}</span
           >
           <span
-            v-if="color.pips > 0"
+            v-if="color.pips > 0 || color.hybrid_pips > 0"
             class="text-muted-foreground text-xs tabular-nums"
-            :title="`${color.pips} ${color.label.toLowerCase()} pips across the deck's costs`"
+            :title="`${color.pips} ${color.label.toLowerCase()} ${plural(color.pips, 'pip', 'pips')} across the deck's costs`"
           >
-            {{ color.pips }} {{ color.pips === 1 ? 'pip' : 'pips' }}
+            <template v-if="color.pips > 0">
+              {{ color.pips }} {{ plural(color.pips, 'pip', 'pips') }}
+            </template>
+            <!-- A hybrid-only colour would otherwise read as a bare "No demand". -->
+            <template v-if="color.hybrid_pips > 0">
+              <template v-if="color.pips > 0"> · </template>{{ color.hybrid_pips }} hybrid
+            </template>
           </span>
         </li>
       </ul>
@@ -197,12 +224,9 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
 
       <!-- The evidence: what set each number, and what the numbers assume. -->
       <div v-if="expanded" :id="detailsId" class="space-y-5 border-t pt-4">
-        <section
-          v-for="color in colors"
-          :key="color.color"
-          class="rounded-md border p-3"
-          :aria-label="`${color.label} mana`"
-        >
+        <!-- Unnamed sections, like DeckBracket's: a named one is a region landmark, and six
+          per deck page would bury the ones that matter. The heading carries the name. -->
+        <section v-for="color in colors" :key="color.color" class="rounded-md border p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="inline-flex items-center gap-1.5 text-sm font-medium">
               <ManaSymbols :text="`{${color.color}}`" class="leading-none" aria-hidden="true" />
@@ -227,7 +251,7 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
                 <a
                   :href="hrefFor('card', game, card.card_id)"
                   class="inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs hover:underline"
-                  :title="demandTitle(color, card.sources_needed, card.cost_key, card.turn)"
+                  :title="demandTitle(color, card)"
                   @click="onActivate($event, 'card', game, card.card_id)"
                   @pointerenter="warm('card')"
                   @focusin="warm('card')"
@@ -238,7 +262,8 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
                     >×{{ card.quantity }}</span
                   >
                   <span class="text-muted-foreground tabular-nums"
-                    >→ {{ card.sources_needed }}</span
+                    >→ {{ card.sources_needed }}<template v-if="card.x_cost"> at X=0</template
+                    ><template v-else-if="card.clamped">*</template></span
                   >
                 </a>
               </li>

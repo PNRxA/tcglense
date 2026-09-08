@@ -1152,7 +1152,7 @@ deck ids), matching the public-sharing surface.
 | `GET /api/decks/{game}/{deck_id}/legality` | — | `{ data: DeckLegality \| null }` — the deck's verdict against its own `format` (issues #557/#596), evaluated over the deck proper. `data` is **null** when the format isn't legality-tracked — that means "nothing to evaluate", never "illegal". `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/bracket` | — | `{ data: DeckBracketEstimate \| null }` — where the deck sits on Wizards' 1–5 **Commander bracket** ladder, estimated from its cards over the deck proper. `data` is **null** unless the deck's format normalises to `commander` — the one format the ladder is defined for. `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/tokens` | — | `DeckTokens { tokens: DeckToken[], unchecked_count }` — the tokens and emblems the deck's cards make, over the deck proper: what a player brings to a game *besides* the deck. Read off the catalog's per-card token relations (Scryfall `all_parts`, stored in `cards.token_parts`), never inferred from rules text. One entry per distinct token — grouped by the token printing's own `oracle_id`, so a Treasure referenced under a dozen per-set ids is one entry and Wurmcoil Engine's two same-named Wurms stay two — carrying `card` (the newest referenced printing, `null` when none is in the catalog; `name`/`type_line` still describe it), `sources` (the deck's cards that make it, by name, capped at 20) and an exact `source_count`. Ordered most-made first. **No count of tokens to bring:** nothing upstream separates "create a Treasure" from "create X Treasures", so the response states cards, not tokens. `unchecked_count` is the deck's cards whose catalog row predates the column (NULL, not `[]`) — while it is non-zero the list is a floor, not the whole answer. `404` if not the caller's |
-| `GET /api/decks/{game}/{deck_id}/mana` | — | `DeckManaBase` — the deck's **mana base** (issue #670): per colour, the pips its spells demand against the sources its library produces, judged by Frank Karsten's 2022 source counts, with a plain verdict (`"Short 2 black sources: …"`). **Demand** is the deck a player casts from — the shuffled library **plus** the command zone (a commander's own pips count) — and **supply** is the library alone (a commander is never a source for the 99); maybeboards and sideboards are in neither, and the zone split is `rules::deck_zone`'s, the same one `stats` and `goldfish` use. Colours include `C` (an Eldrazi's `{C}` is a real requirement). Hybrid, Phyrexian and `{2/C}` pips ride `hybrid_pips` and are never counted against a colour. `table_size` (40/60/80/99) is the format's stated deck size when it has one (Commander → the 99-card column, however few cards are in it yet), else the nearest to `deck_size`. Always answers — never `null`; an empty deck has an empty `colors`. `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/mana` | — | `DeckManaBase` — the deck's **mana base** (issue #670): per colour, the pips its spells demand against the sources its library produces, judged by Frank Karsten's 2022 source counts, with a plain verdict (`"Short 2 black sources: …"`). **Demand** is the deck a player casts from — the shuffled library **plus** the command zone (a commander's own pips count) — and **supply** is the library alone (a commander is never a source for the 99); maybeboards and sideboards are in neither. The zone split borrows both of `rules`' answers, like the deck list's facets: which sections are the zone is `deck_zone`'s, and whether the zone leads this deck's format is `format_leads_with_command_zone`'s — so in a format with no command zone the cards in the seeded `Commander` section supply mana like the rest of the 60. Colours include `C` (an Eldrazi's `{C}` is a real requirement). Hybrid, Phyrexian and `{2/C}` pips ride `hybrid_pips` and are never counted against a colour. `table_size` (40/60/80/99) is the format's stated deck size when it has one (Commander → the 99-card column, however few cards are in it yet), else the nearest to `deck_size`. Always answers — never `null`; an empty deck has an empty `colors`. `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/goldfish` | — | `GoldfishHand` — shuffle the library and deal an opening hand (issue #596). Stateless and seeded: `?seed=` (u32; omitted = a fresh one, echoed back), `?mulligans=` (London — each reshuffles and owes one card to the bottom), `?bottom=<card ids>` (at most one per mulligan, each must be in the hand), `?draws=` (the draw step, clamped to the library), `?opening=` (default 7), `?sections=` as above. The same URL always deals the same cards. The shuffled library is capped at 20,000 cards (a deck row's counts are caller-controlled and the shuffle materialises one slot per copy, so a bigger one is refused rather than allocated). `404` if not the caller's; `422` for a parameter out of range, a library too large to shuffle, or a bottomed card that isn't in hand |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
@@ -1237,24 +1237,33 @@ hybrid_pips, demand_count, demand, sources, land_sources, nonland_sources, sourc
 source_cards, sources_needed, shortfall, status, verdict }`. `pips` and `sources` are
 copy-weighted over a per-name fold (a card in two arts is one card running the copies of
 both); `demand` is `DeckManaDemandCard[] = { card_id, name, quantity, mana_cost, pips, turn,
-cost_key, gold, sources_needed }`, hungriest first and capped at 10 (`demand_count` stays
-exact), where `cost_key` (`"1CC"`) names the table row the spell was judged as and `turn` is
-its mana value; `source_cards` is `DeckManaSource[] = { card_id, name, quantity, land }`,
-lands first, capped at 50 (`source_count` exact). `sources_needed` is the largest
-`demand[].sources_needed` — **Karsten's number** for the deck's `table_size`, plus one for a
-multicoloured card (his gold-card rule), a spell past the table's last row judged as that row
-— or `null` when nothing demands the colour; `status` is `enough` / `short` / `no_demand` and
-`shortfall` is `max(0, needed − sources)`. The thresholds are a **citation, not a model**:
-Frank Karsten, *How Many Sources Do You Need to Consistently Cast Your Spells? A 2022 Update*
-(TCGplayer Infinite, 2022), reproduced as a data constant in `analysis/mana.rs` and named in
-`source`; `caveats` (never empty) state what they assume — a tapped land, a fetch, a mana
-creature or a rock each count as one source here where Karsten weighs some as less. A
-`mana_cost` is read off the front half of a split card only (the two halves are two spells).
-`unchecked_count` is the library's cards whose `produced_mana` is NULL: the ingest stores
-"produces nothing" as `""` (Scryfall omits the field for a non-producer, so absence upstream
-*is* "none"), so a NULL is a row not rewritten since that convention arrived — reported, like
-`tokens`' `unchecked_count`, rather than read as a non-source; it heals on the next bulk
-import.
+cost_key, gold, sources_needed, x_cost, clamped }`, hungriest first and capped at 10
+(`demand_count` stays exact), where `cost_key` (`"1CC"`) names the table row the spell was
+judged as and `turn` is its mana value; `source_cards` is `DeckManaSource[] = { card_id, name,
+quantity, land }`, lands first, capped at 50 (`source_count` exact). `sources_needed` is the
+largest `demand[].sources_needed` among the **non-`x_cost`** spells — **Karsten's number** for
+the deck's `table_size`, plus one for a multicoloured card (his gold-card rule) — or `null`
+when nothing sets one; `status` is `enough` / `short` / `no_demand` / `undecided` (demanded,
+but only by X-cost spells) and `shortfall` is `max(0, needed − sources)`. An **X-cost** spell
+is listed with the number its fixed pips imply but never decides the colour — Karsten's own
+advice for one is to judge it by the lands you expect to tap, which only the player knows.
+`clamped` marks a spell the table had to be stretched for (more than four pips of the colour,
+judged as four — a floor; or a mana value past its pip group's last row, judged as that row —
+an over-estimate); `cost_key` is then not the cost's own row, and a caveat says which way it
+errs. The thresholds are a **citation, not a model**: Frank Karsten, *How Many Sources Do You
+Need to Consistently Cast Your Spells? A 2022 Update* (TCGplayer Infinite, 2022), reproduced
+as a data constant in `analysis/mana.rs` (a test pins every number) and named in `source`.
+Only the gold-card rule is his; the hybrid exemption is this read's own simplification and is
+**narrower** than his (he asks for the table number in *combined* sources across a hybrid's
+colours, a union requirement this read reports as `hybrid_pips` but does not compute), as is
+the past-the-table clamp. `caveats` (never empty) state all of that — and that a tapped land,
+a fetch, a mana creature or a rock each count as one source here where Karsten weighs some as
+less. A `mana_cost` is read off the front half of a split card only (the two halves are two
+spells). `unchecked_count` is the library's distinct cards whose `produced_mana` is NULL: the
+ingest stores "produces nothing" as `""` (Scryfall omits the field for a non-producer, so
+absence upstream *is* "none"; migration 79 backfilled every existing NULL to `""` without
+touching `updated_at`), so a NULL is a row that has somehow never been rewritten — reported,
+like `tokens`' `unchecked_count`, rather than read as a non-source.
 
 `DeckDetail = { id, game, name, description, format, folder_id, is_public, handle, summary,
 maybeboard_summary, sections, cards, created_at, updated_at }` — `summary` and

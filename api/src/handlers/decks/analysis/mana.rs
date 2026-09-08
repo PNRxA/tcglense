@@ -17,23 +17,34 @@
 //! a deck with a typical land count (17 / 25 / 35 / 41 for 40 / 60 / 80 / 99 cards), and —
 //! for the 99-card column — with Commander's free mulligan and first-turn draw. His
 //! simulation is his; what lives here is the published result, so a number in the response
-//! can be checked against the article line by line. Three of his rules of thumb are applied
-//! because he states them and they change the answer: a mana value beyond the table's last
-//! row uses that row (a nine-drop needs no more sources than a six-drop), a **multicoloured**
-//! card's requirement goes up by one for each of its colours ("for gold cards, increase all
-//! requirements by one"), and a **hybrid**, Phyrexian or `{2/C}` pip is never counted against
-//! a colour, because it can be paid another way. Everything he weighs fractionally — a
-//! tapped land, a fetch, a cantrip, a mana rock — counts here as one source, which is why the
+//! can be checked against the article line by line. **One** rule of thumb is his and is
+//! applied verbatim: a **multicoloured** card's requirement goes up by one for each of its
+//! colours ("for gold cards … increase all requirements by one"). Three more are this
+//! module's own conservative simplifications, *not* the article's, and every response says
+//! so in its caveats: a mana value beyond a pip group's last row is judged as that row (the
+//! table stops at seven and the article says nothing past it — an over-estimate, since the
+//! numbers fall as the turn rises); a **hybrid**, Phyrexian or `{2/C}` pip is reported but
+//! never counted against a colour — deliberately *narrower* than Karsten, who asks for the
+//! table number in *combined* sources across a hybrid's colours ("for hybrid spells, you need
+//! to have enough combined sources of either color"), a union requirement this read reports
+//! (`hybrid_pips`) but does not compute, and Phyrexian and twobrid costs the article never
+//! discusses; and an **X** spell is listed but never sets a colour's number, because Karsten's
+//! advice for one — judge it by "the typical amount of lands that you expect to tap to cast
+//! the spell" — is a fact only the player has. Everything he weighs fractionally — a tapped
+//! land, a fetch, a cantrip, a mana rock — counts here as one source, which is why the
 //! caveats say so.
 //!
-//! **Zones are [`super::rules::deck_zone`]'s answer, never a second list of names.**
-//! Demand is the deck a player casts from — the shuffled library **and** the command zone
-//! (a commander's own pips are the first thing to check) — and supply is the library alone:
-//! a commander is never a source for the 99, however many colours it produces. Maybeboards
-//! are out of both (issue #570); a sideboard is out of both too, since nothing in it is cast
-//! on curve from the main deck. The library is the same selection the composition read and
-//! the goldfish shuffle use (`default_library_section_ids`), so the three can't disagree
-//! about what a deck's library is.
+//! **Zones are [`super::rules`]'s answers, never a second list of names.** Which sections are
+//! the command zone is [`super::rules::deck_zone`]'s; whether that zone *leads* the deck is
+//! [`super::rules::format_leads_with_command_zone`]'s — the same pair the deck list's facets
+//! borrow. Demand is the deck a player casts from — the shuffled library **and** the command
+//! zone (a commander's own pips are the first thing to check) — and supply is the library
+//! alone: a commander is never a source for the 99, however many colours it produces. In a
+//! format with no command zone (every deck is seeded with a `Commander` section, so a Modern
+//! deck can easily have cards in one) those cards are just part of the 60, as the legality
+//! rules already treat them, so they supply mana like any other library card. Maybeboards are
+//! out of both (issue #570); a sideboard is out of both too, since nothing in it is cast on
+//! curve from the main deck.
 //!
 //! **Nothing here goes per copy.** Pips and sources are copy-weighted by multiplication over
 //! a per-name fold ([`super::fold_by_name`], shared with the bracket), so a deck row's counts —
@@ -50,7 +61,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use super::rules::{DeckZone, deck_zone, format_deck_size};
+use super::rules::{DeckZone, deck_zone, format_deck_size, format_leads_with_command_zone};
 use super::stats::type_words;
 use super::{DeckAnalysisInput, NameFold, fold_by_name};
 
@@ -121,18 +132,35 @@ fn table_size_for(size: i64) -> i64 {
     best
 }
 
+/// One table lookup: the row a spell was judged as, its number, and whether the spell had to
+/// be clamped onto the table to get there — decided here, where the clamp happens, so the
+/// caveat that words it can never disagree with the number it explains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Threshold {
+    key: &'static str,
+    sources: i64,
+    /// More pips of the colour than the table's four-pip row: judged as four, a **floor**.
+    clamped_pips: bool,
+    /// A mana value past the pip group's last row: judged as that row, an **over-estimate**
+    /// (within a group the numbers fall as the turn rises). Not reported when the pip clamp
+    /// already applies — a cost with more pips than the table knows is a floor whatever its
+    /// mana value, and saying "over-estimate" beside it would be false.
+    clamped_turn: bool,
+}
+
 /// Look up the sources one colour needs for a spell of `mana_value` with `pips` of it, in a
-/// deck of `table_size` cards. Returns the table row's cost key and its number.
+/// deck of `table_size` cards.
 ///
 /// Clamped, in both directions, to the table: more than four pips reads as four, a mana
-/// value above the pip group's last row reads as that row (a later turn is only ever easier)
-/// and one below it — impossible for a cost that carries the pips, kept total for a fold that
-/// mustn't panic — reads as the first.
-fn threshold(table_size: i64, mana_value: i64, pips: i64) -> (&'static str, i64) {
+/// value above the pip group's last row reads as that row, and one below it — impossible for
+/// a cost that carries the pips, kept total for a fold that mustn't panic — reads as the
+/// first. The two clamps are reported separately because they err in opposite directions.
+fn threshold(table_size: i64, mana_value: i64, pips: i64) -> Threshold {
     let column = TABLE_SIZES
         .iter()
         .position(|size| *size == table_size)
         .unwrap_or(0);
+    let clamped_pips = pips > MAX_TABLE_PIPS;
     let pips = pips.clamp(1, MAX_TABLE_PIPS);
     let mut chosen: Option<&(&str, i64, i64, [i64; 4])> = None;
     for row in KARSTEN_2022.iter().filter(|row| row.2 == pips) {
@@ -143,8 +171,18 @@ fn threshold(table_size: i64, mana_value: i64, pips: i64) -> (&'static str, i64)
         }
     }
     match chosen {
-        Some((key, _, _, columns)) => (key, columns[column]),
-        None => ("C", 0),
+        Some((key, row_mana_value, _, columns)) => Threshold {
+            key,
+            sources: columns[column],
+            clamped_pips,
+            clamped_turn: !clamped_pips && *row_mana_value < mana_value,
+        },
+        None => Threshold {
+            key: "C",
+            sources: 0,
+            clamped_pips,
+            clamped_turn: false,
+        },
     }
 }
 
@@ -195,6 +233,9 @@ struct ParsedCost {
     /// Pips that name a colour but can be paid another way: each colour of a hybrid
     /// `{W/U}`, the colour of a twobrid `{2/W}` or a Phyrexian `{W/P}`.
     flexible: BTreeMap<char, i64>,
+    /// Whether the cost holds an `{X}` (or `{Y}`/`{Z}`): its real mana value is the player's
+    /// choice, so the turn it is cast on — and the table row — is not the cost's to state.
+    x_cost: bool,
 }
 
 /// Read a Scryfall mana cost (`{1}{B}{B}`, `{W/U}{W/U}`, `{2/G}`, `{G/U/P}`, `{X}{R}`).
@@ -236,7 +277,7 @@ fn parse_cost(cost: &str) -> ParsedCost {
             continue;
         }
         match symbol.as_str() {
-            "X" | "Y" | "Z" => {}
+            "X" | "Y" | "Z" => parsed.x_cost = true,
             _ => {
                 if let Some(color) = color_letter(&symbol) {
                     parsed.mana_value = parsed.mana_value.saturating_add(1);
@@ -263,7 +304,9 @@ pub struct DeckManaDemandCard {
     pub mana_cost: String,
     /// Pips of this colour in that cost.
     pub pips: i64,
-    /// The mana value of that cost, which is the turn the spell is meant to be cast on.
+    /// The mana value of that cost — the turn the spell is meant to be cast on, unless
+    /// `x_cost` (then it is the value with `X` at zero) or `clamped` (then the table row it
+    /// was judged as sits below it).
     pub turn: i64,
     /// The table row this spell was judged as (`"1CC"`), after clamping.
     pub cost_key: String,
@@ -272,6 +315,15 @@ pub struct DeckManaDemandCard {
     pub gold: bool,
     /// Sources of this colour a deck this size needs to cast it on curve.
     pub sources_needed: i64,
+    /// Whether the cost holds an `{X}`. Listed with the number its fixed pips alone imply,
+    /// but **never** the card that sets the colour's requirement: how much mana it is cast
+    /// for is the player's choice, which is also Karsten's advice for one.
+    pub x_cost: bool,
+    /// Whether the spell had to be clamped onto the table to be judged: more than four pips
+    /// of the colour (judged as four — a floor), or a mana value past its pip group's last
+    /// row (judged as that row — an over-estimate). `cost_key` is then not the cost's own
+    /// row, and a client must not present it as one.
+    pub clamped: bool,
 }
 
 /// One card in the library that produces a colour.
@@ -300,6 +352,9 @@ pub enum DeckManaStatus {
     /// Nothing in the deck has a hard pip of this colour; the row is here for its sources
     /// (or its hybrid pips) alone.
     NoDemand,
+    /// The colour is demanded, but only by `X`-cost spells — whose requirement is the
+    /// player's to state, so no number is asserted.
+    Undecided,
 }
 
 /// One colour's ledger: what the deck asks for, what the library gives, and the verdict.
@@ -352,9 +407,9 @@ pub struct DeckManaBase {
     pub land_count: i64,
     /// One ledger per colour the deck demands or produces, in WUBRG-then-colourless order.
     pub colors: Vec<DeckManaColor>,
-    /// Cards in the library whose catalog row hasn't been checked for what it produces (it
-    /// predates the empty-string convention and is rewritten by the next bulk import). While
-    /// this is non-zero every source count is a floor.
+    /// Distinct cards in the library whose catalog row hasn't been checked for what it
+    /// produces (it predates the empty-string convention, which migration 79 backfilled and
+    /// every bulk import writes). While this is non-zero every source count is a floor.
     pub unchecked_count: i64,
     /// What the numbers assume. Never empty — a threshold is only honest beside its model.
     pub caveats: Vec<String>,
@@ -373,9 +428,17 @@ struct ColorLedger {
     sources: Vec<DeckManaSource>,
 }
 
-/// The library's and the command zone's section ids, by [`deck_zone`]. A maybeboard is
-/// neither, by its column; a sideboard is neither, by its name.
-fn zone_sections(input: &DeckAnalysisInput) -> (Vec<i32>, Vec<i32>) {
+/// The library's and the command zone's section ids: which sections are the zone is
+/// [`deck_zone`]'s answer, whether the zone leads this deck's format is
+/// [`format_leads_with_command_zone`]'s — a `Commander` section in a Modern deck is library.
+/// A maybeboard is neither, by its column; a sideboard is neither, by its name.
+///
+/// Deliberately borrows both answers rather than [`super::stats::default_library_section_ids`]
+/// alone: that selection is the *shuffle* (a card filed under `Commander` starts a Modern game
+/// in hand no more than in the command zone), while a source is a source wherever the 60 is
+/// kept.
+fn zone_sections(format: Option<&str>, input: &DeckAnalysisInput) -> (Vec<i32>, Vec<i32>) {
+    let leads = format_leads_with_command_zone(format);
     let mut library = Vec::new();
     let mut command = Vec::new();
     for section in &input.sections {
@@ -384,7 +447,8 @@ fn zone_sections(input: &DeckAnalysisInput) -> (Vec<i32>, Vec<i32>) {
         }
         match deck_zone(&section.name) {
             DeckZone::Main => library.push(section.id),
-            DeckZone::Command => command.push(section.id),
+            DeckZone::Command if leads => command.push(section.id),
+            DeckZone::Command => library.push(section.id),
             DeckZone::Sideboard => {}
         }
     }
@@ -403,37 +467,48 @@ fn plural(count: i64, one: &str, many: &str) -> String {
     }
 }
 
+/// The card that sets a colour's number: the most demanding **non-`X`** spell, since an
+/// `X` spell's real cost is the player's choice. `ledger.demand` is already sorted most
+/// demanding first.
+fn decisive(ledger: &ColorLedger) -> Option<&DeckManaDemandCard> {
+    ledger.demand.iter().find(|card| !card.x_cost)
+}
+
 /// Word one colour's verdict.
-fn verdict(color: char, ledger: &ColorLedger, sources: i64, needed: Option<i64>) -> String {
+fn verdict(color: char, ledger: &ColorLedger, sources: i64, status: DeckManaStatus) -> String {
     let label = color_label(color).to_lowercase();
-    match needed {
-        None if ledger.hybrid_pips > 0 => format!(
+    match (status, decisive(ledger)) {
+        (DeckManaStatus::NoDemand, _) if ledger.hybrid_pips > 0 => format!(
             "Only hybrid pips ask for {label} — {} {} it could pay, none it must.",
             ledger.hybrid_pips,
             plural(ledger.hybrid_pips, "pip", "pips")
         ),
-        None => format!("Nothing in this deck needs {label} mana."),
-        Some(needed) if sources >= needed => {
-            format!("Enough {label} sources: {sources} of the {needed} needed.")
-        }
-        Some(needed) => {
+        (DeckManaStatus::NoDemand, _) => format!("Nothing in this deck needs {label} mana."),
+        (DeckManaStatus::Undecided, _) => format!(
+            "Only X-cost {} for {label}: how many sources that takes depends on X.",
+            plural(ledger.demand.len() as i64, "spell asks", "spells ask")
+        ),
+        (DeckManaStatus::Enough, Some(card)) => format!(
+            "Enough {label} sources: {sources} of the {} needed.",
+            card.sources_needed
+        ),
+        (DeckManaStatus::Short, Some(card)) => {
+            let needed = card.sources_needed;
             let short = needed - sources;
-            let wanted_by = ledger
-                .demand
-                .first()
-                .map(|card| format!(" for {}", card.name))
-                .unwrap_or_default();
             format!(
-                "Short {short} {label} {}: {sources} of {needed} needed{wanted_by}.",
-                plural(short, "source", "sources")
+                "Short {short} {label} {}: {sources} of {needed} needed for {}.",
+                plural(short, "source", "sources"),
+                card.name
             )
         }
+        // Unreachable: Enough and Short are only assigned when a decisive card exists.
+        (_, None) => format!("Nothing in this deck needs {label} mana."),
     }
 }
 
 /// Fold a deck into its mana base.
 pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> DeckManaBase {
-    let (library_ids, command_ids) = zone_sections(input);
+    let (library_ids, command_ids) = zone_sections(format, input);
     let library = fold_by_name(&input.in_sections(&library_ids));
     let played_ids: Vec<i32> = library_ids.iter().chain(&command_ids).copied().collect();
     let played = fold_by_name(&input.in_sections(&played_ids));
@@ -451,6 +526,10 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
     let table_size = table_size_for(format_deck_size(format).unwrap_or(deck_size));
 
     let mut ledgers: BTreeMap<char, ColorLedger> = BTreeMap::new();
+    // Decided in the fold, over every demanding card, never re-derived from the capped lists.
+    let mut any_clamped_pips = false;
+    let mut any_clamped_turn = false;
+    let mut any_x_cost = false;
 
     // Demand: every hard pip in the deck a player casts from.
     for fold in &played {
@@ -461,7 +540,10 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
         let gold = parsed.hard.len() > 1;
         for (&color, &pips) in &parsed.hard {
             let mana_value = parsed.mana_value.max(pips);
-            let (cost_key, base) = threshold(table_size, mana_value, pips);
+            let row = threshold(table_size, mana_value, pips);
+            any_clamped_pips |= row.clamped_pips;
+            any_clamped_turn |= row.clamped_turn;
+            any_x_cost |= parsed.x_cost;
             let ledger = ledgers.entry(color).or_default();
             ledger.pips = ledger.pips.saturating_add(pips.saturating_mul(fold.copies));
             ledger.demand.push(DeckManaDemandCard {
@@ -471,9 +553,11 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
                 mana_cost: parsed.text.clone(),
                 pips,
                 turn: mana_value,
-                cost_key: cost_key.to_string(),
+                cost_key: row.key.to_string(),
                 gold,
-                sources_needed: base + i64::from(gold),
+                sources_needed: row.sources + i64::from(gold),
+                x_cost: parsed.x_cost,
+                clamped: row.clamped_pips || row.clamped_turn,
             });
         }
         for (&color, &pips) in &parsed.flexible {
@@ -527,7 +611,9 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
                     .then_with(|| a.name.cmp(&b.name))
             });
             let demand_count = ledger.demand.len() as i64;
-            let sources_needed = ledger.demand.first().map(|card| card.sources_needed);
+            // The number is the most demanding spell's — skipping X spells, whose real cost
+            // is the player's. They stay in `demand` so the reader sees them.
+            let sources_needed = decisive(&ledger).map(|card| card.sources_needed);
 
             // Lands first, then the most copies, then by name.
             ledger.sources.sort_by(|a, b| {
@@ -553,11 +639,12 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
 
             let shortfall = sources_needed.map_or(0, |needed| (needed - sources).max(0));
             let status = match sources_needed {
-                None => DeckManaStatus::NoDemand,
+                None if ledger.demand.is_empty() => DeckManaStatus::NoDemand,
+                None => DeckManaStatus::Undecided,
                 Some(_) if shortfall > 0 => DeckManaStatus::Short,
                 Some(_) => DeckManaStatus::Enough,
             };
-            let verdict = verdict(*color, &ledger, sources, sources_needed);
+            let verdict = verdict(*color, &ledger, sources, status);
 
             let mut demand = ledger.demand;
             demand.truncate(MAX_LISTED_DEMAND);
@@ -587,28 +674,40 @@ pub(crate) fn analyse_mana(format: Option<&str>, input: &DeckAnalysisInput) -> D
     let mut caveats = vec![
         format!(
             "Thresholds are Frank Karsten's 2022 numbers for a {table_size}-card deck: the \
-             sources of one colour that cast a spell on curve about 90% of the time, assuming \
-             a typical land count and enough lands drawn. A tapped land, a fetch land, a mana \
-             creature or a rock each count as one full source here; Karsten weighs some of \
-             them as less."
+             sources of one colour that cast a spell on curve 90% of the time for a one-drop, \
+             rising to 96% for a seven-drop, assuming a typical land count and enough lands \
+             drawn. A tapped land, a fetch land, a mana creature or a rock each count as one \
+             full source here; Karsten weighs some of them as less."
         ),
-        "Hybrid, Phyrexian and {2/C} pips can be paid another way, so they're listed but never \
-         counted against a colour. A multicoloured card needs one more source of each of its \
-         colours (Karsten's gold-card rule)."
+        "A multicoloured card needs one more source of each of its colours (Karsten's \
+         gold-card rule). Hybrid, Phyrexian and {2/C} pips are listed but never counted \
+         against a colour — a simplification of this read, not the article's: Karsten asks \
+         for the table number in combined sources across a hybrid's colours."
             .to_string(),
         "Only the shuffled library supplies mana: a commander's own pips are demand, but its \
          section is never a source for the rest of the deck."
             .to_string(),
     ];
-    if colors.iter().any(|color| {
-        color
-            .demand
-            .iter()
-            .any(|card| card.pips > MAX_TABLE_PIPS || card.turn > 7)
-    }) {
+    if any_x_cost {
         caveats.push(
-            "A spell with more than four pips of one colour, or a mana value past seven, is \
-             judged as the table's last row — a floor, since the table stops there."
+            "An X-cost spell is listed with the number its fixed pips imply but never sets a \
+             colour's requirement: Karsten judges one by the lands you expect to tap for it, \
+             which only you know."
+                .to_string(),
+        );
+    }
+    if any_clamped_pips {
+        caveats.push(
+            "A spell with more than four pips of one colour is judged as the table's four-pip \
+             row — a floor, since the table stops there."
+                .to_string(),
+        );
+    }
+    if any_clamped_turn {
+        caveats.push(
+            "A spell whose mana value is past the last row for its pip count is judged as that \
+             row, which over-states what it needs — a spell cast a turn later is only ever \
+             easier to have the colours for."
                 .to_string(),
         );
     }
@@ -640,6 +739,12 @@ mod tests {
 
     fn cost(text: &str) -> ParsedCost {
         parse_cost(text)
+    }
+
+    /// A lookup as `(row, sources)`, for the cases that aren't about the clamp flags.
+    fn t(table_size: i64, mana_value: i64, pips: i64) -> (&'static str, i64) {
+        let row = threshold(table_size, mana_value, pips);
+        (row.key, row.sources)
     }
 
     fn color<'a>(base: &'a DeckManaBase, color: &str) -> &'a DeckManaColor {
@@ -717,11 +822,53 @@ mod tests {
     #[test]
     fn the_table_is_pinned_to_the_article() {
         // A handful of rows read straight off the article's summary, one per pip group.
-        assert_eq!(threshold(60, 3, 2), ("1CC", 18));
-        assert_eq!(threshold(99, 2, 2), ("CC", 30));
-        assert_eq!(threshold(40, 1, 1), ("C", 9));
-        assert_eq!(threshold(80, 5, 4), ("1CCCC", 31));
-        assert_eq!(threshold(60, 4, 3), ("1CCC", 21));
+        assert_eq!(t(60, 3, 2), ("1CC", 18));
+        assert_eq!(t(99, 2, 2), ("CC", 30));
+        assert_eq!(t(40, 1, 1), ("C", 9));
+        assert_eq!(t(80, 5, 4), ("1CCCC", 31));
+        assert_eq!(t(60, 4, 3), ("1CCC", 21));
+        // The whole constant, against a second copy typed from the article's summary table
+        // (columns 60 / 80 / 99 / 40) — an edit to one number fails here rather than shipping.
+        let expected: &[(&str, [i64; 4])] = &[
+            ("C", [14, 19, 19, 9]),
+            ("1C", [13, 18, 19, 9]),
+            ("2C", [12, 16, 18, 8]),
+            ("3C", [10, 15, 16, 7]),
+            ("4C", [9, 14, 15, 6]),
+            ("5C", [9, 12, 14, 6]),
+            ("CC", [21, 28, 30, 14]),
+            ("1CC", [18, 25, 28, 12]),
+            ("2CC", [16, 23, 26, 11]),
+            ("3CC", [15, 20, 23, 10]),
+            ("4CC", [13, 19, 22, 9]),
+            ("5CC", [12, 17, 20, 8]),
+            ("CCC", [23, 32, 36, 16]),
+            ("1CCC", [21, 29, 33, 14]),
+            ("2CCC", [19, 26, 30, 13]),
+            ("3CCC", [17, 24, 28, 11]),
+            ("4CCC", [16, 22, 26, 10]),
+            ("CCCC", [24, 34, 39, 17]),
+            ("1CCCC", [22, 31, 36, 15]),
+        ];
+        assert_eq!(KARSTEN_2022.len(), expected.len());
+        for ((key, mana_value, pips, columns), (expected_key, expected_columns)) in
+            KARSTEN_2022.iter().zip(expected)
+        {
+            assert_eq!(key, expected_key);
+            assert_eq!(columns, expected_columns, "{key}");
+            // The key spells the row: its generic part plus one `C` per pip.
+            let generic = mana_value - pips;
+            let spelled = format!(
+                "{}{}",
+                if generic > 0 {
+                    generic.to_string()
+                } else {
+                    String::new()
+                },
+                "C".repeat(*pips as usize)
+            );
+            assert_eq!(*key, spelled, "row key must match its mana value and pips");
+        }
     }
 
     #[test]
@@ -732,15 +879,35 @@ mod tests {
                 "pip group {pips}"
             );
         }
-        // Past the last row of a group: the last row, never nothing.
-        assert_eq!(threshold(60, 9, 1), ("5C", 9));
-        assert_eq!(threshold(60, 12, 2), ("5CC", 12));
-        // More pips than the table knows: the four-pip group.
-        assert_eq!(threshold(60, 5, 6), ("1CCCC", 22));
-        // A mana value below the group's first row: the first row, not a panic.
-        assert_eq!(threshold(60, 1, 3), ("CCC", 23));
+        // Past the last row of a group: the last row, never nothing — and flagged as the
+        // turn clamp, which is an over-estimate.
+        assert_eq!(t(60, 9, 1), ("5C", 9));
+        assert_eq!(t(60, 12, 2), ("5CC", 12));
+        let seven_drop_one_pip = threshold(60, 7, 1);
+        assert!(
+            seven_drop_one_pip.clamped_turn,
+            "the one-pip group ends at six"
+        );
+        assert!(!seven_drop_one_pip.clamped_pips);
+        let six_drop_four_pips = threshold(60, 6, 4);
+        assert!(
+            six_drop_four_pips.clamped_turn,
+            "the four-pip group ends at five"
+        );
+        assert!(
+            !threshold(60, 6, 1).clamped_turn,
+            "a row's own mana value isn't a clamp"
+        );
+        assert!(!threshold(60, 3, 2).clamped_turn);
+        // More pips than the table knows: the four-pip group, flagged as the pip clamp.
+        assert_eq!(t(60, 5, 6), ("1CCCC", 22));
+        let five_pips = threshold(60, 5, 6);
+        assert!(five_pips.clamped_pips && !five_pips.clamped_turn);
+        // A mana value below the group's first row: the first row, not a panic, no clamp.
+        assert_eq!(t(60, 1, 3), ("CCC", 23));
+        assert!(!threshold(60, 1, 3).clamped_turn);
         // An unknown table size falls back to the 60-card column.
-        assert_eq!(threshold(17, 1, 1), ("C", 14));
+        assert_eq!(t(17, 1, 1), ("C", 14));
     }
 
     #[test]
@@ -1025,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn the_floor_caveat_appears_only_when_the_table_was_clamped() {
+    fn the_clamp_caveats_appear_only_when_the_table_was_clamped_and_say_which_way() {
         let plain = analyse_mana(
             None,
             &deck(
@@ -1034,15 +1201,239 @@ mod tests {
             ),
         );
         assert!(!plain.caveats.iter().any(|c| c.contains("last row")));
+        assert!(!plain.caveats.iter().any(|c| c.contains("four-pip")));
+        assert!(!color(&plain, "U").demand[0].clamped);
 
-        let clamped = analyse_mana(
+        // A mana value past its pip group's last row: the over-estimate wording, and the
+        // card says it was clamped so a client never presents the row as the cost's own.
+        let late = analyse_mana(
             None,
             &deck(
                 vec![section(1, "Deck", false)],
                 vec![entry("p", "Primal Surge", 1, 1, 0).mana_cost("{8}{G}{G}")],
             ),
         );
-        assert!(clamped.caveats.iter().any(|c| c.contains("last row")));
-        assert_eq!(color(&clamped, "G").demand[0].cost_key, "5CC");
+        assert!(late.caveats.iter().any(|c| c.contains("over-states")));
+        assert!(!late.caveats.iter().any(|c| c.contains("four-pip")));
+        assert_eq!(color(&late, "G").demand[0].cost_key, "5CC");
+        assert!(color(&late, "G").demand[0].clamped);
+
+        // The one-pip group ends at six, so a seven-mana single-pip spell is clamped too —
+        // which a fixed "past seven" test would have missed.
+        let seven = analyse_mana(
+            None,
+            &deck(
+                vec![section(1, "Deck", false)],
+                vec![entry("s", "Sphinx", 1, 1, 0).mana_cost("{6}{U}")],
+            ),
+        );
+        assert!(seven.caveats.iter().any(|c| c.contains("over-states")));
+        assert_eq!(color(&seven, "U").demand[0].cost_key, "5C");
+
+        // More than four pips: the floor wording, and only that.
+        let pips = analyse_mana(
+            None,
+            &deck(
+                vec![section(1, "Deck", false)],
+                vec![entry("k", "Khalni Hydra", 1, 1, 0).mana_cost("{G}{G}{G}{G}{G}{G}{G}{G}")],
+            ),
+        );
+        assert!(pips.caveats.iter().any(|c| c.contains("four-pip")));
+        assert!(!pips.caveats.iter().any(|c| c.contains("over-states")));
+        assert!(color(&pips, "G").demand[0].clamped);
+
+        // The clamp is decided in the fold, not read off the capped list: a clamped spell
+        // sorted past the tenth listed card still raises the caveat.
+        let mut entries: Vec<_> = (0..12)
+            .map(|i| {
+                entry(&format!("h{i}"), &format!("Hungry {i:02}"), 1, 1, 0)
+                    .mana_cost("{B}{B}{B}{B}")
+            })
+            .collect();
+        entries.push(entry("late", "Late", 1, 1, 0).mana_cost("{9}{B}"));
+        let buried = analyse_mana(None, &deck(vec![section(1, "Deck", false)], entries));
+        assert_eq!(color(&buried, "B").demand.len(), MAX_LISTED_DEMAND);
+        assert!(!color(&buried, "B").demand.iter().any(|c| c.name == "Late"));
+        assert!(buried.caveats.iter().any(|c| c.contains("over-states")));
+    }
+
+    /// An X spell's real cost is the player's choice, so it is listed but never the card
+    /// that sets a colour's number — Karsten's own advice is to judge one by the lands you
+    /// expect to tap for it.
+    #[test]
+    fn an_x_spell_is_listed_but_never_decisive() {
+        let sections = vec![section(1, "Deck", false)];
+        let with_other = analyse_mana(
+            Some("Commander"),
+            &deck(
+                sections.clone(),
+                vec![
+                    entry("ex", "Exsanguinate", 1, 1, 0).mana_cost("{X}{B}{B}"),
+                    entry("sign", "Sign in Blood", 1, 1, 0).mana_cost("{B}{B}"),
+                    entry("swamp", "Swamp", 1, 30, 0)
+                        .type_line("Basic Land — Swamp")
+                        .produces("B"),
+                ],
+            ),
+        );
+        let black = color(&with_other, "B");
+        assert_eq!(black.demand_count, 2);
+        let ex = black
+            .demand
+            .iter()
+            .find(|c| c.name == "Exsanguinate")
+            .unwrap();
+        assert!(ex.x_cost);
+        assert_eq!(
+            ex.cost_key, "CC",
+            "listed with the number its fixed pips imply"
+        );
+        // Sign in Blood (CC on turn two, 30 in a 99-card deck) decides — not Exsanguinate,
+        // which would otherwise tie it and be sorted first.
+        assert_eq!(black.sources_needed, Some(30));
+        assert_eq!(black.status, DeckManaStatus::Enough);
+        assert_eq!(black.verdict, "Enough black sources: 30 of the 30 needed.");
+        assert!(with_other.caveats.iter().any(|c| c.contains("X-cost")));
+
+        // X spells alone: the colour is demanded, but no number is asserted.
+        let alone = analyse_mana(
+            Some("Commander"),
+            &deck(
+                sections,
+                vec![
+                    entry("ex", "Exsanguinate", 1, 1, 0).mana_cost("{X}{B}{B}"),
+                    entry("swamp", "Swamp", 1, 5, 0)
+                        .type_line("Basic Land — Swamp")
+                        .produces("B"),
+                ],
+            ),
+        );
+        let black = color(&alone, "B");
+        assert_eq!(black.pips, 2);
+        assert_eq!(black.sources_needed, None);
+        assert_eq!(black.shortfall, 0);
+        assert_eq!(black.status, DeckManaStatus::Undecided);
+        assert_eq!(
+            black.verdict,
+            "Only X-cost spell asks for black: how many sources that takes depends on X."
+        );
+    }
+
+    /// Every deck is seeded with a `Commander` section; in a format with no command zone the
+    /// cards in it are just part of the 60 — demand, and supply too.
+    #[test]
+    fn a_commander_section_supplies_mana_in_a_format_with_no_command_zone() {
+        let sections = vec![section(1, "Commander", false), section(2, "Deck", false)];
+        let cards = vec![
+            entry("island", "Island", 1, 4, 0)
+                .type_line("Basic Land — Island")
+                .produces("U"),
+            entry("island2", "Island", 2, 10, 0)
+                .type_line("Basic Land — Island")
+                .produces("U"),
+            entry("delver", "Delver of Secrets", 2, 4, 0)
+                .mana_cost("{U}")
+                .produces(""),
+        ];
+
+        let modern = analyse_mana(Some("Modern"), &deck(sections.clone(), cards.clone()));
+        assert_eq!(
+            modern.library_size, 18,
+            "the Commander section is library here"
+        );
+        assert_eq!(modern.land_count, 14);
+        let blue = color(&modern, "U");
+        assert_eq!(blue.sources, 14);
+        assert_eq!(blue.status, DeckManaStatus::Enough, "{blue:?}");
+
+        // The same rows in Commander: the zone leads, so its cards are demand only.
+        let commander = analyse_mana(Some("Commander"), &deck(sections, cards));
+        assert_eq!(commander.library_size, 14);
+        assert_eq!(color(&commander, "U").sources, 10);
+    }
+
+    /// A colour the library produces but nothing pays — the shape almost every Commander
+    /// deck has for the colour its lands happen to make.
+    #[test]
+    fn a_colour_with_sources_and_no_demand_says_so() {
+        let base = analyse_mana(
+            None,
+            &deck(
+                vec![section(1, "Deck", false)],
+                vec![
+                    entry("bolt", "Lightning Bolt", 1, 4, 0)
+                        .mana_cost("{R}")
+                        .produces(""),
+                    entry("mtn", "Mountain", 1, 8, 0)
+                        .type_line("Basic Land — Mountain")
+                        .produces("R"),
+                    entry("wastes", "Wastes", 1, 2, 0)
+                        .type_line("Basic Land")
+                        .produces("C"),
+                ],
+            ),
+        );
+        let colorless = color(&base, "C");
+        assert_eq!(colorless.sources, 2);
+        assert_eq!(colorless.pips, 0);
+        assert_eq!(colorless.status, DeckManaStatus::NoDemand);
+        assert_eq!(
+            colorless.verdict,
+            "Nothing in this deck needs colorless mana."
+        );
+    }
+
+    /// A type line is read by its front face, like every other reader of one: a modal
+    /// double-faced card whose back is a land is a nonland source (it is cast as its front
+    /// or played as its back — either way a source), and a land // land pathway is a land.
+    #[test]
+    fn a_double_faced_type_line_is_read_by_its_front() {
+        let base = analyse_mana(
+            None,
+            &deck(
+                vec![section(1, "Deck", false)],
+                vec![
+                    entry(
+                        "mdfc",
+                        "Shatterskull Smashing // Shatterskull, the Hammer Pass",
+                        1,
+                        2,
+                        0,
+                    )
+                    .type_line("Sorcery // Land")
+                    .mana_cost("{X}{R}{R}")
+                    .produces("R"),
+                    entry("path", "Riverglide Pathway // Lavaglide Pathway", 1, 3, 0)
+                        .type_line("Land // Land")
+                        .produces("U,R"),
+                ],
+            ),
+        );
+        assert_eq!(base.land_count, 3);
+        let red = color(&base, "R");
+        assert_eq!(red.sources, 5);
+        assert_eq!(red.land_sources, 3);
+        assert_eq!(red.nonland_sources, 2);
+    }
+
+    #[test]
+    fn a_produced_mana_list_is_read_case_insensitively_and_once_per_colour() {
+        let base = analyse_mana(
+            None,
+            &deck(
+                vec![section(1, "Deck", false)],
+                vec![
+                    entry("odd", "Odd Land", 1, 2, 0)
+                        .type_line("Land")
+                        .produces("g,G,w"),
+                ],
+            ),
+        );
+        assert_eq!(
+            color(&base, "G").sources,
+            2,
+            "one source per copy, not per listing"
+        );
+        assert_eq!(color(&base, "W").sources, 2);
     }
 }

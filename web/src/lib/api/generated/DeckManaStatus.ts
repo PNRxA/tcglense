@@ -3,4 +3,4 @@
 /**
  * The verdict on one colour.
  */
-export type DeckManaStatus = "enough" | "short" | "no_demand";
+export type DeckManaStatus = "enough" | "short" | "no_demand" | "undecided";

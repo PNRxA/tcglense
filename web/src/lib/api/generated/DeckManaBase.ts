@@ -27,9 +27,9 @@ land_count: number,
  */
 colors: Array<DeckManaColor>, 
 /**
- * Cards in the library whose catalog row hasn't been checked for what it produces (it
- * predates the empty-string convention and is rewritten by the next bulk import). While
- * this is non-zero every source count is a floor.
+ * Distinct cards in the library whose catalog row hasn't been checked for what it
+ * produces (it predates the empty-string convention, which migration 79 backfilled and
+ * every bulk import writes). While this is non-zero every source count is a floor.
  */
 unchecked_count: number, 
 /**
