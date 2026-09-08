@@ -7,11 +7,18 @@ import StaleNotice from '@/components/cards/StaleNotice.vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import DeckStatBars from '@/components/decks/DeckStatBars.vue'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
-import type { DeckRole, DeckRoles, DeckStatItem } from '@/lib/api'
+import type { DeckRole, DeckRoleGroup, DeckRoles, DeckStatItem } from '@/lib/api'
 
 // **Card roles** (issue #671): how much of the deck ramps, draws, removes, wipes, counters,
 // tutors, recurs and protects — the eight questions a deckbuilder asks about a list they
 // can't remember card by card.
+//
+// It rests **compact**, in `DeckBracket`'s shape: one row of chips, one per role with its
+// count — and the chips are the filter toggles, so the resting panel is the whole control.
+// Behind "Details" sit the bars (the same eight numbers, drawn to scale), what each role
+// counts, and every card it counted. Two panels above this one already rest collapsed on the
+// same page, and a third full-height card of bars on a page whose subject is the card list
+// was the thing this shape replaces.
 //
 // Every claim is the server's (`GET /api/decks/{game}/{deck_id}/roles`, or its public and
 // precon mirrors), including each role's label and its description, so a CLI asking the same
@@ -43,9 +50,19 @@ const props = defineProps<{
   stale?: boolean
 }>()
 
-/** The selected role, or null. The bars *are* the filter control (`DeckStatBars`'
- * `selectable` mode), so the panel owns no toggle of its own. */
+/** The selected role, or null. The resting chips and the expanded bars (`DeckStatBars`'
+ * `selectable` mode) are both bound to it — two views of one control, never two controls —
+ * so the panel owns no toggle of its own. */
 const role = defineModel<DeckRole | null>('role', { default: null })
+
+/** "Ramp: 25 copies" — the chip's tooltip, in the same words the bar's label uses. */
+function chipTitle(group: DeckRoleGroup): string {
+  return `${group.label}: ${group.copies} ${group.copies === 1 ? 'copy' : 'copies'}`
+}
+
+function toggle(next: DeckRole) {
+  role.value = role.value === next ? null : next
+}
 
 // Every role, zeroes included — a deck with no board wipes says so, and a bar that vanished
 // when it hit zero would be read as "not counted" rather than "none".
@@ -113,64 +130,95 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
       <Skeleton class="h-24 w-full" />
     </CardContent>
 
-    <CardContent v-else-if="roles" class="space-y-4">
+    <CardContent v-else-if="roles" class="space-y-3">
       <StaleNotice v-if="stale" label="Couldn't refresh — showing the roles as they last loaded." />
-      <p class="text-muted-foreground text-xs">
-        Read off each card's rules text — a card can fill several roles, and one the grammar isn't
-        sure about is left out. Click a role to filter the list.
-      </p>
 
-      <DeckStatBars
-        v-model:selected="role"
-        title="Copies by role"
-        layout="rows"
-        selectable
-        :items="items"
-      />
+      <!-- The resting row: every role as a chip, zeroes included (an absent "Board wipes"
+        would read as "not counted"). Each chip is the toggle for its role — pressed when the
+        list below is filtered to it, and the same chip clears it. -->
+      <ul class="flex flex-wrap gap-1.5" aria-label="Filter the card list by role">
+        <li v-for="group in roles.roles" :key="group.role">
+          <button
+            type="button"
+            class="focus-visible:ring-ring/50 inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs outline-none focus-visible:ring-3"
+            :class="[
+              role === group.role
+                ? 'bg-muted ring-ring/50 ring-2'
+                : 'hover:bg-muted/40 border-transparent',
+              group.copies === 0 ? 'text-muted-foreground' : '',
+            ]"
+            :aria-pressed="role === group.role"
+            :title="chipTitle(group)"
+            @click="toggle(group.role)"
+          >
+            {{ group.label }}
+            <span
+              class="inline-flex items-center rounded px-1 font-semibold tabular-nums"
+              :class="group.copies === 0 ? '' : 'bg-muted'"
+              >{{ group.copies }}</span
+            >
+          </button>
+        </li>
+      </ul>
 
       <p class="text-muted-foreground text-xs">
         <span class="tabular-nums">{{ classifiedCount }}</span> of
         <span class="tabular-nums">{{ roles.card_count }}</span> distinct cards fill at least one
-        role.
+        role — a card can fill several roles. Click a role to filter the list.
       </p>
 
-      <!-- What each role counts, and the cards it counted — the panel's claim to being
-        checkable, and the only place the near-miss each role deliberately excludes is
-        spelled out. -->
-      <div v-if="expanded" :id="detailsId" class="grid gap-3 border-t pt-4 sm:grid-cols-2">
-        <section v-for="group in roles.roles" :key="group.role" class="rounded-md border p-3">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-sm font-medium">{{ group.label }}</h3>
-            <span
-              class="inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-              :class="group.count === 0 ? 'text-muted-foreground' : 'bg-muted'"
-              :title="`${group.count} card${group.count === 1 ? '' : 's'}, ${group.copies} ${
-                group.copies === 1 ? 'copy' : 'copies'
-              }`"
-              >{{ group.count }}</span
-            >
-          </div>
-          <p class="text-muted-foreground mt-1 text-xs">{{ group.description }}</p>
-          <ul v-if="group.cards.length" class="mt-2 flex flex-wrap gap-1.5">
-            <li v-for="card in group.cards" :key="card.card_id">
-              <a
-                :href="hrefFor('card', game, card.card_id)"
-                class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs hover:underline"
-                @click="onActivate($event, 'card', game, card.card_id)"
-                @pointerenter="warm('card')"
-                @focusin="warm('card')"
+      <!-- The evidence: the same eight numbers drawn to scale, what each role counts (the
+        only place the near-miss each role deliberately excludes is spelled out), and the
+        cards it counted — the panel's claim to being checkable. -->
+      <div v-if="expanded" :id="detailsId" class="space-y-4 border-t pt-4">
+        <p class="text-muted-foreground text-xs">
+          Read off each card's rules text. A card the grammar isn't sure about is left out rather
+          than guessed, so a bar is a floor.
+        </p>
+
+        <DeckStatBars
+          v-model:selected="role"
+          title="Copies by role"
+          layout="rows"
+          selectable
+          :items="items"
+        />
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <section v-for="group in roles.roles" :key="group.role" class="rounded-md border p-3">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-medium">{{ group.label }}</h3>
+              <span
+                class="inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+                :class="group.count === 0 ? 'text-muted-foreground' : 'bg-muted'"
+                :title="`${group.count} card${group.count === 1 ? '' : 's'}, ${group.copies} ${
+                  group.copies === 1 ? 'copy' : 'copies'
+                }`"
+                >{{ group.count }}</span
               >
-                {{ card.name }}
-                <span v-if="card.quantity > 1" class="text-muted-foreground tabular-nums"
-                  >×{{ card.quantity }}</span
+            </div>
+            <p class="text-muted-foreground mt-1 text-xs">{{ group.description }}</p>
+            <ul v-if="group.cards.length" class="mt-2 flex flex-wrap gap-1.5">
+              <li v-for="card in group.cards" :key="card.card_id">
+                <a
+                  :href="hrefFor('card', game, card.card_id)"
+                  class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs hover:underline"
+                  @click="onActivate($event, 'card', game, card.card_id)"
+                  @pointerenter="warm('card')"
+                  @focusin="warm('card')"
                 >
-              </a>
-            </li>
-          </ul>
-          <p v-if="group.count > group.cards.length" class="text-muted-foreground mt-1.5 text-xs">
-            …and {{ group.count - group.cards.length }} more
-          </p>
-        </section>
+                  {{ card.name }}
+                  <span v-if="card.quantity > 1" class="text-muted-foreground tabular-nums"
+                    >×{{ card.quantity }}</span
+                  >
+                </a>
+              </li>
+            </ul>
+            <p v-if="group.count > group.cards.length" class="text-muted-foreground mt-1.5 text-xs">
+              …and {{ group.count - group.cards.length }} more
+            </p>
+          </section>
+        </div>
       </div>
     </CardContent>
   </Card>

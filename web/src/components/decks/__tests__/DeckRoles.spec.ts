@@ -91,13 +91,32 @@ async function mountExpanded(props: Record<string, unknown> = {}) {
 }
 
 describe('DeckRoles', () => {
-  it('draws every role, the empty ones included', () => {
+  it('rests as one chip per role, the empty ones included', () => {
     const wrapper = mountPanel()
+    const chips = wrapper.findAll('button[aria-pressed]')
+
+    expect(chips).toHaveLength(8)
+    // A role the deck holds none of is a chip reading zero, not a chip that isn't there — an
+    // absent "Board wipes" would have to be read as "not counted".
+    expect(chips.map((chip) => chip.text().replace(/\s+/g, ' '))).toEqual([
+      'Ramp 3',
+      'Card draw 0',
+      'Removal 1',
+      'Board wipes 0',
+      'Counterspells 0',
+      'Tutors 0',
+      'Recursion 0',
+      'Protection 0',
+    ])
+    // Compact means no bars while collapsed — they are the detail, not the summary.
+    expect(wrapper.findAll('[role="img"]')).toHaveLength(0)
+  })
+
+  it('draws the same eight numbers as bars behind the disclosure', async () => {
+    const wrapper = await mountExpanded()
     const bars = wrapper.findAll('[role="img"]')
 
     expect(bars).toHaveLength(8)
-    // A role the deck holds none of is a bar reading zero, not a bar that isn't there — an
-    // absent "Board wipes" would have to be read as "not counted".
     expect(bars.map((bar) => bar.attributes('aria-label'))).toEqual([
       'Ramp: 3 copies',
       'Card draw: 0 copies',
@@ -131,6 +150,20 @@ describe('DeckRoles', () => {
 
     await wrapper.findAll('button[aria-pressed]')[0]!.trigger('click')
     expect(wrapper.emitted('update:role')).toEqual([['ramp'], [null]])
+  })
+
+  it('binds the expanded bars to the same selection as the chips', async () => {
+    const wrapper = await mountExpanded({ role: 'removal' })
+    const pressed = wrapper
+      .findAll('button[aria-pressed="true"]')
+      .map((button) => button.text().replace(/\s+/g, ''))
+    // The chip and the bar for the one selected role, and nothing else: one control, two
+    // views of it.
+    expect(pressed).toEqual(['Removal1', 'Removal1'])
+
+    // Clicking the bar clears it exactly as the chip would.
+    await wrapper.findAll('button[aria-pressed="true"]')[1]!.trigger('click')
+    expect(wrapper.emitted('update:role')).toEqual([[null]])
   })
 
   it('keeps the evidence behind a disclosure', async () => {
