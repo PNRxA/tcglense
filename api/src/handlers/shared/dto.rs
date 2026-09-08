@@ -1,6 +1,7 @@
 //! Shared card response DTOs: the public card payload (`CardResponse` + its faces
-//! and prices) reused by both the catalog and collection endpoints, plus the two
-//! small `card::Model` accessors it's built from.
+//! and prices) reused by both the catalog and collection endpoints, the detail-only
+//! `CardDetailResponse` the single-card route wraps it in (issue #673), plus the two
+//! small `card::Model` accessors they're built from.
 //!
 //! The wire DTOs here (and in the other handler modules) carry a test-only
 //! `ts_rs::TS` derive: `cargo test` exports each one as a TypeScript type into
@@ -89,6 +90,125 @@ pub(crate) struct CardResponse {
     /// (`"modern"`, `"commander"`, …) -> `"legal" | "not_legal" | "banned" |
     /// "restricted"`. `None` when the catalog row has no legality data (issue #557).
     pub legalities: Option<BTreeMap<String, String>>,
+}
+
+/// The single-card route's payload (`GET /api/games/{game}/cards/{id}`, issue #673): the
+/// shared [`CardResponse`] every listing carries, **flattened**, plus the print + collector
+/// details only the card page reads — who painted it, its flavour text, the finishes it
+/// comes in, frame/border/stamp/promo facts, the Reserved List flag, its EDHREC / Penny
+/// rank, the mana it produces, and a Battle's printed defense.
+///
+/// Detail-only on purpose: `CardResponse` rides every list payload (a grid page is up to 200
+/// of them, CDN/ETag-cached), so these ~20 columns stay off it and live here, on the one
+/// route that answers for a single card. Nothing here is derived — every field is the
+/// catalog column as stored (`defense` is the printed box, rendered like P/T), so the
+/// response stays a pure function of its URL and the public cache rules are unchanged.
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, rename = "CardDetail"))]
+pub(crate) struct CardDetailResponse {
+    #[serde(flatten)]
+    #[schema(inline)]
+    pub card: CardResponse,
+    /// The illustrator credited on the printing (`a:` searches it); a multi-artist card
+    /// carries every name in one string, as printed.
+    pub artist: Option<String>,
+    /// Scryfall's stable ids for the artist(s) above, one per artist.
+    pub artist_ids: Vec<String>,
+    /// The artwork's id — every printing of the same painting shares it (the key the art
+    /// tags and a future "other printings of this artwork" read join on).
+    pub illustration_id: Option<String>,
+    /// The printed flavour text; a multi-faced card's faces are joined by `\n//\n`.
+    pub flavor_text: Option<String>,
+    /// The printed watermark (a guild or faction mark, a Universes Beyond logo), if any.
+    pub watermark: Option<String>,
+    /// The finishes this printing exists in — `nonfoil` / `foil` / `etched`.
+    pub finishes: Vec<String>,
+    /// The frame layout (`1993`, `2003`, `2015`, `future`, …).
+    pub frame: Option<String>,
+    /// Frame effects on the printing (`showcase`, `extendedart`, `legendary`, …).
+    pub frame_effects: Vec<String>,
+    /// `black` / `white` / `silver` / `gold` / `borderless`.
+    pub border_color: Option<String>,
+    /// The holofoil security stamp (`oval`, `triangle`, `acorn`, `arena`, …), if any.
+    pub security_stamp: Option<String>,
+    /// Scryfall's promo-type tags (`prerelease`, `buyabox`, `sldbonus`, …).
+    pub promo_types: Vec<String>,
+    /// The colours of mana this card can produce.
+    pub produced_mana: Vec<String>,
+    /// A Battle's printed defense box, exactly as stored (the `def:` filter's column).
+    pub defense: Option<String>,
+    /// On the Reserved List — never to be reprinted (`is:reserved`).
+    pub reserved: bool,
+    pub full_art: bool,
+    pub textless: bool,
+    pub promo: bool,
+    /// A variation of another printing in the same set (alternate art, a different frame).
+    pub variation: bool,
+    /// A Story Spotlight card (the planeswalker-symbol frame stamp).
+    pub story_spotlight: bool,
+    /// Carries Wizards' content warning (a printing the publisher has disavowed).
+    pub content_warning: bool,
+    /// Popularity rank on EDHREC (lower is more played); `null` when unranked.
+    pub edhrec_rank: Option<i32>,
+    /// Popularity rank in Penny Dreadful; `null` when unranked.
+    pub penny_rank: Option<i32>,
+}
+
+impl From<card::Model> for CardDetailResponse {
+    fn from(m: card::Model) -> Self {
+        // Move the detail columns out first — `CardResponse::from` consumes the row, and
+        // none of these are read by it.
+        let artist = m.artist.clone();
+        let artist_ids = split_csv(m.artist_ids.clone());
+        let illustration_id = m.illustration_id.clone();
+        let flavor_text = m.flavor_text.clone();
+        let watermark = m.watermark.clone();
+        let finishes = split_csv(m.finishes.clone());
+        let frame = m.frame.clone();
+        let frame_effects = split_csv(m.frame_effects.clone());
+        let border_color = m.border_color.clone();
+        let security_stamp = m.security_stamp.clone();
+        let promo_types = split_csv(m.promo_types.clone());
+        let produced_mana = split_csv(m.produced_mana.clone());
+        let defense = m.defense.clone();
+        // The flags are provider booleans (Scryfall sends every one on every card), so a
+        // NULL only ever means a row the sync hasn't rewritten yet — read as `false`.
+        let reserved = m.reserved.unwrap_or(false);
+        let full_art = m.full_art.unwrap_or(false);
+        let textless = m.textless.unwrap_or(false);
+        let promo = m.promo.unwrap_or(false);
+        let variation = m.variation.unwrap_or(false);
+        let story_spotlight = m.story_spotlight.unwrap_or(false);
+        let content_warning = m.content_warning.unwrap_or(false);
+        let edhrec_rank = m.edhrec_rank;
+        let penny_rank = m.penny_rank;
+
+        CardDetailResponse {
+            card: CardResponse::from(m),
+            artist,
+            artist_ids,
+            illustration_id,
+            flavor_text,
+            watermark,
+            finishes,
+            frame,
+            frame_effects,
+            border_color,
+            security_stamp,
+            promo_types,
+            produced_mana,
+            defense,
+            reserved,
+            full_art,
+            textless,
+            promo,
+            variation,
+            story_spotlight,
+            content_warning,
+            edhrec_rank,
+            penny_rank,
+        }
+    }
 }
 
 impl From<card::Model> for CardResponse {

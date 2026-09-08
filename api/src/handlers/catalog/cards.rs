@@ -8,7 +8,8 @@ use crate::entities::card;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort, build_page, load_card,
+    CardDetailResponse, CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort,
+    build_page, load_card,
     require_game, trim_query,
 };
 use crate::state::AppState;
@@ -205,7 +206,9 @@ pub(crate) async fn search_cards(
 
 /// Get card
 ///
-/// `GET /api/games/{game}/cards/{id}` -> one card's full detail.
+/// `GET /api/games/{game}/cards/{id}` -> one card's full detail: the shared `Card` shape
+/// every listing carries plus the print + collector details only this route exposes
+/// (artist, flavour text, finishes, frame, Reserved List, defense, … — issue #673).
 #[utoipa::path(
     get,
     path = "/api/games/{game}/cards/{id}",
@@ -215,17 +218,17 @@ pub(crate) async fn search_cards(
         ("id" = String, Path, description = "External card id"),
     ),
     responses(
-        (status = 200, description = "The card's full detail.", body = CardResponse),
+        (status = 200, description = "The card's full detail: every `Card` field plus the print details (artist, flavour text, finishes, frame, Reserved List, defense, ranks).", body = CardDetailResponse),
         (status = 404, description = "Unknown game or card."),
     ),
 )]
 pub async fn get_card(
     State(state): State<AppState>,
     Path((game, id)): Path<(String, String)>,
-) -> Result<Json<CardResponse>, AppError> {
+) -> Result<Json<CardDetailResponse>, AppError> {
     require_game(&game)?;
     let card = load_card(&state, &game, &id).await?;
-    Ok(Json(CardResponse::from(card)))
+    Ok(Json(CardDetailResponse::from(card)))
 }
 
 /// List card printings
