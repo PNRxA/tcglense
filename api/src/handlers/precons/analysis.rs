@@ -44,8 +44,8 @@ use crate::extract::{Path, Query};
 use crate::handlers::decks::DeckSectionResponse;
 use crate::handlers::decks::{
     AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
-    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
-    analyse_legality, analyse_stats, analyse_tokens,
+    DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
+    analyse_goldfish, analyse_legality, analyse_roles, analyse_stats, analyse_tokens,
 };
 use crate::handlers::shared::{DataBody, require_game};
 use crate::state::AppState;
@@ -241,6 +241,32 @@ pub async fn precon_bracket(
     Ok(Json(DataBody {
         data: analyse_bracket(format.as_deref(), &input),
     }))
+}
+
+/// Preconstructed deck card roles
+///
+/// `GET /api/games/{game}/precons/{slug}/roles` -> the published decklist's role counts
+/// (ramp, draw, removal, wipes, counters, tutors, recursion, protection), through the same
+/// core a deck page uses, so the precon and the deck you copy from it count the same.
+#[utoipa::path(
+    get,
+    path = "/api/games/{game}/precons/{slug}/roles",
+    tag = "Preconstructed decks",
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("slug" = String, Path, description = "Precon slug, e.g. `turtle-power-tmc`"),
+    ),
+    responses(
+        (status = 200, description = "The decklist's role counts, the cards behind each, and which roles each printing fills.", body = DeckRoles),
+        (status = 404, description = "Unknown game or precon."),
+    ),
+)]
+pub async fn precon_roles(
+    State(state): State<AppState>,
+    Path((game, slug)): Path<(String, String)>,
+) -> Result<Json<DeckRoles>, AppError> {
+    let (_, input, _) = load(&state, &game, &slug).await?;
+    Ok(Json(analyse_roles(&input)))
 }
 
 /// Tokens a preconstructed deck makes

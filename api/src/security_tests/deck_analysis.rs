@@ -1,5 +1,5 @@
-//! Deck analysis (issue #596): the composition, legality, bracket, and goldfish reads on
-//! both the authed deck surface and its public-sharing mirror.
+//! Deck analysis (issue #596): the composition, legality, bracket, roles (issue #671), and
+//! goldfish reads on both the authed deck surface and its public-sharing mirror.
 //!
 //! What these pin, over and above the pure-function unit tests beside each module:
 //!
@@ -138,6 +138,7 @@ async fn analysis_reads_require_authentication() {
         "/api/decks/mtg/1/stats",
         "/api/decks/mtg/1/legality",
         "/api/decks/mtg/1/bracket",
+        "/api/decks/mtg/1/roles",
         "/api/decks/mtg/1/goldfish",
     ] {
         let (status, headers, _) = send(&app, get(path)).await;
@@ -162,7 +163,7 @@ async fn another_users_deck_is_404_never_403() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "roles", "goldfish"] {
         let (status, _, _) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &bob),
@@ -191,7 +192,7 @@ async fn a_read_only_key_may_analyse() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "roles", "goldfish"] {
         let (status, _, body) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &key),
@@ -449,7 +450,7 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     let (deck_id, _) = deck_with_cards(&app, &access, "Shared", "Modern", &stack).await;
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "roles", "goldfish"] {
         let (status, headers, _) = send(
             &app,
             get(&format!("/api/u/nobody-0001/decks/{deck_id}/{path}")),
@@ -612,6 +613,81 @@ async fn the_bracket_is_estimated_only_for_commander() {
     );
     assert_eq!(
         public_bracket, body,
+        "a shared deck and its owner's copy are the same deck"
+    );
+}
+
+/// The role counts (issue #671) over the seeded catalog, whose numbered cards carry one
+/// role-shaped line of rules text each — so this pins that the read counts real cards, hands
+/// back the printings the filter needs, and answers identically on the public mirror.
+#[tokio::test]
+async fn roles_count_the_deck_and_mirror_publicly() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "roles@example.com", PW).await;
+    // Six consecutive seeded cards walk the whole type/rules-text cycle once: a dork, a
+    // counterspell, a wrath, a draw engine, a rock, and a piece of spot removal. By id, not
+    // `sample_card_ids` — the listing is name-ordered, and a name held in two sets would
+    // fold into one card and break the count.
+    let cards: Vec<String> = (1..=6).map(|n| format!("dummy-dmu-{n:04}")).collect();
+    let stack: Vec<(String, i64)> = cards.iter().map(|c| (c.clone(), 2)).collect();
+    let (deck_id, _) = deck_with_cards(&app, &access, "Roles", "Commander", &stack).await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/roles"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "roles failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"), "per-user data");
+
+    let roles = body["roles"].as_array().expect("roles");
+    assert_eq!(roles.len(), 8, "every role is always reported: {body:?}");
+    let count = |role: &str| -> i64 {
+        roles
+            .iter()
+            .find(|group| group["role"] == role)
+            .unwrap_or_else(|| panic!("{role} missing from {body:?}"))["count"]
+            .as_i64()
+            .expect("count")
+    };
+    assert_eq!(count("ramp"), 2, "the dork and the rock: {body:?}");
+    assert_eq!(count("counterspell"), 1);
+    assert_eq!(count("board_wipe"), 1);
+    assert_eq!(count("card_draw"), 1);
+    assert_eq!(count("removal"), 1);
+    assert_eq!(count("tutor"), 0);
+    assert_eq!(count("recursion"), 0);
+    assert_eq!(count("protection"), 0);
+    assert_eq!(body["card_count"], 6);
+    assert_eq!(body["unclassified_count"], 0);
+    // Two copies each, so the bars a 60-card builder reads differ from the names.
+    let ramp = roles
+        .iter()
+        .find(|group| group["role"] == "ramp")
+        .expect("ramp");
+    assert_eq!(ramp["copies"], 4);
+    assert_eq!(ramp["cards"].as_array().expect("cards").len(), 2);
+    // Every printing holding a role is in the filter map, keyed by its external id.
+    let card_roles = body["card_roles"].as_object().expect("card_roles");
+    assert_eq!(card_roles.len(), 6);
+    for card in &cards {
+        assert!(
+            card_roles.contains_key(card),
+            "{card} should be filterable: {card_roles:?}"
+        );
+    }
+
+    // The public mirror is the same computation, and CDN-cacheable.
+    let handle = share(&app, &access, "roleplayer", deck_id).await;
+    let (status, headers, public) =
+        send(&app, get(&format!("/api/u/{handle}/decks/{deck_id}/roles"))).await;
+    assert_eq!(status, StatusCode::OK, "public roles: {public:?}");
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read is a pure function of its URL, so it's CDN-cacheable"
+    );
+    assert_eq!(
+        public, body,
         "a shared deck and its owner's copy are the same deck"
     );
 }

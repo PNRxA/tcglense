@@ -169,9 +169,21 @@ fn has_ability(card: &CardFacts, keyword: &str) -> bool {
 /// a name the card answers to as well, which is what lets Zndrsplt's "Partner with Okaun, Eye
 /// of Chaos" find the very printing that shipped beside it in the same Secret Lair deck. A
 /// single-faced name holds no `//` and so compares exactly as it did before.
-fn answers_to(card: &CardFacts, name: &str) -> bool {
+pub(super) fn answers_to(card: &CardFacts, name: &str) -> bool {
+    own_names(card).iter().any(|own| own == name)
+}
+
+/// Every name this card answers to, lowercased: the printing's full name and each of its
+/// `//`-separated halves. The one seam for "does this text name this card" — the deck-role
+/// grammar reads it to tell a card returning *itself* from the graveyard from one returning
+/// something else, for the same reversible-printing reason [`answers_to`] exists.
+pub(super) fn own_names(card: &CardFacts) -> Vec<String> {
     let full = card.name.to_lowercase();
-    full == name || full.split("//").any(|half| half.trim() == name)
+    let mut names = vec![full.clone()];
+    if full.contains("//") {
+        names.extend(full.split("//").map(|half| half.trim().to_string()));
+    }
+    names
 }
 
 /// The card named by a "Partner with <name>" ability, lowercased, or `None`.

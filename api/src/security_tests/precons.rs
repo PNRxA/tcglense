@@ -248,6 +248,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/stats")),
     )
     .await;
+    let (_, _, precon_roles) = send(
+        &app,
+        get(&format!("/api/games/mtg/precons/{COMMANDER_SLUG}/roles")),
+    )
+    .await;
 
     // Now copy it and ask the deck the same three questions.
     let (_, _, deck) = send(
@@ -274,6 +279,11 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
     let (_, _, deck_stats) = send(
         &app,
         get_with_bearer(&format!("/api/decks/mtg/{deck_id}/stats"), &access),
+    )
+    .await;
+    let (_, _, deck_roles) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/roles"), &access),
     )
     .await;
 
@@ -336,6 +346,15 @@ async fn a_precons_analysis_matches_the_deck_you_copy_from_it() {
         "precon {precon_bracket:?} vs copy {deck_bracket:?}"
     );
     assert_eq!(precon_bracket["categories"], deck_bracket["categories"]);
+
+    // The role counts too (issue #671): one grammar, one answer, on both surfaces. Only the
+    // per-role groups are compared — `card_roles` is keyed by printing and the copy holds the
+    // same printings, but a fold that dropped a printing would show up as a count first.
+    assert_eq!(
+        precon_roles["roles"], deck_roles["roles"],
+        "precon {precon_roles:?} vs copy {deck_roles:?}"
+    );
+    assert_eq!(precon_roles["card_roles"], deck_roles["card_roles"]);
 
     // And the composition: same cards, so the same copies in the deck proper.
     assert_eq!(

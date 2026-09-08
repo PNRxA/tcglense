@@ -110,7 +110,7 @@ impl UserRoute {
             // above, so the same tighter bucket rather than the generous General one.
             if matches!(
                 tail.rsplit('/').next(),
-                Some("stats" | "legality" | "bracket" | "tokens" | "goldfish")
+                Some("stats" | "legality" | "bracket" | "tokens" | "roles" | "goldfish")
             ) {
                 return Self::Analytics;
             }

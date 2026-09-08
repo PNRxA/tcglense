@@ -15,9 +15,10 @@
 //! and it is why the estimate never returns bracket 1 or bracket 5 on its own: both are
 //! claims about intent, and no amount of card text settles them.
 //!
-//! The categories it counts live in [`signals`], one grammar over the card's own text per
-//! category, and every matched card is handed back with the estimate — a number a player
-//! can't audit is a number they won't trust.
+//! The categories it counts live in [`super::signals::bracket`], one grammar over the card's
+//! own text per category (sharing its clause grammar with the deck-role predicates beside
+//! it), and every matched card is handed back with the estimate — a number a player can't
+//! audit is a number they won't trust.
 //!
 //! Scoped to **Commander**. The ladder is defined for that format and no other, so a deck
 //! in any other format (or none) gets `None` — "nothing to say", exactly as an untracked
@@ -25,11 +26,8 @@
 
 use serde::Serialize;
 
-use super::{AnalysisEntry, CardFacts, DeckAnalysisInput};
-
-mod signals;
-
-use signals::{is_extra_turn, is_game_changer, is_mass_land_denial, is_tutor};
+use super::signals::bracket::{is_extra_turn, is_game_changer, is_mass_land_denial, is_tutor};
+use super::{CardFacts, DeckAnalysisInput, NameFold, fold_by_name};
 
 /// The one format the bracket ladder is defined for, as [`super::formats`] keys it.
 const BRACKET_FORMAT_KEY: &str = "commander";
@@ -208,38 +206,6 @@ pub struct DeckBracketEstimate {
 }
 
 // ---------- Evaluation ----------
-
-/// One card name folded across every section and printing it appears in — the same fold
-/// the legality verdict does, so a card in two arts is one Game Changer rather than two.
-struct NameFold<'a> {
-    facts: &'a CardFacts,
-    card_id: String,
-    copies: i64,
-}
-
-fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a>> {
-    let mut folds: Vec<NameFold<'a>> = Vec::new();
-    let mut index_by_name: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
-    for entry in entries {
-        let copies = entry.copies();
-        if copies == 0 {
-            continue;
-        }
-        match index_by_name.get(entry.facts.name.as_str()) {
-            Some(&index) => folds[index].copies += copies,
-            None => {
-                index_by_name.insert(entry.facts.name.as_str(), folds.len());
-                folds.push(NameFold {
-                    facts: &entry.facts,
-                    card_id: entry.facts.id.clone(),
-                    copies,
-                });
-            }
-        }
-    }
-    folds
-}
 
 /// "Armageddon", "Armageddon and Ravages of War", "A, B and 4 more".
 ///
@@ -445,6 +411,7 @@ pub(crate) fn analyse_bracket(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handlers::decks::analysis::AnalysisEntry;
     use crate::handlers::decks::analysis::test_fixtures::{deck, entry, section};
 
     const MAIN: i32 = 1;

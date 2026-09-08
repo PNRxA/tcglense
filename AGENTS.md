@@ -334,6 +334,22 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   caller-controlled, so an oversized library is a `422`, never an allocation. For the same
   reason the command-zone check counts copies instead of expanding them; **nothing on these
   paths may go per-copy.**
+  **Card roles are a grammar, not a list** (`analysis::roles`, issue #671): "ten ramp, ten
+  draw, eight removal" is counted off each card's rules text through the **same clause grammar
+  the bracket's signals read** — `analysis/signals/` (mod.rs the shared grammar, `bracket.rs`
+  and `roles.rs` the predicates; the tutor role *is* `signals::bracket::is_tutor`), so a ninth
+  role or a fifth bracket category extends that module rather than starting a third copy of
+  "does this clause say X". Same stance as the bracket: **every predicate declines when unsure**
+  (a land search to hand isn't ramp, "Whenever you draw a card" isn't draw, a target *you
+  control* is a flicker not removal, `Hexproof` on its own line protects nothing but itself),
+  the counted cards ride the response, and a card name is matched through `rules::own_names` /
+  `answers_to` — never `facts.name` — so a reversible printing's `Name // Name` still answers.
+  Maybeboards out, command zone in; both of those and the bracket count through the one
+  `analysis::fold_by_name` seam (representative = smallest external id, so a precon and its
+  copy answer byte-identically). The `card_roles` map is keyed by **printing**, because the
+  deck page filters rows by the printing they hold; the per-role `cards` lists are capped, the
+  counts never are, and `unclassified_count` is on the wire so the bars can't be read as a
+  partition of the deck. Three route mirrors, like every analysis read.
   **The bracket estimate is a floor, not a verdict** (`analysis::bracket`): it reports the
   lowest of Wizards' rungs the deck's cards don't rule out and is **only ever 2, 3 or 4** —
   1 (Exhibition) and 5 (cEDH) are claims about *intent*, so asserting either from a list would

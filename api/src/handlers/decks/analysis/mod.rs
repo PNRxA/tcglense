@@ -13,6 +13,9 @@
 //! * **Tokens** ([`tokens`]) — the tokens and emblems the deck's cards make, which is what a
 //!   player has to bring to a game *besides* the deck. The only one of these that consults
 //!   the catalog again rather than folding what the deck already loaded.
+//! * **Roles** ([`roles`]) — how many pieces of ramp, draw, removal, wipes, counters, tutors,
+//!   recursion and protection the deck holds, read off each card's rules text through the
+//!   same clause grammar the bracket's signals use ([`signals`]), issue #671.
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -55,14 +58,17 @@ pub(crate) mod formats;
 pub(crate) mod goldfish;
 pub(crate) mod legality;
 pub(crate) mod read;
+pub(crate) mod roles;
 pub(crate) mod rules;
+pub(super) mod signals;
 pub(crate) mod stats;
 pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
-    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_stats,
-    __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens,
+    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_roles,
+    __path_deck_stats, __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_roles,
+    deck_stats, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -70,6 +76,7 @@ pub use read::{
 pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
+pub(crate) use roles::{DeckRoles, analyse_roles};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
 pub(crate) use tokens::{DeckTokens, analyse_tokens};
 
@@ -318,6 +325,49 @@ pub(crate) async fn load_analysis_with_cards(
     }
 
     Ok((DeckAnalysisInput { sections, entries }, models))
+}
+
+/// One card name folded across every section and printing it appears in — the same fold
+/// the legality verdict does, so a card in two arts is one Game Changer (or one piece of
+/// removal) rather than two. Shared by the bracket estimate and the role counts; a third
+/// per-name counter belongs here too.
+///
+/// `card_id` is the **smallest** external id among the name's printings, not the first in
+/// row order: a precon and the deck copied from it load their rows in different orders, and
+/// the two must answer byte-identically (the same rule the token fold applies).
+pub(super) struct NameFold<'a> {
+    pub facts: &'a CardFacts,
+    pub card_id: String,
+    pub copies: i64,
+}
+
+pub(super) fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a>> {
+    let mut folds: Vec<NameFold<'a>> = Vec::new();
+    let mut index_by_name: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for entry in entries {
+        let copies = entry.copies();
+        if copies == 0 {
+            continue;
+        }
+        match index_by_name.get(entry.facts.name.as_str()) {
+            Some(&index) => {
+                folds[index].copies += copies;
+                if entry.facts.id < folds[index].card_id {
+                    folds[index].card_id = entry.facts.id.clone();
+                }
+            }
+            None => {
+                index_by_name.insert(entry.facts.name.as_str(), folds.len());
+                folds.push(NameFold {
+                    facts: &entry.facts,
+                    card_id: entry.facts.id.clone(),
+                    copies,
+                });
+            }
+        }
+    }
+    folds
 }
 
 /// Builders the module's own unit tests construct decks with, so a test names only the
