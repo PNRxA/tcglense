@@ -340,21 +340,24 @@ pub async fn scryfall_sld_drops(headers: HeaderMap) -> Result<Response, AppError
 /// stance: one origin talks to the source.
 ///
 /// Touches **no upstream**. Version-gated by a strong `ETag` derived from the upstream
-/// document's own tag (what the origin's last completed import recorded in `ingest_state`),
-/// so a consumer whose tables are current gets a bodyless `304`, and the tag it stores is
-/// stable across origin restarts. `404` until the origin has completed an import — a
-/// consumer treats that as a failed sync and retries next tick, rather than importing an
-/// empty snapshot. Shared-cacheable like the other metadata, but the body has no size
-/// hint, so the conditional layer never buffers it to hash.
+/// document's own tag (what the origin's last completed import recorded in `ingest_state`
+/// — and kept there through a later `running` or `error` state, so the tables still held
+/// under it keep serving during the next import window), so a consumer whose tables are
+/// current gets a bodyless `304`, and the tag it stores is stable across origin restarts.
+/// `404` until the origin has completed an import — a consumer treats that as a failed
+/// sync and retries next tick, rather than importing an empty snapshot. Shared-cacheable
+/// like the other metadata, but the body has no size hint, so the conditional layer never
+/// buffers it to hash.
 pub async fn spellbook_combos(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Response, AppError> {
     use crate::catalog::ingest_state;
     use crate::spellbook;
+    // The tag is written only by a completed import and preserved by every later state
+    // (`spellbook::ingest`), so its presence *is* "an import has completed".
     let version = ingest_state::load(&state.db, spellbook::GAME, spellbook::DATASET)
         .await?
-        .filter(|row| row.status == "complete")
         .and_then(|row| row.source_updated_at)
         .ok_or_else(|| AppError::NotFound("mirror: no combo snapshot imported yet".to_string()))?;
     // The upstream tag is an opaque quoted string; hash it so ours is header-safe whatever

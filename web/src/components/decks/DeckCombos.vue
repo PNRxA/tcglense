@@ -73,7 +73,10 @@ const sourceUrl = computed(
 
 const pending = computed(() => combosQuery.isPending.value)
 const updating = computed(() => combosQuery.isFetching.value && !pending.value)
-const anything = computed(() => combos.value.length > 0 || almost.value.length > 0)
+/** Gated on the exact counts, not the lists: the lists are re-read after the count is
+ *  taken, so a rebuild between the two can hand back fewer rows than the count claims — and
+ *  "none" must never be said while the count says otherwise. */
+const anything = computed(() => comboCount.value > 0 || almostCount.value > 0)
 
 /** The two lists, as one loop: they render identically apart from their heading and the
  *  "Needs:" line only an incomplete combo has. An empty one is dropped rather than headed,

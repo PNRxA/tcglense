@@ -19,7 +19,8 @@
 //! * a piece that **must be the commander** is held only when it sits in the command zone
 //!   of a format that leads with one — the same two answers the facets and the mana base
 //!   borrow (`rules::deck_zone`, `rules::format_leads_with_command_zone`); in a 60-card
-//!   format nothing is ever the commander, so such a combo is always at least a card away;
+//!   format nothing is ever the commander, so a combo needing one is unreachable there —
+//!   it is never "one card short", whichever of its pieces the deck holds;
 //! * a piece wanting more copies than the deck holds is short by that piece;
 //! * a **template** ("any free sacrifice outlet") is a Scryfall query this app can't run,
 //!   so it always counts as one missing card, named — a combo with a template is never
@@ -101,8 +102,9 @@ pub struct DeckComboMissing {
     /// The card's or template's name.
     pub name: String,
     pub kind: DeckComboMissingKind,
-    /// For a card: a printing to link to (the catalog's newest, or the deck's own for a
-    /// `commander` miss); `null` for a template or an unheld card the catalog lacks.
+    /// For a card: a printing to link to — the deck's own when it holds the card (a
+    /// `commander` miss, or a `card` miss for too few copies), else the catalog's newest;
+    /// `null` for a template or an unheld card the catalog lacks.
     pub card_id: Option<String>,
 }
 
@@ -377,9 +379,19 @@ pub(crate) async fn analyse_combos(
     }
 
     let leads = format_leads_with_command_zone(format);
+    // The zone split is by name (`rules::deck_zone`); a maybeboard that happens to be
+    // called `Commander` is out of the deck entirely (issue #570), so it is dropped here
+    // before it can colour the identity filter — `fold_held` never sees it anyway.
     let command_zone: HashSet<i32> = if leads {
+        let maybeboards: HashSet<i32> = input
+            .sections
+            .iter()
+            .filter(|s| s.is_maybeboard)
+            .map(|s| s.id)
+            .collect();
         command_zone_section_ids(&input.sections)
             .into_iter()
+            .filter(|id| !maybeboards.contains(id))
             .collect()
     } else {
         HashSet::new()
@@ -446,6 +458,27 @@ pub(crate) async fn analyse_combos(
                 .is_none_or(|deck| c.identity.is_subset(deck))
         })
         .collect();
+    // In a format with no command zone nothing is ever the commander, so a combo with a
+    // must-be-commander piece can't be completed by adding a card (held or not): it isn't
+    // one short, it's unreachable. The scan only sees held pieces, so the candidates are
+    // asked about their whole piece list once here, chunked on the candidate ids.
+    if !leads && !almost.is_empty() {
+        let candidate_ids: Vec<i32> = almost.iter().map(|c| c.combo_id).collect();
+        let mut needs_commander: HashSet<i32> = HashSet::new();
+        for chunk in candidate_ids.chunks(COMBO_CHUNK) {
+            let ids: Vec<i32> = ComboPiece::find()
+                .select_only()
+                .column(combo_piece::Column::ComboId)
+                .distinct()
+                .filter(combo_piece::Column::ComboId.is_in(chunk.iter().copied()))
+                .filter(combo_piece::Column::MustBeCommander.eq(true))
+                .into_tuple()
+                .all(&state.db)
+                .await?;
+            needs_commander.extend(ids);
+        }
+        almost.retain(|c| !needs_commander.contains(&c.combo_id));
+    }
     // Fewest pieces first (a two-card combo is the headline), then most-played, then a
     // stable id so a precon and its copy answer identically.
     complete.sort_by(|a, b| {

@@ -38,7 +38,8 @@ pub struct CardCombos {
 /// `GET /api/games/{game}/cards/{id}/combos` -> the Commander Spellbook combos the card is
 /// a piece of, most-played first (at most 50; `total` is exact). Keyed by the card's
 /// gameplay identity (`oracle_id`), so every printing returns the same list; every piece
-/// links to a catalog printing where one exists. `404` if the game or card id is unknown;
+/// links to a catalog printing where one exists — the viewed card to the printing being
+/// viewed. `404` if the game or card id is unknown;
 /// an empty list when the card is in no combo — or when no combo data has been synced.
 #[utoipa::path(
     get,
@@ -96,7 +97,11 @@ pub async fn card_combos(
         .iter()
         .flat_map(|(_, pieces)| pieces.iter().map(|p| p.oracle_id.clone()))
         .collect();
-    let printings = representative_printings(&state.db, &game, &oracle_ids).await?;
+    let mut printings = representative_printings(&state.db, &game, &oracle_ids).await?;
+    // The viewed card's own piece links to *this* printing, so the page never sends the
+    // reader to a sibling printing of the card they are already on (the SPA tells "the
+    // card being viewed" apart by exactly this id).
+    printings.insert(oracle_id.to_string(), card.external_id.clone());
 
     response.combos = rows
         .iter()

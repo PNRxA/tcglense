@@ -6,6 +6,12 @@
 //! document advertising a version, so the fetch itself is conditional
 //! (`If-None-Match`) and an unchanged day is a bodyless `304` — one request, no parse.
 //! The stored tag is only sent back after a **complete** run; an errored run re-fetches.
+//! A document served without an `ETag` is versioned by a **content hash** of what it
+//! reduced to instead, so the mirror re-serve still has a version to gate on (it can't be
+//! sent back as `If-None-Match`, so such a document is fetched every tick and says so).
+//! The `running` state keeps the *previous* completed tag: the mirror serves the tables it
+//! still holds under that tag until the swap lands, rather than blanking for the import
+//! window (or for as long as a run stays errored — `mark_error` preserves it too).
 //!
 //! **Two documents, one table shape.** In upstream mode the ~28 MB gzipped export is
 //! inflated and split element by element ([`super::stream`]); in mirror mode the origin's
@@ -24,12 +30,13 @@ use chrono::Utc;
 use futures_util::TryStreamExt;
 use reqwest::{
     Client, StatusCode,
-    header::{ACCEPT, ETAG, IF_NONE_MATCH, LAST_MODIFIED},
+    header::{ACCEPT, ETAG, IF_NONE_MATCH},
 };
 use sea_orm::{
     ActiveValue::{NotSet, Set},
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
 };
+use sha2::{Digest, Sha256};
 
 use super::model::{ComboRecord, Variant};
 use super::stream::VariantSplitter;
@@ -76,16 +83,21 @@ async fn refresh_inner(
     source: &SyncSource,
     url: &str,
 ) -> Result<(), IngestError> {
-    // The tag to revalidate against: only a *completed* import's, so an errored run (or a
-    // zero-row one) re-fetches the document rather than 304-ing onto a table it never
-    // filled.
-    let prev_etag = ingest_state::load(db, GAME, DATASET)
-        .await?
-        .filter(|state| state.status == "complete")
-        .and_then(|state| state.source_updated_at);
+    // The last tag the tables were filled under (kept through `running` and `error`
+    // states, see the module doc), and whether it was a *completed* import's — only then
+    // is it sent back, so an errored or zero-row run re-fetches the document rather than
+    // 304-ing onto a table it never filled.
+    let state = ingest_state::load(db, GAME, DATASET).await?;
+    let held_tag = state.as_ref().and_then(|s| s.source_updated_at.clone());
+    let prev_etag = state
+        .as_ref()
+        .filter(|s| s.status == "complete")
+        .and_then(|s| s.source_updated_at.as_deref())
+        // A content-hash version is ours, not the server's: never sent back.
+        .filter(|tag| !tag.starts_with(CONTENT_VERSION_PREFIX));
 
     let mut request = client.get(url).header(ACCEPT, "application/json");
-    if let Some(tag) = prev_etag.as_deref() {
+    if let Some(tag) = prev_etag {
         request = request.header(IF_NONE_MATCH, tag);
     }
     let response = request.send().await?;
@@ -93,31 +105,36 @@ async fn refresh_inner(
         tracing::info!("combo database unchanged (304); already up to date");
         return Ok(());
     }
+    // The mirror answers 404 until its origin has completed an import (an origin on a
+    // pre-#683 build, or one that opted out): name that plainly, since it is a steady state
+    // the consumer can't do anything about, not a transport blip.
+    if response.status() == StatusCode::NOT_FOUND && !source.from_upstream() {
+        return Err(IngestError::Other(
+            "the mirror does not offer a combo snapshot yet (its origin has not completed an import); will retry next tick"
+                .to_string(),
+        ));
+    }
     let response = response.error_for_status()?;
-    // The version this document is. `ETag` first (both the upstream CDN and the mirror
-    // send a strong one), `Last-Modified` as the fallback; a document with neither imports
-    // every tick and says so.
-    let version = response
+    // The version this document is: its `ETag` (both the upstream CDN and the mirror send
+    // a strong one). Absent, the reduced records are hashed below instead.
+    let etag = response
         .headers()
         .get(ETAG)
-        .or_else(|| response.headers().get(LAST_MODIFIED))
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
-    if version.is_none() {
-        tracing::warn!(
-            "combo document carries no ETag/Last-Modified; it will re-import every tick"
-        );
+    if etag.is_none() {
+        tracing::warn!("combo document carries no ETag; it will be re-fetched every tick");
     }
 
     let started = Utc::now();
-    tracing::info!(url, version = ?version, "importing combo database");
+    tracing::info!(url, etag = ?etag, "importing combo database");
     ingest_state::put(
         db,
         StateFields {
             game: GAME,
             dataset: DATASET,
             status: "running",
-            source_updated_at: version.as_deref(),
+            source_updated_at: held_tag.as_deref(),
             detail: "importing combos",
             sets_imported: 0,
             cards_imported: 0,
@@ -139,6 +156,7 @@ async fn refresh_inner(
             "combo import produced 0 combos; treating as failure to retry".to_string(),
         ));
     }
+    let version = etag.unwrap_or_else(|| content_version(&records));
 
     let pieces = replace_combos(db, records).await?;
 
@@ -148,7 +166,7 @@ async fn refresh_inner(
             game: GAME,
             dataset: DATASET,
             status: "complete",
-            source_updated_at: version.as_deref(),
+            source_updated_at: Some(&version),
             detail: &format!("imported {count} combos ({pieces} pieces)"),
             sets_imported: 0,
             cards_imported: i32::try_from(count).unwrap_or(i32::MAX),
@@ -159,6 +177,30 @@ async fn refresh_inner(
     .await?;
     tracing::info!(combos = count, pieces, "combo database import complete");
     Ok(())
+}
+
+/// Marks a version the ingest minted itself (no `ETag` on the document) — never sent back
+/// as `If-None-Match`, but a stable tag for the mirror re-serve to gate on.
+const CONTENT_VERSION_PREFIX: &str = "content-";
+
+/// A version for a document that carried no `ETag`: a hash over what it reduced to — every
+/// combo's id and popularity and its pieces' identities, in order — so two fetches of the
+/// same data agree and any change to a combo moves it.
+fn content_version(records: &[ComboRecord]) -> String {
+    let mut hasher = Sha256::new();
+    for record in records {
+        hasher.update(record.id.as_bytes());
+        hasher.update(record.popularity.to_le_bytes());
+        for piece in &record.pieces {
+            hasher.update(piece.oracle_id.as_bytes());
+            hasher.update([u8::from(piece.must_be_commander)]);
+        }
+        hasher.update(b"\n");
+    }
+    format!(
+        "{CONTENT_VERSION_PREFIX}{}",
+        hex::encode(&hasher.finalize()[..16])
+    )
 }
 
 /// Reduce the upstream export — one gzipped JSON document — element by element.
@@ -449,6 +491,27 @@ mod tests {
             .await
             .expect("count");
         assert_eq!(orphaned, 0, "the old combo's pieces went with it");
+    }
+
+    #[test]
+    fn a_content_version_is_stable_and_moves_with_the_data() {
+        let a = vec![
+            record("1", &[("o1", "One")], &[]),
+            record("2", &[("o2", "Two")], &[]),
+        ];
+        let same = a.clone();
+        assert_eq!(content_version(&a), content_version(&same));
+        assert!(content_version(&a).starts_with(CONTENT_VERSION_PREFIX));
+        let mut moved = a.clone();
+        moved[1].popularity += 1;
+        assert_ne!(content_version(&a), content_version(&moved));
+        let mut repieced = a;
+        repieced[0].pieces[0].oracle_id = "o9".into();
+        assert_ne!(content_version(&same), content_version(&repieced));
+        let mut recommandered = same.clone();
+        recommandered[0].pieces[0].must_be_commander =
+            !recommandered[0].pieces[0].must_be_commander;
+        assert_ne!(content_version(&same), content_version(&recommandered));
     }
 
     #[tokio::test]

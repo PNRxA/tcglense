@@ -1185,7 +1185,7 @@ deck ids), matching the public-sharing surface.
 | `GET /api/decks/{game}/{deck_id}/mana` | — | `DeckManaBase` — the deck's **mana base** (issue #670): per colour, the pips its spells demand against the sources its library produces, judged by Frank Karsten's 2022 source counts, with a plain verdict (`"Short 2 black sources: …"`). **Demand** is the deck a player casts from — the shuffled library **plus** the command zone (a commander's own pips count) — and **supply** is the library alone (a commander is never a source for the 99); maybeboards and sideboards are in neither. The zone split borrows both of `rules`' answers, like the deck list's facets: which sections are the zone is `deck_zone`'s, and whether the zone leads this deck's format is `format_leads_with_command_zone`'s — so in a format with no command zone the cards in the seeded `Commander` section supply mana like the rest of the 60. Colours include `C` (an Eldrazi's `{C}` is a real requirement). Hybrid, Phyrexian and `{2/C}` pips ride `hybrid_pips` and are never counted against a colour. `table_size` (40/60/80/99) is the format's stated deck size when it has one (Commander → the 99-card column, however few cards are in it yet), else the nearest to `deck_size`. Always answers — never `null`; an empty deck has an empty `colors`. `404` if not the caller's |
 | `GET /api/decks/{game}/{deck_id}/goldfish` | — | `GoldfishHand` — shuffle the library and deal an opening hand (issue #596). Stateless and seeded: `?seed=` (u32; omitted = a fresh one, echoed back), `?mulligans=` (London — each reshuffles and owes one card to the bottom), `?bottom=<card ids>` (at most one per mulligan, each must be in the hand), `?draws=` (the draw step, clamped to the library), `?opening=` (default 7), `?sections=` as above. The same URL always deals the same cards. The shuffled library is capped at 20,000 cards (a deck row's counts are caller-controlled and the shuffle materialises one slot per copy, so a bigger one is refused rather than allocated). `404` if not the caller's; `422` for a parameter out of range, a library too large to shuffle, or a bottomed card that isn't in hand |
 | `GET /api/decks/{game}/{deck_id}/pricing` | — | `DeckPricing` — **where the deck's money is** (issue #672): every row of the deck **proper** (maybeboard rows are neither listed nor counted) priced as held, most expensive first, each carrying the cheapest priced printing of its card **at that row's own finish split** — what `PUT …/cards/{id}/printing` would land on — and the saving. `total_usd` is the deck detail's `summary.total_value_usd`, not a second fold of it (same rows, same `Valuation` accumulator), `cheapest_total_usd` is that total minus `saving_usd`, and `null` always means **unpriced**, never `"0.00"`. Three bounded queries; nothing goes per copy. This read writes nothing, so a read-only key may call it — the swap it suggests is the existing `WritableUser` printing write, and "swap all" is that same write batched client-side. `404` if not the caller's |
-| `GET /api/decks/{game}/{deck_id}/combos` | — | `DeckCombos` — **the combos in the deck** (issue #683): which Commander Spellbook combos the deck **proper** can assemble (`combos`, fewest pieces first then most-played, capped at 100 with `combo_count` exact) and which it is exactly **one card short** of (`almost`, most-played first, capped at 50 with `almost_count` exact). Read off the synced combo database (`combos` + `combo_pieces`, keyed by **oracle id** — any printing counts), never inferred from rules text. "Held" is decided once: maybeboards out, sideboards and the command zone in; a piece flagged `must_be_commander` counts only from the command zone of a format that leads with one (`rules::deck_zone` + `rules::format_leads_with_command_zone`, the pair the facets borrow — in a 60-card format it is never the commander); a piece wanting more copies than held is short; a **template** ("any free sacrifice outlet", a Scryfall query this app can't run) always counts as one missing card, so a combo with one is never reported complete. `almost` is filtered to the commander's colour identity where the format leads with a command zone (a deck can't add its way to a colour). `available: false` means **no combo data has been synced** (or `COMBOS_SYNC_ENABLED=false`) — an empty list is then "unknown", never "none". `source` / `source_url` carry the attribution Commander Spellbook asks for. `404` if not the caller's |
+| `GET /api/decks/{game}/{deck_id}/combos` | — | `DeckCombos` — **the combos in the deck** (issue #683): which Commander Spellbook combos the deck **proper** can assemble (`combos`, fewest pieces first then most-played, capped at 100 with `combo_count` exact) and which it is exactly **one card short** of (`almost`, most-played first, capped at 50 with `almost_count` exact). Read off the synced combo database (`combos` + `combo_pieces`, keyed by **oracle id** — any printing counts), never inferred from rules text. "Held" is decided once: maybeboards out, sideboards and the command zone in; a piece flagged `must_be_commander` counts only from the command zone of a format that leads with one (`rules::deck_zone` + `rules::format_leads_with_command_zone`, the pair the facets borrow — in a 60-card format nothing is ever the commander, so a combo needing one is unreachable there and listed in neither list); a piece wanting more copies than held is short; a **template** ("any free sacrifice outlet", a Scryfall query this app can't run) always counts as one missing card, so a combo with one is never reported complete. `almost` is filtered to the commander's colour identity where the format leads with a command zone (a deck can't add its way to a colour). `available: false` means **no combo data has been synced** (or `COMBOS_SYNC_ENABLED=false`) — an empty list is then "unknown", never "none". `source` / `source_url` carry the attribution Commander Spellbook asks for. `404` if not the caller's |
 | `PUT /api/decks/{game}/{deck_id}` | `{ name, description?, format? }` | `Deck` — replace the deck's editable metadata (folder + sharing are their own routes) |
 | `DELETE /api/decks/{game}/{deck_id}` | — | `204` — delete the deck (sections + cards cascade) |
 | `PUT /api/decks/{game}/{deck_id}/folder` | `{ folder_id }` | `Deck` — file the deck under a folder, or `null` to loosen it (`404` for a folder that isn't the caller's) |
@@ -1341,21 +1341,6 @@ issue #570's split again), and `cheapest` is `DeckCheapestPrinting = { card, pri
 full `Card` payload so a client can show the printing and hand its `id` straight to
 `PUT …/cards/{id}/printing` (which is why the line carries `section_id`: the same printing in
 two sections is two rows, and the swap addresses one). Five rules make the numbers honest:
-`DeckCombos = { combos, combo_count, almost, almost_count, available, source, source_url }` —
-**the combos in the deck** (issue #683). Each `DeckCombo` flattens a `ComboSummary = { id, url,
-identity, mana_needed, mana_value_needed, prerequisites, description, popularity, bracket_tag,
-templates, produces }` — Commander Spellbook's own data for the variant: `id` its variant id,
-`url` its page (`commanderspellbook.com/combo/{id}`), `identity` WUBRG letters, `produces` the
-results by name (standalone + contextual features; every feature when a combo names only
-helpers), `templates` the wildcard requirements — and adds `pieces` (`DeckComboPiece[] =
-{ oracle_id, name, quantity, must_be_commander, card_id, in_deck }`, in the combo's own order;
-`card_id` is the deck's own printing when held — the lowest-sorting one — else the catalog's
-newest, or `null`) and `missing` (`DeckComboMissing[] = { name, kind, card_id }`, `kind` one of
-`card` / `template` / `commander`; empty for a combo the deck can assemble). The same
-`ComboSummary` fronts the card page's `CardCombos = { combos: CardCombo[], total, source,
-source_url }`, where `CardCombo` carries `pieces: ComboPiece[] = { oracle_id, name, quantity,
-must_be_commander, card_id }` (no deck to be relative to).
-
 * **The total is the deck page's own total.** `total_usd` is `summary.total_value_usd` — the
   same rows folded through the same `Valuation`, not a second computation of it — so the two
   can never disagree, and the lines sum to it.
@@ -1379,6 +1364,21 @@ must_be_commander, card_id }` (no deck to be relative to).
   whose saving is unknown moves none of the three. `unpriced_count` counts rows with no price
   in either held finish (while it is non-zero, `total_usd` is a floor) and `swappable_count`
   the rows with a saving above zero — what a "swap all" would touch.
+
+`DeckCombos = { combos, combo_count, almost, almost_count, available, source, source_url }` —
+**the combos in the deck** (issue #683). Each `DeckCombo` flattens a `ComboSummary = { id, url,
+identity, mana_needed, mana_value_needed, prerequisites, description, popularity, bracket_tag,
+templates, produces }` — Commander Spellbook's own data for the variant: `id` its variant id,
+`url` its page (`commanderspellbook.com/combo/{id}`), `identity` WUBRG letters, `produces` the
+results by name (standalone + contextual features; every feature when a combo names only
+helpers), `templates` the wildcard requirements — and adds `pieces` (`DeckComboPiece[] =
+{ oracle_id, name, quantity, must_be_commander, card_id, in_deck }`, in the combo's own order;
+`card_id` is the deck's own printing when held — the lowest-sorting one — else the catalog's
+newest, or `null`) and `missing` (`DeckComboMissing[] = { name, kind, card_id }`, `kind` one of
+`card` / `template` / `commander`; empty for a combo the deck can assemble). The same
+`ComboSummary` fronts the card page's `CardCombos = { combos: CardCombo[], total, source,
+source_url }`, where `CardCombo` carries `pieces: ComboPiece[] = { oracle_id, name, quantity,
+must_be_commander, card_id }` (no deck to be relative to).
 
 `lines` is sorted most expensive first, unpriced rows last, then by name/id/section, so a
 top-N panel is a prefix rather than a client-side sort. Candidates come from the shared
@@ -1733,7 +1733,7 @@ a risk: an unpublished day is a `404`, which `public_cache_layer` marks `no-stor
 | `GET /api/mirror/scryfall/sets` | Scryfall's sets listing |
 | `GET /api/mirror/scryfall/file/{kind}` | the named Scryfall bulk file (`kind` validated), **as served** — i.e. still gzipped |
 | `GET /api/mirror/scryfall/sld-drops` | the current Secret Lair drop snapshot (curated titles + collector numbers) as JSON, served from this origin's in-memory drop store (a strong content `ETag`, so an unchanged snapshot is a `304`) |
-| `GET /api/mirror/spellbook/combos` | the combo database (issue #683) as this origin holds it: every stored combo as one gzipped JSONL line of `spellbook::model::ComboRecord`, streamed from the tables; strong `ETag` (derived from the upstream export's tag the origin last imported) → `304`; **`404` until the origin has completed an import** |
+| `GET /api/mirror/spellbook/combos` | the combo database (issue #683) as this origin holds it: every stored combo as one gzipped JSONL line of `spellbook::model::ComboRecord`, streamed from the tables; strong `ETag` (derived from the upstream export's tag the origin last imported — kept through a later running/errored import, so the tables still held keep serving; a content hash when upstream sent no tag) → `304`; **`404` until the origin has completed an import**; a rebuild landing under an in-flight stream errors that transfer rather than ending it short |
 | `GET /api/mirror/mtgjson/AllPrintings.json.gz` | MTGJSON's `AllPrintings` gzip (ETag-conditional) |
 | `GET /api/mirror/tcgcsv/{*path}` | the TCGCSV path proxied through (catalog / prices / daily archives; `archive/…` is cached a year `immutable`, everything else keeps the 1-hour meta TTL) |
 | `GET /api/mirror/fingerprints/{game}` | the visual-scanner match index for `game` as a compact binary payload (`application/octet-stream`), so other instances **import** it instead of hashing card images |

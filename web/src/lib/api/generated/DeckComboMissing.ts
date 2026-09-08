@@ -10,7 +10,8 @@ export type DeckComboMissing = {
  */
 name: string, kind: DeckComboMissingKind, 
 /**
- * For a card: a printing to link to (the catalog's newest, or the deck's own for a
- * `commander` miss); `null` for a template or an unheld card the catalog lacks.
+ * For a card: a printing to link to — the deck's own when it holds the card (a
+ * `commander` miss, or a `card` miss for too few copies), else the catalog's newest;
+ * `null` for a template or an unheld card the catalog lacks.
  */
 card_id: string | null, };

@@ -12,7 +12,10 @@
 //!
 //! A mid-stream failure ends the transfer with an error rather than a short-but-valid
 //! body — a consumer that read a truncated snapshot would import half a database and
-//! version-lock it, and the ingest's zero-row guard can't see "half".
+//! version-lock it, and the ingest's zero-row guard can't see "half". That includes the
+//! drain's own race: a rebuild committing under it re-mints every id, so a chunk that
+//! resolves fewer rows than it asked for is that rebuild, and the transfer is errored
+//! rather than padded with the empty chunks `load_combos` would otherwise hand back.
 
 use std::io;
 
@@ -75,6 +78,23 @@ async fn drain(db: DatabaseConnection, tx: mpsc::Sender<Result<Bytes, io::Error>
                 return;
             }
         };
+        // `load_combos` only ever drops ids that no longer resolve, and ids are never
+        // reused, so a short chunk means exactly one thing: the tables were rebuilt while
+        // this drain was in flight. End the transfer with an error — a consumer must never
+        // import the first half of one version as the whole of it.
+        if rows.len() != chunk.len() {
+            tracing::warn!(
+                expected = chunk.len(),
+                got = rows.len(),
+                "combo snapshot rows vanished mid-drain (table rebuilt); ending the transfer"
+            );
+            let _ = tx
+                .send(Err(io::Error::other(
+                    "combo snapshot rebuilt mid-stream; retry",
+                )))
+                .await;
+            return;
+        }
         let mut plain: Vec<u8> = Vec::new();
         for (model, pieces) in &rows {
             let record = ComboRecord::from_models(model, pieces);

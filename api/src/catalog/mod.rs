@@ -161,11 +161,18 @@ pub async fn refresh_all(
                 // infinite together, keyed by oracle_id. Its own document with its own
                 // conditional-GET version gate (an unchanged day is one 304), pulled from
                 // the mirror's compact snapshot — or, on the origin, the upstream export.
-                // Independent of the card sync; a `false` flag here retries next tick like
-                // the rest.
+                // **Deliberately not in the providers flag**: the dataset is optional (its
+                // own off-switch, and the reads degrade to `available: false`), and its
+                // mirror source legitimately answers 404 until the origin has completed an
+                // import — an origin still on a pre-#683 build, or one that opted out. Were
+                // that fatal, every self-host behind such an origin would never record a
+                // completed tick: hourly full retries, no boot deferral, and on a fresh
+                // install neither the price backfill nor the fingerprint build ever
+                // spawned. So a failure is logged, left in `ingest_state` (status `error`,
+                // retried next tick) and otherwise stands aside — the sld-drops /
+                // fingerprint-import stance for the other two origin-derived datasets.
                 if let Err(err) = crate::spellbook::refresh(db, client, source).await {
                     tracing::error!(game = game.id, error = %err, "combo database refresh failed");
-                    providers_succeeded = false;
                 }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.

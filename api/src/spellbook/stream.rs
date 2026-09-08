@@ -93,11 +93,15 @@ impl<R: AsyncBufRead + Unpin> VariantSplitter<R> {
             }
             let buf = self.reader.fill_buf().await?;
             if buf.is_empty() {
-                // EOF. An element still open is a truncated stream.
-                if self.machine.phase == Phase::Object {
+                // EOF. Anything but a cleanly closed document is truncation: an element
+                // still open, but also an array or root object that never closed — a
+                // stream cut between two elements would otherwise read as a short list.
+                // (The gzip layer beneath already rejects a cut member; this is the
+                // splitter's own guarantee for any caller.)
+                if !matches!(self.machine.phase, Phase::Start | Phase::Done) {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
-                        "variants stream ended inside an object",
+                        "variants stream ended before the document closed",
                     ));
                 }
                 self.machine.phase = Phase::Done;
@@ -162,11 +166,10 @@ impl Machine {
                     } else {
                         Phase::Root
                     };
-                } else if self.key.len() < ARRAY_KEY.len() + 1 {
+                } else if self.key.len() <= ARRAY_KEY.len() {
+                    // One byte past the key's length is enough to know it can't match;
+                    // nothing more is kept, so a long root string costs no memory.
                     self.key.push(byte);
-                } else {
-                    // Longer than the key we want: can't match, stop collecting.
-                    self.key.push(b'!');
                 }
             }
             Phase::AfterKey => match byte {
@@ -302,6 +305,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_long_root_string_is_not_buffered() {
+        let long = "x".repeat(5 * 1024 * 1024);
+        let doc = format!(r#"{{"notes": "{long}", "variants": [{{"id": "1"}}]}}"#);
+        let reader = tokio::io::BufReader::with_capacity(4096, Cursor::new(doc.into_bytes()));
+        let mut splitter = VariantSplitter::new(reader);
+        let first = splitter.next_object().await.expect("split").expect("one");
+        assert_eq!(first, r#"{"id": "1"}"#.as_bytes());
+        assert!(splitter.machine.key.len() <= ARRAY_KEY.len() + 1);
+    }
+
+    #[tokio::test]
     async fn an_empty_array_and_a_missing_key_yield_nothing() {
         assert!(
             split(r#"{"variants": []}"#)
@@ -323,6 +337,24 @@ mod tests {
             .await
             .expect_err("truncated");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        // Cut cleanly between two elements: still not a short list.
+        let err = split(r#"{"variants": [{"id": "1"}, "#)
+            .await
+            .expect_err("truncated between elements");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        // The array closing is the clean end the splitter reads to; whatever follows it
+        // (the root's own `}`, or nothing at all) is not its concern.
+        let objects = split(r#"{"variants": [{"id": "1"}]"#)
+            .await
+            .expect("the array closed");
+        assert_eq!(objects.len(), 1);
+        // An empty body is not a document either.
+        assert!(
+            split("")
+                .await
+                .expect("empty is a clean nothing")
+                .is_empty()
+        );
         let err = split(r#"[1, 2]"#).await.expect_err("not an object");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }

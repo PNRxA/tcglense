@@ -415,10 +415,11 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   The provider is `spellbook/` and **only the mirror origin fetches upstream** (a ~650 MB JSON
   document, streamed through `spellbook::stream`'s splitter, never buffered); every other
   instance imports the origin's compact gzipped-JSONL re-serve (`/api/mirror/spellbook/combos`,
-  `COMBOS_SYNC_ENABLED`) — the Secret Lair stance. Both paths write through the one
-  `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
+  `COMBOS_SYNC_ENABLED`) — the Secret Lair stance, and like those two it is **never fatal to the
+  sync tick** (the mirror answers 404 until its origin has imported once). Both paths write
+  through the one `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
   maybeboards out, sideboard + command zone in; a `must_be_commander` piece counts only from the
-  command zone of a format that leads with one (the same two `rules` answers the facets borrow);
+  command zone of a format that leads with one (the same two `rules` answers the facets borrow — in a format without one such a combo is unreachable and never listed);
   a **template** ("any sac outlet") is always one missing card, so such a combo is never
   "complete"; `almost` (one card short) is filtered to the commander's colours. `available: false`
   is "no data synced", never "no combos" — the `token_parts` NULL stance. The bracket estimate

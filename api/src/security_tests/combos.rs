@@ -191,7 +191,8 @@ async fn a_commander_piece_counts_only_from_the_command_zone_of_a_leading_format
     );
 
     // In a format with no command zone the seeded `Commander` section is just part of
-    // the 60, so the piece is never the commander.
+    // the 60, so nothing is ever the commander: a combo that needs one isn't a card away,
+    // it is unreachable, and it is listed nowhere.
     let (modern_id, sections) = new_deck(&app, &token, "Modern").await;
     let zone = section_named(&sections, "Commander");
     let main = section_named(&sections, "Creatures");
@@ -199,8 +200,8 @@ async fn a_commander_piece_counts_only_from_the_command_zone_of_a_leading_format
     put_card(&app, &token, modern_id, &c5, main, 1).await;
     let body = combos(&app, &token, modern_id).await;
     assert!(ids(&body["combos"]).is_empty());
-    assert_eq!(ids(&body["almost"]), vec!["dummy-4-5"]);
-    assert_eq!(body["almost"][0]["missing"][0]["kind"], "commander");
+    assert!(ids(&body["almost"]).is_empty(), "{:?}", body["almost"]);
+    assert_eq!(body["almost_count"], 0);
 }
 
 #[tokio::test]

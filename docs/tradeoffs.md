@@ -720,7 +720,14 @@ catalog) is planned but not implemented.
   instance that fetches the ~650 MB export (a self-host imports the origin's compact re-serve,
   the Secret Lair stance), every combo on the wire carries its `commanderspellbook.com/combo/{id}`
   URL, every response carries `source` + `source_url`, and both SPA panels name and link the
-  source. The upstream export is one JSON document, not JSONL, so it is read through a purpose-
+  source. **The combo sync never fails the card-sync tick.** It is the first optional dataset
+  (its own off-switch, reads degrading to `available: false`) whose mirror source legitimately
+  answers `404` — an origin still on a pre-#683 build, or one that opted out — for as long as
+  that holds; feeding it into `refresh_all`'s providers flag would have every self-host behind
+  such an origin never record a completed tick (hourly full retries, no boot deferral, and on a
+  fresh install neither the price backfill nor the fingerprint build spawned). So it is logged,
+  left in `ingest_state` as `error`, and retried next tick — the sld-drops / fingerprint-import
+  stance. The upstream export is one JSON document, not JSONL, so it is read through a purpose-
   built byte-level splitter (`spellbook::stream`) rather than `serde_json` — parsing 650 MB
   whole was never an option, and a general streaming JSON parser would be a dependency for a
   problem that needs only string boundaries and brace depth.
