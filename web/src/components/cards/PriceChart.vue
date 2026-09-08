@@ -16,12 +16,14 @@ import { STRUCTURAL_CATALOG_STALE_MS } from '@/lib/queryClient'
 // range buttons, and the pending/error/empty branches; the unovis chart body lives in
 // PriceChartInner, loaded lazily so unovis stays off every detail route's critical chunk
 // AND the query fires in parallel with that chunk fetch. The two USD fields are all the
-// chart reads, so any series carrying them — a card's `PricePoint` (with unused eur/tix)
-// or a product's `ProductPricePoint` — satisfies it.
+// chart requires, so any series carrying them — a card's `PricePoint` (with unused eur/tix)
+// or a product's `ProductPricePoint` — satisfies it; a card's optional `usd_etched` (issue
+// #676) adds a third line where the printing is priced in it.
 interface PricePointLike {
   date: string
   usd: string | null
   usd_foil: string | null
+  usd_etched?: string | null
 }
 const props = withDefaults(
   defineProps<{
@@ -109,6 +111,7 @@ const series = computed<PricePointLike[]>(() =>
     ...point,
     usd: money.convertUsd(point.usd),
     usd_foil: money.convertUsd(point.usd_foil),
+    usd_etched: money.convertUsd(point.usd_etched ?? null),
   })),
 )
 
@@ -119,7 +122,7 @@ const isEmpty = computed(
   () =>
     !query.isPending.value &&
     !query.isError.value &&
-    !series.value.some((p) => p.usd != null || p.usd_foil != null),
+    !series.value.some((p) => p.usd != null || p.usd_foil != null || p.usd_etched != null),
 )
 </script>
 

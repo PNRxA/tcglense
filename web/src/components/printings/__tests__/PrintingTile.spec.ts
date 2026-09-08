@@ -23,7 +23,7 @@ describe('PrintingTile', () => {
           set_code: 'alp',
           collector_number: '42',
           rarity: 'rare',
-          prices: { usd: '2.50', usd_foil: null, eur: null, tix: null },
+          prices: { usd: '2.50', usd_foil: null, usd_etched: null, eur: null, tix: null },
         }),
         selectable: true,
         current: true,
