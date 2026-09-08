@@ -12,7 +12,8 @@ use crate::catalog;
 use crate::db::Dialect;
 use crate::entities::{card, product, wishlist_item, wishlist_product_item};
 use crate::handlers::shared::{
-    BULK_THRESHOLD_CENTS, CollectionSort, SortDir, SortField, group_into_drops, search_condition,
+    BULK_THRESHOLD_CENTS, CollectionSort, CopyFilter, SortDir, SortField, group_into_drops,
+    search_condition,
 };
 use sea_orm::{ActiveModelTrait, Condition, Set};
 
@@ -99,13 +100,22 @@ async fn wishlist_query_scopes_by_user_and_applies_search_and_sort() {
         sort: CollectionSort,
         dir: SortDir,
     ) -> Vec<String> {
-        wishlist_query(1, "mtg", set_codes, search, sort, dir, Dialect::Sqlite)
-            .all(db)
-            .await
-            .expect("run wishlist query")
-            .into_iter()
-            .filter_map(|(_, card)| card.map(|c| c.name))
-            .collect()
+        wishlist_query(
+            1,
+            "mtg",
+            set_codes,
+            search,
+            CopyFilter::default(),
+            sort,
+            dir,
+            Dialect::Sqlite,
+        )
+        .all(db)
+        .await
+        .expect("run wishlist query")
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.name))
+        .collect()
     }
 
     // Default recency (updated desc): newest row first, user 2's card absent.
@@ -205,6 +215,7 @@ async fn wishlist_query_orders_by_total_copies() {
             "mtg",
             None,
             None,
+            CopyFilter::default(),
             CollectionSort::Quantity,
             dir,
             Dialect::Sqlite,
@@ -367,6 +378,7 @@ async fn wishlist_query_scopes_to_a_set() {
             "mtg",
             set_codes,
             search,
+            CopyFilter::default(),
             CollectionSort::Card(SortField::Name),
             SortDir::Asc,
             Dialect::Sqlite,
@@ -477,6 +489,7 @@ async fn wanted_cards_group_into_drops_with_counts() {
         "mtg",
         Some(&scope),
         None,
+        CopyFilter::default(),
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
         Dialect::Sqlite,

@@ -754,6 +754,115 @@ async fn quantity_sort_orders_the_owned_list_by_copies() {
     assert_eq!(quantities(&body), vec![1, 3, 5]);
 }
 
+/// The copy-count / finish filter (issue #677) narrows the owned-card list through the
+/// full HTTP path — the total by default, a single finish's counter on request — and a
+/// contradictory or unknown value is a 422. The query-level semantics are unit-tested in
+/// `handlers::collection::tests`; this pins the param plumbing end to end, and that the
+/// same params are **inert on the public catalog search**: the filter lives on the holdings
+/// `ListParams`, never in the shared Scryfall grammar, so it can't learn per-user state.
+#[tokio::test]
+async fn copy_count_filter_narrows_the_owned_list_and_never_the_catalog() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "copies@example.com", "password123").await;
+
+    // Five cards at distinct (regular, foil) splits: totals 1, 4, 3, 4, 6.
+    let ids = sample_card_ids(&app, 5).await;
+    for (id, quantity, foil) in [
+        (&ids[0], 1, 0),
+        (&ids[1], 4, 0),
+        (&ids[2], 0, 3),
+        (&ids[3], 2, 2),
+        (&ids[4], 6, 0),
+    ] {
+        let (status, _, body) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &card_path(id),
+                &token,
+                json!({ "quantity": quantity, "foil_quantity": foil }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+    }
+
+    async fn owned_ids(app: &Router, token: &str, query: &str) -> Vec<String> {
+        let (status, _, body) = send(
+            app,
+            get_with_bearer(&format!("/api/collection/mtg?sort=name&{query}"), token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body:?}");
+        let mut out: Vec<String> = body["data"]
+            .as_array()
+            .expect("collection data array")
+            .iter()
+            .map(|e| e["card"]["id"].as_str().expect("id").to_string())
+            .collect();
+        out.sort();
+        out
+    }
+    let sorted = |picks: &[usize]| {
+        let mut out: Vec<String> = picks.iter().map(|&i| ids[i].clone()).collect();
+        out.sort();
+        out
+    };
+
+    // "Which cards do I own more than four of?" — the total, foils included.
+    assert_eq!(owned_ids(&app, &token, "min_copies=5").await, sorted(&[4]));
+    // "Which playsets am I short of?" — 1 to 3 copies in total.
+    assert_eq!(
+        owned_ids(&app, &token, "min_copies=1&max_copies=3").await,
+        sorted(&[0, 2])
+    );
+    // A single finish reads only that counter, and requires a copy of it.
+    assert_eq!(
+        owned_ids(&app, &token, "finish=foil").await,
+        sorted(&[2, 3])
+    );
+    assert_eq!(
+        owned_ids(&app, &token, "finish=foil&min_copies=3").await,
+        sorted(&[2])
+    );
+    assert_eq!(
+        owned_ids(&app, &token, "finish=regular&max_copies=2").await,
+        sorted(&[0, 3])
+    );
+    // Absent = every holding.
+    assert_eq!(owned_ids(&app, &token, "").await.len(), 5);
+
+    // Contradictory / unknown values are a 422, never a silent default.
+    for bad in [
+        "min_copies=4&max_copies=3",
+        "min_copies=-1",
+        "finish=etched",
+    ] {
+        let (status, _, _) = send(
+            &app,
+            get_with_bearer(&format!("/api/collection/mtg?{bad}"), &token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+
+    // The public catalog search doesn't know these params: the same query returns the
+    // whole catalog, and a bogus finish isn't even validated there — the filter lives on
+    // the holdings `ListParams`, not in the shared search grammar.
+    let (status, _, all) = send(&app, get("/api/games/mtg/cards?page_size=1")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, filtered) = send(
+        &app,
+        get("/api/games/mtg/cards?page_size=1&min_copies=99&max_copies=0&finish=etched"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered:?}");
+    assert_eq!(
+        filtered["total"], all["total"],
+        "the catalog must ignore holdings params"
+    );
+}
+
 /// The `content-disposition` header value as a string, or `""` if absent.
 fn content_disposition(headers: &HeaderMap) -> &str {
     headers

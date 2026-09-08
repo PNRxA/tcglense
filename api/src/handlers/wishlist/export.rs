@@ -22,8 +22,8 @@ use super::read::wishlist_query;
 ///
 /// `GET /api/wishlist/{game}/cards/export` -> the whole result set of the signed-in
 /// user's wanted-card search as a `.txt` download, honouring the same
-/// `q`/`set`/`include_related`/`sort`/`dir` params as `/api/wishlist/{game}` — the
-/// wish-list browse's mirror of the catalog's card-search export. Lines carry the real
+/// `q`/`set`/`include_related`/`sort`/`dir`/`min_copies`/`max_copies`/`finish` params as
+/// `/api/wishlist/{game}` — the wish-list browse's mirror of the catalog's card-search export. Lines carry the real
 /// wanted counts, one line per non-empty finish (`4 Sol Ring (LTC) 284`, foil copies on a
 /// second ` *F*`-tagged line), so a shopping list pastes straight into the importers.
 #[utoipa::path(
@@ -38,6 +38,9 @@ use super::read::wishlist_query;
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the wish-list list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the wish-list list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the wish-list list"),
         ("format" = Option<String>, Query, description = "`text` (default, `N Name (SET) 123` per wanted finish, foil tagged ` *F*`) or `names` (de-duplicated card names)"),
     ),
     responses(
@@ -63,6 +66,7 @@ pub async fn export_wishlist_cards(
         &game,
         parts.set_codes.as_deref(),
         parts.search,
+        parts.copies,
         parts.sort,
         parts.dir,
         state.dialect(),

@@ -187,8 +187,8 @@ pub async fn export_collection(
 ///
 /// `GET /api/collection/{game}/cards/export` -> the whole result set of the signed-in
 /// user's owned-card search as a `.txt` download, honouring the same
-/// `q`/`set`/`include_related`/`sort`/`dir` params as `/api/collection/{game}` — the
-/// collection browse's mirror of the catalog's card-search export. Lines carry the real
+/// `q`/`set`/`include_related`/`sort`/`dir`/`min_copies`/`max_copies`/`finish` params as
+/// `/api/collection/{game}` — the collection browse's mirror of the catalog's card-search export. Lines carry the real
 /// owned counts, one line per non-empty finish (`4 Sol Ring (LTC) 284`, foil copies on a
 /// second ` *F*`-tagged line), so the file round-trips through the text importer.
 #[utoipa::path(
@@ -203,6 +203,9 @@ pub async fn export_collection(
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the collection list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the collection list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the collection list"),
         ("format" = Option<String>, Query, description = "`text` (default, `N Name (SET) 123` per owned finish, foil tagged ` *F*`) or `names` (de-duplicated card names)"),
     ),
     responses(
@@ -228,6 +231,7 @@ pub async fn export_collection_cards(
         &game,
         parts.set_codes.as_deref(),
         parts.search,
+        parts.copies,
         parts.sort,
         parts.dir,
         state.dialect(),

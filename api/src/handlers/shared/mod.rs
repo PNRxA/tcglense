@@ -33,9 +33,9 @@ pub(crate) use grouping::{
 };
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
-    CollectionSort, CollectionSubtypeGroup, CollectionSummary, HoldingSummaryRow, ListParams,
-    MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams,
-    SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
+    CollectionSort, CollectionSubtypeGroup, CollectionSummary, CopyFilter, HoldingSummaryRow,
+    ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest,
+    SetsParams, SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
     holding_subtype_page, narrow_export_statement, narrow_summary_rows, resolve_holdings_list,
     resolve_set_scope, summarize_holdings, validate_quantity,
 };

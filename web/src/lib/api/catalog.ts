@@ -1,4 +1,5 @@
 import { API_URL, listQuery, request, requestBlob } from './client'
+import type { HoldingFinish } from '@/lib/holdingsFilter'
 import type {
   ArtTagEntry,
   Card,
@@ -180,6 +181,12 @@ export interface CardExportParams {
   dir?: string
   includeRelated?: boolean
   format?: CardExportFormat
+  /** Holdings exports only (issue #677): the copy-count filter the browse grid is showing —
+   * `min_copies` / `max_copies` bounds read through `finish`, so the file matches the rows on
+   * screen. The catalog exports have no held counts to bound, so they never pass them. */
+  minCopies?: number
+  maxCopies?: number
+  finish?: HoldingFinish
 }
 
 /** Build a card export's query string. Shared with the collection / wish-list card
@@ -191,6 +198,10 @@ export function cardExportQuery(params: CardExportParams = {}): string {
   if (params.sort) search.set('sort', params.sort)
   if (params.dir) search.set('dir', params.dir)
   if (params.includeRelated) search.set('include_related', 'true')
+  // A copy bound of 0 is meaningful, so guard on presence rather than truthiness.
+  if (params.minCopies != null) search.set('min_copies', String(params.minCopies))
+  if (params.maxCopies != null) search.set('max_copies', String(params.maxCopies))
+  if (params.finish && params.finish !== 'any') search.set('finish', params.finish)
   // `text` is the server default, so only a non-default shape needs stating.
   if (params.format && params.format !== 'text') search.set('format', params.format)
   const qs = search.toString()

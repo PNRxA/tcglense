@@ -63,6 +63,15 @@ describe('wishlistPath', () => {
     )
   })
 
+  it('carries the copy-count filter as its own params (issue #677)', () => {
+    expect(wishlistPath('mtg', { minCopies: 5, finish: 'foil' })).toBe(
+      '/api/wishlist/mtg?min_copies=5&finish=foil',
+    )
+    expect(wishlistPath('mtg', { minCopies: 2, maxCopies: 3, finish: 'regular' })).toBe(
+      '/api/wishlist/mtg?min_copies=2&max_copies=3&finish=regular',
+    )
+  })
+
   it('encodes the game segment', () => {
     expect(wishlistPath('a/b')).toContain('a%2Fb')
   })
@@ -84,6 +93,12 @@ describe('wishlistCardExportPath', () => {
       }),
     ).toBe(
       '/api/wishlist/mtg/cards/export?q=t%3Agoblin&set=neo&sort=quantity&dir=desc&format=names',
+    )
+  })
+
+  it('carries the copy-count filter, so the file is the rows on screen', () => {
+    expect(wishlistCardExportPath('mtg', { minCopies: 4, finish: 'foil' })).toBe(
+      '/api/wishlist/mtg/cards/export?min_copies=4&finish=foil',
     )
   })
 
@@ -120,6 +135,12 @@ describe('wishlistSetDropsPath', () => {
   it('appends pagination + search params', () => {
     expect(wishlistSetDropsPath('mtg', 'sld', { page: 2, pageSize: 20, q: 't:goblin' })).toBe(
       '/api/wishlist/mtg/sets/sld/drops?page=2&page_size=20&q=t%3Agoblin',
+    )
+  })
+
+  it('carries the copy-count filter into the by-drop listing too', () => {
+    expect(wishlistSetDropsPath('mtg', 'sld', { maxCopies: 3 })).toBe(
+      '/api/wishlist/mtg/sets/sld/drops?max_copies=3',
     )
   })
 

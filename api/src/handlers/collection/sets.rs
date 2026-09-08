@@ -104,12 +104,15 @@ pub(crate) async fn owned_sets(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
         ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the owned cards"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the collection list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the collection list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the collection list"),
     ),
     responses(
         (status = 200, description = "A page of the user's owned cards in the set, grouped by drop.", body = Page<CollectionDropGroup>),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game or set, or the set isn't drop-grouped."),
-        (status = 422, description = "Malformed search query."),
+        (status = 422, description = "Malformed search query or copy-count filter."),
     ),
 )]
 pub async fn collection_set_drops(
@@ -146,6 +149,9 @@ pub(crate) async fn owned_drop_page(
         .search()
         .map(|s| search_condition(game_meta, s, dialect))
         .transpose()?;
+    // The copy-count / finish filter (issue #677) narrows the grouped views exactly as it
+    // does the flat list, so the browse chip can't disagree with the grouping toggle.
+    let copies = params.copy_filter()?;
 
     // The user's owned cards in this set, in collector-number order (with their
     // holdings) — bounded by one set, so we group + paginate by drop in memory, keeping
@@ -156,6 +162,7 @@ pub(crate) async fn owned_drop_page(
         game,
         Some(&scope),
         search,
+        copies,
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
         dialect,
@@ -188,12 +195,15 @@ pub(crate) async fn owned_drop_page(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
         ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter over the owned cards"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the collection list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the collection list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the collection list"),
     ),
     responses(
         (status = 200, description = "A page of the user's owned cards in the set, grouped by sub-type.", body = Page<CollectionSubtypeGroup>),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game or set."),
-        (status = 422, description = "Malformed search query."),
+        (status = 422, description = "Malformed search query or copy-count filter."),
     ),
 )]
 pub async fn collection_set_subtypes(
@@ -229,6 +239,9 @@ pub(crate) async fn owned_subtype_page(
         .search()
         .map(|s| search_condition(game_meta, s, dialect))
         .transpose()?;
+    // The copy-count / finish filter (issue #677) narrows the grouped views exactly as it
+    // does the flat list, so the browse chip can't disagree with the grouping toggle.
+    let copies = params.copy_filter()?;
 
     // The user's owned cards in this set, in collector-number order (with their holdings)
     // — bounded by one set, so we group + paginate by sub-type in memory.
@@ -238,6 +251,7 @@ pub(crate) async fn owned_subtype_page(
         game,
         Some(&scope),
         search,
+        copies,
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
         dialect,

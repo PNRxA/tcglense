@@ -73,6 +73,24 @@ describe('collectionPath', () => {
     )
   })
 
+  it('carries the copy-count filter as its own params, never folded into q', () => {
+    // Issue #677: `min_copies`/`max_copies`/`finish` are separate query params — the
+    // Scryfall grammar in `q` knows nothing about held counts.
+    expect(collectionPath('mtg', { minCopies: 5, finish: 'foil' })).toBe(
+      '/api/collection/mtg?min_copies=5&finish=foil',
+    )
+    expect(collectionPath('mtg', { minCopies: 2, maxCopies: 3 })).toBe(
+      '/api/collection/mtg?min_copies=2&max_copies=3',
+    )
+    expect(collectionPath('mtg', { q: 't:goblin', maxCopies: 3, finish: 'regular' })).toBe(
+      '/api/collection/mtg?q=t%3Agoblin&max_copies=3&finish=regular',
+    )
+  })
+
+  it('keeps a zero copy bound (0 is meaningful, unlike the falsy-skipped params)', () => {
+    expect(collectionPath('mtg', { maxCopies: 0 })).toBe('/api/collection/mtg?max_copies=0')
+  })
+
   it('encodes the game segment', () => {
     expect(collectionPath('a/b')).toContain('a%2Fb')
   })
@@ -86,6 +104,12 @@ describe('collectionSetDropsPath', () => {
   it('appends pagination + search params', () => {
     expect(collectionSetDropsPath('mtg', 'sld', { page: 2, pageSize: 20, q: 't:goblin' })).toBe(
       '/api/collection/mtg/sets/sld/drops?page=2&page_size=20&q=t%3Agoblin',
+    )
+  })
+
+  it('carries the copy-count filter into the by-drop listing too', () => {
+    expect(collectionSetDropsPath('mtg', 'sld', { minCopies: 4, finish: 'foil' })).toBe(
+      '/api/collection/mtg/sets/sld/drops?min_copies=4&finish=foil',
     )
   })
 
@@ -430,6 +454,16 @@ describe('collectionCardExportPath', () => {
   it('omits the default text format, like the catalog export paths', () => {
     expect(collectionCardExportPath('mtg', { format: 'text' })).toBe(
       '/api/collection/mtg/cards/export',
+    )
+  })
+
+  it('carries the copy-count filter, so the file is the rows on screen', () => {
+    expect(collectionCardExportPath('mtg', { minCopies: 5, finish: 'foil' })).toBe(
+      '/api/collection/mtg/cards/export?min_copies=5&finish=foil',
+    )
+    // `any` is the server default, so it never needs stating.
+    expect(collectionCardExportPath('mtg', { maxCopies: 3, finish: 'any' })).toBe(
+      '/api/collection/mtg/cards/export?max_copies=3',
     )
   })
 
