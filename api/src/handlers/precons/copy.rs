@@ -124,6 +124,8 @@ pub async fn copy_precon_deck(
             name: precon.name.clone(),
             description: Some(copy_description(&precon)),
             format: precon_format(&precon.deck_type),
+            // A catalog row has no folder of the caller's to inherit: the copy starts loose.
+            folder_id: None,
         },
         sections,
     )

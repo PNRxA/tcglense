@@ -7,6 +7,7 @@ import {
   ChevronUp,
   ClipboardCopy,
   Copy,
+  CopyPlus,
   FileDown,
   Globe,
   Layers,
@@ -47,6 +48,7 @@ import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckCardControl from '@/components/decks/DeckCardControl.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
+import DeckCompare from '@/components/decks/DeckCompare.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
@@ -99,6 +101,9 @@ const {
   ownedInCollection,
   wantedInWishlist,
   addDeckToCollection,
+  duplicateDeck,
+  duplicating,
+  duplicateError,
   folders,
   renameOpen,
   editName,
@@ -317,6 +322,12 @@ function copyDeckList() {
               <DropdownMenuItem @click="openRename"
                 ><Settings2 class="size-4" /> Rename / format</DropdownMenuItem
               >
+              <!-- "Make a v2" (issue #674): a private copy in this folder, opened on
+                success. No confirmation — a copy is a deck you can delete, unlike the
+                additive collection write above. -->
+              <DropdownMenuItem :disabled="duplicating" @click="duplicateDeck"
+                ><CopyPlus class="size-4" /> Duplicate deck</DropdownMenuItem
+              >
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Move to folder</DropdownMenuLabel>
               <DropdownMenuItem v-if="deck.folder_id != null" @click="move(null)"
@@ -338,6 +349,9 @@ function copyDeckList() {
       </header>
       <p v-if="exportError" class="text-destructive -mt-3 mb-4 text-sm" aria-live="polite">
         {{ exportError }}
+      </p>
+      <p v-if="duplicateError" class="text-destructive -mt-3 mb-4 text-sm" aria-live="polite">
+        {{ duplicateError }}
       </p>
 
       <!-- Is this deck legal in its format? (issue #557) — a verdict the server works out
@@ -379,6 +393,10 @@ function copyDeckList() {
 
       <!-- Goldfish a sample hand (issue #596). -->
       <DeckGoldfish :game="game" :deck-id="deck.id" />
+
+      <!-- What changed against another of your decks (issue #674). Keyed on the deck id so
+        navigating v1 → v2 (as the Duplicate action does) remounts it with a fresh pick. -->
+      <DeckCompare :key="deck.id" class="mb-6" :game="game" :deck-id="deck.id" />
 
       <!-- Add cards -->
       <DeckAddCard

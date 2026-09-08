@@ -12,11 +12,14 @@
 //! shared with the copy, so they carry across verbatim (a copy survives a catalog re-import
 //! for the same reason a deck card does).
 //!
-//! That last paragraph describes **two** callers now: this one, and the precon copy
-//! ([`crate::handlers::precons::copy`]), whose source rows likewise already carry internal
-//! card ids. Both go through [`insert_deck_with_cards`], so the deck cap, the transaction
-//! boundary, and the chunked insert are stated once — the difference between them is only
-//! *where the sections come from* (an existing deck's, or a mapping of upstream's boards).
+//! That last paragraph describes **three** callers now: this one, the owner's own duplicate
+//! ([`copy_deck`], issue #674 — "make a v2 with the new commander" without publishing first),
+//! and the precon copy ([`crate::handlers::precons::copy`]), whose source rows likewise
+//! already carry internal card ids. All three go through [`insert_deck_with_cards`], so the
+//! deck cap, the transaction boundary, and the chunked insert are stated once — the
+//! difference between them is only *where the sections come from* (an existing deck's, read
+//! through [`source_sections`], or a mapping of upstream's boards) and where the copy is
+//! filed (a duplicate stays in its source's folder; the other two start loose).
 
 use axum::{Json, extract::State};
 use chrono::Utc;
@@ -32,10 +35,11 @@ use crate::entities::prelude::{Deck, DeckCard, DeckSection};
 use crate::entities::{deck, deck_card, deck_section};
 use crate::error::AppError;
 use crate::extract::Path;
+use crate::handlers::shared::require_game;
 use crate::handlers::sharing::decks::load_public_deck;
 use crate::state::AppState;
 
-use super::{MAX_DECK_NAME, MAX_DECKS_PER_GAME, deck_detail};
+use super::{DeckResponse, MAX_DECK_NAME, MAX_DECKS_PER_GAME, deck_detail, deck_header, load_deck};
 
 /// Cards are bulk-inserted in bounded batches so the SQL parameter count stays within the
 /// SQLite/Postgres limits even for a large source deck — the same rationale (and value) as the
@@ -88,44 +92,9 @@ pub async fn copy_public_deck(
     // to the one identical 404 body, so this write is no more of an existence oracle than the read.
     let (_owner, source) = load_public_deck(&state, &handle, deck_id).await?;
 
-    // Read the source's sections (in their display order) and cards up front, outside the
-    // transaction — they're another user's already-committed rows.
-    let sections = DeckSection::find()
-        .filter(deck_section::Column::DeckId.eq(source.id))
-        .order_by_asc(deck_section::Column::Position)
-        .order_by_asc(deck_section::Column::Id)
-        .all(&state.db)
-        .await?;
-    let cards = DeckCard::find()
-        .filter(deck_card::Column::DeckId.eq(source.id))
-        .all(&state.db)
-        .await?;
-    // Group the cards under the section they came from, preserving the source's section
-    // order (the query above ordered them). The copy's stored `position` values are
-    // compacted to `0..n` by the seam rather than mirroring the source's integers — the
-    // *order* is what a section's position means, and it is unchanged.
-    //
-    // A card whose section somehow didn't come back is dropped rather than aborting the
-    // whole copy — the same tolerance the per-card section lookup had.
-    let mut by_section: HashMap<i32, Vec<NewDeckCard>> = HashMap::with_capacity(sections.len());
-    for card in &cards {
-        by_section
-            .entry(card.section_id)
-            .or_default()
-            .push(NewDeckCard {
-                card_id: card.card_id,
-                quantity: card.quantity,
-                foil_quantity: card.foil_quantity,
-            });
-    }
-    let new_sections: Vec<NewDeckSection> = sections
-        .into_iter()
-        .map(|section| NewDeckSection {
-            cards: by_section.remove(&section.id).unwrap_or_default(),
-            name: section.name,
-            is_maybeboard: section.is_maybeboard,
-        })
-        .collect();
+    // Read the source's sections and cards up front, outside the transaction — they're
+    // another user's already-committed rows.
+    let new_sections = source_sections(&state, source.id).await?;
 
     let new_deck = insert_deck_with_cards(
         &state,
@@ -135,6 +104,8 @@ pub async fn copy_public_deck(
             name: copy_name(&source.name),
             description: source.description.clone(),
             format: source.format.clone(),
+            // Someone else's folders mean nothing to the caller: the copy starts loose.
+            folder_id: None,
         },
         new_sections,
     )
@@ -146,13 +117,113 @@ pub async fn copy_public_deck(
     ))
 }
 
+/// Duplicate deck
+///
+/// `POST /api/decks/{game}/{deck_id}/copy` -> duplicate one of the caller's **own** decks
+/// (issue #674), returning the new deck's list header. The copy is named
+/// `"<name> (copy)"`, starts private, is filed in the **same folder** as its source, and
+/// carries the source's sections (name, position, maybeboard flag) and cards (regular +
+/// foil counts) verbatim — the same clone the public copy makes, without having to publish
+/// the deck first. `404` when the deck isn't the caller's; `422` at the per-game deck cap.
+#[utoipa::path(
+    post,
+    path = "/api/decks/{game}/{deck_id}/copy",
+    tag = "Decks",
+    security(("api_key" = [])),
+    params(
+        ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
+        ("deck_id" = i32, Path, description = "The deck to duplicate (must be the caller's)"),
+    ),
+    responses(
+        (status = 200, description = "The new copy's list header (private, same folder as its source).", body = DeckResponse),
+        (status = 401, description = "Missing or invalid API key."),
+        (status = 403, description = "API key is read-only."),
+        (status = 404, description = "Unknown game, or the deck is not the caller's."),
+        (status = 422, description = "The caller is already at their per-game deck cap."),
+    ),
+)]
+pub async fn copy_deck(
+    State(state): State<AppState>,
+    WritableUser(user): WritableUser,
+    Path((game, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckResponse>, AppError> {
+    require_game(&game)?;
+    // Ownership first: a deck that isn't the caller's is the uniform 404, like every other
+    // deck-scoped route (never a 403 — no existence oracle over deck ids).
+    let source = load_deck(&state, user.id, &game, deck_id).await?;
+    let new_sections = source_sections(&state, source.id).await?;
+
+    let new_deck = insert_deck_with_cards(
+        &state,
+        user.id,
+        NewDeck {
+            game: source.game.clone(),
+            name: copy_name(&source.name),
+            description: source.description.clone(),
+            format: source.format.clone(),
+            // The caller's own folder, so the v2 lands beside the v1 on the shelf.
+            folder_id: source.folder_id,
+        },
+        new_sections,
+    )
+    .await?;
+
+    // A header, like an import's response: the SPA navigates to the copy and loads its detail
+    // there. Built through the one `deck_header` seam every `DeckResponse` producer uses.
+    Ok(Json(deck_header(&state.db, &new_deck).await?))
+}
+
+/// Read an existing deck's sections (in display order) and cards into the shape
+/// [`insert_deck_with_cards`] writes — the half of a deck copy that every deck-sourced copy
+/// shares, whoever owns the source. The caller has already proved it may read `deck_id`.
+///
+/// The copy's stored `position` values are compacted to `0..n` by the seam rather than
+/// mirroring the source's integers — the *order* is what a section's position means, and
+/// it is unchanged. A card whose section somehow didn't come back is dropped rather than
+/// aborting the whole copy — the same tolerance the per-card section lookup had.
+async fn source_sections(state: &AppState, deck_id: i32) -> Result<Vec<NewDeckSection>, AppError> {
+    let sections = DeckSection::find()
+        .filter(deck_section::Column::DeckId.eq(deck_id))
+        .order_by_asc(deck_section::Column::Position)
+        .order_by_asc(deck_section::Column::Id)
+        .all(&state.db)
+        .await?;
+    let cards = DeckCard::find()
+        .filter(deck_card::Column::DeckId.eq(deck_id))
+        .all(&state.db)
+        .await?;
+    let mut by_section: HashMap<i32, Vec<NewDeckCard>> = HashMap::with_capacity(sections.len());
+    for card in &cards {
+        by_section
+            .entry(card.section_id)
+            .or_default()
+            .push(NewDeckCard {
+                card_id: card.card_id,
+                quantity: card.quantity,
+                foil_quantity: card.foil_quantity,
+            });
+    }
+    Ok(sections
+        .into_iter()
+        .map(|section| NewDeckSection {
+            cards: by_section.remove(&section.id).unwrap_or_default(),
+            name: section.name,
+            is_maybeboard: section.is_maybeboard,
+        })
+        .collect())
+}
+
 /// The metadata of a deck about to be written by [`insert_deck_with_cards`]. Everything else
-/// about a new deck is fixed by the seam: it is the caller's, private, and loose.
+/// about a new deck is fixed by the seam: it is the caller's and private.
 pub(crate) struct NewDeck {
     pub game: String,
     pub name: String,
     pub description: Option<String>,
     pub format: Option<String>,
+    /// The caller's folder to file the copy under, or `None` for loose. Only a duplicate of
+    /// the caller's own deck ever sets it — a source it already owns is the one case where
+    /// the folder is theirs to inherit.
+    pub folder_id: Option<i32>,
 }
 
 /// One section of a deck about to be written, in display order, with the cards filed under
@@ -177,7 +248,9 @@ pub(crate) struct NewDeckCard {
 /// The per-game deck cap is enforced **before** anything is written (the same guard `create`
 /// applies), and the cards go in bounded chunks so the bind count stays within SQLite's and
 /// Postgres' limits for a large source deck. An empty section is still created: a copied
-/// deck should look like its source, including the buckets its owner left empty.
+/// deck should look like its source, including the buckets its owner left empty. Nothing
+/// here re-validates `meta.folder_id` — every caller passes either `None` or a folder read
+/// off a deck row the caller already owns.
 pub(crate) async fn insert_deck_with_cards(
     state: &AppState,
     user_id: i32,
@@ -198,11 +271,12 @@ pub(crate) async fn insert_deck_with_cards(
     let now = Utc::now();
     let txn = state.db.begin().await?;
 
-    // 1. The new deck row, owned by the caller: private and loose (no folder).
+    // 1. The new deck row, owned by the caller: private, in whichever folder the caller
+    //    chose (the seam trusts `meta.folder_id` — it is the source deck's own, or none).
     let new_deck = deck::ActiveModel {
         user_id: Set(user_id),
         game: Set(meta.game),
-        folder_id: Set(None),
+        folder_id: Set(meta.folder_id),
         name: Set(meta.name),
         description: Set(meta.description),
         format: Set(meta.format),
