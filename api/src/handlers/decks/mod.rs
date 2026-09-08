@@ -55,8 +55,8 @@ mod to_collection;
 mod write;
 
 pub use analysis::{
-    deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_stats, deck_tokens,
-    list_deck_formats,
+    deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing, deck_roles, deck_stats,
+    deck_tokens, list_deck_formats,
 };
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use containing::decks_containing_card;
@@ -89,7 +89,8 @@ pub use write::{create_deck, delete_deck, move_deck_to_folder, set_deck_visibili
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::decks::__path_<fn>`.
 pub use analysis::{
     __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
-    __path_deck_stats, __path_deck_tokens, __path_list_deck_formats,
+    __path_deck_pricing, __path_deck_roles, __path_deck_stats, __path_deck_tokens,
+    __path_list_deck_formats,
 };
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
 pub use containing::__path_decks_containing_card;
@@ -122,9 +123,9 @@ pub(crate) use analysis::rules::COLOUR_ORDER;
 // computation its owner sees.
 pub(crate) use analysis::{
     AnalysisEntry, CardFacts, DeckAnalysisInput, DeckAnalytics, DeckBracketEstimate, DeckLegality,
-    DeckManaBase, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
-    analyse_goldfish, analyse_legality, analyse_mana, analyse_stats, analyse_tokens, load_analysis,
-    load_analysis_with_cards,
+    DeckManaBase, DeckPricing, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing,
+    analyse_roles, analyse_stats, analyse_tokens, load_analysis, load_analysis_with_cards,
 };
 // The section-name -> zone rule. Re-exported because the precon analysis mirror synthesises
 // its own section names and must be able to prove they land in the zones they claim: the
@@ -556,11 +557,16 @@ pub(crate) enum NeedMode {
 }
 
 /// Query for `GET /api/decks/{game}/needed`: the matching mode (defaults to
-/// [`NeedMode::Card`]).
+/// [`NeedMode::Card`]) and, optionally, **one deck to scope the list to** (issue #675) —
+/// the shopping list for *this* deck rather than for every deck at once.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct NeededParams {
     #[serde(default)]
     pub mode: NeedMode,
+    /// Scope the list to one of the caller's decks. Must be the caller's, for this game —
+    /// anything else is a `404`, exactly as the deck-scoped routes answer.
+    #[serde(default)]
+    pub deck_id: Option<i32>,
 }
 
 /// Result of a deck import: a lightweight header for the newly created deck plus match
@@ -591,19 +597,75 @@ pub struct NeededCardDeck {
 /// (fully-covered cards are omitted). In [`NeedMode::Card`] the counts aggregate every
 /// printing of the gameplay card and `card` is a representative printing the decks use; in
 /// [`NeedMode::Printing`] they're for one exact printing and `card` is that printing.
+///
+/// Scoped to one deck (`?deck_id=`, issue #675), `required` is what *that* deck wants and
+/// `needed` is its share of the shortfall across **all** the caller's decks —
+/// `min(required, every deck's demand − owned)` — so two decks that share one owned Sol
+/// Ring are both told they still need one, rather than both claiming it. `owned` and
+/// `decks` keep their game-wide meaning: the collection's count, and every deck wanting
+/// the card (the scoped deck among them).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct NeededCard {
     pub card: CardResponse,
-    /// Copies still to acquire: `max(0, required - owned)`, always &gt; 0.
+    /// Copies still to acquire, always &gt; 0: `required - owned` game-wide, and scoped to a
+    /// deck `min(required, every deck's demand - owned)` — that deck's share of the
+    /// cross-deck shortfall.
     pub needed: i64,
-    /// Total copies (regular + foil) the caller's decks want, summed across decks/sections.
+    /// Total copies (regular + foil) wanted, summed across sections — by every deck of the
+    /// caller's game-wide, by the scoped deck alone under `deck_id`.
     pub required: i64,
     /// Copies owned in the caller's collection — any printing of the card in `card` mode,
     /// this exact printing in `printing` mode.
     pub owned: i64,
     /// The caller's decks that want this card, by name.
     pub decks: Vec<NeededCardDeck>,
+    /// What the `needed` copies cost **at the printings and finishes the decks hold**, 2-dp
+    /// USD: the decks' own demand for this card is priced as they hold it (regular copies at
+    /// `usd`, foil at `usd_foil`, over every contributing printing), and the shortfall is
+    /// charged at that per-copy price. `null` when no held finish of it is priced — never
+    /// `"0.00"`.
+    pub held_usd: Option<String>,
+    /// What the `needed` copies cost at the card's **cheapest printing** anywhere in the
+    /// catalog — the lower of that printing's regular and foil price (folded foil-★ variants
+    /// never considered), times `needed`. The identity's floor in either mode: in
+    /// `printing` mode it is what accepting another printing would cost, beside `held_usd`
+    /// for the exact one. `null` when no printing of the card is priced.
+    pub cheapest_usd: Option<String>,
+}
+
+/// The money and the size of a shopping list, folded once so a client can show
+/// "12 cards, ~$41" without re-summing the lines (issue #675).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct NeededTotals {
+    /// Distinct entries in `data`.
+    pub cards: i64,
+    /// Copies to acquire: the sum of every entry's `needed`.
+    pub copies: i64,
+    /// The sum of every entry's `held_usd` — the shopping list priced at the printings the
+    /// decks run. `null` when no entry is priced that way. While `held_unpriced_cards` is
+    /// non-zero this is a floor.
+    pub held_usd: Option<String>,
+    /// Entries whose `held_usd` is `null`.
+    pub held_unpriced_cards: i64,
+    /// The sum of every entry's `cheapest_usd` — the same list at each card's cheapest
+    /// printing. `null` when no entry has a priced printing at all. While
+    /// `cheapest_unpriced_cards` is non-zero this is a floor.
+    pub cheapest_usd: Option<String>,
+    /// Entries whose `cheapest_usd` is `null`.
+    pub cheapest_unpriced_cards: i64,
+}
+
+/// The shopping list: the shortfalls, the deck it was scoped to (if any), and the totals.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct NeededCards {
+    /// The shortfalls, by card name.
+    pub data: Vec<NeededCard>,
+    /// The deck the list is scoped to (`?deck_id=`), or `null` for the game-wide list.
+    pub deck: Option<NeededCardDeck>,
+    pub totals: NeededTotals,
 }
 
 /// One exact printing a deck holds of the card asked about: just enough to say *which*

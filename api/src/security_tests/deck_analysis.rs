@@ -1,5 +1,5 @@
-//! Deck analysis (issue #596): the composition, legality, bracket, and goldfish reads on
-//! both the authed deck surface and its public-sharing mirror.
+//! Deck analysis (issue #596): the composition, legality, bracket, roles (issue #671), and
+//! goldfish reads on both the authed deck surface and its public-sharing mirror.
 //!
 //! What these pin, over and above the pure-function unit tests beside each module:
 //!
@@ -138,6 +138,7 @@ async fn analysis_reads_require_authentication() {
         "/api/decks/mtg/1/stats",
         "/api/decks/mtg/1/legality",
         "/api/decks/mtg/1/bracket",
+        "/api/decks/mtg/1/roles",
         "/api/decks/mtg/1/goldfish",
     ] {
         let (status, headers, _) = send(&app, get(path)).await;
@@ -162,7 +163,9 @@ async fn another_users_deck_is_404_never_403() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "tokens", "mana", "goldfish"] {
+    for path in [
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish",
+    ] {
         let (status, _, _) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &bob),
@@ -191,7 +194,9 @@ async fn a_read_only_key_may_analyse() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "tokens", "mana", "goldfish"] {
+    for path in [
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing",
+    ] {
         let (status, _, body) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &key),
@@ -449,7 +454,9 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     let (deck_id, _) = deck_with_cards(&app, &access, "Shared", "Modern", &stack).await;
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
-    for path in ["stats", "legality", "bracket", "tokens", "mana", "goldfish"] {
+    for path in [
+        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing",
+    ] {
         let (status, headers, _) = send(
             &app,
             get(&format!("/api/u/nobody-0001/decks/{deck_id}/{path}")),
@@ -612,6 +619,81 @@ async fn the_bracket_is_estimated_only_for_commander() {
     );
     assert_eq!(
         public_bracket, body,
+        "a shared deck and its owner's copy are the same deck"
+    );
+}
+
+/// The role counts (issue #671) over the seeded catalog, whose numbered cards carry one
+/// role-shaped line of rules text each — so this pins that the read counts real cards, hands
+/// back the printings the filter needs, and answers identically on the public mirror.
+#[tokio::test]
+async fn roles_count_the_deck_and_mirror_publicly() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "roles@example.com", PW).await;
+    // Six consecutive seeded cards walk the whole type/rules-text cycle once: a dork, a
+    // counterspell, a wrath, a draw engine, a rock, and a piece of spot removal. By id, not
+    // `sample_card_ids` — the listing is name-ordered, and a name held in two sets would
+    // fold into one card and break the count.
+    let cards: Vec<String> = (1..=6).map(|n| format!("dummy-dmu-{n:04}")).collect();
+    let stack: Vec<(String, i64)> = cards.iter().map(|c| (c.clone(), 2)).collect();
+    let (deck_id, _) = deck_with_cards(&app, &access, "Roles", "Commander", &stack).await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/roles"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "roles failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"), "per-user data");
+
+    let roles = body["roles"].as_array().expect("roles");
+    assert_eq!(roles.len(), 8, "every role is always reported: {body:?}");
+    let count = |role: &str| -> i64 {
+        roles
+            .iter()
+            .find(|group| group["role"] == role)
+            .unwrap_or_else(|| panic!("{role} missing from {body:?}"))["count"]
+            .as_i64()
+            .expect("count")
+    };
+    assert_eq!(count("ramp"), 2, "the dork and the rock: {body:?}");
+    assert_eq!(count("counterspell"), 1);
+    assert_eq!(count("board_wipe"), 1);
+    assert_eq!(count("card_draw"), 1);
+    assert_eq!(count("removal"), 1);
+    assert_eq!(count("tutor"), 0);
+    assert_eq!(count("recursion"), 0);
+    assert_eq!(count("protection"), 0);
+    assert_eq!(body["card_count"], 6);
+    assert_eq!(body["unclassified_count"], 0);
+    // Two copies each, so the bars a 60-card builder reads differ from the names.
+    let ramp = roles
+        .iter()
+        .find(|group| group["role"] == "ramp")
+        .expect("ramp");
+    assert_eq!(ramp["copies"], 4);
+    assert_eq!(ramp["cards"].as_array().expect("cards").len(), 2);
+    // Every printing holding a role is in the filter map, keyed by its external id.
+    let card_roles = body["card_roles"].as_object().expect("card_roles");
+    assert_eq!(card_roles.len(), 6);
+    for card in &cards {
+        assert!(
+            card_roles.contains_key(card),
+            "{card} should be filterable: {card_roles:?}"
+        );
+    }
+
+    // The public mirror is the same computation, and CDN-cacheable.
+    let handle = share(&app, &access, "roleplayer", deck_id).await;
+    let (status, headers, public) =
+        send(&app, get(&format!("/api/u/{handle}/decks/{deck_id}/roles"))).await;
+    assert_eq!(status, StatusCode::OK, "public roles: {public:?}");
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read is a pure function of its URL, so it's CDN-cacheable"
+    );
+    assert_eq!(
+        public, body,
         "a shared deck and its owner's copy are the same deck"
     );
 }
@@ -849,4 +931,277 @@ async fn a_library_too_big_to_shuffle_is_refused_not_allocated() {
                     .is_some_and(|m| m.starts_with("1000000 cards in the command zone"))),
         "{body:?}"
     );
+}
+
+/// The two printings of the dummy catalog's reprinted card, dearest first: `(external id,
+/// regular USD price)`. The pair is what makes "cheapest printing" testable offline.
+async fn reprint_pair(app: &Router) -> Vec<(String, String)> {
+    let (status, _, body) = send(
+        app,
+        get("/api/games/mtg/cards?name=Dummy%20Reprinted%20Relic&page_size=10"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "printing lookup failed: {body:?}");
+    let mut pair: Vec<(String, String)> = body["data"]
+        .as_array()
+        .expect("printing data")
+        .iter()
+        .map(|c| {
+            (
+                c["id"].as_str().expect("id").to_string(),
+                c["prices"]["usd"].as_str().expect("usd").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(pair.len(), 2, "dummy catalog must contain a reprint pair");
+    pair.sort_by(|a, b| {
+        b.1.parse::<f64>()
+            .expect("price")
+            .partial_cmp(&a.1.parse::<f64>().expect("price"))
+            .expect("ordered")
+    });
+    pair
+}
+
+#[tokio::test]
+async fn pricing_names_the_cheapest_printing_and_its_saving_at_the_rows_finish_split() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing@example.com", PW).await;
+    let pair = reprint_pair(&app).await;
+    let (dear, dear_usd) = &pair[0];
+    let (cheap, cheap_usd) = &pair[1];
+    let dear_cents = (dear_usd.parse::<f64>().expect("price") * 100.0).round() as i64;
+    let cheap_cents = (cheap_usd.parse::<f64>().expect("price") * 100.0).round() as i64;
+    assert!(cheap_cents < dear_cents, "the pair must differ in price");
+
+    // Two regular copies of the dear printing in the deck proper; the same card in the
+    // maybeboard, which must not appear anywhere in the breakdown.
+    let (deck_id, section_id) =
+        deck_with_cards(&app, &access, "Priced", "Modern", &[(dear.clone(), 2)]).await;
+    let (_, _, detail) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), &access),
+    )
+    .await;
+    let maybeboard = detail["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|s| s["is_maybeboard"] == true)
+        .expect("a maybeboard is seeded")["id"]
+        .as_i64()
+        .expect("id");
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{dear}"),
+            &access,
+            json!({ "quantity": 4, "foil_quantity": 0, "section_id": maybeboard }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, headers, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let lines = pricing["lines"].as_array().expect("lines");
+    assert_eq!(
+        lines.len(),
+        1,
+        "the maybeboard row is not listed: {lines:?}"
+    );
+    let line = &lines[0];
+    assert_eq!(line["card"]["id"], *dear);
+    assert_eq!(line["section_id"].as_i64(), Some(section_id));
+    assert_eq!(line["quantity"], 2);
+    assert_eq!(line["foil_quantity"], 0);
+    let cents = |v: &Value| -> i64 {
+        (v.as_str().expect("usd string").parse::<f64>().expect("usd") * 100.0).round() as i64
+    };
+    assert_eq!(cents(&line["price_usd"]), 2 * dear_cents);
+    assert_eq!(line["cheapest"]["card"]["id"], *cheap);
+    assert_eq!(cents(&line["cheapest"]["price_usd"]), 2 * cheap_cents);
+    assert_eq!(cents(&line["saving_usd"]), 2 * (dear_cents - cheap_cents));
+
+    // The totals agree with the deck's own summary and with each other.
+    assert_eq!(pricing["total_usd"], detail["summary"]["total_value_usd"]);
+    assert_eq!(cents(&pricing["total_usd"]), 2 * dear_cents);
+    assert_eq!(
+        cents(&pricing["saving_usd"]),
+        2 * (dear_cents - cheap_cents)
+    );
+    assert_eq!(cents(&pricing["cheapest_total_usd"]), 2 * cheap_cents);
+    assert_eq!(pricing["unpriced_count"], 0);
+    assert_eq!(pricing["swappable_count"], 1);
+
+    // Swap through the existing printing write — what the panel's button does — and the
+    // breakdown now reports the row as already the cheapest: a zero saving, never null.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{dear}/printing"),
+            &access,
+            json!({ "new_card_id": cheap, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "swap failed: {body:?}");
+    let (_, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    let line = &pricing["lines"][0];
+    assert_eq!(line["card"]["id"], *cheap);
+    assert_eq!(line["cheapest"]["card"]["id"], *cheap);
+    assert_eq!(line["saving_usd"], "0.00");
+    assert_eq!(pricing["saving_usd"], "0.00");
+    assert_eq!(pricing["swappable_count"], 0);
+    assert_eq!(pricing["total_usd"], pricing["cheapest_total_usd"]);
+}
+
+#[tokio::test]
+async fn pricing_lists_most_expensive_first_and_a_foil_row_is_priced_as_foil() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-order@example.com", PW).await;
+    let cards = sample_card_ids(&app, 3).await;
+    let (deck_id, section_id) = deck_with_cards(
+        &app,
+        &access,
+        "Ordered",
+        "Modern",
+        &[(cards[0].clone(), 1), (cards[1].clone(), 1)],
+    )
+    .await;
+    // A third row held as one foil copy: its price is the foil price, not the regular.
+    let (status, _, _) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{}", cards[2]),
+            &access,
+            json!({ "quantity": 0, "foil_quantity": 1, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    let lines = pricing["lines"].as_array().expect("lines");
+    assert_eq!(lines.len(), 3);
+    let prices: Vec<f64> = lines
+        .iter()
+        .map(|l| {
+            l["price_usd"]
+                .as_str()
+                .expect("priced")
+                .parse()
+                .expect("usd")
+        })
+        .collect();
+    assert!(
+        prices.windows(2).all(|w| w[0] >= w[1]),
+        "most expensive first: {prices:?}"
+    );
+    let foil_line = lines
+        .iter()
+        .find(|l| l["card"]["id"] == cards[2])
+        .expect("the foil row is listed");
+    assert_eq!(
+        foil_line["price_usd"], foil_line["card"]["prices"]["usd_foil"],
+        "one foil copy is worth the foil price"
+    );
+    assert_eq!(foil_line["cheapest"]["card"]["id"], cards[2]);
+    assert_eq!(foil_line["saving_usd"], "0.00");
+}
+
+#[tokio::test]
+async fn a_shared_decks_pricing_is_public_and_identical_to_the_owners() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-share@example.com", PW).await;
+    let pair = reprint_pair(&app).await;
+    let (deck_id, _) = deck_with_cards(
+        &app,
+        &access,
+        "Shared pricing",
+        "Modern",
+        &[(pair[0].0.clone(), 3)],
+    )
+    .await;
+    let handle = share(&app, &access, "pricer", deck_id).await;
+
+    let (status, headers, public_pricing) = send(
+        &app,
+        get(&format!("/api/u/{handle}/decks/{deck_id}/pricing")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public pricing failed: {public_pricing:?}"
+    );
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read should be CDN-cacheable, got {:?}",
+        cache_control(&headers)
+    );
+    let (_, _, owner_pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(
+        public_pricing, owner_pricing,
+        "a shared deck is the same deck"
+    );
+    assert_eq!(public_pricing["swappable_count"], 1);
+}
+
+#[tokio::test]
+async fn a_nonfoil_copy_of_a_foil_only_printing_is_unpriced_not_zero() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "pricing-foil-only@example.com", PW).await;
+    // The dummy catalog's foil-only showcase: a foil price, no regular one.
+    let (status, _, body) = send(
+        &app,
+        get("/api/games/mtg/cards?name=Dummy%20Foil-Only%20Showcase&page_size=5"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "lookup failed: {body:?}");
+    let card = &body["data"][0];
+    assert!(card["prices"]["usd"].is_null() && card["prices"]["usd_foil"].is_string());
+    let id = card["id"].as_str().expect("id").to_string();
+
+    let (deck_id, _) = deck_with_cards(&app, &access, "Foil only", "Modern", &[(id, 1)]).await;
+    let (status, _, pricing) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/pricing"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {pricing:?}");
+    let line = &pricing["lines"][0];
+    assert!(
+        line["price_usd"].is_null(),
+        "unpriced, never 0.00: {line:?}"
+    );
+    assert!(line["saving_usd"].is_null());
+    assert!(
+        line["cheapest"].is_null(),
+        "no printing is priced for a nonfoil copy: {line:?}"
+    );
+    assert_eq!(pricing["unpriced_count"], 1);
+    assert!(pricing["total_usd"].is_null() || pricing["total_usd"] == "0.00");
 }

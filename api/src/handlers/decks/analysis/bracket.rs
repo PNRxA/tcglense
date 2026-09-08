@@ -15,9 +15,10 @@
 //! and it is why the estimate never returns bracket 1 or bracket 5 on its own: both are
 //! claims about intent, and no amount of card text settles them.
 //!
-//! The categories it counts live in [`signals`], one grammar over the card's own text per
-//! category, and every matched card is handed back with the estimate — a number a player
-//! can't audit is a number they won't trust.
+//! The categories it counts live in [`super::signals::bracket`], one grammar over the card's
+//! own text per category (sharing its clause grammar with the deck-role predicates beside
+//! it), and every matched card is handed back with the estimate — a number a player can't
+//! audit is a number they won't trust.
 //!
 //! Scoped to **Commander**. The ladder is defined for that format and no other, so a deck
 //! in any other format (or none) gets `None` — "nothing to say", exactly as an untracked
@@ -25,11 +26,8 @@
 
 use serde::Serialize;
 
+use super::signals::bracket::{is_extra_turn, is_game_changer, is_mass_land_denial, is_tutor};
 use super::{CardFacts, DeckAnalysisInput, NameFold, fold_by_name};
-
-mod signals;
-
-use signals::{is_extra_turn, is_game_changer, is_mass_land_denial, is_tutor};
 
 /// The one format the bracket ladder is defined for, as [`super::formats`] keys it.
 const BRACKET_FORMAT_KEY: &str = "commander";

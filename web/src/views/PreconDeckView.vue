@@ -16,6 +16,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
@@ -25,7 +26,7 @@ import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
-import { usePreconLegalityQuery } from '@/composables/useDeckAnalysis'
+import { usePreconLegalityQuery, usePreconRolesQuery } from '@/composables/useDeckAnalysis'
 import { useGameName } from '@/composables/useCatalog'
 import {
   useAddPreconToCollectionMutation,
@@ -81,9 +82,15 @@ const { sections, entries } = (() => {
   }
 })()
 
+// Card roles (issue #671), the precon address of the same read — the bars double as the
+// card list's role filter, so the query lives here and not in the panel.
+const rolesQuery = usePreconRolesQuery(game, slug)
+const roles = computed(() => rolesQuery.data.value)
+
 const {
   filterQuery,
   filterColors,
+  filterRole,
   filterActive,
   clearFilters,
   cardsBySection,
@@ -91,7 +98,7 @@ const {
   sectionNavItems,
   matchCount,
   totalCount,
-} = useDeckCardDisplay({ cards: entries, sections })
+} = useDeckCardDisplay({ cards: entries, sections, roles })
 
 const cardSize = useCardSizeStore()
 const deckView = useDeckViewStore()
@@ -350,6 +357,14 @@ usePageMeta({
       <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
       <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
       <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
+      <DeckRoles
+        v-model:role="filterRole"
+        :game="game"
+        :roles="roles"
+        :pending="rolesQuery.isPending.value"
+        :failed="rolesQuery.isLoadingError.value"
+        :stale="rolesQuery.isRefetchError.value"
+      />
       <DeckMana v-if="entries.length > 0" :game="game" :precon-slug="slug" class="mb-4" />
       <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
 
