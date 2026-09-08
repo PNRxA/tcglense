@@ -324,8 +324,9 @@ const alertFinishes = computed<AlertFinish[]>(() => cardAlertFinishes(card.value
         <CardArtTags :game="game" :id="id" />
 
         <!-- Price history over time. Keyed off game/id, so it mounts and fetches in
-          parallel with the card query above. `toggleable` adds the regular/foil key so
-          either line can be switched off; `game` overlays set-release markers. -->
+          parallel with the card query above. `toggleable` adds the legend key — regular, foil
+          and, on a printing priced in it, etched — so any line can be switched off; `game`
+          overlays set-release markers. -->
         <PriceChart
           :query-key="['card-prices', game, id]"
           :fetcher="(range) => getPriceHistory(game, id, range)"

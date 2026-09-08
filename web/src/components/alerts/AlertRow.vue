@@ -13,7 +13,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useDeleteAlertMutation, useUpdateAlertMutation } from '@/composables/useAlerts'
-import { ApiError, type PriceAlert } from '@/lib/api'
+import { ApiError, type AlertFinish, type PriceAlert } from '@/lib/api'
+import { ALERT_FINISH_LABELS } from '@/lib/alertFinishes'
 
 const props = defineProps<{ alert: PriceAlert }>()
 
@@ -33,9 +34,15 @@ const targetLink = computed(() => {
     : `/sealed/${props.alert.game}/${props.alert.target.external_id}`
 })
 
-const finishLabel = computed(() =>
-  props.alert.finish === 'nonfoil' ? '' : ` ${props.alert.finish}`,
-)
+// The finish beside the name, spelled from the shared vocabulary (lib/alertFinishes.ts) so the
+// list and the create dialog can't disagree; a regular alert names no finish. The wire slug is
+// one of the three the API accepts, so an unknown one only ever means a newer server — fall
+// back to the raw slug rather than render nothing.
+const finishLabel = computed(() => {
+  const finish = props.alert.finish
+  if (finish === 'nonfoil') return ''
+  return ` ${ALERT_FINISH_LABELS[finish as AlertFinish] ?? finish}`
+})
 
 function startEdit() {
   editDirection.value = props.alert.direction === 'above' ? 'above' : 'below'
@@ -113,8 +120,7 @@ async function onDelete() {
         :to="targetLink ?? undefined"
         class="block truncate font-medium hover:underline"
       >
-        {{ alert.target.name
-        }}<span class="text-muted-foreground capitalize">{{ finishLabel }}</span>
+        {{ alert.target.name }}<span class="text-muted-foreground">{{ finishLabel }}</span>
       </component>
       <p class="text-muted-foreground truncate text-xs uppercase">{{ alert.target.set_code }}</p>
 
