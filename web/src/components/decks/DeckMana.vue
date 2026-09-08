@@ -250,7 +250,11 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
               …and {{ color.demand_count - color.demand.length }} more
             </p>
           </template>
-          <p v-if="color.hybrid_pips > 0" class="text-muted-foreground mt-2 text-xs">
+          <!-- Only beside a hard requirement: with none, the verdict above already says it. -->
+          <p
+            v-if="color.hybrid_pips > 0 && color.pips > 0"
+            class="text-muted-foreground mt-2 text-xs"
+          >
             Plus {{ color.hybrid_pips }} hybrid {{ color.hybrid_pips === 1 ? 'pip' : 'pips' }} this
             colour could pay — not counted against it.
           </p>

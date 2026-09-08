@@ -260,7 +260,16 @@ describe('DeckMana', () => {
     expect(wrapper.get('ul > li').text()).toMatch(/Sources\s*10/)
     expect(wrapper.get('ul > li').text()).not.toContain('/')
     expect(wrapper.get('ul > li').text()).toContain('No demand')
-    expect(wrapper.text()).toContain('Plus 8 hybrid pips this colour could pay — not counted')
+    // The verdict already says it, so the note that would repeat it stays out…
+    expect(wrapper.text()).toContain('Only hybrid pips ask for white')
+    expect(wrapper.text()).not.toContain('Plus 8 hybrid pips')
+
+    // …and appears only beside a hard requirement the hybrid pips don't add to.
+    query.data = makeBase({
+      colors: [color({ color: 'G', label: 'Green', hybrid_pips: 3 })],
+    })
+    const mixed = await mountExpanded()
+    expect(mixed.text()).toContain('Plus 3 hybrid pips this colour could pay — not counted')
   })
 
   it('words an unchecked card as syncing, never as producing nothing', () => {
