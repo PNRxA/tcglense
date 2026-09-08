@@ -15,30 +15,31 @@
 //! - an undeliverable heads-up (no channel configured yet) is retried on the next pass rather
 //!   than silently swallowed — until the release drops out of the window.
 //!
-//! Where the dates come from (no new ingestion — both are already in the catalog):
-//! - **Secret Lair drops** aren't dated in the bulk API, so a drop's street date is the
-//!   earliest `released_at` among the drop's cards (Scryfall stamps each printing with its
-//!   drop's date), grouped by the runtime drop table ([`crate::scryfall::drops`]). Only drops
-//!   whose cards are already in the catalog with a near-future date are notifiable — a drop not
-//!   yet spoiled simply isn't seen, and the feature degrades gracefully rather than guessing.
-//! - **Regular sets** carry `card_sets.released_at` directly. A single notification per set
-//!   (the theme), never per sealed product: top-level sets only (`parent_set_code IS NULL`, so
-//!   an expansion's tied Commander/token child sets fold into the one theme), a curated set-type
-//!   allow-list, non-digital, and never the continuously-restocked `sld` set itself. `box` is on
-//!   that allow-list — see [`NOTIFY_SET_TYPES`] for why (The Zeta Set).
-//! - **A set that is itself a Secret Lair release** — code carrying the family's `sl` prefix,
-//!   filed as its own top-level set the way The Zeta Set (`slz`) was — is found by the set path
-//!   and delivered to **either** opt-in ([`ReleaseKind::SecretLairSet`]), worded per recipient:
-//!   as a Secret Lair release to anyone holding the Secret Lair opt-in, as a new set to a
-//!   set-only subscriber. A user holding both opt-ins gets it **once per pass**, because the
-//!   audience is one `OR` over the two flags on their single `alert_channels` row, and **once
-//!   ever**, because the ledger is keyed by the release (`set` / code), not by the opt-in that
-//!   matched.
+//! **What counts as a release is not decided here.** The set predicate (top-level, the
+//! curated set-type allow-list including `box`, non-digital, never `sld` itself), the `sl`-prefix
+//! upgrade to a Secret Lair release, and the per-drop date derivation off `sld`'s cards all live
+//! in [`crate::catalog::releases`] — the seam this engine shares with the public release
+//! calendar (`GET /api/games/{game}/releases`), so the page a subscriber looks at and the
+//! heads-up they get can never disagree about what is releasing. This module only decides what
+//! to do with a release:
+//! - **A Secret Lair drop** (inside `sld`, keyed by its slug) goes to the Secret Lair opt-in.
+//!   Only drops whose cards are already in the catalog with a near-future date are notifiable —
+//!   a drop not yet listed simply isn't seen, and the feature degrades gracefully rather than
+//!   guessing.
+//! - **A regular set** (keyed by its code) goes to the set opt-in: one notification per theme,
+//!   never per sealed product.
+//! - **A set that is itself a Secret Lair release** — an `sl`-prefixed code filed as its own
+//!   top-level set the way The Zeta Set (`slz`) was — is found by the set path and delivered to
+//!   **either** opt-in ([`ReleaseKind::SecretLairSet`]), worded per recipient: as a Secret Lair
+//!   release to anyone holding the Secret Lair opt-in, as a new set to a set-only subscriber. A
+//!   user holding both opt-ins gets it **once per pass**, because the audience is one `OR` over
+//!   the two flags on their single `alert_channels` row, and **once ever**, because the ledger
+//!   is keyed by the release (`set` / code), not by the opt-in that matched.
 //!
 //! Memory stays O(batch): the opted-in users are keyset-paginated by `alert_channels.id`, and
 //! the notified-ledger lookup + delivery run per page — nothing loads every subscriber at once.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use chrono::NaiveDate;
 use sea_orm::prelude::DateTimeUtc;
@@ -47,22 +48,11 @@ use sea_orm::{
     Set,
 };
 
+use crate::catalog::releases::{self, SLD_SET_CODE};
 use crate::email::Emailer;
-use crate::entities::prelude::{AlertChannel, Card, CardSet, ReleaseNotification};
-use crate::entities::{alert_channel, card, card_set, release_notification};
+use crate::entities::prelude::{AlertChannel, ReleaseNotification};
+use crate::entities::{alert_channel, release_notification};
 use crate::notifications::{self, AlertNotification};
-use crate::scryfall::drops;
-
-/// The game the release surfaces cover today (MTG). Secret Lair and set dates are both MTG.
-const GAME: &str = crate::scryfall::GAME;
-
-/// The Secret Lair set code (lowercased, as cards store it).
-const SLD_SET_CODE: &str = "sld";
-
-/// The set-code prefix Scryfall gives the Secret Lair family (`sld`, `slu`, `slc`, `slp`, `slx`,
-/// `slz`, …). A set the set path admits whose code carries it is a Secret Lair release of its
-/// own and is delivered as one — see [`is_secret_lair_set_code`].
-const SECRET_LAIR_CODE_PREFIX: &str = "sl";
 
 /// How many days ahead of a release to notify. `1` = "a day before scheduled release"; the
 /// window is inclusive of today too, so a run that missed yesterday still catches a release on
@@ -72,31 +62,6 @@ const LEAD_DAYS: i64 = 1;
 /// Keyset page size when scanning opted-in users — memory stays O(batch) regardless of how
 /// many subscribers exist (the same bound the price-alert evaluator uses).
 const USER_BATCH: u64 = 2_000;
-
-/// The set types a "new set release" heads-up covers: the major retail themes a collector
-/// would want a heads-up for. Deliberately excludes the noise (tokens, promos, memorabilia,
-/// digital-only alchemy, minigames, …) so the notification is a real release, not a same-day
-/// accessory printing.
-///
-/// `box` is on the list because that is how Scryfall filed The Zeta Set (`slz`, 2026-09-02): a
-/// Secret Lair-line release published as its **own top-level `box` set** — no parent set, no
-/// cards in `sld` — so the per-drop path (which reads `sld` cards only) never saw it and, with
-/// `box` excluded here, neither did this one: nobody was told. The `sld` set itself stays out by
-/// code (its drops notify per-drop) and the `sld`-parented spin-offs (`slu`, `slc`) by the
-/// top-level filter. The bucket is otherwise dormant: the catalog's other top-level `box` sets
-/// (Game Night, Guild Kits, Challenger Decks, and older oddities such as the Salvat and
-/// Hachette partworks) all released between 1996 and 2022, so in practice this entry admits a
-/// future release like `slz` and whatever else Scryfall files as a top-level box — and the
-/// look-ahead window keeps every historical one unreachable regardless.
-const NOTIFY_SET_TYPES: &[&str] = &[
-    "core",
-    "expansion",
-    "commander",
-    "draft_innovation",
-    "masters",
-    "funny",
-    "box",
-];
 
 /// Which kind of upcoming release a heads-up is for. Determines the opt-ins it is delivered to,
 /// the ledger `kind` it dedups on, and the message wording.
@@ -133,16 +98,6 @@ impl ReleaseKind {
             ReleaseKind::SecretLairSet => Condition::any().add(secret_lair).add(sets),
         }
     }
-}
-
-/// Whether a set the set path admitted is a Secret Lair release of its own, by the family's
-/// `sl` code prefix. The prefix is Scryfall's MTG vocabulary, so the caller guards on [`GAME`]
-/// first; and it is judged **after** the set filters, never instead of them: `sld` itself is
-/// out by code, its spin-offs (`slu`, `slc`, `slp`, `slx`) by their `sld` parent, and `slci` —
-/// The Lost Caverns of Ixalan's substitute cards, a `token` child set — by both type and
-/// parent, so the prefix only ever upgrades a set that would have notified anyway.
-fn is_secret_lair_set_code(code: &str) -> bool {
-    code.starts_with(SECRET_LAIR_CODE_PREFIX)
 }
 
 /// One upcoming release the evaluator may notify about, resolved to what a message needs.
@@ -298,105 +253,35 @@ fn now_from(today: NaiveDate) -> DateTimeUtc {
         .and_utc()
 }
 
-/// Secret Lair drops with cards releasing inside `[from, to]`, one entry per drop. A drop's
-/// date is the earliest near-future `released_at` among its cards (they share a street date);
-/// cards are grouped to their drop via the runtime drop table, so a card whose collector number
-/// isn't in the current snapshot (a not-yet-listed drop) is simply skipped.
+/// Secret Lair drops with cards releasing inside `[from, to]`, one entry per drop, in the
+/// snapshot's display order — [`releases::sld_drops_releasing`] dressed as notifiable
+/// releases. A query failure is logged and answered as "nothing to notify" so one bad read
+/// never stalls the pass.
 async fn upcoming_sld_drops(db: &DatabaseConnection, from: &str, to: &str) -> Vec<UpcomingRelease> {
-    let Some(table) = drops::table(GAME, SLD_SET_CODE) else {
-        return Vec::new();
-    };
-
-    let rows: Vec<(String, Option<String>)> = match Card::find()
-        .select_only()
-        .column(card::Column::CollectorNumber)
-        .column(card::Column::ReleasedAt)
-        .filter(card::Column::Game.eq(GAME))
-        .filter(card::Column::SetCode.eq(SLD_SET_CODE))
-        .filter(card::Column::ReleasedAt.gte(from))
-        .filter(card::Column::ReleasedAt.lte(to))
-        .into_tuple()
-        .all(db)
-        .await
-    {
-        Ok(rows) => rows,
+    match releases::sld_drops_releasing(db, from, to).await {
+        Ok(drops) => drops
+            .into_iter()
+            .map(|drop| UpcomingRelease {
+                kind: ReleaseKind::SldDrop,
+                ref_key: drop.slug,
+                game: releases::GAME.to_string(),
+                display_name: drop.title,
+                release_date: drop.released_at,
+            })
+            .collect(),
         Err(err) => {
             tracing::warn!(error = %err, "failed to load upcoming Secret Lair cards");
-            return Vec::new();
-        }
-    };
-
-    struct Accum {
-        title: String,
-        order: usize,
-        release_date: String,
-    }
-    let mut by_slug: HashMap<String, Accum> = HashMap::new();
-    for (collector_number, released_at) in rows {
-        let Some(released_at) = released_at else {
-            continue;
-        };
-        let Some(drop) = table.drop_for(&collector_number) else {
-            continue;
-        };
-        match by_slug.get_mut(&drop.slug) {
-            Some(accum) => {
-                if released_at < accum.release_date {
-                    accum.release_date = released_at;
-                }
-            }
-            None => {
-                by_slug.insert(
-                    drop.slug.clone(),
-                    Accum {
-                        title: drop.title.clone(),
-                        order: drop.order,
-                        release_date: released_at,
-                    },
-                );
-            }
+            Vec::new()
         }
     }
-
-    // Stable output order: the drop's display order in the snapshot.
-    let mut ordered: Vec<(usize, UpcomingRelease)> = by_slug
-        .into_iter()
-        .map(|(slug, accum)| {
-            (
-                accum.order,
-                UpcomingRelease {
-                    kind: ReleaseKind::SldDrop,
-                    ref_key: slug,
-                    game: GAME.to_string(),
-                    display_name: accum.title,
-                    release_date: accum.release_date,
-                },
-            )
-        })
-        .collect();
-    ordered.sort_by_key(|(order, _)| *order);
-    ordered.into_iter().map(|(_, release)| release).collect()
 }
 
-/// Regular sets releasing inside `[from, to]`: one entry per theme. Top-level sets only (so an
-/// expansion's tied child sets don't each notify), a curated set-type allow-list, non-digital,
-/// and never the `sld` set itself (handled per-drop above). A release filed as its own top-level
-/// `box` set (`slz`, The Zeta Set) notifies here like any other set — see [`NOTIFY_SET_TYPES`] —
-/// and, carrying the Secret Lair code prefix, is classified [`ReleaseKind::SecretLairSet`] so it
-/// reaches the Secret Lair opt-in too.
+/// Sets releasing inside `[from, to]`: one entry per theme, by [`releases::announceable_sets`]
+/// — the same predicate the release calendar lists. A set that is itself a Secret Lair release
+/// ([`releases::is_secret_lair_release`]: `slz`, The Zeta Set) is classified
+/// [`ReleaseKind::SecretLairSet`] so it reaches the Secret Lair opt-in too.
 async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<UpcomingRelease> {
-    let rows: Vec<card_set::Model> = match CardSet::find()
-        .filter(card_set::Column::ReleasedAt.gte(from))
-        .filter(card_set::Column::ReleasedAt.lte(to))
-        .filter(card_set::Column::Digital.eq(false))
-        .filter(card_set::Column::ParentSetCode.is_null())
-        .filter(card_set::Column::Code.ne(SLD_SET_CODE))
-        .filter(card_set::Column::SetType.is_in(NOTIFY_SET_TYPES.iter().map(|s| s.to_string())))
-        .order_by_asc(card_set::Column::ReleasedAt)
-        .order_by_asc(card_set::Column::Code)
-        .all(db)
-        .await
-    {
+    let rows = match releases::announceable_sets(from, to).all(db).await {
         Ok(rows) => rows,
         Err(err) => {
             tracing::warn!(error = %err, "failed to load upcoming set releases");
@@ -406,8 +291,8 @@ async fn upcoming_sets(db: &DatabaseConnection, from: &str, to: &str) -> Vec<Upc
 
     rows.into_iter()
         .filter_map(|set| {
-            let release_date = set.released_at?;
-            let kind = if set.game == GAME && is_secret_lair_set_code(&set.code) {
+            let release_date = set.released_at.clone()?;
+            let kind = if releases::is_secret_lair_release(&set) {
                 ReleaseKind::SecretLairSet
             } else {
                 ReleaseKind::Set
@@ -531,8 +416,10 @@ fn release_phrase(release_date: &str, today: NaiveDate) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::releases::GAME;
     use crate::email::{Emailer, Mailbox, OutgoingEmail};
     use crate::entities::prelude::ReleaseNotification;
+    use crate::entities::{card, card_set};
     use chrono::Utc;
     use sea_orm::{ActiveModelTrait, PaginatorTrait};
 
@@ -564,20 +451,6 @@ mod tests {
             release_phrase("not-a-date", today),
             "releases on not-a-date"
         );
-    }
-
-    /// The Secret Lair family is recognised by its `sl` code prefix and nothing else — the set
-    /// filters, not this test, keep `sld` and its child sets out.
-    #[test]
-    fn secret_lair_set_code_is_the_sl_prefix() {
-        assert!(is_secret_lair_set_code("slz"));
-        assert!(is_secret_lair_set_code("sld"));
-        assert!(is_secret_lair_set_code("slu"));
-        assert!(!is_secret_lair_set_code("tbox"));
-        assert!(!is_secret_lair_set_code("s"));
-        assert!(!is_secret_lair_set_code(""));
-        // Case follows the catalog (codes are stored lowercased).
-        assert!(!is_secret_lair_set_code("SLZ"));
     }
 
     /// Insert a user + an alert-channel row opted into the given release kinds, with the email
