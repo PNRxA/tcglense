@@ -85,18 +85,26 @@ function matchesTextToken(
 }
 
 /**
- * Filter deck entries by a free-text query and a colour-pip selection, ANDed together.
- * Whitespace-separated query tokens are ANDed, each matched per `matchesTextToken`.
- * Blank query + no pips returns the list unchanged.
+ * Filter deck entries by a free-text query, a colour-pip selection, and a card-role
+ * selection, all ANDed together. Whitespace-separated query tokens are ANDed, each matched
+ * per `matchesTextToken`. Blank query + no pips + no role returns the list unchanged.
+ *
+ * `roleCardIds` is the set of external card ids filling the selected role (issue #671),
+ * resolved by the caller from the server's `card_roles` map — the roles are a fact about
+ * the *card*, not something this module can read off a printing, so it never re-derives
+ * them. `null` is "no role selected" and is no constraint at all; an empty set is a real
+ * constraint that matches nothing.
  */
 export function filterDeckEntries(
   entries: DeckCardEntry[],
   query: string,
   colors: readonly DeckFilterColor[],
+  roleCardIds: ReadonlySet<string> | null = null,
 ): DeckCardEntry[] {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (tokens.length === 0 && colors.length === 0) return entries
+  if (tokens.length === 0 && colors.length === 0 && roleCardIds === null) return entries
   return entries.filter((entry) => {
+    if (roleCardIds !== null && !roleCardIds.has(entry.card.id)) return false
     if (!matchesColors(entry, colors)) return false
     if (tokens.length === 0) return true
     const gameplay = entryHaystack(entry)

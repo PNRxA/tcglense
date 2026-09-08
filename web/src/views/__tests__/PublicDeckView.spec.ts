@@ -99,6 +99,7 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
     usePublicDeckTokensQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckManaQuery: () => ({ data: vueRef(undefined), ...settled() }),
     usePublicDeckPricingQuery: () => ({ data: vueRef(undefined), ...settled() }),
+    usePublicDeckRolesQuery: () => ({ data: vueRef(undefined), ...settled() }),
   }
 })
 

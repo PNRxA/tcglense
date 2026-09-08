@@ -57,7 +57,7 @@ use crate::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
             change_deck_card_printing, copy_public_deck, create_deck, create_folder,
             create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_pricing,
-            deck_stats, deck_tokens, decks_containing_card, delete_deck, delete_folder,
+            deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck, delete_folder,
             delete_section, export_deck, get_deck, import_deck, list_deck_formats, list_decks,
             list_folders, move_deck_card, move_deck_to_folder, needed_cards, reorder_sections,
             set_deck_card, set_deck_visibility, update_deck, update_folder, update_section,
@@ -71,15 +71,15 @@ use crate::{
         precons::{
             add_precon_to_collection, card_precons, copy_precon_deck, get_precon,
             list_precon_groups, list_precons, precon_bracket, precon_facets, precon_goldfish,
-            precon_legality, precon_mana, precon_stats, precon_tokens,
+            precon_legality, precon_mana, precon_roles, precon_stats, precon_tokens,
         },
         search::universal_search,
         sharing::{
             get_collection_visibility, get_wishlist_visibility, public_deck, public_deck_bracket,
             public_deck_goldfish, public_deck_legality, public_deck_mana, public_deck_pricing,
-            public_deck_stats, public_deck_tokens, public_decks, public_list, public_owned_counts,
-            public_product_sets, public_product_summary, public_products, public_profile,
-            public_set_drops, public_set_subtypes, public_sets, public_summary,
+            public_deck_roles, public_deck_stats, public_deck_tokens, public_decks, public_list,
+            public_owned_counts, public_product_sets, public_product_summary, public_products,
+            public_profile, public_set_drops, public_set_subtypes, public_sets, public_summary,
             public_wishlist_list, public_wishlist_owned_counts, public_wishlist_product_sets,
             public_wishlist_product_summary, public_wishlist_products, public_wishlist_set_drops,
             public_wishlist_set_subtypes, public_wishlist_sets, public_wishlist_summary,
@@ -439,6 +439,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/decks/{game}/{deck_id}/bracket", get(deck_bracket))
         .route("/api/decks/{game}/{deck_id}/tokens", get(deck_tokens))
         .route("/api/decks/{game}/{deck_id}/mana", get(deck_mana))
+        .route("/api/decks/{game}/{deck_id}/roles", get(deck_roles))
         .route("/api/decks/{game}/{deck_id}/goldfish", get(deck_goldfish))
         .route("/api/decks/{game}/{deck_id}/pricing", get(deck_pricing))
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
@@ -680,6 +681,7 @@ pub fn build_router(state: AppState) -> Router {
             get(precon_tokens),
         )
         .route("/api/games/{game}/precons/{slug}/mana", get(precon_mana))
+        .route("/api/games/{game}/precons/{slug}/roles", get(precon_roles))
         .route(
             "/api/games/{game}/precons/{slug}/goldfish",
             get(precon_goldfish),
@@ -836,6 +838,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/u/{handle}/decks/{deck_id}/mana",
             get(public_deck_mana),
+        )
+        .route(
+            "/api/u/{handle}/decks/{deck_id}/roles",
+            get(public_deck_roles),
         )
         .route(
             "/api/u/{handle}/decks/{deck_id}/goldfish",

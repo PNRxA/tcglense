@@ -21,9 +21,10 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
     DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckManaBase, DeckPricing,
-    DeckResponse, DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket,
-    analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing, analyse_stats,
-    analyse_tokens, deck_detail, deck_headers, load_analysis, load_analysis_with_cards,
+    DeckResponse, DeckRoles, DeckTokens, GoldfishHand, GoldfishParams, StatsParams,
+    analyse_bracket, analyse_goldfish, analyse_legality, analyse_mana, analyse_pricing,
+    analyse_roles, analyse_stats, analyse_tokens, deck_detail, deck_headers, load_analysis,
+    load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -249,6 +250,33 @@ pub async fn public_deck_bracket(
     Ok(Json(DataBody {
         data: analyse_bracket(deck.format.as_deref(), &input),
     }))
+}
+
+/// Public deck card roles
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/roles` -> a public deck's role counts (ramp, draw,
+/// removal, wipes, counters, tutors, recursion, protection), identical to what its owner
+/// sees. `404` when the handle is unknown or the deck is private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/roles",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "The deck's role counts, the cards behind each, and which roles each printing fills.", body = DeckRoles),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_roles(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckRoles>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_roles(&input)))
 }
 
 /// Tokens a public deck makes
