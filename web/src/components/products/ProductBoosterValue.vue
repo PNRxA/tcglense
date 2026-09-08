@@ -82,7 +82,14 @@ function picksLabel(picks: number): string {
 </script>
 
 <template>
-  <section v-if="show" :aria-busy="pending || undefined">
+  <!-- Styled as the deck page's panels are (the `Card` primitive's surface — background,
+    border, shadow — on a `<section>` so the heading keeps its landmark), which is what makes
+    the folded state read as a panel that opens rather than a paragraph that stops. -->
+  <section
+    v-if="show"
+    class="bg-card text-card-foreground rounded-xl border p-4 shadow-sm"
+    :aria-busy="pending || undefined"
+  >
     <div class="mb-1 flex items-center justify-between gap-3">
       <!-- Exactly "Expected value": the unit and the qualification go beneath, so the heading
         itself stays a stable landmark (and a screenshot script can wait on it). -->
