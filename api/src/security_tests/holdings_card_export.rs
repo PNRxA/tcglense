@@ -230,6 +230,37 @@ async fn collection_export_honours_the_same_search_scope_and_sort_as_the_listing
         scoped_lines.iter().all(|line| line.contains(&marker)),
         "every exported row belongs to the scoped set: {scoped}"
     );
+
+    // The copy-count filter (issue #677) narrows the export exactly as it narrows the
+    // listing — it rides the same resolved `HoldingsListQuery`, so a "spares to trade"
+    // grid exports the spares, never the whole collection.
+    let (id, name, set, num) = &sample_cards(&app, 8).await[0];
+    hold_card(&app, "collection", &token, id, 5, 1).await;
+    let (status, _, spares) = send_text(
+        &app,
+        get_with_bearer("/api/collection/mtg/cards/export?min_copies=5", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        card_lines(&spares),
+        vec![
+            format!("5 {name} ({set}) {num}"),
+            format!("1 {name} ({set}) {num} *F*"),
+        ],
+        "only the holding past the floor, with its real counts"
+    );
+    let (status, _, foils) = send_text(
+        &app,
+        get_with_bearer("/api/collection/mtg/cards/export?finish=foil", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        card_lines(&foils).len(),
+        2,
+        "the one foil holding, both of its lines"
+    );
 }
 
 #[tokio::test]

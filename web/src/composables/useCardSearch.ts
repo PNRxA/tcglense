@@ -29,8 +29,10 @@ function queriesEqual(a: LocationQueryRaw, b: LocationQuery): boolean {
 
 /** Merge `changes` into the current URL query and `replace` — an undefined/empty value
  * drops its key, every other (e.g. a set view's `related`/`from`) is left untouched. A
- * no-op change is skipped so we never push an identical URL. Shared by the list controls. */
-function patchQuery(
+ * no-op change is skipped so we never push an identical URL. Shared by the list controls —
+ * exported so sibling URL-backed controls (`useCopiesFilter`) write through the same merge
+ * rather than re-deriving one that could drop a key this one preserves. */
+export function patchQuery(
   route: ReturnType<typeof useRoute>,
   router: ReturnType<typeof useRouter>,
   changes: Record<string, string | undefined>,

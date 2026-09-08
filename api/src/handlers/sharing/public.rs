@@ -109,6 +109,9 @@ pub async fn public_profile(
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed list"),
     ),
     responses(
         (status = 200, description = "A page of the owner's owned cards.", body = Page<CollectionEntry>),
@@ -303,6 +306,9 @@ pub async fn public_product_sets(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
         ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed view"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed view"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed view"),
     ),
     responses(
         (status = 200, description = "A page of the owner's owned cards in the set, grouped by drop.", body = Page<CollectionDropGroup>),
@@ -336,6 +342,9 @@ pub async fn public_set_drops(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
         ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed view"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed view"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed view"),
     ),
     responses(
         (status = 200, description = "A page of the owner's owned cards in the set, grouped by sub-type.", body = Page<CollectionSubtypeGroup>),
@@ -427,6 +436,9 @@ pub async fn public_owned_counts(
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed list"),
     ),
     responses(
         (status = 200, description = "A page of the owner's wanted cards.", body = Page<CollectionEntry>),
@@ -535,6 +547,9 @@ pub async fn public_wishlist_sets(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by drop)"),
         ("page_size" = Option<u64>, Query, description = "Drops per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed view"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed view"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed view"),
     ),
     responses(
         (status = 200, description = "A page of the owner's wanted cards in the set, grouped by drop.", body = Page<CollectionDropGroup>),
@@ -568,6 +583,9 @@ pub async fn public_wishlist_set_drops(
         ("page" = Option<u64>, Query, description = "1-based page number (paginated by sub-type)"),
         ("page_size" = Option<u64>, Query, description = "Sub-types per page (clamped)"),
         ("q" = Option<String>, Query, description = "Optional Scryfall-style search filter"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the authed view"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the authed view"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the authed view"),
     ),
     responses(
         (status = 200, description = "A page of the owner's wanted cards in the set, grouped by sub-type.", body = Page<CollectionSubtypeGroup>),

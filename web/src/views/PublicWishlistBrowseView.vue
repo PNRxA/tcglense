@@ -20,6 +20,7 @@ import SearchSyntaxHint from '@/components/cards/SearchSyntaxHint.vue'
 import SetScopeBar from '@/components/cards/SetScopeBar.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionGrid from '@/components/collection/CollectionGrid.vue'
+import CopiesFilterMenu from '@/components/collection/CopiesFilterMenu.vue'
 import { CARD_PAGE_SIZE } from '@/composables/useCatalog'
 import { useHoldingsBrowse } from '@/composables/useHoldingsBrowse'
 import {
@@ -73,6 +74,11 @@ const {
   ghostGroups,
   ownership,
   ownershipReady,
+  copiesFilter,
+  copiesActive,
+  copiesDescription,
+  setCopies,
+  clearCopies,
   scopeTotalValue,
   scopeCopiesLabel,
   total,
@@ -194,6 +200,14 @@ const notFound = computed(() => summaryQuery.isError.value)
               @select="setGroupView"
             />
             <GhostToggle :show-ghosts="showGhosts" @toggle="setShowGhosts" />
+            <!-- Held-mode only: the copy-count + finish filter reads the owner's held counts,
+                 which the catalog listing behind show-ghosts doesn't have. -->
+            <CopiesFilterMenu
+              v-if="!showGhosts"
+              :filter="copiesFilter"
+              @apply="setCopies"
+              @clear="clearCopies"
+            />
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <CardSizeMenu />
@@ -205,6 +219,12 @@ const notFound = computed(() => summaryQuery.isError.value)
 
         <p v-else-if="!hasCards && query" class="text-muted-foreground py-12">
           No cards match “{{ query }}”.
+        </p>
+
+        <!-- The copy-count filter matched nothing: say so, rather than the empty-wish list state
+             below, which isn't true of this wish list. -->
+        <p v-else-if="!hasCards && copiesActive" class="text-muted-foreground py-12">
+          No cards with {{ copiesDescription }}.
         </p>
 
         <div v-else-if="!hasCards" class="py-16 text-center">

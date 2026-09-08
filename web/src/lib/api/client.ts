@@ -85,8 +85,8 @@ interface RequestOptions {
 /**
  * Encode the shared list-endpoint query params in one place. Keys are emitted in a fixed
  * order (page, page_size, limit, q, sort, dir, set, include_related, name, drop,
- * bulk_max_cents) and falsy values are skipped (a 0 page, empty query, or false flag drops
- * out). Returns '' or a leading `?…` string.
+ * bulk_max_cents, min_copies, max_copies, finish) and falsy values are skipped (a 0 page,
+ * empty query, or false flag drops out). Returns '' or a leading `?…` string.
  */
 export function listQuery(params: {
   page?: number
@@ -100,6 +100,12 @@ export function listQuery(params: {
   drop?: string
   bulkMaxCents?: number
   limit?: number
+  /** Holdings listings only (issue #677): keep rows holding at least this many copies. */
+  minCopies?: number
+  /** Holdings listings only: keep rows holding at most this many copies. */
+  maxCopies?: number
+  /** Holdings listings only: which counter the copy bounds read (`any`/`regular`/`foil`). */
+  finish?: string
 }): string {
   const search = new URLSearchParams()
   if (params.page) search.set('page', String(params.page))
@@ -115,6 +121,11 @@ export function listQuery(params: {
   // A bulk cutoff of 0 is meaningful (nothing counts as bulk), so guard on presence
   // rather than truthiness — unlike the other params above.
   if (params.bulkMaxCents != null) search.set('bulk_max_cents', String(params.bulkMaxCents))
+  // A copy bound of 0 is meaningful too ("hold none of this finish"), so both guard on
+  // presence rather than truthiness.
+  if (params.minCopies != null) search.set('min_copies', String(params.minCopies))
+  if (params.maxCopies != null) search.set('max_copies', String(params.maxCopies))
+  if (params.finish) search.set('finish', params.finish)
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }
