@@ -602,9 +602,12 @@ pub struct NeededCardDeck {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct NeededCard {
     pub card: CardResponse,
-    /// Copies still to acquire: `max(0, required - owned)`, always &gt; 0.
+    /// Copies still to acquire, always &gt; 0: `required - owned` game-wide, and scoped to a
+    /// deck `min(required, every deck's demand - owned)` — that deck's share of the
+    /// cross-deck shortfall.
     pub needed: i64,
-    /// Total copies (regular + foil) the caller's decks want, summed across decks/sections.
+    /// Total copies (regular + foil) wanted, summed across sections — by every deck of the
+    /// caller's game-wide, by the scoped deck alone under `deck_id`.
     pub required: i64,
     /// Copies owned in the caller's collection — any printing of the card in `card` mode,
     /// this exact printing in `printing` mode.
@@ -619,7 +622,9 @@ pub struct NeededCard {
     pub held_usd: Option<String>,
     /// What the `needed` copies cost at the card's **cheapest printing** anywhere in the
     /// catalog — the lower of that printing's regular and foil price (folded foil-★ variants
-    /// never considered), times `needed`. `null` when no printing of the card is priced.
+    /// never considered), times `needed`. The identity's floor in either mode: in
+    /// `printing` mode it is what accepting another printing would cost, beside `held_usd`
+    /// for the exact one. `null` when no printing of the card is priced.
     pub cheapest_usd: Option<String>,
 }
 

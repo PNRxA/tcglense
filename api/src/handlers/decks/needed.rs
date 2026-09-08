@@ -192,10 +192,13 @@ pub async fn needed_cards(
         }
     }
 
-    // The cheapest printing of every identity the decks want, one lookup — the floor a
-    // shopper can buy at, whichever printing the deck happens to list.
+    // The cheapest printing of every identity that can reach the wire, one lookup — the
+    // floor a shopper can buy at, whichever printing the deck happens to list. Scoped, only
+    // the groups the scoped deck contributes to are emitted below, so only those are priced;
+    // the supply comparison stays whole-account regardless.
     let oracle_ids: HashSet<&str> = groups
         .values()
+        .filter(|group| scope_id.is_none() || group.scoped_required > 0)
         .flat_map(|group| group.printings.values())
         .filter_map(|p| p.card.oracle_id.as_deref().filter(|id| !id.is_empty()))
         .collect();
@@ -425,9 +428,11 @@ fn fold_totals(data: &[NeededCard]) -> NeededTotals {
 
 /// The gameplay identity of a card across printings: its `oracle_id`, or its name when the
 /// catalog has none — the same rule the deck printing-swap uses to decide two rows are the
-/// same card. Namespaced (`o:` / `n:`) so an oracle id can never collide with a name.
+/// same card. Namespaced (`o:` / `n:`) so an oracle id can never collide with a name, and
+/// an empty id counts as none (the cheapest lookup skips those the same way), or every
+/// such card would fold into one `o:` group.
 fn identity_key(oracle_id: Option<&str>, name: &str) -> String {
-    match oracle_id {
+    match oracle_id.filter(|id| !id.is_empty()) {
         Some(oracle) => format!("o:{oracle}"),
         None => format!("n:{name}"),
     }
@@ -471,5 +476,7 @@ mod tests {
     fn identity_key_namespaces_oracle_and_name() {
         assert_eq!(identity_key(Some("abc"), "Sol Ring"), "o:abc");
         assert_eq!(identity_key(None, "Sol Ring"), "n:Sol Ring");
+        // An empty oracle id is no identity, not a shared one.
+        assert_eq!(identity_key(Some(""), "Sol Ring"), "n:Sol Ring");
     }
 }

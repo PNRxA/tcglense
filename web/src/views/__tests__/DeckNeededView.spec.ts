@@ -171,6 +171,9 @@ describe('DeckNeededView', () => {
     const text = wrapper.text()
     expect(text).toContain('Cards needed for Krenko Goblins')
     expect(text).toContain('Back to deck')
+    // Scoped counts are worded as this deck's, and the badge explains a shortfall the
+    // numbers alone don't add up to (need 1 · wants 2 · own 1 is fine; the title says why).
+    expect(text).toContain('this deck wants 2 · own 1')
     // Back goes to the deck; the escape hatch goes to the game-wide list.
     const hrefs = wrapper.findAll('a').map((a) => a.attributes('href'))
     expect(hrefs).toContain('/decks/mtg/7')

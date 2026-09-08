@@ -1,6 +1,6 @@
 import { computed, type Ref } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { setWishlistEntry, type ApiError, type NeededCard } from '@/lib/api'
+import { ApiError, setWishlistEntry, type NeededCard } from '@/lib/api'
 import { invalidateWishlistData, useWishlistCounts } from '@/composables/useWishlist'
 import { planWishlistTopUps, type WishlistTopUp } from '@/lib/neededCost'
 import { useAuthedMutation } from '@/lib/queries'
@@ -29,8 +29,17 @@ const CONCURRENCY = 4
 export function useNeededWishlist(game: Ref<string>, entries: Ref<NeededCard[]>) {
   const cards = computed(() => entries.value.map((entry) => entry.card))
   // Fresh counts on every open: the plan is built from absolute counts, so a stale badge
-  // read could re-add copies the user just removed on the wish-list page.
-  const { ownership: wanted, ready } = useWishlistCounts(game, cards, { staleTime: 0 })
+  // read could re-add copies the user just removed on the wish-list page. And the plan is
+  // trusted only once that refetch has landed — `ready && !fetching`, the gate
+  // `useBatchCounts` documents for every absolute-count seeder (a same-key refetch serves
+  // the retained map as "ready" while the fresh one loads, and a write planned off it would
+  // lower a count the user raised elsewhere since).
+  const {
+    ownership: wanted,
+    ready: loaded,
+    fetching,
+  } = useWishlistCounts(game, cards, { staleTime: 0 })
+  const ready = computed(() => loaded.value && !fetching.value)
   const plan = computed<WishlistTopUp[]>(() => planWishlistTopUps(entries.value, wanted.value))
   const toAdd = computed(() => plan.value.length)
 
@@ -41,7 +50,9 @@ export function useNeededWishlist(game: Ref<string>, entries: Ref<NeededCard[]>)
     mutationFn: async (token: string, topUps: WishlistTopUp[]): Promise<WishlistTopUpResult> => {
       let added = 0
       let failed = 0
-      // Bounded fan-out; a failed card is counted, not fatal — the others still land.
+      // Bounded fan-out; a failed card is counted, not fatal — the others still land. The
+      // one exception is the per-user quota: once a write is refused as rate-limited, every
+      // remaining one would be too, so the rest are counted as failed without being sent.
       for (let i = 0; i < topUps.length; i += CONCURRENCY) {
         const batch = topUps.slice(i, i + CONCURRENCY)
         const outcomes = await Promise.allSettled(
@@ -52,9 +63,18 @@ export function useNeededWishlist(game: Ref<string>, entries: Ref<NeededCard[]>)
             }),
           ),
         )
+        let throttled = false
         for (const outcome of outcomes) {
           if (outcome.status === 'fulfilled') added += 1
-          else failed += 1
+          else {
+            failed += 1
+            if (outcome.reason instanceof ApiError && outcome.reason.status === 429)
+              throttled = true
+          }
+        }
+        if (throttled) {
+          failed += topUps.length - (i + batch.length)
+          break
         }
       }
       return { added, failed }
@@ -63,8 +83,10 @@ export function useNeededWishlist(game: Ref<string>, entries: Ref<NeededCard[]>)
   }
   const mutation = useAuthedMutation<WishlistTopUpResult, WishlistTopUp[]>(options)
 
-  function addAll(): Promise<WishlistTopUpResult> {
-    return mutation.mutateAsync(plan.value)
+  /** Run the plan. The outcome lands in `result` / `error` — the caller reads those rather
+   * than a promise, so a refused batch is never an unhandled rejection. */
+  function addAll(): void {
+    mutation.mutate(plan.value)
   }
 
   return {

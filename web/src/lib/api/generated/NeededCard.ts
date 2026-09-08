@@ -18,11 +18,14 @@ import type { NeededCardDeck } from "./NeededCardDeck";
  */
 export type NeededCard = { card: Card, 
 /**
- * Copies still to acquire: `max(0, required - owned)`, always &gt; 0.
+ * Copies still to acquire, always &gt; 0: `required - owned` game-wide, and scoped to a
+ * deck `min(required, every deck's demand - owned)` — that deck's share of the
+ * cross-deck shortfall.
  */
 needed: number, 
 /**
- * Total copies (regular + foil) the caller's decks want, summed across decks/sections.
+ * Total copies (regular + foil) wanted, summed across sections — by every deck of the
+ * caller's game-wide, by the scoped deck alone under `deck_id`.
  */
 required: number, 
 /**
@@ -45,6 +48,8 @@ held_usd: string | null,
 /**
  * What the `needed` copies cost at the card's **cheapest printing** anywhere in the
  * catalog — the lower of that printing's regular and foil price (folded foil-★ variants
- * never considered), times `needed`. `null` when no printing of the card is priced.
+ * never considered), times `needed`. The identity's floor in either mode: in
+ * `printing` mode it is what accepting another printing would cost, beside `held_usd`
+ * for the exact one. `null` when no printing of the card is priced.
  */
 cheapest_usd: string | null, };

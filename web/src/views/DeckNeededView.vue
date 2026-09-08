@@ -10,7 +10,7 @@ import { useGamesQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import { useNeededCardsQuery } from '@/composables/useDecks'
 import { useNeededWishlist } from '@/composables/useNeededWishlist'
-import type { NeedMode } from '@/lib/api'
+import type { NeedMode, NeededCard } from '@/lib/api'
 import { neededCostLine, neededEntryPrice } from '@/lib/neededCost'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
@@ -81,6 +81,18 @@ const {
   error: addError,
   addAll,
 } = useNeededWishlist(game, needed)
+/** The badge's explanation, worded for the scope: game-wide the three numbers add up;
+ *  scoped they need not, since the copies you own may be spoken for by another deck. */
+function needTitle(entry: NeededCard): string {
+  if (deckId.value === null) {
+    return `You need ${entry.needed} more (your decks want ${entry.required}, you own ${entry.owned})`
+  }
+  const sharedAway = entry.needed > entry.required - entry.owned
+  return sharedAway
+    ? `You need ${entry.needed} more for this deck: it wants ${entry.required} and you own ${entry.owned}, but your other decks want those copies too`
+    : `You need ${entry.needed} more for this deck (it wants ${entry.required}, you own ${entry.owned})`
+}
+
 const addLabel = computed(() => {
   if (adding.value) return 'Adding…'
   if (!wishlistReady.value) return 'Add to wish list'
@@ -221,14 +233,19 @@ const addLabel = computed(() => {
               <template #badge>
                 <span
                   class="bg-primary text-primary-foreground absolute top-1.5 right-1.5 z-20 inline-flex cursor-default items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium shadow select-none"
-                  :title="`You need ${entry.needed} more (your decks want ${entry.required}, you own ${entry.owned})`"
+                  :title="needTitle(entry)"
                 >
                   need {{ entry.needed }}
                 </span>
               </template>
             </CardTile>
+            <!-- Scoped, `required` is this deck's and `owned` is the collection's, and the
+              shortfall is this deck's share of what every deck wants — so "wants 1 · own 1"
+              can honestly sit under "need 1" when another deck runs the same copy. -->
             <p class="text-muted-foreground mt-1 text-xs tabular-nums">
-              want {{ entry.required }} · own {{ entry.owned }}
+              <template v-if="deckId !== null">this deck wants {{ entry.required }}</template>
+              <template v-else>want {{ entry.required }}</template>
+              · own {{ entry.owned }}
             </p>
             <!-- What the missing copies cost as held, then at the cheapest printing when
               that's less; an unpriced card says nothing rather than $0. -->
