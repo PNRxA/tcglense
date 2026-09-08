@@ -256,11 +256,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   a third derived field belongs there, not at a call site.
   **Deck analysis is server-side** (issue #596): composition + draw odds
   (`/stats`), the legality verdict (`/legality`), the estimated Commander bracket
-  (`/bracket`), the tokens the deck makes (`/tokens`), and a seeded sample hand
+  (`/bracket`), the tokens the deck makes (`/tokens`), the mana base (`/mana`, issue #670),
+  and a seeded sample hand
   (`/goldfish`) all live in `handlers/decks/analysis/`, so a CLI gets what the deck page shows; each is
   mirrored under `/api/u/{handle}/decks/{id}/…` **through the same `analyse_*` core**, so a
-  shared deck and its owner's copy can never disagree. All five are **`GET`s taking
+  shared deck and its owner's copy can never disagree. All six are **`GET`s taking
   `AuthUser`** — they write nothing, so a read-only key must be able to call them.
+  **The mana base is a citation, not a model** (`analysis::mana`): the sources-needed numbers
+  are Frank Karsten's 2022 summary table held as a data constant with its source, applied
+  with the three rules of thumb he states (gold cards +1, hybrid/Phyrexian/twobrid pips never
+  counted against a colour, a cost past the table's last row judged as that row) and nothing
+  else — never re-simulated. Demand is the library **plus** the command zone and supply the
+  library alone (a commander's pips count; its section is never a source), both zones read
+  off `rules::deck_zone`, never a second list. Two couplings: `cards.produced_mana` stores
+  "produces nothing" as `""` (`scryfall::map`) so a NULL can mean "not checked yet" — the
+  `token_parts` stance — and the `produces:` search leaf's colourless branch reads both
+  spellings; and `CardFacts::mana_cost` falls back to the first face's cost, read off the
+  front half of a split card only.
   **Tokens are a provider fact, not a grammar** (`analysis::tokens`): what a card makes is
   read off `cards.token_parts` — Scryfall's `all_parts`, filtered at ingest to `token`
   components plus emblems (which upstream files as `combo_piece`, told apart by the printed

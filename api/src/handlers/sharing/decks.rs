@@ -20,10 +20,10 @@ use crate::entities::prelude::Deck;
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::decks::{
-    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckResponse, DeckTokens,
-    GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish, analyse_legality,
-    analyse_stats, analyse_tokens, deck_detail, deck_headers, load_analysis,
-    load_analysis_with_cards,
+    DeckAnalytics, DeckBracketEstimate, DeckDetail, DeckLegality, DeckManaBase, DeckResponse,
+    DeckTokens, GoldfishHand, GoldfishParams, StatsParams, analyse_bracket, analyse_goldfish,
+    analyse_legality, analyse_mana, analyse_stats, analyse_tokens, deck_detail, deck_headers,
+    load_analysis, load_analysis_with_cards,
 };
 use crate::handlers::shared::DataBody;
 use crate::state::AppState;
@@ -278,6 +278,33 @@ pub async fn public_deck_tokens(
     // The deck row's own game, not a path segment — this surface addresses a deck by handle
     // and id alone.
     Ok(Json(analyse_tokens(&state, &deck.game, &input).await?))
+}
+
+/// Public deck mana base
+///
+/// `GET /api/u/{handle}/decks/{deck_id}/mana` -> a public deck's colour requirements against
+/// its sources, identical to what its owner sees. `404` when the handle is unknown or the
+/// deck is private/absent.
+#[utoipa::path(
+    get,
+    path = "/api/u/{handle}/decks/{deck_id}/mana",
+    tag = "Public sharing",
+    params(
+        ("handle" = String, Path, description = "The owner's public handle, e.g. `alice-0001`"),
+        ("deck_id" = i32, Path, description = "The deck's id"),
+    ),
+    responses(
+        (status = 200, description = "Per-colour pips, sources, Karsten's threshold and the verdict.", body = DeckManaBase),
+        (status = 404, description = "Unknown handle, or the deck is private/absent."),
+    ),
+)]
+pub async fn public_deck_mana(
+    State(state): State<AppState>,
+    Path((handle, deck_id)): Path<(String, i32)>,
+) -> Result<Json<DeckManaBase>, AppError> {
+    let (_, deck) = load_public_deck(&state, &handle, deck_id).await?;
+    let input = load_analysis(&state, deck.id).await?;
+    Ok(Json(analyse_mana(deck.format.as_deref(), &input)))
 }
 
 /// Goldfish a public deck

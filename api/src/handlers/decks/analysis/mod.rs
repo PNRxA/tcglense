@@ -13,6 +13,9 @@
 //! * **Tokens** ([`tokens`]) — the tokens and emblems the deck's cards make, which is what a
 //!   player has to bring to a game *besides* the deck. The only one of these that consults
 //!   the catalog again rather than folding what the deck already loaded.
+//! * **Mana base** ([`mana`]) — the colour pips the deck's spells ask for against the
+//!   sources its library holds, judged by Frank Karsten's source counts, so "do I have
+//!   enough blue for `UU` on turn two" is answered rather than guessed.
 //!
 //! All three used to live in the SPA (`web/src/lib/deckStats.ts`, `legality.ts`,
 //! `deckRules.ts`) and were unreachable from anything but a browser. They are the same
@@ -54,6 +57,7 @@ pub(crate) mod bracket;
 pub(crate) mod formats;
 pub(crate) mod goldfish;
 pub(crate) mod legality;
+pub(crate) mod mana;
 pub(crate) mod read;
 pub(crate) mod rules;
 pub(crate) mod stats;
@@ -61,8 +65,9 @@ pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
-    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_stats,
-    __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_stats, deck_tokens,
+    __path_deck_bracket, __path_deck_goldfish, __path_deck_legality, __path_deck_mana,
+    __path_deck_stats, __path_deck_tokens, deck_bracket, deck_goldfish, deck_legality, deck_mana,
+    deck_stats, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -70,6 +75,7 @@ pub use read::{
 pub(crate) use bracket::{DeckBracketEstimate, analyse_bracket};
 pub(crate) use goldfish::{GoldfishHand, GoldfishParams, analyse_goldfish};
 pub(crate) use legality::{DeckLegality, analyse_legality};
+pub(crate) use mana::{DeckManaBase, analyse_mana};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
 pub(crate) use tokens::{DeckTokens, analyse_tokens};
 
@@ -114,6 +120,17 @@ pub(crate) struct CardFacts {
     /// empty list is "makes none"; [`tokens`] is the one reader that tells them apart, and
     /// it must keep doing so (see [`crate::scryfall::map::token_parts`]).
     pub token_parts: Option<Vec<StoredPart>>,
+    /// The printed mana cost, `{1}{B}{B}`-style — the top level, falling back to the first
+    /// face's for a transforming or modal double-faced card (Scryfall leaves the top level
+    /// null there). A split card carries both halves joined by ` // `; [`mana`] reads the
+    /// front half only.
+    pub mana_cost: Option<String>,
+    /// The colours of mana this card can produce (`W`/`U`/`B`/`R`/`G`/`C`), as the catalog
+    /// stored them. `None` is **"not checked yet"** — a row not rewritten since
+    /// `scryfall::map` started storing an empty list as `""` rather than NULL — and an empty
+    /// list is "produces none"; [`mana`] is the reader that tells them apart, and it must keep
+    /// doing so (the same stance `token_parts` takes above).
+    pub produced_mana: Option<Vec<String>>,
 }
 
 impl From<&card::Model> for CardFacts {
@@ -160,6 +177,13 @@ impl From<&card::Model> for CardFacts {
                 .token_parts
                 .as_deref()
                 .and_then(|json| serde_json::from_str(json).ok()),
+            mana_cost: m
+                .mana_cost
+                .clone()
+                .or_else(|| faces.first().and_then(|f| f.mana_cost.clone())),
+            // `split_csv` reads the stored `""` as an empty list, which is exactly the
+            // "checked, produces nothing" answer — only a NULL column stays `None`.
+            produced_mana: m.produced_mana.clone().map(|csv| split_csv(Some(csv))),
         }
     }
 }
@@ -188,6 +212,42 @@ impl AnalysisEntry {
     pub(crate) fn signed_copies(&self) -> i64 {
         i64::from(self.quantity).saturating_add(i64::from(self.foil_quantity))
     }
+}
+
+/// One card **name** folded across every section and printing it appears in — the identity
+/// the copy limit, the bracket and the mana base all count by, so a card held in two arts is
+/// one Game Changer, one source, one spell to cast, rather than two.
+pub(super) struct NameFold<'a> {
+    pub facts: &'a CardFacts,
+    /// The first printing the deck holds the card under, for keys and links.
+    pub card_id: String,
+    /// Copies across every folded row.
+    pub copies: i64,
+}
+
+/// Fold `entries` by card name, in first-seen order, dropping rows holding no copies.
+pub(super) fn fold_by_name<'a>(entries: &[&'a AnalysisEntry]) -> Vec<NameFold<'a>> {
+    let mut folds: Vec<NameFold<'a>> = Vec::new();
+    let mut index_by_name: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for entry in entries {
+        let copies = entry.copies();
+        if copies == 0 {
+            continue;
+        }
+        match index_by_name.get(entry.facts.name.as_str()) {
+            Some(&index) => folds[index].copies += copies,
+            None => {
+                index_by_name.insert(entry.facts.name.as_str(), folds.len());
+                folds.push(NameFold {
+                    facts: &entry.facts,
+                    card_id: entry.facts.id.clone(),
+                    copies,
+                });
+            }
+        }
+    }
+    folds
 }
 
 /// A deck loaded for analysis: its sections in display order, and every card in it whose
@@ -340,6 +400,8 @@ pub(crate) mod test_fixtures {
             legalities: None,
             game_changer: None,
             token_parts: None,
+            mana_cost: None,
+            produced_mana: None,
         }
     }
 
@@ -407,6 +469,19 @@ pub(crate) mod test_fixtures {
             self.token_parts = Some(Vec::new());
             self
         }
+
+        /// The printed mana cost, Scryfall-style (`{1}{B}{B}`).
+        pub(crate) fn mana_cost(mut self, cost: &str) -> Self {
+            self.mana_cost = Some(cost.to_string());
+            self
+        }
+
+        /// The colours this card produces, as the catalog stores them (`"W,U"`). Setting it
+        /// marks the row **checked**; `""` is "checked, produces nothing".
+        pub(crate) fn produces(mut self, csv: &str) -> Self {
+            self.produced_mana = Some(split_csv(Some(csv.to_string())));
+            self
+        }
     }
 
     /// One deck row: `entry(card_id, name, section_id, quantity, foil_quantity)`.
@@ -460,6 +535,14 @@ pub(crate) mod test_fixtures {
         }
         pub(crate) fn no_tokens(mut self) -> Self {
             self.facts = self.facts.no_tokens();
+            self
+        }
+        pub(crate) fn mana_cost(mut self, cost: &str) -> Self {
+            self.facts = self.facts.mana_cost(cost);
+            self
+        }
+        pub(crate) fn produces(mut self, csv: &str) -> Self {
+            self.facts = self.facts.produces(csv);
             self
         }
     }

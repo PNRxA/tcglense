@@ -375,6 +375,17 @@ pub(crate) fn format_leads_with_command_zone(format: Option<&str>) -> bool {
     }
 }
 
+/// The deck size a (free-text) format states — the exact size, or the minimum for a format
+/// that only sets a floor — or `None` for a format with no rule profile. What the mana base
+/// picks its threshold column by, so a Commander deck is judged against the 99-card numbers
+/// even while it is still being built, rather than as the 40-card deck it is so far.
+pub(crate) fn format_deck_size(format: Option<&str>) -> Option<i64> {
+    let rules = super::formats::normalize_format_key(format).and_then(format_rules)?;
+    Some(match rules.size {
+        DeckSize::Exact(size) | DeckSize::Min(size) => size,
+    })
+}
+
 // ---------- Command-zone eligibility ----------
 
 /// Whether a card may lead a deck in this kind of command zone.

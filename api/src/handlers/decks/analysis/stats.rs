@@ -173,8 +173,9 @@ pub(crate) fn default_library_section_ids(sections: &[DeckSectionResponse]) -> V
 // ---------- Composition ----------
 
 /// The words on a card's front type line, as the raw line spells them. Case-sensitive by
-/// design: the buckets above are the printed type names.
-fn type_words(type_line: Option<&str>) -> HashSet<String> {
+/// design: the buckets above are the printed type names. Shared with [`super::mana`], whose
+/// land/nonland source split must mean the same "land" this composition's land count does.
+pub(super) fn type_words(type_line: Option<&str>) -> HashSet<String> {
     let front = type_line
         .unwrap_or_default()
         .split("//")

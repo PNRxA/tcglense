@@ -101,7 +101,12 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
 
     // Comma-joined array columns (same shape as colours).
     let keywords = join_colors(&card.keywords);
-    let produced_mana = join_colors(&card.produced_mana);
+    // Stored as `""` rather than NULL when the card produces nothing: Scryfall omits the
+    // field for a non-producer, so absence upstream IS "produces none", and writing that as
+    // NULL would leave the deck mana-base read (`decks::analysis::mana`) unable to tell a
+    // checked non-producer from a row never rewritten since the column arrived — the same
+    // reason `token_parts` stores `[]`. A NULL column now means "not checked yet".
+    let produced_mana = Some(join_colors(&card.produced_mana).unwrap_or_default());
     let artist_ids = join_colors(&card.artist_ids);
     let frame_effects = join_colors(&card.frame_effects);
     let promo_types = join_colors(&card.promo_types);

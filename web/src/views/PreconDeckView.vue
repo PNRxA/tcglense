@@ -16,6 +16,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTokens from '@/components/decks/DeckTokens.vue'
@@ -349,6 +350,7 @@ usePageMeta({
       <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
       <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
       <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
+      <DeckMana v-if="entries.length > 0" :game="game" :precon-slug="slug" class="mb-4" />
       <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
 
       <!-- Card list controls, the same set the deck pages carry. -->
