@@ -11,6 +11,7 @@ import {
   evVersusPrice,
   expectedValueHeading,
   oddsLabel,
+  pricedShareLabel,
 } from '@/lib/productCounts'
 
 // What an average copy of this sealed product is worth at today's prices (issue #682),
@@ -60,12 +61,6 @@ const TOP_CONTRIBUTORS = 8
 const contributors = computed(() => ev.value?.top.slice(0, TOP_CONTRIBUTORS) ?? [])
 
 const { hrefFor, onActivate, warm } = useDetailModalLink()
-
-/** Below 1 the EV is missing prices, and saying so is the difference between a low number
- * and a wrong one. Never shown at 1 — "100% of picks priced" is noise. */
-function pricedShareLabel(share: number): string {
-  return `${Math.round(share * 100)}% of picks priced`
-}
 
 /** Picks are an expectation over the pack's variants, so a slot that isn't a whole number
  * keeps its decimals rather than rounding to a count it never deals. */

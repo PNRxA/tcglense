@@ -297,6 +297,22 @@ export function oddsLabel(oneIn: number): string {
  * rendered as the range it really is (`14–15 cards per pack`) rather than a fake decimal.
  * Empty string when there is no count to state, so the caller renders nothing.
  */
+/**
+ * A `0..1` priced share as the "N% of picks priced" annotation, shown only below one. It
+ * mirrors the API's own `percent` guard at both ends: a share short of one is never printed
+ * as `100%` (the line only exists because something is unpriced, so "100% of picks priced"
+ * would contradict the caveat beside it — `>99%` is what a 99.7% share honestly is), and a
+ * non-zero share is never `0%`. Empty string at or above one, where the caller shows nothing.
+ */
+export function pricedShareLabel(share: number): string {
+  if (!Number.isFinite(share) || share >= 1) return ''
+  if (share <= 0) return '0% of picks priced'
+  const pct = share * 100
+  if (pct < 0.5) return '<1% of picks priced'
+  if (pct >= 99.5) return '>99% of picks priced'
+  return `${Math.round(pct)}% of picks priced`
+}
+
 export function cardsPerPackLabel(cardsPerPack: number): string {
   if (!Number.isFinite(cardsPerPack) || cardsPerPack <= 0) return ''
   const rounded = Math.round(cardsPerPack)

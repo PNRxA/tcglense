@@ -10,6 +10,7 @@ import {
   boosterLabel,
   boxItemCount,
   cardsPerPackLabel,
+  pricedShareLabel,
   evVersusPrice,
   expectedValueHeading,
   oddsLabel,
@@ -403,6 +404,28 @@ describe('oddsLabel', () => {
     expect(oddsLabel(Number.POSITIVE_INFINITY)).toBe('rarely')
     expect(oddsLabel(Number.NaN)).toBe('rarely')
     expect(oddsLabel(0)).toBe('rarely')
+  })
+})
+
+describe('pricedShareLabel', () => {
+  it('never rounds a short share up to a whole one', () => {
+    // The annotation only exists because something is unpriced, so "100% of picks priced"
+    // would contradict the caveat beside it — the API's own `percent` guard, mirrored.
+    expect(pricedShareLabel(0.9971)).toBe('>99% of picks priced')
+    expect(pricedShareLabel(0.995)).toBe('>99% of picks priced')
+    expect(pricedShareLabel(0.994)).toBe('99% of picks priced')
+    expect(pricedShareLabel(0.62)).toBe('62% of picks priced')
+  })
+
+  it('never rounds a real share down to nothing', () => {
+    expect(pricedShareLabel(0.004)).toBe('<1% of picks priced')
+    expect(pricedShareLabel(0)).toBe('0% of picks priced')
+  })
+
+  it('is empty at one — a fully priced pack needs no annotation', () => {
+    expect(pricedShareLabel(1)).toBe('')
+    expect(pricedShareLabel(1.2)).toBe('')
+    expect(pricedShareLabel(Number.NaN)).toBe('')
   })
 })
 
