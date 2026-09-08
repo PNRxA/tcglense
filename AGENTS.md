@@ -603,6 +603,15 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   of `ingest::flush_cards` — the
   `update_columns` list *and* `upsert_changed_guard` — or every sync wipes it and mass-bumps
   `updated_at`, the cursor the price-alert narrowing reads.
+- **The shared `Card` DTO is not where per-printing detail goes.** `CardResponse` rides
+  every listing (a catalog page is up to 200 rows, CDN/ETag-cached, and the deck/holdings
+  payloads carry hundreds more), so print + collector columns — artist, flavour text,
+  finishes, frame/border/stamp/promo types, Reserved List, produced mana, a Battle's
+  defense, the EDHREC/Penny ranks — live on `CardDetailResponse` (ts `CardDetail`, issue
+  #673), which `#[serde(flatten)]`s `Card` and is returned by the **single-card route
+  alone**, so a client typed against `Card` keeps working. Nothing there is derived (each
+  field is the column as stored) and a NULL provider boolean reads as `false`, a NULL
+  comma-joined column as `[]`.
 - A replace-mode import matching **zero** catalog cards is refused (wipe guard). Every
   collection import is **one-off** — there is no saved link and no re-sync (the
   `collection_sources` table and the incremental "smart" sync went with them, `m..072`),

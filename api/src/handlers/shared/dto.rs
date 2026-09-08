@@ -348,6 +348,46 @@ mod tests {
         assert!(!is_secret_lair_bonus(Some("notsldbonus")));
     }
 
+    /// The detail wrapper is a pure projection of the row: the CSV columns split into
+    /// arrays, a NULL provider boolean reads as `false`, and the shared `CardResponse`
+    /// it wraps is unchanged (it is what every listing still answers).
+    #[test]
+    fn card_detail_splits_csv_columns_and_reads_null_flags_as_false() {
+        let row = card::Model {
+            artist: Some("Rebecca Guay".into()),
+            artist_ids: Some("artist-a,artist-b".into()),
+            flavor_text: Some("The siege breaks at dawn.".into()),
+            finishes: Some("nonfoil,foil".into()),
+            frame_effects: Some("showcase,legendary".into()),
+            defense: Some("5".into()),
+            reserved: Some(true),
+            edhrec_rank: Some(1234),
+            // `full_art` and the rest stay NULL, the shape of a row the sync predates.
+            ..crate::test_support::card_model(1)
+        };
+        let detail = CardDetailResponse::from(row.clone());
+
+        assert_eq!(detail.artist.as_deref(), Some("Rebecca Guay"));
+        assert_eq!(detail.artist_ids, ["artist-a", "artist-b"]);
+        assert_eq!(detail.finishes, ["nonfoil", "foil"]);
+        assert_eq!(detail.frame_effects, ["showcase", "legendary"]);
+        assert_eq!(detail.defense.as_deref(), Some("5"));
+        assert!(detail.reserved);
+        assert_eq!(detail.edhrec_rank, Some(1234));
+        // NULL columns: empty arrays (never `None`-ish) and `false` flags, no ranks.
+        assert!(detail.promo_types.is_empty());
+        assert!(detail.produced_mana.is_empty());
+        assert!(!detail.full_art);
+        assert!(!detail.content_warning);
+        assert_eq!(detail.penny_rank, None);
+
+        // The wrapped payload is exactly the shared `Card` the listings answer.
+        let plain = CardResponse::from(row);
+        assert_eq!(detail.card.id, plain.id);
+        assert_eq!(detail.card.name, plain.name);
+        assert_eq!(detail.card.set_code, plain.set_code);
+    }
+
     #[test]
     fn parse_legalities_is_tolerant() {
         // The happy path: the stored Scryfall object becomes the wire map.

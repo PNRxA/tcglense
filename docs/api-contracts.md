@@ -250,7 +250,7 @@ plain `{ data: [...] }`.
 | `GET /api/games/{game}/art-tags?q&limit` | `{ data: ArtTagEntry[] }` — Tagger **art tags** usable with the `art:` search filter, `ArtTagEntry = { slug, label, count, description }` (`count` = distinct stored artworks matching, hierarchy-expanded; tags matching nothing we store are absent). With `q`: up to `limit` (default 10, max 50) tags whose slug **or** label contains `q` (case-insensitive; starts-with matches first, then by `count`) — the advanced-search autocomplete. Without `q`: the game's **full** tag list ordered by slug — the SPA tag-browser payload (a few thousand entries; ETag/CDN-cached like every public catalog read) |
 | `GET /api/games/{game}/keywords` | `{ data: KeywordEntry[] }` — the game's **rules-keyword glossary**, name-ordered. `KeywordEntry = { name, slug, kind, text, parameterized, match_mode }`: `kind` is `"ability"` (a named ability a card *has*) / `"action"` (a verb the rules define) / `"ability_word"` (an italic label with no rules meaning); `text` is the official reminder text where one exists; `slug` is the `/keywords/{slug}` page segment, derived server-side so the sitemap and the SPA can't disagree; `parameterized` marks a keyword that carries a value (`Ward {2}`, `Annihilator 3`). `match_mode` tells the SPA how far the *name* can be trusted inside card text — `"anywhere"` (distinctive jargon), `"ability_line"` (also an everyday word, so only in keyword position), `"never"` (rules plumbing like `Tap`/`Destroy`: glossary page only, never linked inline). A **static table**, not a query (`crate::catalog::keywords`), so it answers in full on an unsynced instance and changes only with a release; a supported game with no table yet returns `200 []`, only an unknown game is `404` |
 | `GET /api/games/{game}/formats` | `{ data: DeckFormat[] }` — the game's **legality-tracked deck formats**, in display order (issue #596). `DeckFormat = { key, label, group, aliases, popular }`: `key` is the slug a card's `legalities` object uses, `label` the display spelling (also what `deck.format` stores when picked), `group` the select grouping (`constructed`/`commander`/`arena`/`other`), `aliases` the extra spellings a free-text format is normalised through (`edh` → `commander`), and `popular` marks the six most-played. The vocabulary the deck legality read keys on, published so a CLI can complete and validate `--format` without hard-coding it. A **static table** like `/keywords`; a game with no legality data returns `200 []`, only an unknown game is `404` |
-| `GET /api/games/{game}/cards/{id}` | one `Card` |
+| `GET /api/games/{game}/cards/{id}` | one `CardDetail` — every `Card` field plus the print + collector details only this route carries (see below) |
 | `GET /api/games/{game}/cards/{id}/image?size&face` | the card image bytes (image proxy, see below) |
 | `GET /api/games/{game}/cards/{id}/prices?range` | `{ data: PricePoint[] }` — the card's price history, **oldest first** (`[]` if none in range). No `range` = the full daily series; an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows it and returns a **downsampled subset** (coarser the longer the window). Unknown `range` = `422` |
 | `GET /api/games/{game}/cards/{id}/prints` | `{ data: Card[] }` — the card's **other** printings (same `oracle_id`), **newest printing first**, capped at 200 (`[]` if none, or the card has no `oracle_id`) |
@@ -280,6 +280,26 @@ Scryfall object parsed as-is (issue #557): keys are Scryfall format slugs
 `"legal" | "not_legal" | "banned" | "restricted"`; `null` when the row has no (valid)
 legality data. It rides **every** `Card` payload (lists included) so the deck views can
 evaluate format breaches client-side from the deck detail they already hold.
+
+`CardDetail = Card + { artist, artist_ids: string[], illustration_id, flavor_text,
+watermark, finishes: string[], frame, frame_effects: string[], border_color,
+security_stamp, promo_types: string[], produced_mana: string[], defense, reserved,
+full_art, textless, promo, variation, story_spotlight, content_warning: boolean,
+edhrec_rank, penny_rank: number | null }` — what `GET /api/games/{game}/cards/{id}`
+answers (issue #673). The `Card` half is **flattened**: every key above sits at the top
+level of the same object, so a client typed against `Card` reads the detail response
+unchanged and simply ignores the extra keys. Those extras are **detail-only on purpose** —
+`Card` rides every *listing* (a grid page is up to 200 rows, CDN/ETag-cached, and the deck
+and holdings payloads carry hundreds more), so ~20 columns nobody reads in a grid stay off
+it and live on the one route that answers for a single card. Nothing here is derived: each
+field is the catalog column as stored, so `defense` is the Battle's printed box rendered
+like power/toughness (a string, `null` on everything that isn't a Battle), and a
+multi-faced card's `flavor_text` is its faces joined by `\n//\n` — the same join
+`oracle_text` gets, so `ft:` matches either face. The booleans are provider flags every
+card carries, so a NULL column reads as **`false`**, never `null`; the comma-joined
+columns (`artist_ids`, `finishes`, `frame_effects`, `promo_types`, `produced_mana`) come
+back as arrays, **empty rather than null**. The response is still a pure function of its
+URL and keeps the public catalog cache policy the route always had.
 
 **Folded foil-★ variants.** Some printings are two catalog objects sharing one gameplay
 identity — a nonfoil `1587` and a foil `1587★` — with the star's foil price copied onto the

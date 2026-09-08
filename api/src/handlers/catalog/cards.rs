@@ -9,8 +9,7 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     CardDetailResponse, CardResponse, DataBody, Page, SearchGroup, SortField, apply_card_sort,
-    build_page, load_card,
-    require_game, trim_query,
+    build_page, load_card, require_game, trim_query,
 };
 use crate::state::AppState;
 

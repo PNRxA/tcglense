@@ -19,6 +19,7 @@ mod api_keys;
 mod art_tags;
 mod caching;
 mod captcha;
+mod card_detail;
 mod card_export;
 mod card_preview;
 mod cli_auth;
