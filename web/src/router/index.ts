@@ -370,6 +370,20 @@ const router = createRouter({
     //
     // Game-scoped like the rest of the catalog (`/cards/:game/…`, `/sealed/:game/…`), so
     // a second TCG's glossary needs no new route shape and moves no existing URL.
+    // The release calendar (issue #679): the all-games hub and each game's month view. Public
+    // catalog data (no `requiresAuth`) and indexable — the page behind the release heads-ups,
+    // whose "get a heads-up" button is the only thing that leads to a signed-in surface.
+    {
+      path: '/releases',
+      name: 'release-games',
+      component: () => import('@/views/ReleaseGamesView.vue'),
+    },
+    {
+      path: '/releases/:game',
+      name: 'game-releases',
+      component: () => import('@/views/ReleaseCalendarView.vue'),
+      props: true,
+    },
     {
       path: '/keywords',
       name: 'keywords',
@@ -509,6 +523,11 @@ const router = createRouter({
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return savedPosition
     if (to.path === from.path) return false
+    // A hash on a NEW page names an element on it — the release calendar's "get a heads-up"
+    // button lands on the alert settings' release section — so scroll there, not to the top.
+    // vue-router resolves the lazy view before scrolling, and the target is static markup
+    // (not gated on a query), so the element exists by then.
+    if (to.hash) return { el: to.hash, top: 16 }
     return { top: 0 }
   },
 })

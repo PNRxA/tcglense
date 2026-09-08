@@ -7,8 +7,9 @@
 //!
 //! The handlers are split across submodules by concern — [`status`] (game list +
 //! import status), [`sets`] (sets, set cards, by-drop), [`cards`] (card lists +
-//! detail + other printings), [`prices`] (price history), and [`image`] (the image
-//! proxy) — with the shared query params and card helpers kept here.
+//! detail + other printings), [`prices`] (price history), [`releases`] (the release
+//! calendar), and [`image`] (the image proxy) — with the shared query params and card
+//! helpers kept here.
 
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
@@ -37,6 +38,7 @@ mod image;
 mod keywords;
 mod prices;
 mod products;
+mod releases;
 mod rulings;
 mod scan;
 mod sets;
@@ -59,6 +61,7 @@ pub use products::{
     card_sealed, get_product, list_products, product_card_sections, product_cards,
     product_containers, product_contents, product_facets, product_image, product_prices,
 };
+pub use releases::list_releases;
 pub use rulings::card_rulings;
 pub use scan::scan_cards;
 pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
@@ -81,6 +84,7 @@ pub use products::{
     __path_product_cards, __path_product_containers, __path_product_contents,
     __path_product_facets, __path_product_prices,
 };
+pub use releases::__path_list_releases;
 pub use rulings::__path_card_rulings;
 pub use scan::__path_scan_cards;
 pub use sets::{

@@ -37,9 +37,9 @@ use crate::{
             card_art_tags, card_image, card_names, card_prices, card_prints, card_rulings,
             card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
             ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
-            list_set_cards, list_set_drops, list_set_subtypes, list_sets, preview_cards,
-            product_card_sections, product_cards, product_containers, product_contents,
-            product_facets, product_image, product_prices, scan_cards, set_icon,
+            list_releases, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
+            preview_cards, product_card_sections, product_cards, product_containers,
+            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -625,6 +625,13 @@ pub fn build_router(state: AppState) -> Router {
         // `deck.format` is normalised against, published so a CLI can complete and validate
         // it. Static sibling of `cards`/`sets`, public and CDN-cacheable like them.
         .route("/api/games/{game}/formats", get(list_deck_formats))
+        // The release calendar (issue #679): the sets and Secret Lair drops releasing inside
+        // a date window, each set with the precons and sealed products it ships — the page
+        // behind the release heads-ups, listing exactly what they would notify about
+        // (`catalog::releases` is the one definition both read). Public and the same for
+        // every visitor, so CDN + ETag cached with the rest; another static sibling of
+        // `cards`/`sets`.
+        .route("/api/games/{game}/releases", get(list_releases))
         .route("/api/games/{game}/cards/{id}", get(get_card))
         .route("/api/games/{game}/cards/{id}/image", get(card_image))
         .route("/api/games/{game}/cards/{id}/prices", get(card_prices))
