@@ -85,10 +85,9 @@ const {
   wishlistCounts,
   wishlistReady,
   copiesFilter,
-  copiesToken,
-  finish,
   copiesActive,
   copiesDescription,
+  setCopies,
   clearCopies,
   scopeTotalValue,
   scopeCopiesLabel,
@@ -218,8 +217,8 @@ const {
                  which the catalog listing behind show-ghosts doesn't have. -->
             <CopiesFilterMenu
               v-if="!showGhosts"
-              v-model:copies="copiesToken"
-              v-model:finish="finish"
+              :filter="copiesFilter"
+              @apply="setCopies"
               @clear="clearCopies"
             />
           </div>

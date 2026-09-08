@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 
 import {
-  COPIES_PRESETS,
+  COPIES_COMPARATORS,
   EMPTY_COPIES_FILTER,
   FINISH_OPTIONS,
+  boundsFromComparison,
+  comparisonFromBounds,
   copiesFilterParams,
   copiesToken,
   describeCopiesFilter,
@@ -77,11 +79,71 @@ describe('copiesToken', () => {
     expect(copiesToken(bounds.min, bounds.max)).toBe('5-')
   })
 
-  it('round-trips every preset the chip offers', () => {
-    for (const preset of COPIES_PRESETS) {
-      const bounds = parseCopiesToken(preset.value)
-      expect(copiesToken(bounds.min, bounds.max) ?? '').toBe(preset.value)
+  it('round-trips every comparison the chip can commit', () => {
+    for (const comparison of [
+      { comparator: 'eq' as const, value: 4 },
+      { comparator: 'gte' as const, value: 5 },
+      { comparator: 'gt' as const, value: 4 },
+      { comparator: 'lte' as const, value: 3 },
+      { comparator: 'lt' as const, value: 4 },
+      { comparator: 'between' as const, value: 2, upper: 3 },
+    ]) {
+      const bounds = boundsFromComparison(comparison)
+      expect(bounds).not.toBeNull()
+      const token = copiesToken(bounds!.min, bounds!.max)
+      expect(parseCopiesToken(token)).toEqual(bounds)
     }
+  })
+})
+
+describe('boundsFromComparison', () => {
+  it('spells each comparator as inclusive bounds, shifting the strict ones by one', () => {
+    expect(boundsFromComparison({ comparator: 'eq', value: 4 })).toEqual({ min: 4, max: 4 })
+    expect(boundsFromComparison({ comparator: 'gte', value: 5 })).toEqual({ min: 5 })
+    expect(boundsFromComparison({ comparator: 'gt', value: 4 })).toEqual({ min: 5 })
+    expect(boundsFromComparison({ comparator: 'lte', value: 3 })).toEqual({ max: 3 })
+    expect(boundsFromComparison({ comparator: 'lt', value: 4 })).toEqual({ max: 3 })
+    expect(boundsFromComparison({ comparator: 'between', value: 2, upper: 3 })).toEqual({
+      min: 2,
+      max: 3,
+    })
+  })
+
+  it('refuses what can never be a bound', () => {
+    // Nothing is held in fewer than zero copies.
+    expect(boundsFromComparison({ comparator: 'lt', value: 0 })).toBeNull()
+    expect(boundsFromComparison({ comparator: 'eq', value: -1 })).toBeNull()
+    expect(boundsFromComparison({ comparator: 'eq', value: 2.5 })).toBeNull()
+    expect(boundsFromComparison({ comparator: 'eq', value: Number.NaN })).toBeNull()
+    // A range needs both ends, the right way round.
+    expect(boundsFromComparison({ comparator: 'between', value: 2 })).toBeNull()
+    expect(boundsFromComparison({ comparator: 'between', value: 5, upper: 2 })).toBeNull()
+    // Equal ends are a valid "exactly".
+    expect(boundsFromComparison({ comparator: 'between', value: 4, upper: 4 })).toEqual({
+      min: 4,
+      max: 4,
+    })
+  })
+})
+
+describe('comparisonFromBounds', () => {
+  it('reads bounds back as the canonical comparison the form shows', () => {
+    expect(comparisonFromBounds({ min: 4, max: 4 })).toEqual({ comparator: 'eq', value: 4 })
+    expect(comparisonFromBounds({ min: 5 })).toEqual({ comparator: 'gte', value: 5 })
+    expect(comparisonFromBounds({ max: 3 })).toEqual({ comparator: 'lte', value: 3 })
+    expect(comparisonFromBounds({ min: 2, max: 3 })).toEqual({
+      comparator: 'between',
+      value: 2,
+      upper: 3,
+    })
+    expect(comparisonFromBounds({})).toBeNull()
+  })
+
+  it('canonicalizes the strict comparators: "more than 4" re-opens as "at least 5"', () => {
+    const gt = boundsFromComparison({ comparator: 'gt', value: 4 })!
+    expect(comparisonFromBounds(gt)).toEqual({ comparator: 'gte', value: 5 })
+    const lt = boundsFromComparison({ comparator: 'lt', value: 4 })!
+    expect(comparisonFromBounds(lt)).toEqual({ comparator: 'lte', value: 3 })
   })
 })
 
@@ -157,17 +219,36 @@ describe('describeCopiesFilter', () => {
     expect(describeCopiesFilter({ min: 1, max: 1, finish: 'foil' })).toBe('1 foil copy')
   })
 
-  it('describes every preset the chip offers', () => {
-    const described = COPIES_PRESETS.map((preset) =>
-      describeCopiesFilter({ ...parseCopiesToken(preset.value), finish: 'any' }),
-    )
-    expect(described).toEqual([null, '1 copy', '2–3 copies', '4 copies', '5 or more copies'])
+  it('words each comparison the chip can commit', () => {
+    const words = (
+      comparator: 'eq' | 'gte' | 'gt' | 'lte' | 'lt' | 'between',
+      value: number,
+      upper?: number,
+    ) =>
+      describeCopiesFilter({
+        ...boundsFromComparison({ comparator, value, upper })!,
+        finish: 'any',
+      })
+    expect(words('eq', 1)).toBe('1 copy')
+    expect(words('eq', 4)).toBe('4 copies')
+    expect(words('gte', 5)).toBe('5 or more copies')
+    expect(words('gt', 4)).toBe('5 or more copies')
+    expect(words('lte', 3)).toBe('up to 3 copies')
+    expect(words('lt', 4)).toBe('up to 3 copies')
+    expect(words('between', 2, 3)).toBe('2–3 copies')
   })
 })
 
 describe('the chip option lists', () => {
-  it('offers the copy presets in ladder order, led by the no-filter option', () => {
-    expect(COPIES_PRESETS.map((option) => option.value)).toEqual(['', '1', '2-3', '4', '5-'])
+  it('offers every comparator, led by the plain ones', () => {
+    expect(COPIES_COMPARATORS.map((option) => option.value)).toEqual([
+      'eq',
+      'gte',
+      'gt',
+      'lte',
+      'lt',
+      'between',
+    ])
   })
 
   it('offers every finish token the API accepts, led by the default', () => {

@@ -1,38 +1,46 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import CopiesFilterMenu from '../CopiesFilterMenu.vue'
-import type { HoldingFinish } from '@/lib/holdingsFilter'
+import { EMPTY_COPIES_FILTER, type CopiesFilter } from '@/lib/holdingsFilter'
 
-function mountMenu(props: { copies?: string; finish?: HoldingFinish } = {}) {
-  return mount(CopiesFilterMenu, {
-    props: { copies: '', finish: 'any' as HoldingFinish, ...props },
-    attachTo: document.body,
-  })
+function mountMenu(filter: CopiesFilter = EMPTY_COPIES_FILTER) {
+  return mount(CopiesFilterMenu, { props: { filter }, attachTo: document.body })
 }
 
-/** Open the dropdown and hand back the rendered menu items (the content is portalled). */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** Open the popover (its content is portalled to <body>). */
 async function open(wrapper: ReturnType<typeof mountMenu>) {
   await wrapper.get('button').trigger('click')
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  return Array.from(
-    document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]'),
+  await tick()
+}
+
+const byLabel = (label: string) =>
+  document.body.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)
+
+/** Type a count into the number box (the form keeps the raw string until Apply). */
+async function typeCount(label: string, raw: string) {
+  const input = byLabel(label)
+  if (!input) throw new Error(`no input labelled "${label}"`)
+  input.value = raw
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await tick()
+}
+
+/** Click the button whose visible text is exactly `text`. */
+async function press(text: string) {
+  const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+    (node) => node.textContent?.trim() === text,
   )
+  if (!button) throw new Error(`no button "${text}"`)
+  button.click()
+  await tick()
 }
 
 /** The payload of the last emission of `event`, or undefined if it never fired. */
 function lastEmit(wrapper: ReturnType<typeof mountMenu>, event: string): unknown[] | undefined {
   const events = wrapper.emitted(event)
   return events?.[events.length - 1]
-}
-
-/** Click the menu item whose label is exactly `label`. */
-async function pick(wrapper: ReturnType<typeof mountMenu>, label: string) {
-  const items = await open(wrapper)
-  const item = items.find((node) => node.textContent?.trim() === label)
-  if (!item) throw new Error(`no menu item labelled "${label}"`)
-  item.click()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await wrapper.vm.$nextTick()
 }
 
 describe('CopiesFilterMenu', () => {
@@ -46,7 +54,7 @@ describe('CopiesFilterMenu', () => {
   })
 
   it('states the active filter in words and wears the active pill', () => {
-    const trigger = mountMenu({ copies: '5-', finish: 'foil' }).get('button')
+    const trigger = mountMenu({ min: 5, finish: 'foil' }).get('button')
     expect(trigger.text()).toBe('5 or more foil copies')
     expect(trigger.attributes('aria-pressed')).toBe('true')
     expect(trigger.classes()).toContain('border-primary')
@@ -56,67 +64,84 @@ describe('CopiesFilterMenu', () => {
     expect(mountMenu({ finish: 'foil' }).get('button').text()).toBe('foil copies')
   })
 
-  it('offers both groups, with the current values checked', async () => {
-    const wrapper = mountMenu({ copies: '4', finish: 'regular' })
-    const items = await open(wrapper)
-    const labels = items.map((node) => node.textContent?.trim())
-    expect(labels).toEqual(
-      expect.arrayContaining([
-        'Any count',
-        '1 copy',
-        '2–3 copies',
-        'Playset (4)',
-        '5 or more',
-        'Regular or foil',
-        'Regular only',
-        'Foil only',
-      ]),
-    )
-    const checked = items
-      .filter((node) => node.getAttribute('aria-checked') === 'true')
-      .map((node) => node.textContent?.trim())
-    expect(checked).toEqual(['Playset (4)', 'Regular only'])
+  it('seeds the form from the committed filter', async () => {
+    await open(mountMenu({ min: 2, max: 3, finish: 'regular' }))
+    // A two-sided range re-opens as "between 2 and 3", regular pressed.
+    expect(byLabel('How to compare the count')?.textContent).toContain('Between')
+    expect(byLabel('Number of copies')?.value).toBe('2')
+    expect(byLabel('Upper number of copies')?.value).toBe('3')
+    const pressed = Array.from(
+      document.body.querySelectorAll<HTMLElement>(
+        '[data-slot="toggle-group-item"][data-state="on"]',
+      ),
+    ).map((node) => node.textContent?.trim())
+    expect(pressed).toEqual(['Regular only'])
   })
 
-  it('emits the picked copies preset as the ?copies= token', async () => {
-    const wrapper = mountMenu()
-    await pick(wrapper, 'Playset (4)')
-    expect(lastEmit(wrapper, 'update:copies')).toEqual(['4'])
-    expect(wrapper.emitted('update:finish')).toBeUndefined()
+  it('applies the typed count through the seeded comparator as one filter', async () => {
+    // Seeded "at least 5" (the canonical spelling of ?copies=5-); retype the number.
+    const wrapper = mountMenu({ min: 5, finish: 'any' })
+    await open(wrapper)
+    await typeCount('Number of copies', '7')
+    await press('Apply')
+    expect(lastEmit(wrapper, 'apply')).toEqual([{ min: 7, finish: 'any' }])
+    expect(wrapper.emitted('clear')).toBeUndefined()
   })
 
-  it('emits the empty token for "Any count"', async () => {
-    const wrapper = mountMenu({ copies: '4' })
-    await pick(wrapper, 'Any count')
-    expect(lastEmit(wrapper, 'update:copies')).toEqual([''])
-  })
-
-  it('emits the picked finish without touching the copies bound', async () => {
-    const wrapper = mountMenu({ copies: '4' })
-    await pick(wrapper, 'Foil only')
-    expect(lastEmit(wrapper, 'update:finish')).toEqual(['foil'])
-    expect(wrapper.emitted('update:copies')).toBeUndefined()
-  })
-
-  it('keeps the menu open while a radio item is picked, so both groups can be set', async () => {
-    const wrapper = mountMenu()
-    await pick(wrapper, 'Playset (4)')
-    expect(document.body.querySelectorAll('[role="menuitemradio"]').length).toBeGreaterThan(0)
-  })
-
-  it('offers Clear filter only while something is filtered, and clears both halves', async () => {
-    expect(
-      (await open(mountMenu())).some((node) => node.textContent?.includes('Clear filter')),
-    ).toBe(false)
+  it('applies an exact count and a range through their comparators', async () => {
+    const exact = mountMenu({ min: 4, max: 4, finish: 'any' })
+    await open(exact)
+    await typeCount('Number of copies', '1')
+    await press('Apply')
+    expect(lastEmit(exact, 'apply')).toEqual([{ min: 1, max: 1, finish: 'any' }])
     document.body.replaceChildren()
 
-    const wrapper = mountMenu({ copies: '2-3', finish: 'foil' })
-    await pick(wrapper, 'Clear filter')
-    // One `clear` event for the owner's single URL write — never two model writes, whose
-    // second `router.replace` would snapshot the route before the first landed and re-add
-    // the key it had just dropped.
+    const range = mountMenu({ min: 2, max: 3, finish: 'any' })
+    await open(range)
+    await typeCount('Number of copies', '1')
+    await typeCount('Upper number of copies', '3')
+    await press('Apply')
+    expect(lastEmit(range, 'apply')).toEqual([{ min: 1, max: 3, finish: 'any' }])
+  })
+
+  it('carries the finish toggle into the same single apply', async () => {
+    const wrapper = mountMenu({ min: 4, max: 4, finish: 'any' })
+    await open(wrapper)
+    await press('Foil only')
+    await press('Apply')
+    // One event carrying both halves — never separate bound / finish writes.
+    expect(wrapper.emitted('apply')).toHaveLength(1)
+    expect(lastEmit(wrapper, 'apply')).toEqual([{ min: 4, max: 4, finish: 'foil' }])
+  })
+
+  it('applies a finish alone when the number is left blank', async () => {
+    const wrapper = mountMenu()
+    await open(wrapper)
+    await press('Foil only')
+    await press('Apply')
+    expect(lastEmit(wrapper, 'apply')).toEqual([{ finish: 'foil' }])
+  })
+
+  it('blocks Apply on a range whose ends are the wrong way round', async () => {
+    const wrapper = mountMenu({ min: 2, max: 3, finish: 'any' })
+    await open(wrapper)
+    await typeCount('Number of copies', '5')
+    const apply = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (node) => node.textContent?.trim() === 'Apply',
+    )
+    expect(apply?.disabled).toBe(true)
+    expect(byLabel('Number of copies')?.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('offers Clear filter only while something is filtered, and clears with one event', async () => {
+    await open(mountMenu())
+    expect(document.body.textContent).not.toContain('Clear filter')
+    document.body.replaceChildren()
+
+    const wrapper = mountMenu({ min: 2, max: 3, finish: 'foil' })
+    await open(wrapper)
+    await press('Clear filter')
     expect(wrapper.emitted('clear')).toHaveLength(1)
-    expect(wrapper.emitted('update:copies')).toBeUndefined()
-    expect(wrapper.emitted('update:finish')).toBeUndefined()
+    expect(wrapper.emitted('apply')).toBeUndefined()
   })
 })

@@ -90,18 +90,76 @@ export function parseFinish(raw: unknown): HoldingFinish {
   return raw === 'regular' || raw === 'foil' ? raw : 'any'
 }
 
-/** The copy-count presets the filter chip offers, as `?copies=` tokens (`''` = no bound).
- * Deliberately a short curated ladder rather than two number inputs: these are the
- * questions the filter exists to answer. */
-export const COPIES_PRESETS: readonly { value: string; label: string }[] = [
-  { value: '', label: 'Any count' },
-  { value: '1', label: '1 copy' },
-  { value: '2-3', label: '2–3 copies' },
-  { value: '4', label: 'Playset (4)' },
-  { value: '5-', label: '5 or more' },
+/** How the chip's number is compared against the copies held. The URL and the wire only
+ * know inclusive bounds, so each comparison is spelt as a bound pair: `gt N` is `min N+1`,
+ * `lt N` is `max N-1`, and `between` is the two-sided range a hand-typed `?copies=2-3`
+ * already means. */
+export type CopiesComparator = 'eq' | 'gte' | 'gt' | 'lte' | 'lt' | 'between'
+
+/** The comparator options the chip offers, in the order it lists them. */
+export const COPIES_COMPARATORS: readonly { value: CopiesComparator; label: string }[] = [
+  { value: 'eq', label: 'Exactly' },
+  { value: 'gte', label: 'At least' },
+  { value: 'gt', label: 'More than' },
+  { value: 'lte', label: 'At most' },
+  { value: 'lt', label: 'Less than' },
+  { value: 'between', label: 'Between' },
 ]
 
-/** Which counter the bounds read — the chip's second radio group. */
+/** A typed comparison: the comparator, its number, and — for `between` only — the upper
+ * end of the range. */
+export interface CopiesComparison {
+  comparator: CopiesComparator
+  value: number
+  upper?: number
+}
+
+/**
+ * Turn a comparison into the inclusive bounds the URL / wire carry, or null when it can't
+ * be one: a non-integer or negative number, "less than 0" (nothing holds fewer than none),
+ * or a `between` whose upper end is missing or below its lower. `gt` and `lt` shift by one
+ * because the bounds are inclusive.
+ */
+export function boundsFromComparison(comparison: CopiesComparison): CopiesBounds | null {
+  const { comparator, value, upper } = comparison
+  const whole = (n: number | undefined): n is number =>
+    n != null && Number.isSafeInteger(n) && n >= 0
+  if (!whole(value)) return null
+  switch (comparator) {
+    case 'eq':
+      return { min: value, max: value }
+    case 'gte':
+      return { min: value }
+    case 'gt':
+      return { min: value + 1 }
+    case 'lte':
+      return { max: value }
+    case 'lt':
+      return value === 0 ? null : { max: value - 1 }
+    case 'between':
+      if (!whole(upper) || upper < value) return null
+      return { min: value, max: upper }
+  }
+}
+
+/**
+ * Read bounds back into the comparison the chip's form shows — the canonical spelling, so
+ * `more than 4` re-opens as `at least 5` (the URL keeps only the bounds). Unbounded reads
+ * as a blank `gte` (the form's default comparator with no number).
+ */
+export function comparisonFromBounds(bounds: CopiesBounds): CopiesComparison | null {
+  const { min, max } = bounds
+  if (min == null && max == null) return null
+  if (min != null && max != null) {
+    return min === max
+      ? { comparator: 'eq', value: min }
+      : { comparator: 'between', value: min, upper: max }
+  }
+  if (min != null) return { comparator: 'gte', value: min }
+  return { comparator: 'lte', value: max as number }
+}
+
+/** Which counter the bounds read — the chip's finish toggle. */
 export const FINISH_OPTIONS: readonly { value: HoldingFinish; label: string }[] = [
   { value: 'any', label: 'Regular or foil' },
   { value: 'regular', label: 'Regular only' },

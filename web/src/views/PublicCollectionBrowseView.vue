@@ -76,10 +76,10 @@ const {
   ghostGroups,
   ownership,
   ownershipReady,
-  copiesToken,
-  finish,
+  copiesFilter,
   copiesActive,
   copiesDescription,
+  setCopies,
   clearCopies,
   scopeTotalValue,
   scopeBulkValue,
@@ -223,8 +223,8 @@ const notFound = computed(() => summaryQuery.isError.value)
                  which the catalog listing behind show-ghosts doesn't have. -->
             <CopiesFilterMenu
               v-if="!showGhosts"
-              v-model:copies="copiesToken"
-              v-model:finish="finish"
+              :filter="copiesFilter"
+              @apply="setCopies"
               @clear="clearCopies"
             />
           </div>

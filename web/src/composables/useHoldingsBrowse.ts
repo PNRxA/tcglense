@@ -265,9 +265,8 @@ export function useHoldingsBrowse(
   // the cards within each drop / sub-type just as well.
   const {
     copies: rawCopies,
-    copiesToken,
-    finish,
     active: rawCopiesActive,
+    set: setCopies,
     clear: clearCopies,
   } = useCopiesFilter()
   // Show-ghosts lists the public catalog, which ignores these params — so the filter reads as
@@ -607,10 +606,9 @@ export function useHoldingsBrowse(
     wishlistCounts,
     wishlistReady,
     copiesFilter,
-    copiesToken,
-    finish,
     copiesActive,
     copiesDescription,
+    setCopies,
     clearCopies,
     heldUnique,
     scopeTotal,

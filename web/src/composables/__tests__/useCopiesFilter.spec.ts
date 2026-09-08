@@ -42,16 +42,12 @@ describe('useCopiesFilter', () => {
   it('is inactive and unbounded with no filter in the URL', async () => {
     const { api } = await start('/collection/mtg/cards')
     expect(api.copies.value).toEqual({ finish: 'any' })
-    expect(api.copiesToken.value).toBe('')
-    expect(api.finish.value).toBe('any')
     expect(api.active.value).toBe(false)
   })
 
   it('hydrates the bounds and finish from the URL', async () => {
     const { api } = await start('/collection/mtg/cards?copies=2-3&finish=foil')
     expect(api.copies.value).toEqual({ min: 2, max: 3, finish: 'foil' })
-    expect(api.copiesToken.value).toBe('2-3')
-    expect(api.finish.value).toBe('foil')
     expect(api.active.value).toBe(true)
   })
 
@@ -67,44 +63,42 @@ describe('useCopiesFilter', () => {
     expect(api.active.value).toBe(false)
   })
 
-  it('writes a chosen preset into the URL and restarts paging', async () => {
+  it('commits a whole filter in one write and restarts paging', async () => {
     const { router, api } = await start('/collection/mtg/cards?page=4')
-    api.copiesToken.value = '5-'
+    api.set({ min: 5, finish: 'foil' })
     await flushPromises()
-    expect(query(router).copies).toBe('5-')
+    expect(query(router)).toMatchObject({ copies: '5-', finish: 'foil' })
     expect(query(router).page).toBeUndefined()
+    expect(api.copies.value).toEqual({ min: 5, finish: 'foil' })
   })
 
-  it('canonicalizes a written token through the grammar', async () => {
-    const { router, api } = await start('/collection/mtg/cards')
-    api.copiesToken.value = '5+'
+  it('spells the bounds canonically and drops the keys at their defaults', async () => {
+    const { router, api } = await start('/collection/mtg/cards?copies=4&finish=foil')
+    api.set({ min: 2, max: 3, finish: 'any' })
     await flushPromises()
-    expect(query(router).copies).toBe('5-')
-    expect(api.copies.value).toEqual({ min: 5, finish: 'any' })
+    expect(query(router).copies).toBe('2-3')
+    expect(query(router).finish).toBeUndefined()
 
-    // Junk clears rather than landing a filter the server would reject.
-    api.copiesToken.value = 'lots'
+    api.set({ max: 3, finish: 'regular' })
+    await flushPromises()
+    expect(query(router).copies).toBe('-3')
+    expect(query(router).finish).toBe('regular')
+
+    // Unbounded + default finish = no filter, no keys.
+    api.set({ finish: 'any' })
     await flushPromises()
     expect(query(router).copies).toBeUndefined()
-  })
-
-  it('drops the key for the "any count" option', async () => {
-    const { router, api } = await start('/collection/mtg/cards?copies=4')
-    api.copiesToken.value = ''
-    await flushPromises()
-    expect(query(router).copies).toBeUndefined()
+    expect(query(router).finish).toBeUndefined()
     expect(api.active.value).toBe(false)
   })
 
-  it('writes the finish and drops the key at its "any" default', async () => {
-    const { router, api } = await start('/collection/mtg/cards?page=2')
-    api.finish.value = 'regular'
+  it('replaces both halves at once, never leaving a stale key behind', async () => {
+    // The two-write shape this replaced raced: the second `router.replace` snapshotted the
+    // route before the first landed and re-added the key it had dropped.
+    const { router, api } = await start('/collection/mtg/cards?copies=2-3&finish=foil')
+    api.set({ min: 5, finish: 'any' })
     await flushPromises()
-    expect(query(router).finish).toBe('regular')
-    expect(query(router).page).toBeUndefined()
-
-    api.finish.value = 'any'
-    await flushPromises()
+    expect(query(router).copies).toBe('5-')
     expect(query(router).finish).toBeUndefined()
   })
 
@@ -124,7 +118,7 @@ describe('useCopiesFilter', () => {
     const { router, api } = await start(
       '/collection/mtg/sets/sld?view=all&related=1&ghosts=1&q=elf',
     )
-    api.copiesToken.value = '4'
+    api.set({ min: 4, max: 4, finish: 'any' })
     await flushPromises()
     expect(query(router).copies).toBe('4')
     expect(query(router).view).toBe('all')
