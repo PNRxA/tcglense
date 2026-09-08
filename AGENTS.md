@@ -185,7 +185,18 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   CDN-cached catalog listing and must not learn per-user state (`is:foil` matches the
   catalog's finishes, not the user's). Landing in the seam is what lets the `.txt` export and
   the grouped views inherit it, and the SPA mirrors the one URL grammar for it in
-  `lib/holdingsFilter.ts`. Both surfaces
+  `lib/holdingsFilter.ts`. **The breakdown** (`GET /api/{collection,wishlist}/{game}/breakdown`,
+  issue #680 — value by rarity / colour / type / finish + the top holdings by *held* value) is
+  the twins' third analytics read and lives in the seam too: `handlers/shared/breakdown.rs`
+  folds a `BreakdownRow` (the `SummaryRow` widened by four facet columns, projected through
+  `narrow_breakdown_rows` on top of the summary's own column list) and embeds
+  `summarize_holdings` over the same rows, so its `summary` **is** the header's; each twin
+  contributes only its entity query. It rides `analytics_cache` like value history and movers,
+  but keyed per **surface** (`HoldingsSurface::{Collection,Wishlist}`) — every wish-list card
+  write must `bump_surface_holdings(Wishlist, …)`, or the cached wish-list breakdown outlives
+  the edit — and the per-user `analytics` bucket. The type bucket reads the type line's *first
+  card type* through `shared::type_line::primary_type` (the same supertype table the Archidekt
+  CSV export splits on). Both surfaces
   also hold sealed products in independent `collection_product_items` /
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:

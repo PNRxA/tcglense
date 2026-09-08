@@ -12,6 +12,7 @@ import CollectionSignInPrompt from '@/components/collection/CollectionSignInProm
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import WishlistSettingsMenu from '@/components/wishlist/WishlistSettingsMenu.vue'
+import HoldingBreakdownPanel from '@/components/holdings/HoldingBreakdownPanel.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
@@ -19,6 +20,7 @@ import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { useCurrency } from '@/composables/useCurrency'
 import { sumUsd } from '@/lib/money'
 import {
+  useWishlistBreakdownQuery,
   useWishlistProductSummaryQuery,
   useWishlistSetsQuery,
   useWishlistSummaryQuery,
@@ -59,9 +61,12 @@ const {
   ownership,
   totalValue,
   hasStats,
+  breakdownQuery,
+  breakdown,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useWishlistSummaryQuery,
   useHeldSetsQuery: useWishlistSetsQuery,
+  useBreakdownQuery: useWishlistBreakdownQuery,
   basePath: '/wishlist',
   countNoun: 'wanted',
   withBulk: false,
@@ -187,6 +192,19 @@ usePageMeta({
            section's heading + stats above. -->
       <h2 class="mb-4 text-lg font-semibold">Cards</h2>
       <HoldingStatList :items="cardStats" class="mb-6" />
+
+      <!-- Where the wanted cards' cost sits (issue #680): the collection breakdown's twin,
+           worded for a shopping list. Beside the stats it slices; gated like them. -->
+      <HoldingBreakdownPanel
+        v-if="hasStats"
+        :game="game"
+        :breakdown="breakdown"
+        :pending="breakdownQuery?.isPending.value ?? false"
+        :error="breakdownQuery?.isError.value ?? false"
+        count-noun="wanted"
+        title="Where the cost is"
+        class="mb-8"
+      />
 
       <!-- The set list — wishlisted sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year

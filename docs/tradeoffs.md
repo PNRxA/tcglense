@@ -127,8 +127,9 @@ catalog) is planned but not implemented.
   do no matter how many IPs it comes from — the per-user complement to the per-IP
   auth limits above. Three classes (`ratelimit/per_user.rs`'s `UserRoute`): a generous
   `general` bucket (reads/edits/batch lookups, ~300/min); a middle `analytics` bucket
-  (~30/min) for the whole-collection × full-price-history reads and the CSV export —
-  `GET …/collection/{game}/value-history`, `…/movers`, `…/export` — which read
+  (~30/min) for the whole-collection × full-price-history reads, the whole-holdings
+  `breakdown` fold (issue #680, the wish-list twin included) and the CSV export —
+  `GET …/collection/{game}/value-history`, `…/movers`, `…/breakdown`, `…/export` — which read
   whole-collection price data (up to O(cards × captured days) for a wide value-history
   window; the movers/cutoff anchors are per-item point seeks since the 2026-07 rewrite —
   §Price history) and are `no-store` (no CDN shields them), so one account

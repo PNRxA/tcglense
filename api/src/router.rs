@@ -43,13 +43,14 @@ use crate::{
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
-            MAX_CSV_UPLOAD_BYTES, collection_movers, collection_product_counts,
-            collection_product_summary, collection_set_drops, collection_set_subtypes,
-            collection_sets, collection_summary, collection_value_history, export_collection,
-            export_collection_cards, get_collection_entry, get_collection_product_entry,
-            get_import_job, import_collection, import_collection_csv, import_collection_text,
-            list_collection, list_collection_product_sets, list_collection_products, owned_counts,
-            set_collection_entry, set_collection_product_entry,
+            MAX_CSV_UPLOAD_BYTES, collection_breakdown, collection_movers,
+            collection_product_counts, collection_product_summary, collection_set_drops,
+            collection_set_subtypes, collection_sets, collection_summary, collection_value_history,
+            export_collection, export_collection_cards, get_collection_entry,
+            get_collection_product_entry, get_import_job, import_collection, import_collection_csv,
+            import_collection_text, list_collection, list_collection_product_sets,
+            list_collection_products, owned_counts, set_collection_entry,
+            set_collection_product_entry,
         },
         config::public_config,
         currency::currency_rates,
@@ -95,9 +96,9 @@ use crate::{
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
-            set_wishlist_product_entry, wishlist_counts, wishlist_product_counts,
-            wishlist_product_summary, wishlist_set_drops, wishlist_set_subtypes, wishlist_sets,
-            wishlist_summary,
+            set_wishlist_product_entry, wishlist_breakdown, wishlist_counts,
+            wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
+            wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
     },
     state::AppState,
@@ -229,6 +230,12 @@ pub fn build_router(state: AppState) -> Router {
         // The biggest 1d / 7d / 30d / 1y / 2y / 3y / all-time gain & loss movements across
         // the user's owned cards (per-unit price change × copies held).
         .route("/api/collection/{game}/movers", get(collection_movers))
+        // Where the collection's value sits — by rarity / colour / type / finish + the top
+        // holdings by held value (issue #680); the third analytics-cached scan.
+        .route(
+            "/api/collection/{game}/breakdown",
+            get(collection_breakdown),
+        )
         // The sets a user owns cards in — the collection's per-set landing (mirrors the
         // catalog's game -> sets view), each dressed with catalog metadata + owned counts.
         .route("/api/collection/{game}/sets", get(collection_sets))
@@ -323,6 +330,8 @@ pub fn build_router(state: AppState) -> Router {
             get(get_wishlist_visibility).put(set_wishlist_visibility),
         )
         .route("/api/wishlist/{game}/summary", get(wishlist_summary))
+        // The collection breakdown's twin (issue #680): what buying the list costs, sliced.
+        .route("/api/wishlist/{game}/breakdown", get(wishlist_breakdown))
         .route("/api/wishlist/{game}/sets", get(wishlist_sets))
         .route(
             "/api/wishlist/{game}/sets/{code}/drops",

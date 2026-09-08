@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import {
   getCollection,
+  getCollectionBreakdown,
   getCollectionEntry,
   getCollectionMovers,
   getCollectionOwned,
@@ -39,6 +40,7 @@ const queries = makeHoldingQueries({
   getSetSubtypes: getCollectionSetSubtypes,
   getSummary: getCollectionSummary,
   getSets: getCollectionSets,
+  getBreakdown: getCollectionBreakdown,
   getEntry: getCollectionEntry,
   getCounts: getCollectionOwned,
   setEntry: setCollectionEntry,
@@ -72,6 +74,10 @@ export const useCollectionSummaryQuery = queries.useSummaryQuery
 
 /** The sets the user owns cards in (newest first) — the per-set collection landing. */
 export const useCollectionSetsQuery = queries.useSetsQuery
+
+/** Where the collection's value sits — by rarity, colour, card type and finish, plus the
+ * top holdings by held value (issue #680). Carries the bulk-threshold preference. */
+export const useCollectionBreakdownQuery = queries.useBreakdownQuery
 
 /** How many copies of one card the signed-in user owns — for the card-detail controls. */
 export const useCollectionEntryQuery = queries.useEntryQuery

@@ -5,7 +5,13 @@ import { useSetsQuery } from '@/composables/useCatalog'
 import { useFilteredSetGroups } from '@/composables/useSetGrouping'
 import { useCurrency } from '@/composables/useCurrency'
 import { groupByYear, partitionPinned } from '@/lib/setGroups'
-import type { ApiError, CardSet, CollectionSet, CollectionSummary } from '@/lib/api'
+import type {
+  ApiError,
+  CardSet,
+  CollectionSet,
+  CollectionSummary,
+  HoldingBreakdown,
+} from '@/lib/api'
 import type { CountNoun } from '@/lib/ownership'
 
 /**
@@ -23,6 +29,14 @@ export interface HoldingLandingSurface {
   /** The held-sets hook (`useCollectionSetsQuery` / `useWishlistSetsQuery`) — the sets the
    * user holds cards in, both the default mode's list and the per-set overlay. */
   useHeldSetsQuery: (game: Ref<string>) => UseQueryReturnType<{ data: CollectionSet[] }, ApiError>
+  /** The breakdown hook (`useCollectionBreakdownQuery` / `useWishlistBreakdownQuery`,
+   * issue #680) — where the holding's value sits, for the landing's breakdown panel. The
+   * engine gates it on something being held (it is a whole-holdings scan), so the public
+   * landings, which have no breakdown read, simply leave it out. */
+  useBreakdownQuery?: (
+    game: Ref<string>,
+    opts: { enabled?: Ref<boolean> },
+  ) => UseQueryReturnType<HoldingBreakdown, ApiError>
   /** Route prefix the tiles link under (`/collection`, `/wishlist`, or a public
    * `/u/{handle}`). The engine never reads it — the view threads it into `SetGroupGrid` —
    * so it's a plain string. */
@@ -140,6 +154,12 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
   // Stats are worth showing only once something is held.
   const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
+  // The breakdown panel's query (issue #680), held back until the summary says something is
+  // held: it folds every held card server-side, so an empty holding shouldn't pay for it,
+  // and the panel has nothing to draw before then anyway. Absent for the public landings.
+  const breakdownQuery = surface.useBreakdownQuery?.(game, { enabled: hasStats })
+  const breakdown = computed(() => breakdownQuery?.data.value)
+
   return {
     game,
     summary,
@@ -160,5 +180,7 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
     totalValue,
     bulkValue,
     hasStats,
+    breakdownQuery,
+    breakdown,
   }
 }

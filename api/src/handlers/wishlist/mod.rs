@@ -20,8 +20,9 @@
 //!
 //! The handlers are split across submodules by concern — [`read`] (list / summary /
 //! wanted-count reads), [`sets`] (per-set landing + by-drop), [`write`] (the
-//! wanted-count upsert), and [`products`] (the sealed-product wants) — mirroring
-//! `handlers::collection` minus its import/sync (a wish list has nothing to import). The
+//! wanted-count upsert), [`products`] (the sealed-product wants), and [`breakdown`] (the
+//! collection breakdown's twin, issue #680) — mirroring `handlers::collection` minus its
+//! import/sync (a wish list has nothing to import) and its price-history analytics. The
 //! card wire DTOs and params are the collection's own, reused from
 //! [`crate::handlers::shared::holdings`] so the wish list needs no new generated TS
 //! types; on this side of the API their "owned" fields simply read as "wanted". Sealed
@@ -37,6 +38,7 @@ use crate::entities::wishlist_item;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod breakdown;
 mod export;
 mod products;
 mod read;
@@ -46,6 +48,7 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+pub use breakdown::wishlist_breakdown;
 pub use export::export_wishlist_cards;
 pub use products::{
     get_wishlist_product_entry, list_wishlist_product_sets, list_wishlist_products,
@@ -66,6 +69,7 @@ pub(crate) use sets::{wanted_drop_page, wanted_sets, wanted_subtype_page};
 // The `#[utoipa::path]`-generated route metadata structs, re-exported so
 // `crate::openapi::ApiDoc` can name them at `crate::handlers::wishlist::__path_<fn>`
 // (see the note in `crate::handlers::catalog`).
+pub use breakdown::__path_wishlist_breakdown;
 pub use export::__path_export_wishlist_cards;
 pub use products::{
     __path_get_wishlist_product_entry, __path_list_wishlist_product_sets,

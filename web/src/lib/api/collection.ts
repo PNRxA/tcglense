@@ -28,6 +28,7 @@ import type {
 // signatures. Collection-only surfaces (value history, CSV export) stay local.
 
 export type {
+  BreakdownBucket,
   CollectionDropGroup,
   CollectionEntry,
   CollectionMover,
@@ -41,6 +42,8 @@ export type {
   CollectionSubtypeGroup,
   CollectionSummary,
   CollectionVisibility,
+  HoldingBreakdown,
+  TopHolding,
 } from './generated'
 
 import type { CollectionVisibility } from './generated'
@@ -152,6 +155,14 @@ export const getCollectionSummary = api.summary
 /** The sets the user owns cards in, newest set first — the per-set collection landing.
  * `bulkMaxCents` sets each tile's bulk cutoff, matching the summary header. */
 export const getCollectionSets = api.sets
+
+/** Relative `/api/collection/{game}/breakdown` path (issue #680). */
+export const collectionBreakdownPath = api.breakdownPath
+
+/** Where the collection's value sits — by rarity, colour identity, card type and finish,
+ * plus the top holdings by held value. Carries the bulk-threshold preference so the
+ * embedded summary's bulk slice matches the landing header. */
+export const getCollectionBreakdown = api.breakdown
 
 /** Relative `/api/collection/{game}/sets/{code}/drops` path (paginated by drop). */
 export const collectionSetDropsPath = api.setDropsPath

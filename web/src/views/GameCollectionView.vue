@@ -15,10 +15,12 @@ import CollectionSignInPrompt from '@/components/collection/CollectionSignInProm
 import CollectionImportControls from '@/components/collection/CollectionImportControls.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import HoldingBreakdownPanel from '@/components/holdings/HoldingBreakdownPanel.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
 import HoldingStatList from '@/components/shared/HoldingStatList.vue'
 import { useGameName } from '@/composables/useCatalog'
 import {
+  useCollectionBreakdownQuery,
   useCollectionProductSummaryQuery,
   useCollectionSetsQuery,
   useCollectionSummaryQuery,
@@ -65,9 +67,12 @@ const {
   totalValue,
   bulkValue,
   hasStats,
+  breakdownQuery,
+  breakdown,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useCollectionSummaryQuery,
   useHeldSetsQuery: useCollectionSetsQuery,
+  useBreakdownQuery: useCollectionBreakdownQuery,
   basePath: '/collection',
   withBulk: true,
 })
@@ -223,6 +228,19 @@ function fetchValueHistory(range: PriceRange) {
            the sealed section's heading + stats above. -->
       <h2 class="mb-4 text-lg font-semibold">Cards</h2>
       <HoldingStatList :items="cardStats" class="mb-6" />
+
+      <!-- Where the cards' value sits (issue #680): by rarity / colour / type / finish, and
+           the top holdings by held value. Beside the stats it slices; gated like them. -->
+      <HoldingBreakdownPanel
+        v-if="hasStats"
+        :game="game"
+        :breakdown="breakdown"
+        :pending="breakdownQuery?.isPending.value ?? false"
+        :error="breakdownQuery?.isError.value ?? false"
+        count-noun="owned"
+        title="Where the value is"
+        class="mb-8"
+      />
 
       <!-- The set list — owned sets by default, the whole catalog under "All sets".
            The filter bar sticks to the top of the viewport, and the all-mode year
