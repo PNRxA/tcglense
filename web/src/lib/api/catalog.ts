@@ -2,6 +2,7 @@ import { API_URL, listQuery, request, requestBlob } from './client'
 import type {
   ArtTagEntry,
   Card,
+  CardDetail,
   CardSet,
   DropGroup,
   Game,
@@ -23,6 +24,7 @@ import type {
 export type {
   ArtTagEntry,
   Card,
+  CardDetail,
   CardFace,
   CardPrices,
   CardSet,
@@ -327,8 +329,22 @@ export function listSetSubtypes(
   })
 }
 
-export function getCard(game: string, id: string): Promise<Card> {
-  return request<Card>(`/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`)
+/**
+ * What a card-detail consumer actually holds: the full [`CardDetail`] once the single-card
+ * route answers, or — while a cache-miss deep link (or a just-opened grid modal) is still
+ * pending — the grid tile the query was seeded from, which is a plain [`Card`] and carries
+ * **none** of the detail-only fields. So every detail-only read must tolerate `undefined`;
+ * the shared `Card` half is always there, which is why components taking a `Card`
+ * (CollectionControls, CardPriceSummary, …) keep working unchanged.
+ */
+export type CardDetailOrTile = Card & Partial<Omit<CardDetail, keyof Card>>
+
+/** One card's full detail — the shared `Card` fields plus the print/collector details
+ * only this route carries (artist, flavour text, finishes, frame, Reserved List, …). */
+export function getCard(game: string, id: string): Promise<CardDetail> {
+  return request<CardDetail>(
+    `/api/games/${encodeURIComponent(game)}/cards/${encodeURIComponent(id)}`,
+  )
 }
 
 /** A card's other printings (every card sharing its gameplay identity/oracle id),

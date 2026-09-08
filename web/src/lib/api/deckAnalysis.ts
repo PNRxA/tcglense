@@ -4,6 +4,7 @@ import type {
   DeckBracketEstimate,
   DeckFormat,
   DeckLegality,
+  DeckManaBase,
   DeckPricing,
   DeckTokens,
   GoldfishHand,
@@ -38,6 +39,11 @@ export type {
   DeckIssueStatus,
   DeckLegality,
   DeckLegalityIssue,
+  DeckManaBase,
+  DeckManaColor,
+  DeckManaDemandCard,
+  DeckManaSource,
+  DeckManaStatus,
   DeckPricing,
   DeckPricingLine,
   DeckRuleCardStatus,
@@ -204,6 +210,20 @@ export function getPublicDeckPricing(handle: string, deckId: number): Promise<De
   return request<DeckPricing>(`${publicBase(handle, deckId)}/pricing`)
 }
 
+// ----- Mana base -----
+
+/** The deck's colour pips against its sources, judged by Karsten's source counts (issue
+ * #670): per colour, what the spells demand, what the library produces, the number a deck
+ * this size needs for its hungriest spell, and a plain verdict. */
+export function getDeckMana(token: string, game: string, deckId: number): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${deckBase(game, deckId)}/mana`, { token })
+}
+
+/** The same read for a deck its owner shared. */
+export function getPublicDeckMana(handle: string, deckId: number): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${publicBase(handle, deckId)}/mana`)
+}
+
 // ----- Goldfish -----
 
 /** Deal a sample hand from a deck's library. */
@@ -271,6 +291,11 @@ export function getPreconBracket(
 /** The tokens a published decklist makes — the ones its product's token sheet holds. */
 export function getPreconTokens(game: string, slug: string): Promise<DeckTokens> {
   return request<DeckTokens>(`${preconBase(game, slug)}/tokens`)
+}
+
+/** A published decklist's mana base — judged against the deck size its type states. */
+export function getPreconMana(game: string, slug: string): Promise<DeckManaBase> {
+  return request<DeckManaBase>(`${preconBase(game, slug)}/mana`)
 }
 
 /** A seeded sample hand from a published decklist. */

@@ -49,6 +49,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckPricing from '@/components/decks/DeckPricing.vue'
@@ -343,6 +344,10 @@ function copyDeckList() {
       />
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+
+      <!-- Colour sources against pip requirements (issue #670). Hidden for an empty deck,
+        which has nothing to cast and nothing to cast it with. -->
+      <DeckMana v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
       <!-- Where the money is (issue #672): the value per card, the cheapest printing of
         each, and the swaps that would realise the saving. Nothing to price in an empty deck. -->

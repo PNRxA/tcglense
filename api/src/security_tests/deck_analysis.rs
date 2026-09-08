@@ -162,7 +162,7 @@ async fn another_users_deck_is_404_never_403() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "goldfish"] {
+    for path in ["stats", "legality", "bracket", "tokens", "mana", "goldfish"] {
         let (status, _, _) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &bob),
@@ -191,7 +191,9 @@ async fn a_read_only_key_may_analyse() {
     )
     .await;
 
-    for path in ["stats", "legality", "bracket", "goldfish", "pricing"] {
+    for path in [
+        "stats", "legality", "bracket", "tokens", "mana", "goldfish", "pricing",
+    ] {
         let (status, _, body) = send(
             &app,
             get_with_bearer(&format!("/api/decks/mtg/{deck_id}/{path}"), &key),
@@ -449,7 +451,9 @@ async fn a_shared_deck_analyses_identically_and_privately() {
     let (deck_id, _) = deck_with_cards(&app, &access, "Shared", "Modern", &stack).await;
 
     // Private: the public mirrors are a 404, and never CDN-pinned.
-    for path in ["stats", "legality", "bracket", "goldfish", "pricing"] {
+    for path in [
+        "stats", "legality", "bracket", "tokens", "mana", "goldfish", "pricing",
+    ] {
         let (status, headers, _) = send(
             &app,
             get(&format!("/api/u/nobody-0001/decks/{deck_id}/{path}")),
@@ -612,6 +616,87 @@ async fn the_bracket_is_estimated_only_for_commander() {
     );
     assert_eq!(
         public_bracket, body,
+        "a shared deck and its owner's copy are the same deck"
+    );
+}
+
+/// The mana base (issue #670): demand is read off the deck's costs, supply off the library,
+/// and the public mirror is the same computation. The dummy catalog has no lands and no
+/// producers, so what this can pin over HTTP is the demand side, the zero-supply verdict, and
+/// that a checked non-producer is **not** reported as unchecked — the ingest stores `""` for
+/// it, which is the whole point of the convention.
+#[tokio::test]
+async fn the_mana_base_reads_pips_against_sources() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "mana@example.com", PW).await;
+    let cards = sample_card_ids(&app, 2).await;
+    let (deck_id, _) = deck_with_cards(
+        &app,
+        &access,
+        "Colours",
+        "Commander",
+        &[(cards[0].clone(), 3), (cards[1].clone(), 1)],
+    )
+    .await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}/mana"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "mana failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"), "per-user data");
+    // A Commander deck is judged against the 99-card column however few cards it holds.
+    assert_eq!(body["table_size"], 99);
+    assert_eq!(body["deck_size"], 4);
+    assert_eq!(body["library_size"], 4);
+    assert_eq!(body["land_count"], 0);
+    assert_eq!(
+        body["unchecked_count"], 0,
+        "a seeded card was written with the empty-string convention, so it is checked"
+    );
+    assert!(
+        body["source"]
+            .as_str()
+            .is_some_and(|s| s.contains("Karsten"))
+    );
+    assert!(!body["caveats"].as_array().expect("caveats").is_empty());
+
+    // Every seeded card costs `{n}{C}` for one colour, so there is demand and no supply.
+    let colors = body["colors"].as_array().expect("colors");
+    assert!(!colors.is_empty(), "{body:?}");
+    let total_pips: i64 = colors.iter().map(|c| c["pips"].as_i64().unwrap_or(0)).sum();
+    assert_eq!(total_pips, 4, "one pip per copy: {body:?}");
+    for color in colors {
+        assert_eq!(color["sources"], 0);
+        assert_eq!(color["status"], "short");
+        assert!(color["sources_needed"].as_i64().is_some_and(|n| n > 0));
+        assert_eq!(color["shortfall"], color["sources_needed"]);
+        assert!(
+            color["verdict"]
+                .as_str()
+                .is_some_and(|v| v.starts_with("Short ")),
+            "{color:?}"
+        );
+        let demand = color["demand"].as_array().expect("demand");
+        assert_eq!(demand.len() as i64, color["demand_count"]);
+        assert!(
+            demand.iter().all(|d| d["cost_key"].as_str().is_some()),
+            "every counted card names the table row it was judged as"
+        );
+    }
+
+    // The public mirror is the identical computation.
+    let handle = share(&app, &access, "manabase", deck_id).await;
+    let (status, headers, public) =
+        send(&app, get(&format!("/api/u/{handle}/decks/{deck_id}/mana"))).await;
+    assert_eq!(status, StatusCode::OK, "public mana: {public:?}");
+    assert!(
+        cache_control(&headers).is_some_and(|cc| cc.contains("max-age")),
+        "a public read is a pure function of its URL, so it's CDN-cacheable"
+    );
+    assert_eq!(
+        public, body,
         "a shared deck and its owner's copy are the same deck"
     );
 }

@@ -112,6 +112,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::precons::precon_legality,
         crate::handlers::precons::precon_bracket,
         crate::handlers::precons::precon_tokens,
+        crate::handlers::precons::precon_mana,
         crate::handlers::precons::precon_goldfish,
         crate::handlers::precons::copy_precon_deck,
         crate::handlers::precons::add_precon_to_collection,
@@ -213,6 +214,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::deck_legality,
         crate::handlers::decks::deck_bracket,
         crate::handlers::decks::deck_tokens,
+        crate::handlers::decks::deck_mana,
         crate::handlers::decks::deck_goldfish,
         crate::handlers::decks::deck_pricing,
         // --- Tools: the life counter (tracked games, seats, life history, deck records) ---
@@ -246,6 +248,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::sharing::public_deck_legality,
         crate::handlers::sharing::public_deck_bracket,
         crate::handlers::sharing::public_deck_tokens,
+        crate::handlers::sharing::public_deck_mana,
         crate::handlers::sharing::public_deck_goldfish,
         crate::handlers::sharing::public_deck_pricing,
         // --- Public wish lists (issue #493): handle-keyed read-only mirror of the above ---
@@ -265,6 +268,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         // automatically from the annotated path response bodies.
         crate::catalog::Game,
         crate::handlers::shared::CardResponse,
+        crate::handlers::shared::CardDetailResponse,
         crate::handlers::shared::dto::PricesResponse,
         crate::handlers::shared::dto::CardFaceResponse,
         crate::handlers::shared::CollectionEntry,
