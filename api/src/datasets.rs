@@ -46,6 +46,11 @@ pub struct SyncSource {
     /// rather than threaded as a separate flag because "no source" is the natural way to
     /// say "don't fetch" — [`Self::spellbook_combos_url`] answers `None`.
     combos_enabled: bool,
+    /// How often, in hours, the upstream export is asked for at all
+    /// (`COMBOS_UPSTREAM_INTERVAL_DAYS` × 24; `0` = every tick). Only meaningful in
+    /// upstream mode — a mirror consumer polls the origin every tick, which costs the
+    /// source nothing.
+    combos_upstream_interval_hours: u64,
 }
 
 impl SyncSource {
@@ -53,6 +58,7 @@ impl SyncSource {
     pub fn from_config(config: &Config) -> Self {
         Self::new(config.sync_from_upstream, config.dataset_mirror_url.clone())
             .with_combos(config.combos_sync_enabled)
+            .with_combos_upstream_interval(config.combos_upstream_interval_days.saturating_mul(24))
     }
 
     /// Construct directly (used by tests). Trims a trailing slash off `mirror_base`
@@ -62,7 +68,20 @@ impl SyncSource {
             from_upstream,
             mirror_base: mirror_base.into().trim_end_matches('/').to_string(),
             combos_enabled: true,
+            combos_upstream_interval_hours: 0,
         }
+    }
+
+    /// Set how often (hours) the upstream export is fetched; `0` = every tick.
+    pub fn with_combos_upstream_interval(mut self, hours: u64) -> Self {
+        self.combos_upstream_interval_hours = hours;
+        self
+    }
+
+    /// The upstream fetch cadence in hours (`0` = every tick). See
+    /// [`crate::spellbook::ingest`] for how a completed import younger than this is skipped.
+    pub fn combos_upstream_interval_hours(&self) -> u64 {
+        self.combos_upstream_interval_hours
     }
 
     /// Switch the combo dataset on or off (see [`Self::spellbook_combos_url`]).
@@ -166,6 +185,22 @@ mod tests {
             Some(crate::spellbook::VARIANTS_URL)
         );
         assert!(s.from_upstream());
+    }
+
+    #[test]
+    fn the_upstream_combo_cadence_is_days_times_twenty_four() {
+        let config = Config {
+            combos_upstream_interval_days: 30,
+            ..crate::test_support::test_config()
+        };
+        assert_eq!(
+            SyncSource::from_config(&config).combos_upstream_interval_hours(),
+            720
+        );
+        assert_eq!(
+            SyncSource::new(true, "x").combos_upstream_interval_hours(),
+            0
+        );
     }
 
     #[test]

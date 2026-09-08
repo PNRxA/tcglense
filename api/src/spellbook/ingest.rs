@@ -1,6 +1,13 @@
 //! The combo sync: fetch the dataset (upstream export or mirror snapshot), reduce it to
 //! [`ComboRecord`]s, and swap the `combos` + `combo_pieces` tables wholesale.
 //!
+//! **Fetched sparsely.** Commander Spellbook asks for sparse traffic and the dataset moves
+//! on the order of a set release, so in upstream mode a completed import younger than
+//! `COMBOS_UPSTREAM_INTERVAL_DAYS` (default 30) isn't even asked about — [`upstream_due`]
+//! reads the last completed run's `finished_at` through the same `initial_delay` policy
+//! the Secret Lair sync defers by. A mirror consumer is not gated: its daily poll hits
+//! this app's own origin, which costs the source nothing, and keeps self-hosts fresh.
+//!
 //! **Version-gated on the document's `ETag`** through `ingest_state` `(mtg, combos)`,
 //! but unlike the Scryfall datasets the gate is the *server's*: there is no catalog
 //! document advertising a version, so the fetch itself is conditional
@@ -41,7 +48,7 @@ use sha2::{Digest, Sha256};
 use super::model::{ComboRecord, Variant};
 use super::stream::VariantSplitter;
 use super::{DATASET, GAME};
-use crate::catalog::ingest_state::{self, StateFields};
+use crate::catalog::ingest_state::{self, StateFields, initial_delay};
 use crate::datasets::SyncSource;
 use crate::entities::prelude::{Combo, ComboPiece};
 use crate::entities::{combo, combo_piece};
@@ -88,6 +95,16 @@ async fn refresh_inner(
     // is it sent back, so an errored or zero-row run re-fetches the document rather than
     // 304-ing onto a table it never filled.
     let state = ingest_state::load(db, GAME, DATASET).await?;
+    if source.from_upstream()
+        && !upstream_due(
+            state.as_ref(),
+            source.combos_upstream_interval_hours(),
+            Utc::now(),
+        )
+    {
+        tracing::debug!("combo database fetched from upstream recently; not asking again yet");
+        return Ok(());
+    }
     let held_tag = state.as_ref().and_then(|s| s.source_updated_at.clone());
     let prev_etag = state
         .as_ref()
@@ -177,6 +194,21 @@ async fn refresh_inner(
     .await?;
     tracing::info!(combos = count, pieces, "combo database import complete");
     Ok(())
+}
+
+/// Whether the upstream export should be asked for at all: `true` unless a **completed**
+/// import finished less than `interval_hours` ago (`0` = always). An errored, running or
+/// absent row is always due — the sparse cadence must never turn a failed import into a
+/// month-long gap. Pure (takes `now`), like the deferral it borrows.
+fn upstream_due(
+    state: Option<&crate::entities::ingest_state::Model>,
+    interval_hours: u64,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    let last_completed = state
+        .filter(|s| s.status == "complete")
+        .and_then(|s| s.finished_at);
+    initial_delay(last_completed, interval_hours, now).is_zero()
 }
 
 /// Marks a version the ingest minted itself (no `ETag` on the document) — never sent back
@@ -491,6 +523,32 @@ mod tests {
             .await
             .expect("count");
         assert_eq!(orphaned, 0, "the old combo's pieces went with it");
+    }
+
+    #[test]
+    fn the_upstream_fetch_is_due_only_past_the_interval_or_after_a_failure() {
+        use crate::entities::ingest_state::Model;
+        let now = Utc::now();
+        let row = |status: &str, finished_hours_ago: i64| Model {
+            id: 1,
+            game: GAME.to_string(),
+            dataset: DATASET.to_string(),
+            source_updated_at: None,
+            status: status.to_string(),
+            detail: None,
+            sets_imported: 0,
+            cards_imported: 0,
+            started_at: None,
+            finished_at: Some(now - chrono::Duration::hours(finished_hours_ago)),
+        };
+        // Never imported: due. Completed a day ago against a 30-day cadence: not due.
+        assert!(upstream_due(None, 720, now));
+        assert!(!upstream_due(Some(&row("complete", 24)), 720, now));
+        // Past the cadence, or a cadence of "every tick": due.
+        assert!(upstream_due(Some(&row("complete", 721)), 720, now));
+        assert!(upstream_due(Some(&row("complete", 1)), 0, now));
+        // A failed run is always due — the cadence never hides a failure for a month.
+        assert!(upstream_due(Some(&row("error", 1)), 720, now));
     }
 
     #[test]

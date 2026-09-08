@@ -425,6 +425,11 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   combo data is present; an instance that already synced keeps serving what it holds. A
   failed or missing combo sync never fails the card-sync tick — a mirror origin that doesn't
   offer the snapshot yet is a steady state the consumer just retries),
+  `COMBOS_UPSTREAM_INTERVAL_DAYS` (`30`; how often the mirror origin asks Commander Spellbook
+  for the export at all — a completed import younger than this isn't even revalidated, since
+  their terms ask for sparse traffic and combos change on the order of a set release; `0` =
+  every card-sync tick; a failed import retries next tick regardless; mirror consumers are
+  not gated, their daily poll hits this app's own origin),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
   cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many

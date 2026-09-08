@@ -62,6 +62,7 @@ pub(crate) fn test_config() -> Config {
         fingerprint_import_enabled: false,
         sld_drops_import_enabled: false,
         combos_sync_enabled: false,
+        combos_upstream_interval_days: 30,
         alerts_enabled: false,
         alerts_email_enabled: false,
         alerts_interval_minutes: 60,

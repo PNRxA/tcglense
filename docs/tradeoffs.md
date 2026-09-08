@@ -718,7 +718,11 @@ catalog) is planned but not implemented.
   Commander Spellbook's API documentation asks for sparse traffic and for credit with a link
   back; the backend that publishes the export is MIT-licensed. So the mirror origin is the only
   instance that fetches the ~650 MB export (a self-host imports the origin's compact re-serve,
-  the Secret Lair stance), every combo on the wire carries its `commanderspellbook.com/combo/{id}`
+  the Secret Lair stance), and it asks for it only every `COMBOS_UPSTREAM_INTERVAL_DAYS` (30) —
+  a conditional daily GET would already be a bodiless `304` most days, but "sparse" is their
+  word and combos change on the order of a set release, so the origin doesn't even
+  revalidate in between; the cost is that a brand-new set's combos reach the panels up to a
+  month late, which the interval knob exists to shorten, every combo on the wire carries its `commanderspellbook.com/combo/{id}`
   URL, every response carries `source` + `source_url`, and both SPA panels name and link the
   source. **The combo sync never fails the card-sync tick.** It is the first optional dataset
   (its own off-switch, reads degrading to `available: false`) whose mirror source legitimately

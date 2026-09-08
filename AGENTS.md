@@ -415,7 +415,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   The provider is `spellbook/` and **only the mirror origin fetches upstream** (a ~650 MB JSON
   document, streamed through `spellbook::stream`'s splitter, never buffered); every other
   instance imports the origin's compact gzipped-JSONL re-serve (`/api/mirror/spellbook/combos`,
-  `COMBOS_SYNC_ENABLED`) — the Secret Lair stance, and like those two it is **never fatal to the
+  `COMBOS_SYNC_ENABLED`); the origin itself asks upstream only every
+  `COMBOS_UPSTREAM_INTERVAL_DAYS` (30 — their terms say sparse), a failed run retrying sooner — the Secret Lair stance, and like those two it is **never fatal to the
   sync tick** (the mirror answers 404 until its origin has imported once). Both paths write
   through the one `replace_combos` swap, as does the dummy seed. Four rules the read decides once (`classify`):
   maybeboards out, sideboard + command zone in; a `must_be_commander` piece counts only from the
