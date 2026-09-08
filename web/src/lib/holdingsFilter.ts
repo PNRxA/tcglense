@@ -161,9 +161,9 @@ export function comparisonFromBounds(bounds: CopiesBounds): CopiesComparison | n
 
 /** Which counter the bounds read — the chip's finish toggle. */
 export const FINISH_OPTIONS: readonly { value: HoldingFinish; label: string }[] = [
-  { value: 'any', label: 'Regular or foil' },
-  { value: 'regular', label: 'Regular only' },
-  { value: 'foil', label: 'Foil only' },
+  { value: 'any', label: 'Any finish' },
+  { value: 'regular', label: 'Regular' },
+  { value: 'foil', label: 'Foil' },
 ]
 
 /** The wire params for a holdings listing / export. `finish` is omitted at its `any`

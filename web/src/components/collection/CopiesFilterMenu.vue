@@ -156,7 +156,7 @@ const upperId = useId()
 
     <PopoverContent
       align="start"
-      class="w-72 space-y-4"
+      class="w-80 space-y-4"
       @pointer-down-outside="keepOpenForSelect"
       @focus-outside="keepOpenForSelect"
     >
@@ -218,10 +218,13 @@ const upperId = useId()
 
         <div class="space-y-2">
           <p class="text-sm font-medium">Finish</p>
+          <!-- Fill the row so the three options share it evenly and none can run off the
+               popover's edge; `w-full` overrides the primitive's `w-fit`. -->
           <ToggleGroup
             type="single"
             variant="outline"
             size="sm"
+            class="w-full"
             :model-value="finish"
             aria-label="Which finish the count reads"
             @update:model-value="onSelectFinish"
@@ -230,7 +233,7 @@ const upperId = useId()
               v-for="option in FINISH_OPTIONS"
               :key="option.value"
               :value="option.value"
-              class="text-xs"
+              class="flex-1 text-xs"
             >
               {{ option.label }}
             </ToggleGroupItem>

@@ -75,7 +75,7 @@ describe('CopiesFilterMenu', () => {
         '[data-slot="toggle-group-item"][data-state="on"]',
       ),
     ).map((node) => node.textContent?.trim())
-    expect(pressed).toEqual(['Regular only'])
+    expect(pressed).toEqual(['Regular'])
   })
 
   it('applies the typed count through the seeded comparator as one filter', async () => {
@@ -107,7 +107,7 @@ describe('CopiesFilterMenu', () => {
   it('carries the finish toggle into the same single apply', async () => {
     const wrapper = mountMenu({ min: 4, max: 4, finish: 'any' })
     await open(wrapper)
-    await press('Foil only')
+    await press('Foil')
     await press('Apply')
     // One event carrying both halves — never separate bound / finish writes.
     expect(wrapper.emitted('apply')).toHaveLength(1)
@@ -117,7 +117,7 @@ describe('CopiesFilterMenu', () => {
   it('applies a finish alone when the number is left blank', async () => {
     const wrapper = mountMenu()
     await open(wrapper)
-    await press('Foil only')
+    await press('Foil')
     await press('Apply')
     expect(lastEmit(wrapper, 'apply')).toEqual([{ finish: 'foil' }])
   })
