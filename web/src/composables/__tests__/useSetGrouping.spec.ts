@@ -308,4 +308,22 @@ describe('useSetGrouping', () => {
     expect(query(router).view).toBe('all')
     expect(query(router).ghosts).toBe('1')
   })
+
+  it('carries the holdings copy-count filter across the grouped and scope toggles', async () => {
+    // The browse engine preserves `copies`/`finish` (issue #677) so a layout change never
+    // silently unfilters the grid — a grouped view narrows within each drop just as well.
+    const { router, api } = await start(
+      '/collection/mtg/sets/blb?copies=4&finish=foil&page=3',
+      'blb',
+      { basePath: '/collection', preserveQuery: ['ghosts', 'copies', 'finish'] },
+    )
+    api.setGroupView('all')
+    await flushPromises()
+    expect(query(router)).toMatchObject({ view: 'all', copies: '4', finish: 'foil' })
+    expect(query(router).page).toBeUndefined()
+
+    api.setIncludeRelated(true)
+    await flushPromises()
+    expect(query(router)).toMatchObject({ related: '1', copies: '4', finish: 'foil' })
+  })
 })

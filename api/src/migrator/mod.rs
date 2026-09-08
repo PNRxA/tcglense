@@ -79,7 +79,9 @@ mod m20240101_000076_add_cards_folded_onto_id;
 mod m20240101_000077_add_precon_decks_price_cents;
 mod m20240101_000078_add_cards_keywords_trgm_index;
 mod m20240101_000079_backfill_cards_produced_mana;
-mod m20240101_000080_create_combos_tables;
+mod m20240101_000080_create_booster_tables;
+mod m20240101_000081_add_card_price_history_etched;
+mod m20240101_000082_create_combos_tables;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -169,7 +171,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000077_add_precon_decks_price_cents::Migration),
             Box::new(m20240101_000078_add_cards_keywords_trgm_index::Migration),
             Box::new(m20240101_000079_backfill_cards_produced_mana::Migration),
-            Box::new(m20240101_000080_create_combos_tables::Migration),
+            Box::new(m20240101_000080_create_booster_tables::Migration),
+            Box::new(m20240101_000081_add_card_price_history_etched::Migration),
+            Box::new(m20240101_000082_create_combos_tables::Migration),
         ]
     }
 }

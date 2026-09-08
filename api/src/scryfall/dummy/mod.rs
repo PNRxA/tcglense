@@ -19,6 +19,7 @@
 //! The fabricated data lives in [`catalog`]; the price random walk in [`prices`];
 //! this module orchestrates seeding it into the database.
 
+mod boosters;
 mod catalog;
 mod precons;
 mod prices;
@@ -47,6 +48,7 @@ use crate::entities::{
     art_tag, card, card_art_tag, card_price_history, card_ruling, product, product_price_history,
     sealed_component, sealed_content,
 };
+use boosters::seed_boosters;
 use catalog::{dummy_cards, dummy_sets};
 use precons::seed_precons;
 use prices::price_walk;
@@ -84,12 +86,13 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
     let now = Utc::now();
     let days = PRICE_HISTORY_DAYS as usize;
     let mut models: Vec<card_price_history::ActiveModel> = Vec::with_capacity(cards.len() * days);
-    for (card_id, usd, usd_foil, eur, tix) in &cards {
+    for (card_id, usd, usd_foil, usd_etched, eur, tix) in &cards {
         // Seed the walk from the card id so every card has its own reproducible series
         // (independent of iteration order) and a reseed upserts identical values.
         let mut rng = StdRng::seed_from_u64(*card_id as u64);
         let usd_series = price_walk(usd, &mut rng, days);
         let foil_series = price_walk(usd_foil, &mut rng, days);
+        let etched_series = price_walk(usd_etched, &mut rng, days);
         let eur_series = price_walk(eur, &mut rng, days);
         let tix_series = price_walk(tix, &mut rng, days);
         for d in 0..days {
@@ -101,6 +104,7 @@ async fn seed_price_history(db: &DatabaseConnection) -> Result<u64, IngestError>
                 as_of_date: Set(as_of),
                 price_usd: Set(usd_series[d].clone()),
                 price_usd_foil: Set(foil_series[d].clone()),
+                price_usd_etched: Set(etched_series[d].clone()),
                 price_eur: Set(eur_series[d].clone()),
                 price_tix: Set(tix_series[d].clone()),
                 created_at: Set(now),
@@ -234,6 +238,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
     // component name so the parent's booster section reads `inherited`; rows packed in the
     // **unlisted** land pack carry that name so they render as its own named section.
     const PACK_COMPONENT: &str = "Dummy Base Set Play Booster Pack";
+    const COLLECTOR_PACK_COMPONENT: &str = "Dummy Base Set Collector Booster Pack";
     const LAND_PACK_COMPONENT: &str = "Dummy Base Set Land Pack";
     let mut seed: Vec<(String, &'static str, Membership, bool, Option<&'static str>)> = Vec::new();
     // Found in: the reprinted relic + the prerelease promo ship in the base-set bundle;
@@ -256,18 +261,20 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
             None,
         ));
     }
-    // Can be pulled from: base-set boosters. The collector box's and bundle's pools are
-    // inherited through their linked play-booster component (attributed, so their pages
-    // defer to the pack's own); the pack itself and the Universe draft box (no composition
+    // Can be pulled from: base-set boosters. The bundle's pool is inherited through its
+    // linked play-booster component (attributed, so its page defers to the pack's own); the
+    // collector box's is packed in its **unlisted** collector pack (no catalog product of
+    // its own — the same booster `seed_boosters` links the box to), so it renders as that
+    // pack's named section; the play pack itself and the Universe draft box (no composition
     // seeded — nothing to defer to) own their pools directly. The foil-only showcase is a
-    // foil pull, inherited like the rest of the box's pool.
+    // foil pull, packed like the rest of the box's pool.
     for n in 1..=10 {
         seed.push((
             format!("dummy-dmb-{n:04}"),
             "900001",
             Membership::Booster,
             false,
-            Some(PACK_COMPONENT),
+            Some(COLLECTOR_PACK_COMPONENT),
         ));
     }
     for n in 1..=5 {
@@ -300,7 +307,7 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
         "900001",
         Membership::Booster,
         true,
-        Some(PACK_COMPONENT),
+        Some(COLLECTOR_PACK_COMPONENT),
     ));
     // Packed in the bundle's land pack — a sub-product that is not individually sold, so
     // its cards render as their own named section on the bundle page instead of being
@@ -469,14 +476,16 @@ async fn seed_sealed_components(db: &DatabaseConnection) -> Result<u64, IngestEr
             None,
             None,
         ),
-        // The collector booster box (900001): 12 booster packs (linked to the pack product).
+        // The collector booster box (900001): 12 collector packs — an **unlisted**
+        // sub-product (no catalog row, so no child link), matching the `collector` booster
+        // `seed_boosters` says the box opens; its pool rows are attributed to this name.
         (
             "900001",
             0,
             ComponentKind::Sealed,
-            "Dummy Base Set Play Booster Pack",
+            "Dummy Base Set Collector Booster Pack",
             12,
-            Some("900002"),
+            None,
             None,
         ),
     ];
@@ -880,6 +889,12 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = component_rows,
         "seeded dummy sealed-product components"
     );
+
+    // Booster configurations + the product links that open them, so a sealed product's
+    // expected value and its pack opener have data offline. Joins cards *and* products
+    // (and rebuilds wholesale, like the real ingest), so it runs after both.
+    let booster_rows = seed_boosters(db).await?;
+    tracing::info!(rows = booster_rows, "seeded dummy booster configurations");
 
     // Preconstructed decks (the precon browser), so the list / facets / detail / copy
     // routes have data offline. Joins cards *and* products, so it runs after both.

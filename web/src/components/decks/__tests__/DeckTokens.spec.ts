@@ -78,7 +78,7 @@ function tokenCard(id: string, name: string): Card {
     color_identity: [],
     colors: [],
     layout: 'token',
-    prices: { usd: null, usd_foil: null, eur: null, tix: null },
+    prices: { usd: null, usd_foil: null, usd_etched: null, eur: null, tix: null },
     has_image: false,
     drop_name: null,
     drop_slug: null,

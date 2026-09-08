@@ -1,4 +1,4 @@
-import { toValue, type MaybeRefOrGetter, type Ref } from 'vue'
+import { computed, toValue, type MaybeRefOrGetter, type Ref } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   getCardSealed,
@@ -7,8 +7,10 @@ import {
   getProductCardSections,
   getProductContainers,
   getProductContents,
+  getProductEv,
   getProductFacets,
   listProducts,
+  openProduct,
 } from '@/lib/api'
 import type { ProductCardSectionKey } from '@/lib/api'
 import { PRODUCT_CARDS_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
@@ -180,6 +182,42 @@ export function useProductFacetsQuery(game: Ref<string>) {
     queryKey: ['product-facets', game],
     queryFn: () => getProductFacets(game.value),
     staleTime: 60 * 60 * 1000,
+  })
+}
+
+/** What an average pack of everything one copy of this product opens is worth (issue
+ * #682) — or `data: null` when the product has no booster sheets, which is how the panel
+ * knows to render nothing. Public read, so a plain `useQuery`; the refs go in the key so a
+ * product-to-product navigation refetches. The payload is priced off the same daily card
+ * prices every other catalog read carries, so it shares their staleness (#413). */
+export function useProductEvQuery(game: Ref<string>, id: Ref<string>) {
+  return useQuery({
+    queryKey: ['product-ev', game, id],
+    queryFn: ({ signal }) => getProductEv(game.value, id.value, signal),
+    staleTime: PRICED_CATALOG_STALE_MS,
+  })
+}
+
+/** One seeded opening of a sealed product (issue #682). The response is a pure function of
+ * `(id, seed, copies)` — the whole point of the seed — so it can never go stale:
+ * `staleTime: Infinity` keeps a re-render (or a shared URL revisited) off the network, and
+ * a NEW seed is a new key rather than a refetch. `enabled` holds the request until the
+ * caller has minted a seed (nothing opens on page load unless a `?pack=` URL supplied one),
+ * and `keepPreviousData` holds the last run's cards up while the next one lands so "open
+ * another" doesn't flash an empty panel. */
+export function usePackOpeningQuery(
+  game: Ref<string>,
+  id: Ref<string>,
+  seed: Ref<number | null>,
+  copies: Ref<number>,
+) {
+  return useQuery({
+    queryKey: ['product-open', game, id, seed, copies],
+    enabled: computed(() => seed.value !== null),
+    queryFn: ({ signal }) =>
+      openProduct(game.value, id.value, { seed: seed.value ?? 0, copies: copies.value }, signal),
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
   })
 }
 

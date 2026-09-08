@@ -30,7 +30,7 @@ use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
     csv_download, narrow_export_statement, render_holdings_export, require_game,
-    resolve_holdings_list,
+    resolve_holdings_list, split_type_line,
 };
 use crate::state::AppState;
 
@@ -187,8 +187,8 @@ pub async fn export_collection(
 ///
 /// `GET /api/collection/{game}/cards/export` -> the whole result set of the signed-in
 /// user's owned-card search as a `.txt` download, honouring the same
-/// `q`/`set`/`include_related`/`sort`/`dir` params as `/api/collection/{game}` — the
-/// collection browse's mirror of the catalog's card-search export. Lines carry the real
+/// `q`/`set`/`include_related`/`sort`/`dir`/`min_copies`/`max_copies`/`finish` params as
+/// `/api/collection/{game}` — the collection browse's mirror of the catalog's card-search export. Lines carry the real
 /// owned counts, one line per non-empty finish (`4 Sol Ring (LTC) 284`, foil copies on a
 /// second ` *F*`-tagged line), so the file round-trips through the text importer.
 #[utoipa::path(
@@ -203,6 +203,9 @@ pub async fn export_collection(
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Copy-count floor, as on the collection list"),
+        ("max_copies" = Option<i32>, Query, description = "Copy-count ceiling, as on the collection list"),
+        ("finish" = Option<String>, Query, description = "`any`/`regular`/`foil` — the counter the copy bounds read, as on the collection list"),
         ("format" = Option<String>, Query, description = "`text` (default, `N Name (SET) 123` per owned finish, foil tagged ` *F*`) or `names` (de-duplicated card names)"),
     ),
     responses(
@@ -228,6 +231,7 @@ pub async fn export_collection_cards(
         &game,
         parts.set_codes.as_deref(),
         parts.search,
+        parts.copies,
         parts.sort,
         parts.dir,
         state.dialect(),
@@ -430,45 +434,6 @@ fn color_name(letter: &str) -> &str {
     }
 }
 
-/// MTG supertypes — the fixed leading words that Archidekt splits into its own column.
-const SUPERTYPES: &[&str] = &[
-    "Basic",
-    "Legendary",
-    "Ongoing",
-    "Snow",
-    "World",
-    "Host",
-    "Elite",
-];
-
-/// Split a Scryfall type line into Archidekt's `(Types, Sub-types, Super-types)` columns
-/// (each comma-joined). The left of the em dash holds supertypes + card types; the right
-/// holds subtypes. For a multi-faced card (`"A — B // C — D"`) only the front face is
-/// used, matching Archidekt. A type line without an em dash has no subtypes.
-fn split_type_line(type_line: Option<&str>) -> (String, String, String) {
-    let Some(line) = type_line else {
-        return (String::new(), String::new(), String::new());
-    };
-    let front = line.split("//").next().unwrap_or(line).trim();
-    let (left, right) = match front.split_once('—') {
-        Some((left, right)) => (left.trim(), right.trim()),
-        None => (front, ""),
-    };
-
-    let mut supertypes = Vec::new();
-    let mut types = Vec::new();
-    for word in left.split_whitespace() {
-        if SUPERTYPES.iter().any(|s| s.eq_ignore_ascii_case(word)) {
-            supertypes.push(word);
-        } else {
-            types.push(word);
-        }
-    }
-    let subtypes: Vec<&str> = right.split_whitespace().collect();
-
-    (types.join(","), subtypes.join(","), supertypes.join(","))
-}
-
 /// A CSV writer error is always an internal fault here (we write to an in-memory buffer,
 /// so there's no I/O to fail and every record matches the header width).
 fn csv_err(error: csv::Error) -> AppError {
@@ -555,36 +520,6 @@ mod tests {
         assert_eq!(colors_to_names(Some("W")), "White");
         assert_eq!(colors_to_names(Some("W,G")), "White,Green");
         assert_eq!(colors_to_names(Some("U,B,R")), "Blue,Black,Red");
-    }
-
-    #[test]
-    fn type_line_splits_into_types_subtypes_supertypes() {
-        assert_eq!(
-            split_type_line(Some("Legendary Creature — Human Avatar Ally")),
-            (
-                "Creature".into(),
-                "Human,Avatar,Ally".into(),
-                "Legendary".into()
-            )
-        );
-        assert_eq!(
-            split_type_line(Some("Basic Land — Forest")),
-            ("Land".into(), "Forest".into(), "Basic".into())
-        );
-        // No em dash -> no subtypes.
-        assert_eq!(
-            split_type_line(Some("Enchantment")),
-            ("Enchantment".into(), String::new(), String::new())
-        );
-        // Multi-faced: only the front face is used.
-        assert_eq!(
-            split_type_line(Some("Creature — Human // Creature — Spirit")),
-            ("Creature".into(), "Human".into(), String::new())
-        );
-        assert_eq!(
-            split_type_line(None),
-            (String::new(), String::new(), String::new())
-        );
     }
 
     #[test]

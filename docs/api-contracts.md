@@ -264,7 +264,7 @@ plain `{ data: [...] }`.
 `Card = { id, name, set_code, set_name, collector_number, rarity, lang, released_at,
 mana_cost, cmc, type_line, oracle_text, power, toughness, loyalty,
 color_identity: string[], colors: string[], layout,
-prices: { usd, usd_foil, eur, tix }, has_image,
+prices: { usd, usd_foil, usd_etched, eur, tix }, has_image,
 drop_name: string | null, drop_slug: string | null, drop_noun: string | null, secret_lair_bonus: boolean,
 secret_lair_spend_incentive: boolean,
 faces: { name, mana_cost, type_line, oracle_text, power, toughness, loyalty }[],
@@ -282,6 +282,12 @@ Scryfall object parsed as-is (issue #557): keys are Scryfall format slugs
 `"legal" | "not_legal" | "banned" | "restricted"`; `null` when the row has no (valid)
 legality data. It rides **every** `Card` payload (lists included) so the deck views can
 evaluate format breaches client-side from the deck detail they already hold.
+`prices.usd_etched` is the **etched-foil** price (issue #676) — the third finish some sets
+ship (Commander Legends, LOTR, Double Masters), priced separately by Scryfall; `null` on every
+card with no etched printing, and USD only (Scryfall publishes no `eur_etched`, so none is
+invented). It is a *catalog* price: the collection/wish-list twins hold an etched copy as
+`foil` (`collection_items` has no etched bucket — holding lots, issue #594), so nothing values a
+holding at it, and the SPA's price tile says so.
 
 `CardDetail = Card + { artist, artist_ids: string[], illustration_id, flavor_text,
 watermark, finishes: string[], frame, frame_effects: string[], border_color,
@@ -334,11 +340,13 @@ card — only this small, non-reversible vector is uploaded, never the image). R
 empty-`data` "no match"). Matching is an in-memory Hamming scan — no per-request DB
 work. See `docs/tradeoffs.md` → *Visual card scanner*.
 
-`PricePoint = { date (YYYY-MM-DD), usd, usd_foil, eur, tix }` — prices are the decimal
-strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
+`PricePoint = { date (YYYY-MM-DD), usd, usd_foil, usd_etched, eur, tix }` — prices are the
+decimal strings exactly as stored (any may be `null`). One row per `(card, day)` is captured on
 every sync tick from the already-committed `cards` rows (`scryfall::price_history::snapshot_prices`),
 so the *stored* series stays continuous even on a tick where the version-gated import is
-skipped. The `?range` **downsampling** is response-shaping only: it never averages — it
+skipped. `usd_etched` is captured since the column arrived (`m..081`, issue #676) and is `null`
+on every older row — there is no backfill, since a past day's etched price is not recoverable —
+so the chart's etched line starts where the capture did, and gaps rather than reads as zero. The `?range` **downsampling** is response-shaping only: it never averages — it
 keeps the **last real row per bucket** (one ~real day per week/fortnight/month as the window
 grows), so every returned point is a genuine, internally-consistent snapshot and the newest
 day is always included; the underlying `card_price_history` rows are untouched. The read
@@ -479,7 +487,8 @@ property above holds: uncapped, two-phase drain, bounded channel, no size hint/E
   (`ratelimit/per_user.rs`), same as the CSV export: an uncapped whole-holdings drain is
   too heavy for the General browse budget.
 - Params are the *holdings listing's* own — `q`, `set`, `include_related`, `sort`
-  (`updated`/`quantity`/card sorts), `dir`, plus `?format=` — resolved and built through
+  (`updated`/`quantity`/card sorts), `dir`, the copy-count filter (`min_copies` /
+  `max_copies` / `finish`, issue #677), plus `?format=` — resolved and built through
   the very seams the listing uses (`resolve_holdings_list` +
   `collection_query`/`wishlist_query`), so the file can never disagree with the browse grid.
 - `text` lines carry the **real held counts**, one line per non-empty finish: regular
@@ -507,7 +516,11 @@ on the origin. Per-user, live, and error responses are `no-store`: all `/api/aut
 (access tokens + `Set-Cookie`), the import-`status` route (a live progress signal the
 SPA polls), and any non-2xx (so a CDN can't pin a transient `404`/`5xx`). The image/icon
 routes — and the dataset mirror's dated TCGCSV archives — set their own longer
-`immutable` header, which the layer preserves.
+`immutable` header, which the layer preserves. Two public catalog reads opt *out* per
+request: a **seedless** roll (`.../precons/{slug}/goldfish`, `.../products/{id}/open`) mints
+a random seed, so the response isn't a function of its URL and is returned `no-store` rather
+than letting the edge pin one visitor's hand or box for the TTL; with a `seed` both are
+ordinary cacheable catalog.
 
 **Cloudflare (issue #284 bullet 3).** These directives are all standard and
 Cloudflare-honored: `public` makes a response edge-storable, `s-maxage` sets the edge
@@ -621,6 +634,8 @@ matching catalog set), mirroring the collection set builder's graceful degradati
 | `GET /api/games/{game}/products/{id}` | one `Product` |
 | `GET /api/games/{game}/products/{id}/image?size` | the product image bytes, proxied + cached from the TCGplayer CDN (`tcgplayer-cdn.tcgplayer.com`, host allow-listed). `size` ∈ `normal` (1000×1000, default) / `small` (200w); the on-disk cache + `Cache-Control: immutable` + `CDN_MODE` behave exactly like the card image proxy |
 | `GET /api/games/{game}/products/{id}/prices?range` | `{ data: ProductPricePoint[] }` — the product's price history, **oldest first** (`[]` if none in range). Reuses the exact `?range` windowing/downsampling as the card price endpoint (`api/src/handlers/catalog/pricing.rs`): no `range` = the full daily series, an explicit `range` (`7d`/`30d`/`1y`/`2y`/`3y`/`all`) windows + downsamples it, unknown `range` = `422` |
+| `GET /api/games/{game}/products/{id}/ev` | `{ data: ProductEv }` — what **one copy** of the product is worth on average at today's prices, broken down per booster and per sheet (issue #682), computed from the booster sheet/slot tables the MTGJSON sealed sync writes (`sealed_packs` / `booster_configs` / `booster_sheets`). `{ "data": null }` — **not** a `404` — when the product has no booster data: MTGJSON doesn't describe it, it opens nothing (a commander deck), or its packs are a randomised `contents.variable` choice, which has no defined expected value; a client hides the panel off that one response rather than treating "nothing to say" as an error. Ordinary **public catalog** cache group (shared-cacheable + ETagged): an expected value is the same number for every visitor and moves only when prices do. `404` for an unknown game/product |
+| `GET /api/games/{game}/products/{id}/open?seed&copies` | `PackOpening` — **one simulated opening** of the product against those same sheets: every pack it holds, the variant each rolled, what each slot dealt, and what the pulls are worth today. Stateless and seeded exactly like the deck goldfish — the run is a pure function of `(product, seed, copies)`, all of which ride in the URL, so a URL reproduces (and shares) a run, and there is no session state. `seed` is a `u32`; omitted, the server mints a random one, echoes it back, and answers **`Cache-Control: no-store`** (a random roll is not a function of its URL, and this route sits in the CDN-cached catalog group — a shared cache would otherwise pin one visitor's box as everyone's for the best part of a day). With a `seed` it is ordinary cacheable catalog. `copies` defaults to 1. Pack *n* of an opening is the same pack whatever `copies` was, so raising it extends the run rather than rerolling it. `422` — refused **before** anything is drawn — when the product has no booster data, when `copies` is 0, when the opening would exceed **36 packs** (`MAX_PACKS_PER_OPENING`, one sealed booster box), or when it would deal more than **1200 cards** (`MAX_CARDS_PER_OPENING`, measured off each pack's fattest variant: a `quantity` and a slot count are both ingested data, so the pack count alone is not a bound). `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/cards?page&page_size&section` | page of `ProductCardEntry` — the cards this product is found to contain / can be pulled from, the **reverse** of `.../cards/{id}/sealed` (issue #204). Ordered by membership (`contains` → `booster` → `variable`, so the guaranteed cards lead) and, within the booster pool, **family-exclusive cards first** (a collector booster's special printings no other booster in the set can pull — each flagged `exclusive`, PR #221), then set code + collector number; each card deduped to its **strongest** membership with a foil-only flag. Optional `?section` (`contains`/`exclusive`/`booster`/`variable`) pages just one display section so the SPA paginates each on its own (issue #224); omit it for the whole ordered list — `total`/`has_more` then describe the selected section. A plain `?section` page spans the product's own cards plus those inherited through **listed** sub-products; the optional `?component` param (a `component` value from the sections manifest) instead pages the cards packed in one **unlisted** box component, with `?section` narrowing to one certainty within it — a name matching no component is an empty page, not an error (names are data, not vocabulary). Empty page when the product has no ingested contents; `404` for an unknown game/product, `422` for an unknown section |
 | `GET /api/games/{game}/products/{id}/cards/sections` | `{ data: ProductCardSection[] }` — the **non-empty** display sections of the cards above, with per-section counts, so the SPA knows which independently-paginated blocks to render (issue #224) before fetching any card. Display order: the plain `contains` section, then one section per certainty of each **unlisted** box component (`component` = its name, in box order), then the plain `exclusive` → `booster` → `variable` sections. A plain section whose every card arrived through a **listed** sub-product is flagged `inherited`. `[]` when the product has no ingested contents; `404` for an unknown game/product |
 | `GET /api/games/{game}/products/{id}/contents` | `{ data: ProductComponent[] }` — the product's **structural composition** ("what's in the box"): the nested packs/boxes it bundles (each linked to its own product page), precon decks, fixed promo cards (linked to the card), and physical extras, in display order with quantities. Sourced from MTGJSON's sealed-product `contents` via `sealed_components` (with curated fallback). `[]` when the product has no ingested composition (a bare booster pack, or a product neither MTGJSON nor the fallback describes); `404` for an unknown game/product |
@@ -701,6 +716,18 @@ sections is a pool size, not a pack's worth — a booster with a 600-card pool h
 unknown-key-to-`variable` fallback, and words every heading and chip on the sealed-product page
 from it — a fifth key, or a reordering, has to land on both sides.
 
+**A pack's size and its value are the two exceptions — and both are expectations, not counts.**
+Since issue #682 the API *does* hold each booster's own sheet configuration, so
+`PackEv.cards_per_pack` (the cards an **average** pack deals) and the expected values beside it are
+genuine per-pack numbers, and the only ones on a sealed product's page. Neither is a containment
+claim: `cards_per_pack` is an average over the pack's variants (a pack that is three-in-four a
+fifteen-card configuration and one-in-four a sixteen-card one reports 15.25, a number no pack ever
+holds), an `ev_usd` is an average over many openings at today's prices, and a `PackOpening` is one
+seeded roll of the dice. Every one of those responses carries server-authored `caveats` saying so,
+and `productCounts.ts` is the wording seam for these too — `expectedValueHeading`,
+`cardsPerPackLabel`, `oddsLabel`, `boosterLabel`, `evVersusPrice`, `openingSummary`,
+`openingVersusPrice` — so no per-pack figure reaches the page unqualified.
+
 `ProductComponent = { kind, name, quantity, product: Product | null, card: Card | null }`
 (the `.../products/{id}/contents` endpoint) is one "what's in the box" line item: `kind` is
 `sealed` (a nested pack/box), `deck` (a precon deck), `card` (a fixed promo), or `other` (a
@@ -719,6 +746,108 @@ is how many copies of the viewed child it contains. It uses the same non-recursi
 `sealed_components` data as `ProductComponent`; it does not infer case/box relationships
 from product names.
 
+### Booster expected value & the pack opener (issue #682)
+
+`ProductEv = { ev_usd, packs: PackEv[], top: PackCardOdds[], caveats: string[] }` (the
+`.../products/{id}/ev` endpoint; handlers in `api/src/handlers/catalog/boosters/`) is what **one
+copy** of the product is worth on average. `ev_usd` is 2-dp USD, `Σ pack.quantity × pack.ev_usd`
+over every booster a copy opens, **summed before rounding** — so it can differ by a cent from
+adding up the rendered per-pack figures, and the unrounded sum is the honest one. `packs` is every
+*distinct* booster one copy opens, with how many of each. `top` is at most **12** of the biggest expected
+contributors across the whole copy, ranked by `contribution_usd` descending — and for this list
+alone that money figure is **per copy** (`expected_per_pack × price × quantity`), while
+`expected_per_pack` and `one_in` stay per pack, because that is the unit odds are meaningful in.
+`caveats` is generated server-side and is meant to be **shown** (see below).
+
+`PackEv = { set_code, booster_code, name: string | null, quantity, cards_per_pack, ev_usd,
+priced_share, slots: SlotEv[], top: PackCardOdds[] }` is one booster configuration. `set_code` is
+the lowercased set code (`blb`) and `booster_code` MTGJSON's booster key (`play`, `collector`,
+`draft`, `set`, …) — together the configuration's identity; `name` is upstream's display name
+(`Play Booster`) or `null`. `quantity` is how many of this pack **one copy** of the product opens
+(a bundle's six, a box's thirty-six). `cards_per_pack` is `Σ_variants P(variant) × Σ slot counts` —
+an expectation, fractional when the variants differ. `ev_usd` is 2-dp USD for **one** pack.
+`priced_share` is `0..1`, the share of the pack's expected picks that land on a card with a market
+price (everything else counts as $0). `slots` is one entry per sheet the pack draws from, in the
+order the sheets first appear in the configuration's variants (stable — in practice sheet-name
+order, since the ingest sorts an unordered upstream JSON object); `top` is the pack's ten biggest
+contributors.
+
+`SlotEv = { sheet, foil, picks, ev_usd, card_count, priced_share, top: PackCardOdds[] }` is what one
+**sheet** contributes to an average pack. `sheet` is upstream's own sheet name (`common`,
+`rareMythic`, `foil`, …), not a label; `foil` says the sheet's cards are valued at their **foil**
+price. `picks` is `Σ_variants P(variant) × count` — cards this sheet puts in an average pack, not
+how many it holds; `ev_usd` is `picks × Σ_c (w_c / T) × price_c`, where `T` is the sheet's stated
+total weight (see the model below). `card_count` is the distinct catalog cards the sheet holds;
+`priced_share` the share of *its* picks landing on a priced card — below 1 either because some
+cards are unpriced or because part of the sheet's weight sits on cards the catalog doesn't hold.
+`top` is its three biggest contributors.
+
+`PackCardOdds = { card: Card, foil, sheet, expected_per_pack, one_in, price_usd: string | null,
+contribution_usd }` is one card's pull odds and what they are worth — the unit both `top` lists are
+made of, wrapping the shared `Card` DTO. `expected_per_pack` is expected copies of that card in one
+pack (a with-replacement approximation); `one_in` is `1 / expected_per_pack`, i.e. "one in N packs,
+**on average**", and is finite by construction — a line is never emitted for a card that can't be
+pulled or is worth nothing. `price_usd` is the price actually used (the foil price on a foil sheet),
+`null` when the card has no market price, in which case it counted as $0. `contribution_usd` is
+`expected_per_pack × price`, per pack — except in `ProductEv.top`, where it is per copy.
+
+`PackOpening = { seed, copies, packs: OpenedPack[], value_usd, priced_count, unpriced_count,
+caveats: string[] }` (the `.../products/{id}/open` endpoint) is **one seeded roll of the dice**, not
+an average. `seed` is echoed back so a server-minted roll can be replayed or shared as a URL;
+`packs` is every pack in opening order — copy by copy, and within a copy in the product's own pack
+order (`sealed_packs`, configuration id ascending) — and each pack's roll is derived from
+`(seed, its ordinal in the whole opening)` rather than from one stream walked pack after pack,
+which together make pack *n* the same pack whatever `copies` was. `value_usd` is 2-dp USD of everything pulled (unpriced cards at $0), and
+`priced_count` / `unpriced_count` split the pulls that had a price from those that didn't.
+`OpenedPack = { set_code, booster_code, name, variant, cards: OpenedCard[], value_usd }` adds
+`variant`, the index of the variant that pack rolled within its configuration's variant list;
+`OpenedCard = { card: Card, foil, sheet, price_usd: string | null }` is one dealt card, `foil` (and
+so `price_usd`) coming from the sheet it came off.
+
+**The model, in one place.** A pack rolls **one variant** with probability `weight / Σ weights`,
+then draws `count` cards from each sheet that variant's slots name; a card `c` on a sheet is drawn
+with probability `w_c / T`. `T` is the sheet's stored `total_weight`, which **includes** the weight
+of cards our catalog doesn't hold: that unaccounted share is *reported* (through `priced_share` and
+a caveat) and never re-normalised away, since re-normalising would quietly inflate every remaining
+card's odds. The EV treats each pick as an **independent** weighted draw even where the real sheet
+is drawn without replacement — invisible on any sheet of size, and named in a caveat where it isn't
+— while the **opener genuinely draws without replacement** unless upstream marked the sheet
+`allowDuplicates`, because it deals actual cards where a repeat would be a visible lie. (The
+opener's pool is the cards we hold, so its draw is the one place a simulated pack differs from a
+real one; that too is a caveat.) A `fixed` sheet isn't drawn at all: its slot takes its first
+`count` cards **in stored order**, so a card at position *i* appears in exactly the variants whose
+count exceeds *i*. Upstream's colour balancing of common slots is recorded in the data and
+deliberately **not** simulated. A **foil** sheet prices at the card's foil price and never falls
+back to the regular one — that would be a different card's price.
+
+**`caveats` is part of the answer.** Both responses generate their caveats server-side, in a fixed
+order, each emitted only when it applies (so a caveat that *is* there always means something), and
+they are meant to be **shown**: they are what stops an average or a lucky roll being read as a
+promise. An EV always leads with "an average over many packs at today's market prices — no single
+pack is worth this"; an opening always leads with "one simulated opening … a roll of the dice".
+The rest name the with-replacement approximation, un-simulated colour balancing, unpriced cards
+counted as $0 (with the priced share), and the sheets whose weight the catalog can't account for
+(worst first, at most three named and the rest counted).
+
+**Where the sheet data comes from.** MTGJSON's per-set `booster` maps, kept by the sealed sync's
+booster pass (`api/src/mtgjson/boosters.rs` → `api/src/mtgjson/ingest/boosters.rs`) into three
+tables rebuilt **wholesale** with `sealed_contents`, in the same transaction: `booster_configs`
+(one row per `(game, set_code, code)` — the booster's `name`, its pack variants as a JSON
+`[{ weight, slots: [[sheet, count], …] }]` list in upstream order — a zero-weight variant
+dropped, and each variant's slots sorted by sheet name, since upstream states them as a JSON
+object with no order to keep — and `total_weight`, Σ of the variants *we stored*, recomputed
+rather than trusting upstream's `boostersTotalWeight` so the shares always sum to one), `booster_sheets` (one row per `(config, sheet name)` — the `foil`,
+`balance_colors`, `allow_duplicates` and `fixed` flags, the sheet's `total_weight`, and its cards
+as a JSON `[[card_id, weight], …]` list in **upstream order**, which a `fixed` sheet's slot depends
+on), and `sealed_packs` (one row per `(game, product, config)` with the `quantity` one copy of the
+product opens, nested box → pack references flattened at ingest). Only configurations some catalog
+product actually opens are stored — the reads are product-keyed. A sheet's `total_weight` counts
+every parsed card, **including** the ones our catalog couldn't resolve, which is exactly what makes
+the unaccounted share knowable; a sheet whose every card dropped is still written as an empty list,
+so a slot naming it reads as "we hold none of these" rather than as a missing slot. Row ids are not
+stable across rebuilds and never reach the wire — the wire carries external ids and upstream's own
+set/booster codes.
+
 ## Collection API contract
 
 Per-user, **authenticated** (`Authorization: Bearer <access_token>`, via `AuthUser`),
@@ -730,9 +859,10 @@ card id (the same id the public catalog exposes); the handler resolves it to the
 internal `cards.id` before storage (so a holding survives a catalog re-import). A
 missing token is `401`; an unknown game/card is `404`. These endpoints are **per-user
 rate limited** (issue #168, `ratelimit::user_rate_limit`, keyed by the token's user
-id): a generous `general` quota covers reads/edits/batch lookups, and a tighter
-`import` quota covers the expensive import/CSV endpoints; over-limit is `429` +
-`Retry-After` (and, being per-user, `no-store`).
+id): a generous `general` quota covers reads/edits/batch lookups, a middle `analytics`
+quota covers the whole-collection scans (`value-history`, `movers`, `breakdown`, the
+exports), and a tighter `import` quota covers the expensive import/CSV endpoints;
+over-limit is `429` + `Retry-After` (and, being per-user, `no-store`).
 
 A "holding" is `(user, game, card) → { quantity, foil_quantity }`; there is no row for
 a card you don't own (setting both counts to zero deletes the row), so the table holds
@@ -813,13 +943,14 @@ surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/collection/{game}?…&set&include_related` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`) |
+| `GET /api/collection/{game}?…&set&include_related&min_copies&max_copies&finish` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`). `min_copies`/`max_copies`/`finish` narrow by how many copies are held — see **Copy-count filter** below |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
 | `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
+| `GET /api/collection/{game}/breakdown?bulk_max_cents` | — | `HoldingBreakdown` — **where the collection's value sits** (issue #680): copies + estimated USD value by rarity, by colour-identity bucket, by card type and by finish, plus the ten most valuable holdings by **held** value (price × copies — not a single copy's price, which is the list's `sort=price`). Cards only (sealed products have none of these facets). The embedded `summary` is `/summary`'s own answer over the same rows, so every bucket is a slice of that total; `bulk_max_cents` sets the cutoff for its bulk slice exactly as it does there. `AuthUser` — a read-only key may call it. Rides the analytics response cache under the collection's holdings version + the price epoch + the UTC date (an edit through any handler invalidates it) and the per-user `analytics` bucket. See `HoldingBreakdown` below |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
-| `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
-| `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
+| `GET /api/collection/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
+| `GET /api/collection/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
@@ -828,10 +959,32 @@ surface.
 | `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker; ManaBox, issue #669, is the same case). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
 | `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total, absent until the first page reports it) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
-| `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/`format` |
+| `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&min_copies&max_copies&finish&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/copy-count filter/`format` |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the shared `CardResponse`).
+
+**Copy-count filter** (issue #677 — "which cards do I own more than four of?", "which
+playsets am I one short of?"). Three optional params on every holdings *listing* — the flat
+list, the by-drop and by-sub-type views, the `.txt` card export, and the public `/api/u/…`
+mirrors of each — for both twins:
+
+| Param | Meaning |
+|---|---|
+| `min_copies=<n>` | keep only holdings with **at least** `n` copies |
+| `max_copies=<n>` | keep only holdings with **at most** `n` copies |
+| `finish=any\|regular\|foil` | which counter the bounds read: `any` (default) is the regular + foil **total** — the same key `sort=quantity` orders on; `regular` / `foil` read that one counter **and require at least one copy of it**, so `finish=foil` alone is "every card I hold a foil of" |
+
+So `min_copies=5` is the trade fodder, `min_copies=1&max_copies=3` the playsets to finish,
+`finish=foil&min_copies=4` the foil playsets. Both bounds are inclusive and non-negative; a
+negative bound, `max_copies < min_copies`, or an unknown `finish` is `422` (like a malformed
+`q`). The filter is **not** a `q:` leaf and never will be: the search compiler is shared with
+the public, CDN-cached catalog listing and must not learn per-user state — `is:foil` in `q`
+matches the *catalog's* finishes, which is why `finish=` exists. It lives on the shared
+`ListParams` and is resolved once (`resolve_holdings_list` → `CopyFilter`, applied inside
+`collection_query`/`wishlist_query`), so the export and the grouped views inherit it and can't
+disagree with the grid. The three params are silently ignored by the public catalog routes,
+which don't read them (a `security_tests/collection.rs` case pins that).
 
 `CollectionSummary = { unique_cards, total_cards, total_value_usd, bulk_value_usd }`
 (`api/src/handlers/shared/holdings.rs`): distinct cards owned, total copies (regular +
@@ -885,6 +1038,28 @@ is a candidate only when both endpoints have a price. `all_time` instead compare
 with its own earliest non-null captured price, so a newer catalog item is not excluded by an
 older item's history. A holding kind with no captured history has null `as_of` / `day_as_of`
 and fourteen empty arrays, independently of the other kind.
+
+`HoldingBreakdown = { summary, rarity, color, card_type, finish, top, unpriced_cards }`
+(`api/src/handlers/shared/breakdown.rs`, issue #680): `summary` is a `CollectionSummary`; the
+four facets are `BreakdownBucket[] = { key, cards, copies, value_usd }[]` — distinct held
+cards, held copies, and their estimated USD value (a 2-dp string, `null` when none of them is
+priced) — listing **non-empty buckets only**, each facet a partition of the same rows so its
+values sum to `summary.total_value_usd` and its copies to `summary.total_cards`. Keys:
+`rarity` uses Scryfall's spelling (`common`/`uncommon`/`rare`/`mythic`/`special`/`bonus`,
+`unknown` for a card with none), in that order then alphabetically with `unknown` last;
+`color` is `white`/`blue`/`black`/`red`/`green` for a mono-coloured identity, `multicolor` for
+two or more colours, `colorless` for none, in WUBRG-then-multicolour-then-colourless order;
+`card_type` is the type line's **first card type** past the supertypes, lower-cased
+(`creature`, `land`, … — an artifact creature files under `artifact`; the front face of a
+multi-faced line; `other` when the line names none), most valuable bucket first (then most
+copies, then key); `finish` is `regular` / `foil`, each counting **only that finish's**
+copies (a card held in both is in both). `top: TopHolding[] = { card: Card, quantity,
+foil_quantity, value_usd }[]` ranks by held value — `usd × quantity + usd_foil ×
+foil_quantity` over the finishes the card is priced in — highest first, at most ten, ties by
+internal id; a holding with no priced held finish never ranks and is counted in
+`unpriced_cards` instead (so a small total can be told from an unpriced one). A price counts
+only for a finish that is actually held. The SPA's labels/swatches for the keys are
+`web/src/lib/holdingBreakdown.ts`.
 
 `CollectionSet` is the catalog `Set` shape (`code`, `name`, `set_type`, `released_at`,
 `card_count`, `icon_svg_uri`, `parent_set_code`, `has_drops`, `drop_noun`, `has_subtypes` — the
@@ -1066,13 +1241,14 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 
 | Method & path | Mirrors |
 |---------------|---------|
-| `GET /api/wishlist/{game}?q&sort&dir&set&include_related&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope) |
+| `GET /api/wishlist/{game}?q&sort&dir&set&include_related&min_copies&max_copies&finish&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope, the **copy-count filter** — read on the wanted counts) |
 | `GET /api/wishlist/{game}/summary?set&include_related` | the collection summary (unique / copies / value of what's wanted) |
+| `GET /api/wishlist/{game}/breakdown` | the collection breakdown (issue #680): what buying the list costs by rarity / colour / type / finish, and the ten most valuable wanted lines by wanted value — the same `HoldingBreakdown` shape and fold over `wishlist_items`; no `bulk_max_cents` on the SPA side (a wish list has no bulk preference), though the param is accepted. Cached under the wish list's **own** holdings version (`analytics_cache::HoldingsSurface::Wishlist`, bumped by every wish-list card write), so a wish-list edit invalidates it and a collection edit doesn't; same `analytics` rate bucket |
 | `GET /api/wishlist/{game}/sets` | the collection per-set aggregates (sets holding wishlisted cards, newest first, counts + value) |
-| `GET /api/wishlist/{game}/sets/{code}/drops?q&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
-| `GET /api/wishlist/{game}/sets/{code}/subtypes?q&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
+| `GET /api/wishlist/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
+| `GET /api/wishlist/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
-| `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
+| `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&min_copies&max_copies&finish&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |
 
@@ -1579,7 +1755,7 @@ idempotent). The tick is leader-gated so only one replica evaluates.
 | Method & path | Body | Returns |
 |---------------|------|---------|
 | `GET /api/alerts` | — | `{ data: PriceAlert[] }` — the caller's alerts across all games, most-recently-updated first. `PriceAlert = { id, game, target, finish, direction, threshold, is_active, triggered, last_triggered_at, last_price, created_at }`; `target = { kind, external_id, name, set_code, image_url, current_price }` (a removed catalog target renders as an orphan placeholder so a stale alert can still be seen + deleted) |
-| `POST /api/alerts` | `{ game, target_kind, external_id, finish, direction, threshold }` | `PriceAlert` — create. `target_kind` ∈ `card`/`product`; `finish` ∈ `nonfoil`/`foil`/`etched` (etched card-only, else `422`); `direction` ∈ `below`/`above`; `threshold` a positive USD number, normalised to a 2-dp string. `404` unknown game/target; `422` bad field or over the per-user cap (**500**) |
+| `POST /api/alerts` | `{ game, target_kind, external_id, finish, direction, threshold }` | `PriceAlert` — create. `target_kind` ∈ `card`/`product`; `finish` ∈ `nonfoil`/`foil`/`etched` (etched card-only, else `422` — an `etched` alert watches `cards.price_usd_etched` and *only* that column: a card with no etched price is unpriced for it, never priced at its foil; the SPA offers each finish only when the card is priced in it, `web/src/lib/alertFinishes.ts`); `direction` ∈ `below`/`above`; `threshold` a positive USD number, normalised to a 2-dp string. `404` unknown game/target; `422` bad field or over the per-user cap (**500**) |
 | `PUT /api/alerts/{id}` | `{ finish?, direction?, threshold?, is_active? }` | `PriceAlert` — change any subset (absent = unchanged). Changing finish/direction/threshold **re-arms** the alert. `404` if not the caller's; `422` bad field |
 | `DELETE /api/alerts/{id}` | — | `204` — delete. `404` if not the caller's |
 | `GET /api/alerts/channels` | — | `AlertChannels { discord_webhook_url, discord_enabled, telegram_bot_token, telegram_chat_id, telegram_enabled, email_enabled, email_available }` — the caller's delivery settings (empty defaults if never set, the free channels defaulting to `enabled`). A channel delivers only when its `*_enabled` flag is on **and** it's configured, so a user can pause a channel without clearing its credential. `email_available` = `ALERTS_EMAIL_ENABLED` **and** an email provider is configured. Returned to the owner to prefill the settings form |

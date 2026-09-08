@@ -13,6 +13,7 @@ import AdvancedSearchPanel from '@/components/cards/AdvancedSearchPanel.vue'
 import CardSizeMenu from '@/components/cards/CardSizeMenu.vue'
 import CardSortMenu from '@/components/cards/CardSortMenu.vue'
 import CollectionGrid from '@/components/collection/CollectionGrid.vue'
+import CopiesFilterMenu from '@/components/collection/CopiesFilterMenu.vue'
 import DropSection from '@/components/cards/DropSection.vue'
 import GroupViewToggle from '@/components/cards/GroupViewToggle.vue'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
@@ -83,6 +84,11 @@ const {
   collectionCounts,
   wishlistCounts,
   wishlistReady,
+  copiesFilter,
+  copiesActive,
+  copiesDescription,
+  setCopies,
+  clearCopies,
   scopeTotalValue,
   scopeCopiesLabel,
   total,
@@ -207,6 +213,14 @@ const {
               @select="setGroupView"
             />
             <GhostToggle :show-ghosts="showGhosts" list="wishlist" @toggle="setShowGhosts" />
+            <!-- List-mode only: the copy-count + finish filter reads your wanted counts,
+                 which the catalog listing behind show-ghosts doesn't have. -->
+            <CopiesFilterMenu
+              v-if="!showGhosts"
+              :filter="copiesFilter"
+              @apply="setCopies"
+              @clear="clearCopies"
+            />
           </div>
           <div v-if="hasCards" class="flex gap-2">
             <!-- Flat views only: the grouped views serve different endpoints than the
@@ -224,6 +238,7 @@ const {
               :sort="sort"
               :default-sort="defaultSort"
               :include-related="includeRelated"
+              :copies="copiesFilter"
               :total="total"
             />
             <CardSizeMenu />
@@ -239,6 +254,13 @@ const {
         <!-- A search that matched nothing. -->
         <p v-else-if="!hasCards && query" class="text-muted-foreground py-12">
           No cards match “{{ query }}”.
+        </p>
+
+        <!-- The copy-count filter matched nothing: say so, rather than the "your wish list is
+             empty" state below (which isn't true, and whose "show all cards" button would
+             send you somewhere the filter doesn't even apply). -->
+        <p v-else-if="!hasCards && copiesActive" class="text-muted-foreground py-12">
+          No cards with {{ copiesDescription }}.
         </p>
 
         <!-- Nothing to show. In show-ghosts mode that means the catalog has no cards in

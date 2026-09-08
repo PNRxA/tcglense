@@ -6,8 +6,9 @@ use crate::catalog;
 use crate::db::Dialect;
 use crate::entities::collection_item::MAX_CARD_QUANTITY;
 use crate::entities::{card, card_set};
+use crate::handlers::shared::holdings::Finish;
 use crate::handlers::shared::{
-    BULK_THRESHOLD_CENTS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
+    BULK_THRESHOLD_CENTS, CopyFilter, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SortDir, SortField,
     build_collection_sets, dedupe_ids, group_into_drops, search_condition, validate_quantity,
 };
 use sea_orm::{ActiveModelTrait, Condition, Set};
@@ -24,6 +25,9 @@ fn params(page: Option<u64>, page_size: Option<u64>) -> ListParams {
         set: None,
         include_related: None,
         format: None,
+        min_copies: None,
+        max_copies: None,
+        finish: None,
     }
 }
 
@@ -129,6 +133,113 @@ fn sort_spec_maps_quantity_to_total_copies() {
         .sort_spec()
         .unwrap(),
         (CollectionSort::Quantity, SortDir::Asc)
+    );
+}
+
+#[test]
+fn copy_filter_parses_bounds_and_finish() {
+    // Absent = inert: the default request keeps its exact pre-#677 query.
+    let none = params(None, None).copy_filter().unwrap();
+    assert_eq!(none, CopyFilter::default());
+    assert!(!none.is_active());
+    assert!(none.condition().is_none());
+
+    // A floor on the regular + foil total, most commonly "spares to trade" (5+).
+    let spares = ListParams {
+        min_copies: Some(5),
+        ..params(None, None)
+    }
+    .copy_filter()
+    .unwrap();
+    assert_eq!(
+        spares,
+        CopyFilter {
+            finish: Finish::Any,
+            min: Some(5),
+            max: None,
+        }
+    );
+    assert!(spares.is_active());
+
+    // Every spelling of the finish, case-insensitively; blank means `any`.
+    for (raw, finish) in [
+        ("any", Finish::Any),
+        ("", Finish::Any),
+        ("regular", Finish::Regular),
+        ("NONFOIL", Finish::Regular),
+        (" Foil ", Finish::Foil),
+    ] {
+        assert_eq!(
+            ListParams {
+                finish: Some(raw.into()),
+                ..params(None, None)
+            }
+            .copy_filter()
+            .unwrap()
+            .finish,
+            finish,
+            "finish {raw:?}"
+        );
+    }
+
+    // A single finish is active on its own — "foils I hold" needs no bounds.
+    let foils = ListParams {
+        finish: Some("foil".into()),
+        ..params(None, None)
+    }
+    .copy_filter()
+    .unwrap();
+    assert!(foils.is_active());
+    // …but `min_copies=0` with the default finish is a no-op, not a filter.
+    let zero = ListParams {
+        min_copies: Some(0),
+        ..params(None, None)
+    }
+    .copy_filter()
+    .unwrap();
+    assert!(!zero.is_active());
+}
+
+#[test]
+fn copy_filter_rejects_negative_inverted_and_unknown_values() {
+    for bad in [
+        ListParams {
+            min_copies: Some(-1),
+            ..params(None, None)
+        },
+        ListParams {
+            max_copies: Some(-1),
+            ..params(None, None)
+        },
+        ListParams {
+            min_copies: Some(4),
+            max_copies: Some(3),
+            ..params(None, None)
+        },
+        ListParams {
+            finish: Some("etched".into()),
+            ..params(None, None)
+        },
+    ] {
+        assert!(
+            matches!(bad.copy_filter(), Err(AppError::Validation(_))),
+            "{bad:?} must be a 422"
+        );
+    }
+    // Equal bounds are a valid "exactly N".
+    assert_eq!(
+        ListParams {
+            min_copies: Some(4),
+            max_copies: Some(4),
+            ..params(None, None)
+        }
+        .copy_filter()
+        .unwrap(),
+        CopyFilter {
+            finish: Finish::Any,
+            min: Some(4),
+            max: Some(4),
+        }
     );
 }
 
@@ -289,13 +400,22 @@ async fn collection_query_scopes_by_user_and_applies_search_and_sort() {
         sort: CollectionSort,
         dir: SortDir,
     ) -> Vec<String> {
-        collection_query(1, "mtg", set_codes, search, sort, dir, Dialect::Sqlite)
-            .all(db)
-            .await
-            .expect("run collection query")
-            .into_iter()
-            .filter_map(|(_, card)| card.map(|c| c.name))
-            .collect()
+        collection_query(
+            1,
+            "mtg",
+            set_codes,
+            search,
+            CopyFilter::default(),
+            sort,
+            dir,
+            Dialect::Sqlite,
+        )
+        .all(db)
+        .await
+        .expect("run collection query")
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.name))
+        .collect()
     }
 
     // Default recency (updated desc): newest holding first, user 2's card absent.
@@ -395,6 +515,7 @@ async fn collection_query_orders_by_total_copies() {
             "mtg",
             None,
             None,
+            CopyFilter::default(),
             CollectionSort::Quantity,
             dir,
             Dialect::Sqlite,
@@ -558,6 +679,7 @@ async fn collection_query_scopes_to_a_set() {
             "mtg",
             set_codes,
             search,
+            CopyFilter::default(),
             CollectionSort::Card(SortField::Name),
             SortDir::Asc,
             Dialect::Sqlite,
@@ -668,6 +790,7 @@ async fn owned_cards_group_into_drops_with_counts() {
         "mtg",
         Some(&scope),
         None,
+        CopyFilter::default(),
         CollectionSort::Card(SortField::Number),
         SortDir::Asc,
         Dialect::Sqlite,
@@ -954,6 +1077,7 @@ async fn holdings_search_resolves_the_foil_star_arm_under_the_card_join() {
         "mtg",
         None,
         Some(parse("is:foil", Dialect::Sqlite).expect("parses")),
+        CopyFilter::default(),
         CollectionSort::Recent,
         SortDir::Desc,
         Dialect::Sqlite,
@@ -1039,4 +1163,120 @@ async fn product_page_total_excludes_orphaned_holdings() {
         rows[0].1.as_ref().map(|p| p.external_id.as_str()),
         Some("100")
     );
+}
+
+/// The copy-count filter narrows holdings by their copies (issue #677): on the default
+/// finish it reads the regular + foil **total** (the `quantity` sort's key), while a
+/// single finish reads only that counter and requires at least one copy of it — so "foils
+/// I hold" is expressible without `is:foil`, which matches the *catalog's* finishes.
+#[tokio::test]
+async fn collection_query_narrows_by_copies_and_finish() {
+    use sea_orm::{IntoActiveModel, prelude::DateTimeUtc};
+
+    let db = crate::test_support::migrated_memory_db().await;
+    let at = |s: &str| s.parse::<DateTimeUtc>().unwrap();
+
+    crate::entities::user::ActiveModel {
+        id: Set(1),
+        email: Set("u1@example.test".into()),
+        password_hash: Set(Some("x".into())),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+        email_verified_at: Set(None),
+        session_version: Set(0),
+        username: Set(None),
+        discriminator: Set(None),
+        currency: Set("USD".into()),
+        accent: Set("pink".into()),
+    }
+    .insert(&db)
+    .await
+    .expect("insert user");
+
+    for c in [
+        seed_card(1, "One Regular", "Creature", None),
+        seed_card(2, "Four Regular", "Creature", None),
+        seed_card(3, "Three Foil", "Creature", None),
+        seed_card(4, "Two Each", "Creature", None),
+        seed_card(5, "Six Regular", "Creature", None),
+    ] {
+        c.into_active_model()
+            .insert(&db)
+            .await
+            .expect("insert card");
+    }
+
+    // Totals: 1, 4, 3, 4, 6. Regular: 1, 4, 0, 2, 6. Foil: 0, 0, 3, 2, 0.
+    let hold = |id: i32, card_id: i32, q: i32, f: i32| collection_item::ActiveModel {
+        id: Set(id),
+        user_id: Set(1),
+        game: Set("mtg".into()),
+        card_id: Set(card_id),
+        quantity: Set(q),
+        foil_quantity: Set(f),
+        created_at: Set(at("2024-01-01T00:00:00Z")),
+        updated_at: Set(at("2024-01-01T00:00:00Z")),
+    };
+    for h in [
+        hold(1, 1, 1, 0),
+        hold(2, 2, 4, 0),
+        hold(3, 3, 0, 3),
+        hold(4, 4, 2, 2),
+        hold(5, 5, 6, 0),
+    ] {
+        h.insert(&db).await.expect("insert holding");
+    }
+
+    async fn names(db: &sea_orm::DatabaseConnection, copies: CopyFilter) -> Vec<String> {
+        collection_query(
+            1,
+            "mtg",
+            None,
+            None,
+            copies,
+            CollectionSort::Card(SortField::Name),
+            SortDir::Asc,
+            Dialect::Sqlite,
+        )
+        .all(db)
+        .await
+        .expect("run collection query")
+        .into_iter()
+        .filter_map(|(_, card)| card.map(|c| c.name))
+        .collect()
+    }
+    let filter =
+        |finish: Finish, min: Option<i32>, max: Option<i32>| CopyFilter { finish, min, max };
+
+    // Spares to trade: more than a playset, on the total.
+    assert_eq!(
+        names(&db, filter(Finish::Any, Some(5), None)).await,
+        ["Six Regular"]
+    );
+    // Exactly a playset — the foil + regular split counts towards it.
+    assert_eq!(
+        names(&db, filter(Finish::Any, Some(4), Some(4))).await,
+        ["Four Regular", "Two Each"]
+    );
+    // One short of a playset.
+    assert_eq!(
+        names(&db, filter(Finish::Any, Some(1), Some(3))).await,
+        ["One Regular", "Three Foil"]
+    );
+    // Foils held: the finish alone requires a foil copy, whatever the total.
+    assert_eq!(
+        names(&db, filter(Finish::Foil, None, None)).await,
+        ["Three Foil", "Two Each"]
+    );
+    // Bounds on a finish read that counter only: "Two Each" has 4 in total but 2 foils.
+    assert_eq!(
+        names(&db, filter(Finish::Foil, Some(3), None)).await,
+        ["Three Foil"]
+    );
+    assert_eq!(
+        names(&db, filter(Finish::Regular, None, Some(2))).await,
+        ["One Regular", "Two Each"]
+    );
+    // Inert filter = every holding.
+    assert_eq!(names(&db, CopyFilter::default()).await.len(), 5);
 }

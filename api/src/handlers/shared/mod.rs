@@ -8,6 +8,7 @@
 //! Nothing here may import from `handlers::catalog`, `handlers::collection`, or
 //! `handlers::wishlist` — the dependency only ever flows *into* `shared`.
 
+pub(crate) mod breakdown;
 pub(crate) mod card_export;
 pub(crate) mod cheapest;
 pub(crate) mod combos;
@@ -19,11 +20,14 @@ pub(crate) mod lookup;
 pub(crate) mod pagination;
 pub(crate) mod pricing;
 pub(crate) mod product_holdings;
+pub(crate) mod rng;
 pub(crate) mod search;
 pub(crate) mod sort;
+pub(crate) mod type_line;
 pub(crate) mod validate;
 pub(crate) mod valuation;
 
+pub(crate) use breakdown::{HoldingBreakdown, HoldingBreakdownRow};
 pub(crate) use card_export::{CardExportFormat, render_catalog_export, render_holdings_export};
 pub(crate) use cheapest::{PricedPrinting, load_cheapest_by_oracle, priced_printings_by_oracle};
 pub(crate) use download::{csv_download, text_download};
@@ -34,9 +38,9 @@ pub(crate) use grouping::{
 };
 pub(crate) use holdings::{
     CollectionDropGroup, CollectionEntry, CollectionQuantities, CollectionSetsResponse,
-    CollectionSort, CollectionSubtypeGroup, CollectionSummary, HoldingSummaryRow, ListParams,
-    MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest, SetsParams,
-    SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
+    CollectionSort, CollectionSubtypeGroup, CollectionSummary, CopyFilter, HoldingSummaryRow,
+    ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, SetQuantitiesRequest,
+    SetsParams, SummaryParams, build_collection_sets, copies_expr, dedupe_ids, holding_drop_page,
     holding_subtype_page, narrow_export_statement, narrow_summary_rows, resolve_holdings_list,
     resolve_set_scope, summarize_holdings, validate_quantity,
 };
@@ -53,6 +57,7 @@ pub(crate) use search::{
     every_word_matches, every_word_matches_with, search_condition, starts_with_rank,
 };
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
+pub(crate) use type_line::split_type_line;
 pub(crate) use validate::{validate_name, validate_optional};
 #[cfg(test)]
 pub(crate) use valuation::BULK_THRESHOLD_CENTS;

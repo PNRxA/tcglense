@@ -7,7 +7,7 @@
 use super::harness::*;
 
 use chrono::{Duration, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set, sea_query::Expr};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, sea_query::Expr};
 
 use crate::entities::prelude::{Card, CardPriceHistory, CollectionItem};
 use crate::entities::{card, card_price_history, collection_item};
@@ -76,15 +76,57 @@ async fn priced_card_ids(app: &Router, n: usize) -> Vec<String> {
     ids
 }
 
+/// Grab `n` real card external ids priced in **both** finishes in the seeded catalog.
+async fn foil_priced_card_ids(app: &Router, n: usize) -> Vec<String> {
+    let (status, _, body) = send(app, get("/api/games/mtg/cards?page_size=50")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "listing seeded cards failed: {body:?}"
+    );
+    let ids: Vec<String> = body["data"]
+        .as_array()
+        .expect("cards data array")
+        .iter()
+        .filter(|c| {
+            c["prices"]["usd"].as_str().is_some() && c["prices"]["usd_foil"].as_str().is_some()
+        })
+        .take(n)
+        .map(|c| c["id"].as_str().expect("card id").to_string())
+        .collect();
+    assert!(
+        ids.len() >= n,
+        "need >= {n} seeded cards priced in both finishes, got {}",
+        ids.len()
+    );
+    ids
+}
+
+/// The internal `users.id` for a registered email.
+async fn internal_user_id(db: &sea_orm::DatabaseConnection, email: &str) -> i32 {
+    crate::entities::prelude::User::find()
+        .filter(crate::entities::user::Column::Email.eq(email))
+        .one(db)
+        .await
+        .expect("query user")
+        .expect("registered user exists")
+        .id
+}
+
 /// Own one card, absolute counts, for the token's user.
 async fn own_card(app: &Router, token: &str, id: &str, quantity: i64) {
+    own_card_finishes(app, token, id, quantity, 0).await;
+}
+
+/// Own one card in both finishes, absolute counts, for the token's user.
+async fn own_card_finishes(app: &Router, token: &str, id: &str, quantity: i64, foil: i64) {
     let (status, _, body) = send(
         app,
         json_with_bearer(
             "PUT",
             &card_path(id),
             token,
-            json!({ "quantity": quantity, "foil_quantity": 0 }),
+            json!({ "quantity": quantity, "foil_quantity": foil }),
         ),
     )
     .await;
@@ -752,6 +794,115 @@ async fn quantity_sort_orders_the_owned_list_by_copies() {
     .await;
     assert_eq!(status, StatusCode::OK, "quantity asc sort failed: {body:?}");
     assert_eq!(quantities(&body), vec![1, 3, 5]);
+}
+
+/// The copy-count / finish filter (issue #677) narrows the owned-card list through the
+/// full HTTP path — the total by default, a single finish's counter on request — and a
+/// contradictory or unknown value is a 422. The query-level semantics are unit-tested in
+/// `handlers::collection::tests`; this pins the param plumbing end to end, and that the
+/// same params are **inert on the public catalog search**: the filter lives on the holdings
+/// `ListParams`, never in the shared Scryfall grammar, so it can't learn per-user state.
+#[tokio::test]
+async fn copy_count_filter_narrows_the_owned_list_and_never_the_catalog() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "copies@example.com", "password123").await;
+
+    // Five cards at distinct (regular, foil) splits: totals 1, 4, 3, 4, 6.
+    let ids = sample_card_ids(&app, 5).await;
+    for (id, quantity, foil) in [
+        (&ids[0], 1, 0),
+        (&ids[1], 4, 0),
+        (&ids[2], 0, 3),
+        (&ids[3], 2, 2),
+        (&ids[4], 6, 0),
+    ] {
+        let (status, _, body) = send(
+            &app,
+            json_with_bearer(
+                "PUT",
+                &card_path(id),
+                &token,
+                json!({ "quantity": quantity, "foil_quantity": foil }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+    }
+
+    async fn owned_ids(app: &Router, token: &str, query: &str) -> Vec<String> {
+        let (status, _, body) = send(
+            app,
+            get_with_bearer(&format!("/api/collection/mtg?sort=name&{query}"), token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body:?}");
+        let mut out: Vec<String> = body["data"]
+            .as_array()
+            .expect("collection data array")
+            .iter()
+            .map(|e| e["card"]["id"].as_str().expect("id").to_string())
+            .collect();
+        out.sort();
+        out
+    }
+    let sorted = |picks: &[usize]| {
+        let mut out: Vec<String> = picks.iter().map(|&i| ids[i].clone()).collect();
+        out.sort();
+        out
+    };
+
+    // "Which cards do I own more than four of?" — the total, foils included.
+    assert_eq!(owned_ids(&app, &token, "min_copies=5").await, sorted(&[4]));
+    // "Which playsets am I short of?" — 1 to 3 copies in total.
+    assert_eq!(
+        owned_ids(&app, &token, "min_copies=1&max_copies=3").await,
+        sorted(&[0, 2])
+    );
+    // A single finish reads only that counter, and requires a copy of it.
+    assert_eq!(
+        owned_ids(&app, &token, "finish=foil").await,
+        sorted(&[2, 3])
+    );
+    assert_eq!(
+        owned_ids(&app, &token, "finish=foil&min_copies=3").await,
+        sorted(&[2])
+    );
+    assert_eq!(
+        owned_ids(&app, &token, "finish=regular&max_copies=2").await,
+        sorted(&[0, 3])
+    );
+    // Absent = every holding.
+    assert_eq!(owned_ids(&app, &token, "").await.len(), 5);
+
+    // Contradictory / unknown values are a 422, never a silent default.
+    for bad in [
+        "min_copies=4&max_copies=3",
+        "min_copies=-1",
+        "finish=etched",
+    ] {
+        let (status, _, _) = send(
+            &app,
+            get_with_bearer(&format!("/api/collection/mtg?{bad}"), &token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+
+    // The public catalog search doesn't know these params: the same query returns the
+    // whole catalog, and a bogus finish isn't even validated there — the filter lives on
+    // the holdings `ListParams`, not in the shared search grammar.
+    let (status, _, all) = send(&app, get("/api/games/mtg/cards?page_size=1")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, filtered) = send(
+        &app,
+        get("/api/games/mtg/cards?page_size=1&min_copies=99&max_copies=0&finish=etched"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered:?}");
+    assert_eq!(
+        filtered["total"], all["total"],
+        "the catalog must ignore holdings params"
+    );
 }
 
 /// The `content-disposition` header value as a string, or `""` if absent.
@@ -1505,4 +1656,269 @@ async fn collection_set_tile_card_count_drops_the_folded_foil_star() {
         Some(1),
         "two stored objects, one folded away: {body:?}"
     );
+}
+
+// ---------- Collection breakdown (issue #680) ----------
+
+/// Sum a breakdown facet's `value_usd` strings in cents (`null` buckets contribute
+/// nothing), so a facet can be checked against the embedded summary total.
+fn facet_cents(buckets: &Value) -> i64 {
+    buckets
+        .as_array()
+        .expect("facet array")
+        .iter()
+        .filter_map(|b| b["value_usd"].as_str())
+        .map(|v| (v.parse::<f64>().expect("decimal") * 100.0).round() as i64)
+        .sum()
+}
+
+fn usd_cents(value: &Value) -> i64 {
+    (value
+        .as_str()
+        .expect("usd string")
+        .parse::<f64>()
+        .expect("decimal")
+        * 100.0)
+        .round() as i64
+}
+
+/// The breakdown is a per-user, `no-store`, `AuthUser` read whose embedded summary is the
+/// summary endpoint's own answer, whose facets each slice that total, and whose top
+/// holdings rank by held value (price × copies) rather than a single copy's price.
+#[tokio::test]
+async fn breakdown_slices_the_summary_and_ranks_by_held_value() {
+    let app = test_app_with_catalog().await;
+
+    // Per-user data: no token -> 401, never shared-cached.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/breakdown")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (token, _) = register(&app, "breakdown@example.com", "password123").await;
+
+    // Nothing owned: an empty breakdown, not an error.
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["summary"]["unique_cards"], 0);
+    assert_eq!(body["summary"]["total_value_usd"], Value::Null);
+    for facet in ["rarity", "color", "card_type", "finish", "top"] {
+        assert_eq!(body[facet], json!([]), "{facet} should be empty");
+    }
+    assert_eq!(body["unpriced_cards"], 0);
+
+    // An unknown game is 404, like every collection read.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/nope/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Own two cards priced in both finishes: one regular copy of the first, four regular
+    // plus one foil of the second — so the foil bucket, a card held in both finishes and a
+    // top holding with a foil count all go through the real handler.
+    let ids = foil_priced_card_ids(&app, 2).await;
+    own_card(&app, &token, &ids[0], 1).await;
+    own_card_finishes(&app, &token, &ids[1], 4, 1).await;
+
+    let (status, _, breakdown) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{breakdown:?}");
+    let (status, _, summary) =
+        send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        breakdown["summary"], summary,
+        "the embedded summary is the summary endpoint's own answer"
+    );
+
+    // Every facet is a partition of the same rows, so its values sum to the total and its
+    // copies to the copy count.
+    let total = usd_cents(&summary["total_value_usd"]);
+    for facet in ["rarity", "color", "card_type", "finish"] {
+        assert_eq!(
+            facet_cents(&breakdown[facet]),
+            total,
+            "{facet} should slice the total"
+        );
+        let copies: i64 = breakdown[facet]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["copies"].as_i64().unwrap())
+            .sum();
+        assert_eq!(copies, 6, "{facet} should account for every copy");
+    }
+    // Finish buckets count only their own finish's copies: the card held in both is in
+    // both buckets, so `cards` overlaps while `copies` still partition the six.
+    assert_eq!(breakdown["finish"][0]["key"], "regular");
+    assert_eq!(breakdown["finish"][0]["cards"], 2);
+    assert_eq!(breakdown["finish"][0]["copies"], 5);
+    assert_eq!(breakdown["finish"][1]["key"], "foil");
+    assert_eq!(breakdown["finish"][1]["cards"], 1);
+    assert_eq!(breakdown["finish"][1]["copies"], 1);
+
+    // Top holdings: both cards, ranked by held value, each carrying the card DTO.
+    let top = breakdown["top"].as_array().unwrap();
+    assert_eq!(top.len(), 2);
+    let first = usd_cents(&top[0]["value_usd"]);
+    let second = usd_cents(&top[1]["value_usd"]);
+    assert!(
+        first >= second,
+        "top holdings rank highest held value first"
+    );
+    assert_eq!(first + second, total);
+    for entry in top {
+        let id = entry["card"]["id"].as_str().expect("card id");
+        assert!(ids.contains(&id.to_string()));
+        // Held value = each finish's price × its copies.
+        let regular =
+            usd_cents(&entry["card"]["prices"]["usd"]) * entry["quantity"].as_i64().unwrap();
+        let foil = usd_cents(&entry["card"]["prices"]["usd_foil"])
+            * entry["foil_quantity"].as_i64().unwrap();
+        assert_eq!(usd_cents(&entry["value_usd"]), regular + foil);
+    }
+    assert!(
+        top.iter().any(|entry| entry["foil_quantity"] == 1),
+        "the foil copy rides its top holding"
+    );
+    assert_eq!(breakdown["unpriced_cards"], 0);
+
+    // A holding whose card row is gone (a catalog re-import — `collection_items` has no FK
+    // on `card_id`) is skipped by the projected row exactly as `/summary` skips it: insert
+    // an orphan behind the handlers, then bump the cache through a real write.
+    let now = Utc::now();
+    collection_item::ActiveModel {
+        user_id: Set(internal_user_id(&app.state.db, "breakdown@example.com").await),
+        game: Set("mtg".into()),
+        card_id: Set(999_999),
+        quantity: Set(7),
+        foil_quantity: Set(7),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert orphan holding");
+    own_card(&app, &token, &ids[0], 2).await;
+    let (status, _, breakdown) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, summary) =
+        send(&app, get_with_bearer("/api/collection/mtg/summary", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(breakdown["summary"], summary);
+    assert_eq!(breakdown["summary"]["unique_cards"], 2);
+    assert_eq!(breakdown["summary"]["total_cards"], 7);
+    assert_eq!(breakdown["top"].as_array().unwrap().len(), 2);
+    assert_eq!(breakdown["unpriced_cards"], 0);
+    for facet in ["rarity", "color", "card_type", "finish"] {
+        let copies: i64 = breakdown[facet]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["copies"].as_i64().unwrap())
+            .sum();
+        assert_eq!(copies, 7, "{facet} must skip the orphan");
+    }
+
+    // Another user sees only their own (empty) breakdown.
+    let (bob, _) = register(&app, "breakdown-bob@example.com", "password123").await;
+    let (status, _, body) =
+        send(&app, get_with_bearer("/api/collection/mtg/breakdown", &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["summary"]["unique_cards"], 0);
+    assert_eq!(body["top"], json!([]));
+}
+
+/// The breakdown rides the analytics cache (issue #680): between the user's own edits the
+/// served body comes from the cache, and any edit through the handlers bumps the version so
+/// the next read recomputes. A read-only API key may call it — it writes nothing.
+#[tokio::test]
+async fn breakdown_is_cached_until_a_holdings_edit_and_readable_by_a_read_only_key() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "breakdown-cache@example.com", "password123").await;
+    let ids = priced_card_ids(&app, 2).await;
+    own_card(&app, &token, &ids[0], 1).await;
+
+    let (status, _, first) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["summary"]["total_cards"], 1);
+
+    // Mutate the holdings BEHIND the handlers: no version bump, so the cached body is
+    // served verbatim.
+    CollectionItem::update_many()
+        .col_expr(collection_item::Column::Quantity, Expr::value(7))
+        .filter(collection_item::Column::Game.eq("mtg"))
+        .exec(&app.state.db)
+        .await
+        .expect("raw quantity update");
+    let (status, _, second) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first, second, "second read must be the cached body");
+
+    // A real edit through the handler bumps the version: the next read sees both edits.
+    own_card(&app, &token, &ids[1], 1).await;
+    let (status, _, third) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/breakdown", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(third["summary"]["total_cards"], 8);
+
+    // The bulk threshold is part of the key (it changes the embedded summary's bulk
+    // slice), so a different threshold is a different body, not a stale hit.
+    let (status, _, thresholded) = send(
+        &app,
+        get_with_bearer(
+            "/api/collection/mtg/breakdown?bulk_max_cents=1000000",
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        thresholded["summary"]["bulk_value_usd"], thresholded["summary"]["total_value_usd"],
+        "at a $10k cutoff everything is bulk"
+    );
+    assert_eq!(thresholded["top"], third["top"]);
+
+    // A read-only key can read it.
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "POST",
+            "/api/auth/api-keys",
+            &token,
+            json!({ "name": "ro", "scope": "read" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body:?}");
+    let key = body["key"].as_str().expect("plaintext key").to_string();
+    let (status, _, via_key) =
+        send(&app, get_with_bearer("/api/collection/mtg/breakdown", &key)).await;
+    assert_eq!(status, StatusCode::OK, "{via_key:?}");
+    assert_eq!(via_key, third);
 }

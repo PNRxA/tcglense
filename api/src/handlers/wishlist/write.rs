@@ -6,6 +6,7 @@ use chrono::Utc;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
+use crate::analytics_cache::HoldingsSurface;
 use crate::auth::extractor::WritableUser;
 use crate::entities::prelude::WishlistItem;
 use crate::entities::wishlist_item;
@@ -59,6 +60,12 @@ pub async fn set_wishlist_entry(
             .filter(wishlist_item::Column::CardId.eq(card.id))
             .exec(&state.db)
             .await?;
+        // The wish-list breakdown is analytics-cached under the wish list's own
+        // holdings version (issue #680): orphan it on every write, like the collection.
+        state
+            .analytics_cache
+            .bump_surface_holdings(HoldingsSurface::Wishlist, user.id, &game)
+            .await;
         return Ok(Json(CollectionQuantities {
             quantity: 0,
             foil_quantity: 0,
@@ -96,6 +103,10 @@ pub async fn set_wishlist_entry(
         .exec(&state.db)
         .await?;
 
+    state
+        .analytics_cache
+        .bump_surface_holdings(HoldingsSurface::Wishlist, user.id, &game)
+        .await;
     Ok(Json(CollectionQuantities {
         quantity,
         foil_quantity,

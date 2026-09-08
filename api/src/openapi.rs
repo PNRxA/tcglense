@@ -105,6 +105,8 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::catalog::product_prices,
         crate::handlers::catalog::product_contents,
         crate::handlers::catalog::product_containers,
+        crate::handlers::catalog::product_ev,
+        crate::handlers::catalog::open_product,
         // --- Preconstructed decks ---
         crate::handlers::precons::list_precons,
         crate::handlers::precons::list_precon_groups,
@@ -164,6 +166,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::collection_set_subtypes,
         crate::handlers::collection::collection_value_history,
         crate::handlers::collection::collection_movers,
+        crate::handlers::collection::collection_breakdown,
         crate::handlers::collection::owned_counts,
         crate::handlers::collection::collection_product_counts,
         crate::handlers::collection::export_collection,
@@ -181,6 +184,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::wishlist::wishlist_counts,
         crate::handlers::wishlist::wishlist_product_counts,
         crate::handlers::wishlist::export_wishlist_cards,
+        crate::handlers::wishlist::wishlist_breakdown,
         // Wish-list public-sharing toggle (issue #493).
         crate::handlers::sharing::get_wishlist_visibility,
         crate::handlers::sharing::set_wishlist_visibility,

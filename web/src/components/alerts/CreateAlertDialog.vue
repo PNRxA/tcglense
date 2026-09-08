@@ -22,6 +22,7 @@ import {
 import { useCreateAlertMutation } from '@/composables/useAlerts'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError, type AlertDirection, type AlertFinish } from '@/lib/api'
+import { ALERT_FINISH_LABELS } from '@/lib/alertFinishes'
 
 // "Set price alert" dialog, opened from a card or sealed-product detail page (via
 // SetPriceAlertButton in the shared detail body, so it reaches both the full page and the
@@ -61,17 +62,11 @@ const created = ref(false)
 
 const create = useCreateAlertMutation()
 
-const FINISH_LABELS: Record<AlertFinish, string> = {
-  nonfoil: 'Regular',
-  foil: 'Foil',
-  etched: 'Etched',
-}
-
 // Offer only the finishes the target is priced in (from `finishes`). Empty is defended against
 // with a regular fallback so the form is always usable.
 const finishOptions = computed<{ value: AlertFinish; label: string }[]>(() => {
   const list = props.finishes.length ? props.finishes : (['nonfoil'] as AlertFinish[])
-  return list.map((value) => ({ value, label: FINISH_LABELS[value] }))
+  return list.map((value) => ({ value, label: ALERT_FINISH_LABELS[value] }))
 })
 
 // With a single available finish there's nothing to choose: hide the picker and use it

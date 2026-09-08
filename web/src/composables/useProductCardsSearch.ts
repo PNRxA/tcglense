@@ -41,6 +41,30 @@ export const PRODUCT_CARDS_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'q', sort:
  * (CardTile/ProductTile) — and only a deep link arriving with `?product=` keeps them (#448). */
 export const PRODUCT_CARDS_MODAL_SEARCH_KEYS: ProductCardsSearchKeys = { q: 'pq', sort: 'psort' }
 
+/** The pair of URL query keys one pack opener rides (issue #682): the seed the run was rolled
+ * with, and how many copies it opened. Same two-surface problem the card search above has —
+ * the full page owns its route, the modal overlays someone else's — so it takes the same
+ * shape, and both pairs are declared here so a surface adding modal-scoped state can't forget
+ * to namespace it (or to list it in the modal's `ownedKeys`). */
+export interface PackOpenerKeys {
+  /** Holds the u32 seed, which IS the run — the same seed always deals the same cards. */
+  pack: string
+  /** Holds how many copies were opened (absent means one). */
+  copies: string
+}
+
+/** The keys for the full product page (`/sealed/:game/:id`). It owns its own route, so the
+ * plain names are the shareable contract: `/sealed/mtg/900002?pack=812345&copies=6`. */
+export const PRODUCT_OPENER_KEYS: PackOpenerKeys = { pack: 'pack', copies: 'copies' }
+
+/** The keys for the detail modal (ProductDetailDialog), namespaced for the same reason the
+ * card search is: the modal overlays a *browse* route, and a seed left in that URL is not
+ * inert like a stale search string — the next product opened would read it, auto-deal, and
+ * fire an `/open` request for up to 36 packs nobody asked for. Like the card search, these
+ * belong to the open *product*: every transition that changes or removes `?product=` strips
+ * them (DetailDialogShell's `ownedKeys`, useDetailModalLink's tile swaps). */
+export const PRODUCT_OPENER_MODAL_KEYS: PackOpenerKeys = { pack: 'ppack', copies: 'pcopies' }
+
 /**
  * The sealed-product "Cards in this product" list controls (issue #222 search + the sort that
  * came with the filter-helper/size/sort parity work), backed by the URL so they survive opening

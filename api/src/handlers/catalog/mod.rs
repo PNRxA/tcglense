@@ -32,6 +32,7 @@ use crate::handlers::shared::{
 use crate::scryfall::search::{cust_vals, escape_like};
 
 mod art_tags;
+mod boosters;
 mod cards;
 mod combos;
 mod export;
@@ -49,6 +50,7 @@ mod status;
 mod tests;
 
 pub use art_tags::{card_art_tags, list_art_tags};
+pub use boosters::{open_product, product_ev};
 #[cfg(test)]
 pub(crate) use cards::MAX_PREVIEW_ROWS;
 pub(crate) use cards::search_cards;
@@ -75,6 +77,7 @@ pub use status::{ingest_status, list_games};
 // sibling `__path_` struct, which lives in the private submodule where the handler is
 // defined). See `crate::openapi`.
 pub use art_tags::{__path_card_art_tags, __path_list_art_tags};
+pub use boosters::{__path_open_product, __path_product_ev};
 pub use cards::{
     __path_card_names, __path_card_prints, __path_get_card, __path_list_cards, __path_preview_cards,
 };

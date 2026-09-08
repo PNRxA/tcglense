@@ -153,7 +153,7 @@ const SECRET_LAIR_PAST_RELEASE: &str = "2024-10-04";
 
 /// Number of plain numbered cards in the base set. Kept above `DEFAULT_PAGE_SIZE`
 /// (60) so the set view exercises pagination / `has_more`.
-const BASE_NUMBERED: i32 = 75;
+pub(super) const BASE_NUMBERED: i32 = 75;
 
 /// Stable per-card external id, e.g. `dummy-dmb-0007`. Embeds the set code so ids are
 /// unique across sets and fixed across reboots (the upsert conflict key).
@@ -763,6 +763,11 @@ pub(super) fn dummy_cards() -> Vec<ScryfallCard> {
         "foil".to_string(),
         "etched".to_string(),
     ]);
+    // …and is priced in it, so the etched price tile, the chart's third line and the
+    // alert dialog's third finish have a card to show offline (issue #676).
+    if let Some(prices) = newest_reprint.prices.as_mut() {
+        prices.usd_etched = Some("14.50".to_string());
+    }
     cards.push(newest_reprint);
 
     // A token child set hanging off the base set (exercises set grouping).
@@ -994,6 +999,25 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.usd.is_none() && p.usd_foil.is_some())),
             "expected a foil-only card (no usd, has usd_foil)",
+        );
+    }
+
+    #[test]
+    fn the_etched_card_is_priced_in_its_etched_finish() {
+        // The one card that comes etched also carries an etched price, so the price tile,
+        // the chart's third line and the alert finish picker are exercisable offline; no
+        // other card does, so the tile stays hidden everywhere else (issue #676).
+        let etched: Vec<_> = dummy_cards()
+            .into_iter()
+            .filter(|c| c.prices.as_ref().is_some_and(|p| p.usd_etched.is_some()))
+            .collect();
+        assert_eq!(etched.len(), 1, "exactly one etched-priced card");
+        assert!(
+            etched[0]
+                .finishes
+                .as_ref()
+                .is_some_and(|f| f.iter().any(|x| x == "etched")),
+            "the etched price sits on the card that comes etched",
         );
     }
 

@@ -1,6 +1,8 @@
 pub use super::alert_channel::Entity as AlertChannel;
 pub use super::api_key::Entity as ApiKey;
 pub use super::art_tag::Entity as ArtTag;
+pub use super::booster_config::Entity as BoosterConfig;
+pub use super::booster_sheet::Entity as BoosterSheet;
 pub use super::card::Entity as Card;
 pub use super::card_art_tag::Entity as CardArtTag;
 pub use super::card_fingerprint::Entity as CardFingerprint;
@@ -31,6 +33,7 @@ pub use super::refresh_token::Entity as RefreshToken;
 pub use super::release_notification::Entity as ReleaseNotification;
 pub use super::sealed_component::Entity as SealedComponent;
 pub use super::sealed_content::Entity as SealedContent;
+pub use super::sealed_pack::Entity as SealedPack;
 pub use super::sld_drop_snapshot::Entity as SldDropSnapshot;
 pub use super::user::Entity as User;
 pub use super::wishlist_item::Entity as WishlistItem;

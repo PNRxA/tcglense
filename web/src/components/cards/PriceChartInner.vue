@@ -20,12 +20,14 @@ import type { SupportedCurrency } from '@/lib/currency'
 // route's critical chunk (this loads via defineAsyncComponent, in parallel with the
 // wrapper's price-history query). The wrapper owns the query, range state + buttons, and
 // the pending/error/empty branches; this plots the series it's handed and (when `toggleable`)
-// owns the per-line show/hide state behind the legend. The two USD fields are all it reads,
-// so any series carrying them satisfies it.
+// owns the per-line show/hide state behind the legend. The two USD fields are all it requires,
+// so any series carrying them satisfies it; a card's optional `usd_etched` (issue #676) draws a
+// third line only where a point carries it, so the two-field series stay exactly as before.
 interface PricePointLike {
   date: string
   usd: string | null
   usd_foil: string | null
+  usd_etched?: string | null
 }
 const props = defineProps<{
   series: PricePointLike[]
@@ -54,6 +56,16 @@ interface PricePlot {
   date: number
   usd: number | null
   usdFoil: number | null
+  usdEtched: number | null
+}
+
+// The plotted series, in legend order, each on its own theme chart token — the palette the
+// design system validates for both themes (docs/design-system.md), never a literal colour.
+type SeriesKey = 'usd' | 'usdFoil' | 'usdEtched'
+const SERIES_COLOR: Record<SeriesKey, string> = {
+  usd: 'var(--chart-1)',
+  usdFoil: 'var(--chart-2)',
+  usdEtched: 'var(--chart-3)',
 }
 
 function toNumber(value: string | null): number | null {
@@ -67,6 +79,7 @@ const points = computed<PricePlot[]>(() =>
     date: new Date(p.date).getTime(),
     usd: toNumber(p.usd),
     usdFoil: toNumber(p.usd_foil),
+    usdEtched: toNumber(p.usd_etched ?? null),
   })),
 )
 
@@ -157,25 +170,37 @@ function onIconError(code: string) {
 // a line.
 const plottedUsd = computed(() => points.value.filter((p) => p.usd != null).length)
 const plottedFoil = computed(() => points.value.filter((p) => p.usdFoil != null).length)
+const plottedEtched = computed(() => points.value.filter((p) => p.usdEtched != null).length)
 const showUsdDot = computed(() => points.value.length === 1 || plottedUsd.value === 1)
 const showFoilDot = computed(() => points.value.length === 1 || plottedFoil.value === 1)
+const showEtchedDot = computed(() => points.value.length === 1 || plottedEtched.value === 1)
 
 // Series legend/tooltip metadata. Colours are the theme's chart tokens, which the CSS
 // variables resolve differently in light vs dark, so the chart follows the theme. In
 // single-series mode the foil entry is dropped so the tooltip has no
 // empty "USD foil" row. Keyed off the stable `singleSeries` prop (never the data), so the
 // once-built tooltip template below can't desync from the plotted lines across navigation.
+// The etched entry is the one exception: it is keyed off the data, because a series only
+// ever carries `usd_etched` where a printing is priced in it — a two-field series (a sealed
+// product, the collection value chart) has no etched line to describe, and a card without an
+// etched printing must not grow an empty "USD etched" tooltip row.
 const chartConfig = computed<ChartConfig>(() => {
   const config: ChartConfig = {
     usd: {
       label: props.seriesLabels?.primary ?? props.currency,
-      color: 'var(--chart-1)',
+      color: SERIES_COLOR.usd,
     },
   }
   if (!props.singleSeries) {
     config.usdFoil = {
       label: props.seriesLabels?.secondary ?? `${props.currency} foil`,
-      color: 'var(--chart-2)',
+      color: SERIES_COLOR.usdFoil,
+    }
+  }
+  if (!props.singleSeries && plottedEtched.value > 0) {
+    config.usdEtched = {
+      label: `${props.currency} etched`,
+      color: SERIES_COLOR.usdEtched,
     }
   }
   return config
@@ -188,25 +213,30 @@ const chartConfig = computed<ChartConfig>(() => {
 // with one (or none) there's nothing to toggle and the chart stays legend-less as before.
 // The show/hide engine (which line stays drawn, the keep-one-line rule) lives in the
 // useSeriesToggle composable so it can be unit-tested without the unovis chart body.
-const dataKeys = computed<('usd' | 'usdFoil')[]>(() => {
-  const keys: ('usd' | 'usdFoil')[] = []
+const dataKeys = computed<SeriesKey[]>(() => {
+  const keys: SeriesKey[] = []
   if (plottedUsd.value > 0) keys.push('usd')
   if (!props.singleSeries && plottedFoil.value > 0) keys.push('usdFoil')
+  if (!props.singleSeries && plottedEtched.value > 0) keys.push('usdEtched')
   return keys
 })
 const { shownKeys, canToggle, isShown, toggle: toggleSeries } = useSeriesToggle(dataKeys)
 
 // The toggle engine only governs the opt-in path; a plain chart keeps its original gating so
-// its lines and tooltip are byte-for-byte as before.
+// its lines and tooltip are byte-for-byte as before. The etched line is additionally gated on
+// having a point at all, since a two-field series has nothing for it to draw.
 const shownUsd = computed(() => (props.toggleable ? isShown('usd') : true))
 const shownFoil = computed(() => (props.toggleable ? isShown('usdFoil') : !props.singleSeries))
+const shownEtched = computed(() =>
+  props.toggleable ? isShown('usdEtched') : !props.singleSeries && plottedEtched.value > 0,
+)
 
 const showLegend = computed(() => props.toggleable && canToggle.value)
 const legendItems = computed(() =>
   dataKeys.value.map((key) => ({
     key,
     label: String(chartConfig.value[key]?.label ?? key),
-    color: key === 'usd' ? 'var(--chart-1)' : 'var(--chart-2)',
+    color: SERIES_COLOR[key],
     visible: isShown(key),
   })),
 )
@@ -225,6 +255,7 @@ const visibleConfig = computed<ChartConfig>(() => {
 const x = (d: PricePlot) => d.date
 const usdY = (d: PricePlot) => d.usd
 const foilY = (d: PricePlot) => d.usdFoil
+const etchedY = (d: PricePlot) => d.usdEtched
 
 // Full date for the tooltip (built once below, so it must stay stable).
 const dateFmt = new Intl.DateTimeFormat(undefined, {
@@ -287,20 +318,40 @@ const tooltipTemplate = computed(() =>
             :line-width="1.5"
             line-style="dash"
           />
-          <VisLine v-if="shownUsd" :x="x" :y="usdY" color="var(--chart-1)" :line-width="2" />
-          <VisLine v-if="shownFoil" :x="x" :y="foilY" color="var(--chart-2)" :line-width="2" />
+          <VisLine v-if="shownUsd" :x="x" :y="usdY" :color="SERIES_COLOR.usd" :line-width="2" />
+          <VisLine
+            v-if="shownFoil"
+            :x="x"
+            :y="foilY"
+            :color="SERIES_COLOR.usdFoil"
+            :line-width="2"
+          />
+          <VisLine
+            v-if="shownEtched"
+            :x="x"
+            :y="etchedY"
+            :color="SERIES_COLOR.usdEtched"
+            :line-width="2"
+          />
           <VisScatter
             v-if="showUsdDot && shownUsd"
             :x="x"
             :y="usdY"
-            color="var(--chart-1)"
+            :color="SERIES_COLOR.usd"
             :size="36"
           />
           <VisScatter
             v-if="showFoilDot && shownFoil"
             :x="x"
             :y="foilY"
-            color="var(--chart-2)"
+            :color="SERIES_COLOR.usdFoil"
+            :size="36"
+          />
+          <VisScatter
+            v-if="showEtchedDot && shownEtched"
+            :x="x"
+            :y="etchedY"
+            :color="SERIES_COLOR.usdEtched"
             :size="36"
           />
           <VisAxis

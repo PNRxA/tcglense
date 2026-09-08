@@ -12,10 +12,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sea_orm::sea_query::{Expr, SelectStatement, SimpleExpr};
+use sea_orm::sea_query::{Expr, ExprTrait, SelectStatement, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, FromQueryResult, QuerySelect, QueryTrait, Select,
-    SelectModel, SelectTwo, Selector,
+    ColumnTrait, Condition, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, QueryTrait,
+    Select, SelectModel, SelectTwo, Selector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -267,6 +267,22 @@ pub struct ListParams {
     /// `?format=` on the list endpoints is inert, mirroring the catalog's `ListParams`.
     #[serde(default)]
     pub format: Option<String>,
+    /// Copy-count floor (issue #677): keep only holdings with at least this many copies,
+    /// read off the counter `finish` selects (the regular + foil total by default). A
+    /// negative value is a 422. Absent = no floor.
+    #[serde(default)]
+    pub min_copies: Option<i32>,
+    /// Copy-count ceiling: keep only holdings with at most this many copies, on the same
+    /// counter as `min_copies`. Negative, or below `min_copies`, is a 422. Absent = no cap.
+    #[serde(default)]
+    pub max_copies: Option<i32>,
+    /// Which counter the copy bounds read (`any`/`regular`/`foil`; absent = `any`, the
+    /// regular + foil total). `regular`/`foil` also require at least one copy of that
+    /// finish, so `finish=foil` alone is "every card I hold a foil of" — expressed here,
+    /// not as an `is:foil` search leaf, because that grammar matches the *catalog's*
+    /// finishes, not what the user holds. An unknown value is a 422.
+    #[serde(default)]
+    pub finish: Option<String>,
 }
 
 /// Query params for the (optionally set-scoped) collection summary.
@@ -337,6 +353,103 @@ pub(crate) fn copies_expr() -> SimpleExpr {
     Expr::cust("quantity + foil_quantity")
 }
 
+/// Which of a holding's two counters a copy-count filter reads (issue #677).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Finish {
+    /// The regular + foil total — the same key the `quantity` sort orders on.
+    #[default]
+    Any,
+    /// Regular (non-foil) copies only.
+    Regular,
+    /// Foil copies only.
+    Foil,
+}
+
+impl Finish {
+    /// Parse the `finish` query value case-insensitively; absent/blank is `Any`. Anything
+    /// else is a 422, consistent with an unknown `sort`.
+    pub(crate) fn parse(value: Option<&str>) -> Result<Self, AppError> {
+        match value.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("") | Some("any") => Ok(Self::Any),
+            Some("regular" | "nonfoil") => Ok(Self::Regular),
+            Some("foil") => Ok(Self::Foil),
+            Some(other) => Err(AppError::Validation(format!(
+                "unknown finish '{other}' (expected 'any', 'regular' or 'foil')"
+            ))),
+        }
+    }
+
+    /// The SQL expression for the counter this finish reads. Like [`copies_expr`], the bare
+    /// column names are holdings-only (no `cards` column is called `quantity`), so they
+    /// stay unambiguous under the list queries' card join on either twin.
+    fn counter_expr(self) -> SimpleExpr {
+        match self {
+            Self::Any => copies_expr(),
+            Self::Regular => Expr::cust("quantity"),
+            Self::Foil => Expr::cust("foil_quantity"),
+        }
+    }
+}
+
+/// A resolved copy-count filter for a holdings list (issue #677): the counter to read
+/// and the inclusive bounds on it. Shared by the collection and wish-list twins — the
+/// filter lands in [`HoldingsListQuery`] so the list pages, the grouped views and the
+/// `.txt` exports of both twins narrow identically, and it is deliberately **not** a
+/// search-grammar leaf: that compiler is shared with the public, CDN-cached catalog
+/// search and must never learn per-user state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct CopyFilter {
+    pub finish: Finish,
+    pub min: Option<i32>,
+    pub max: Option<i32>,
+}
+
+impl CopyFilter {
+    /// The effective floor: the requested `min`, raised to 1 when a single finish is
+    /// selected (a card the user holds no foil of isn't "a foil they hold", whatever the
+    /// bounds say). `0` means no floor at all.
+    fn floor(&self) -> i32 {
+        let requested = self.min.unwrap_or(0);
+        match self.finish {
+            Finish::Any => requested,
+            Finish::Regular | Finish::Foil => requested.max(1),
+        }
+    }
+
+    /// Whether the filter narrows anything at all — `None` on the wire for the default
+    /// request, so an unfiltered list keeps its exact pre-#677 SQL.
+    pub(crate) fn is_active(&self) -> bool {
+        self.floor() > 0 || self.max.is_some()
+    }
+
+    /// The SQL condition, or `None` when the filter is inert.
+    pub(crate) fn condition(&self) -> Option<Condition> {
+        if !self.is_active() {
+            return None;
+        }
+        let counter = self.finish.counter_expr();
+        let mut condition = Condition::all();
+        let floor = self.floor();
+        if floor > 0 {
+            condition = condition.add(counter.clone().gte(floor));
+        }
+        if let Some(max) = self.max {
+            condition = condition.add(counter.lte(max));
+        }
+        Some(condition)
+    }
+
+    /// Narrow a twin's list query by this filter — the one place the copy-count condition
+    /// is applied, shared by `collection_query` and `wishlist_query` (and so by every
+    /// reader built on them: the pages, the grouped views, the exports).
+    pub(crate) fn apply<Q: QueryFilter>(&self, query: Q) -> Q {
+        match self.condition() {
+            Some(condition) => query.filter(condition),
+            None => query,
+        }
+    }
+}
+
 impl ListParams {
     /// Resolve the requested 1-based page and clamp the page size to `[1, MAX]`.
     pub(crate) fn page_and_size(&self) -> (u64, u64) {
@@ -374,6 +487,35 @@ impl ListParams {
             DEFAULT_DROP_PAGE_SIZE,
             MAX_DROP_PAGE_SIZE,
         )
+    }
+
+    /// Resolve the `min_copies`/`max_copies`/`finish` params into a validated
+    /// [`CopyFilter`]. A negative bound, a ceiling below the floor, or an unknown finish
+    /// is a 422 — consistent with a malformed `q` — rather than being silently ignored.
+    pub(crate) fn copy_filter(&self) -> Result<CopyFilter, AppError> {
+        let finish = Finish::parse(self.finish.as_deref())?;
+        for (value, field) in [
+            (self.min_copies, "min_copies"),
+            (self.max_copies, "max_copies"),
+        ] {
+            if value.is_some_and(|n| n < 0) {
+                return Err(AppError::Validation(format!(
+                    "{field} must not be negative"
+                )));
+            }
+        }
+        if let (Some(min), Some(max)) = (self.min_copies, self.max_copies)
+            && max < min
+        {
+            return Err(AppError::Validation(
+                "max_copies must be at least min_copies".to_string(),
+            ));
+        }
+        Ok(CopyFilter {
+            finish,
+            min: self.min_copies,
+            max: self.max_copies,
+        })
     }
 
     /// Resolve the `sort`/`dir` params into a validated `(sort, direction)`,
@@ -427,20 +569,24 @@ pub(crate) async fn resolve_set_scope(
 }
 
 /// The resolved, entity-agnostic pieces of a holdings list request: the parsed search
-/// condition, the resolved set scope, and the validated sort. Produced by
+/// condition, the resolved set scope, the copy-count filter, and the validated sort. Produced by
 /// [`resolve_holdings_list`] so the list pages **and** the card exports of both twins
 /// resolve a request identically — the export must stay the very query the grid ran,
 /// and sharing the resolution makes that structural rather than a convention.
 pub(crate) struct HoldingsListQuery {
     pub search: Option<Condition>,
     pub set_codes: Option<Vec<String>>,
+    /// The copy-count / finish filter (issue #677); inert (`CopyFilter::default()`) when
+    /// the request names none.
+    pub copies: CopyFilter,
     pub sort: CollectionSort,
     pub dir: SortDir,
 }
 
-/// Resolve a holdings list/export request's shared pieces: validate the sort, parse the
-/// optional Scryfall-syntax query up front (so a malformed one 422s before we touch the
-/// DB, mirroring the catalog card lists), and resolve the optional set scope — a single
+/// Resolve a holdings list/export request's shared pieces: validate the sort and the
+/// copy-count filter, parse the optional Scryfall-syntax query up front (so a malformed
+/// one 422s before we touch the DB, mirroring the catalog card lists), and resolve the
+/// optional set scope — a single
 /// set, or with `include_related` the set's whole group (root + related sub-sets),
 /// spanning exactly the sets the catalog does.
 pub(crate) async fn resolve_holdings_list(
@@ -450,6 +596,7 @@ pub(crate) async fn resolve_holdings_list(
     params: &ListParams,
 ) -> Result<HoldingsListQuery, AppError> {
     let (sort, dir) = params.sort_spec()?;
+    let copies = params.copy_filter()?;
     let search = params
         .search()
         .map(|s| search_condition(game_meta, s, state.dialect()))
@@ -458,6 +605,7 @@ pub(crate) async fn resolve_holdings_list(
     Ok(HoldingsListQuery {
         search,
         set_codes,
+        copies,
         sort,
         dir,
     })
@@ -638,6 +786,18 @@ pub(crate) fn narrow_summary_rows<E: EntityTrait, C: ColumnTrait>(
     quantity: C,
     foil_quantity: C,
 ) -> Selector<SelectModel<HoldingSummaryRow>> {
+    select_summary_columns(query, quantity, foil_quantity).into_model::<HoldingSummaryRow>()
+}
+
+/// The column list behind [`narrow_summary_rows`], as a still-open `Select` so a wider
+/// projection can stack its own columns on top: the breakdown's
+/// [`super::breakdown::narrow_breakdown_rows`] nests a [`HoldingSummaryRow`] and adds
+/// the facet columns, and this is what keeps the two projections from drifting.
+pub(crate) fn select_summary_columns<E: EntityTrait, C: ColumnTrait>(
+    query: Select<E>,
+    quantity: C,
+    foil_quantity: C,
+) -> Select<E> {
     query
         .select_only()
         .column_as(quantity, "quantity")
@@ -650,7 +810,6 @@ pub(crate) fn narrow_summary_rows<E: EntityTrait, C: ColumnTrait>(
         .column_as(card::Column::FrameEffects, "frame_effects")
         .column_as(card::Column::BorderColor, "border_color")
         .column_as(card::Column::FullArt, "full_art")
-        .into_model::<HoldingSummaryRow>()
 }
 
 /// Fold already-fetched holdings rows (each left-joined to its card) into the

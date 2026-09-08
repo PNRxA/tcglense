@@ -17,6 +17,7 @@ mod harness;
 mod alerts;
 mod api_keys;
 mod art_tags;
+mod boosters;
 mod caching;
 mod captcha;
 mod card_detail;

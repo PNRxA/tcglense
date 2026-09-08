@@ -21,7 +21,7 @@ export function makeCard(id: string, over: Partial<Card> = {}): Card {
     color_identity: ['U'],
     colors: [],
     layout: 'normal',
-    prices: { usd: '0.25', usd_foil: null, eur: null, tix: null },
+    prices: { usd: '0.25', usd_foil: null, usd_etched: null, eur: null, tix: null },
     has_image: false,
     drop_name: null,
     drop_slug: null,

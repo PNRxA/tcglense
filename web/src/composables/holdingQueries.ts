@@ -11,6 +11,7 @@ import type {
   CollectionSet,
   CollectionSubtypeGroupPage,
   CollectionSummary,
+  HoldingBreakdown,
   OwnedCountsMap,
 } from '@/lib/api'
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
@@ -20,6 +21,7 @@ import {
   refetchUnlessFrozen,
 } from '@/composables/holdingListFreeze'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { EMPTY_COPIES_FILTER, copiesFilterParams, type CopiesFilter } from '@/lib/holdingsFilter'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
@@ -82,6 +84,9 @@ export interface HoldingQueriesConfig {
     game: string,
     bulkMaxCents?: number,
   ) => Promise<{ data: CollectionSet[] }>
+  /** The breakdown read (issue #680): where the holding's value sits. The collection
+   * threads its bulk-threshold preference through, like the summary. */
+  getBreakdown: (token: string, game: string, bulkMaxCents?: number) => Promise<HoldingBreakdown>
   getEntry: (token: string, game: string, id: string) => Promise<CollectionQuantities>
   getCounts: (token: string, game: string, ids: string[]) => Promise<OwnedCountsMap>
   setEntry: (
@@ -221,6 +226,9 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     }
     reflowing([prefix, game], cfg.deferListRefetch)
     reflowing([`${prefix}-summary`, game], cfg.deferListRefetch)
+    // The breakdown panel is a summary-shaped block (bars + a top list), not a grid: it
+    // never reflows tiles, so it refetches on every write for both surfaces.
+    qc.invalidateQueries({ queryKey: [`${prefix}-breakdown`, game] })
     if (cfg.invalidateValueHistory) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
@@ -246,14 +254,21 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     query: Ref<string>,
     sort: Ref<string>,
     set?: Ref<string | undefined>,
-    opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
+    opts: {
+      includeRelated?: Ref<boolean>
+      enabled?: Ref<boolean>
+      copies?: Ref<CopiesFilter>
+    } = {},
   ) {
-    // Fall back to stable "no scope" / "not grouped" refs so the query key is well-formed
-    // either way.
+    // Fall back to stable "no scope" / "not grouped" / "unfiltered" refs so the query key is
+    // well-formed either way.
     const setCode = set ?? ref<string | undefined>(undefined)
     const includeRelated = opts.includeRelated ?? ref(false)
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [prefix, game, setCode, query, sort, page, includeRelated],
+      // The copies filter rides the key as the REF (not `.value`), like every other reactive
+      // param here, so flipping it refetches.
+      queryKey: [prefix, game, setCode, query, sort, page, includeRelated, copies],
       queryFn: (token: string) =>
         cfg.getList(token, game.value, {
           page: page.value,
@@ -263,6 +278,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
           set: setCode.value || undefined,
           includeRelated: includeRelated.value || undefined,
           ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+          ...copiesFilterParams(copies.value),
         }),
       // Keep the current grid visible while the next page loads (smoother paging).
       placeholderData: keepPreviousData,
@@ -293,15 +309,17 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     code: Ref<string>,
     page: Ref<number>,
     query: Ref<string>,
-    opts: { enabled?: Ref<boolean> } = {},
+    opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
   ) {
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [`${prefix}-drops`, game, code, query, page],
+      queryKey: [`${prefix}-drops`, game, code, query, page, copies],
       queryFn: (token: string) =>
         cfg.getSetDrops(token, game.value, code.value, {
           page: page.value,
           pageSize: DROP_PAGE_SIZE,
           q: query.value || undefined,
+          ...copiesFilterParams(copies.value),
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
@@ -319,15 +337,17 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     code: Ref<string>,
     page: Ref<number>,
     query: Ref<string>,
-    opts: { enabled?: Ref<boolean> } = {},
+    opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
   ) {
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [`${prefix}-subtypes`, game, code, query, page],
+      queryKey: [`${prefix}-subtypes`, game, code, query, page, copies],
       queryFn: (token: string) =>
         cfg.getSetSubtypes(token, game.value, code.value, {
           page: page.value,
           pageSize: SUBTYPE_PAGE_SIZE,
           q: query.value || undefined,
+          ...copiesFilterParams(copies.value),
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
@@ -405,6 +425,30 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     return useAuthedQuery<{ data: CollectionSet[] }>(options)
   }
 
+  /** Where the holding's value sits (issue #680): copies + value by rarity, colour, card
+   * type and finish, plus the top holdings by held value — the landing's breakdown panel.
+   * For a collection, carries the bulk-threshold preference so the embedded summary's bulk
+   * slice matches the header (and refetches when the threshold changes). `enabled` lets the
+   * landing hold the (whole-holdings) scan back until something is held. */
+  function useBreakdownQuery(game: Ref<string>, opts: { enabled?: Ref<boolean> } = {}) {
+    if (cfg.withBulkThreshold) {
+      const bulkThreshold = useBulkThresholdStore()
+      const bulkMaxCents = computed(() => bulkThreshold.cents)
+      const options = {
+        queryKey: [`${prefix}-breakdown`, game, bulkMaxCents],
+        queryFn: (token: string) => cfg.getBreakdown(token, game.value, bulkMaxCents.value),
+        enabled: opts.enabled,
+      }
+      return useAuthedQuery<HoldingBreakdown>(options)
+    }
+    const options = {
+      queryKey: [`${prefix}-breakdown`, game],
+      queryFn: (token: string) => cfg.getBreakdown(token, game.value),
+      enabled: opts.enabled,
+    }
+    return useAuthedQuery<HoldingBreakdown>(options)
+  }
+
   /**
    * How many copies of one card the signed-in user holds — for the card-detail controls.
    * Options let a caller defer and refresh the fetch: `enabled` gates it (e.g. the grid
@@ -471,6 +515,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     useSubtypesQuery,
     useSummaryQuery,
     useSetsQuery,
+    useBreakdownQuery,
     useEntryQuery,
     useCounts,
     useSetEntryMutation,

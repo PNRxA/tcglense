@@ -18,10 +18,10 @@ use crate::error::AppError;
 use crate::extract::{JsonBody, Path, Query};
 use crate::handlers::shared::{
     CardResponse, CollectionEntry, CollectionQuantities, CollectionSort, CollectionSummary,
-    HoldingSummaryRow, ListParams, MAX_OWNED_IDS, OwnedCountsRequest, OwnedCountsResponse, Page,
-    SortDir, SummaryParams, apply_card_sort, build_page, copies_expr, dedupe_ids, load_card,
-    narrow_summary_rows, require_game, resolve_holdings_list, resolve_set_scope,
-    summarize_holdings,
+    CopyFilter, HoldingSummaryRow, ListParams, MAX_OWNED_IDS, OwnedCountsRequest,
+    OwnedCountsResponse, Page, SortDir, SummaryParams, apply_card_sort, build_page, copies_expr,
+    dedupe_ids, load_card, narrow_summary_rows, require_game, resolve_holdings_list,
+    resolve_set_scope, summarize_holdings,
 };
 use crate::state::AppState;
 
@@ -46,12 +46,15 @@ use super::find_row;
         ("include_related" = Option<bool>, Query, description = "With `set`, span the set's whole group"),
         ("sort" = Option<String>, Query, description = "Sort key (`updated`/`quantity`/`name`/`rarity`/`released`/`cmc`/`price`)"),
         ("dir" = Option<String>, Query, description = "Sort direction (`asc`/`desc`)"),
+        ("min_copies" = Option<i32>, Query, description = "Keep only cards wanted in at least this many copies (of the `finish` counter)"),
+        ("max_copies" = Option<i32>, Query, description = "Keep only cards wanted in at most this many copies (of the `finish` counter)"),
+        ("finish" = Option<String>, Query, description = "Which counter the copy bounds read: `any` (regular + foil, default), `regular`, or `foil` — the latter two also require at least one wanted copy of that finish"),
     ),
     responses(
         (status = 200, description = "A page of the signed-in user's wanted cards.", body = Page<CollectionEntry>),
         (status = 401, description = "Missing or invalid API key."),
         (status = 404, description = "Unknown game."),
-        (status = 422, description = "Malformed search query or sort."),
+        (status = 422, description = "Malformed search query, sort, or copy-count filter."),
     ),
 )]
 pub async fn list_wishlist(
@@ -87,6 +90,7 @@ pub(crate) async fn wanted_list_page(
         game,
         parts.set_codes.as_deref(),
         parts.search,
+        parts.copies,
         parts.sort,
         parts.dir,
         state.dialect(),
@@ -161,18 +165,20 @@ pub(super) fn wanted_summary_rows(
 
 /// Build the wish-list query for a user + game: the [`wanted_with_cards`] base
 /// (per-user scope + optional set scope), plus the optional already-parsed search
-/// condition and the chosen sort. Kept separate from the handler so the join/filter/sort
-/// can be unit-tested against a seeded DB without an `AppState`.
+/// condition, the copy-count filter (issue #677) and the chosen sort. Kept separate from
+/// the handler so the join/filter/sort can be unit-tested against a seeded DB without an
+/// `AppState`.
 ///
 /// The search condition, the set scope, and the card sort touch only `cards` columns;
-/// the `user_id` and `game` filters and the recency sort stay entity-qualified to
-/// `wishlist_items`, so nothing is ambiguous across the join (both tables carry a
-/// `game` column).
+/// the `user_id` and `game` filters, the copy-count filter and the recency sort stay on
+/// `wishlist_items` columns, so nothing is ambiguous across the join (both tables carry
+/// a `game` column).
 pub(super) fn wishlist_query(
     user_id: i32,
     game: &str,
     set_codes: Option<&[String]>,
     search: Option<Condition>,
+    copies: CopyFilter,
     sort: CollectionSort,
     dir: SortDir,
     dialect: Dialect,
@@ -181,6 +187,7 @@ pub(super) fn wishlist_query(
     if let Some(condition) = search {
         query = query.filter(condition);
     }
+    query = copies.apply(query);
     match sort {
         // Newest change first (or oldest, if reversed), with a stable id tiebreaker
         // for deterministic paging.

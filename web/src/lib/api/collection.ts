@@ -1,4 +1,5 @@
 import { request, requestBlob } from './client'
+import type { HoldingFinish } from '@/lib/holdingsFilter'
 import { makeHoldingApi } from './holdings'
 import { makeProductHoldingApi } from './product-holdings'
 import type { PriceRange } from './catalog'
@@ -27,6 +28,7 @@ import type {
 // signatures. Collection-only surfaces (value history, CSV export) stay local.
 
 export type {
+  BreakdownBucket,
   CollectionDropGroup,
   CollectionEntry,
   CollectionMover,
@@ -40,6 +42,8 @@ export type {
   CollectionSubtypeGroup,
   CollectionSummary,
   CollectionVisibility,
+  HoldingBreakdown,
+  TopHolding,
 } from './generated'
 
 import type { CollectionVisibility } from './generated'
@@ -98,6 +102,16 @@ export interface CollectionListParams {
   /** With a `set` scope, span the set's whole group (root + related sub-sets) instead
    * of just the one set — the collection mirror of the catalog's `include_related`. */
   includeRelated?: boolean
+  /** Copy-count filter (issue #677): keep rows holding at least this many copies. Its own
+   * query param, never folded into `q` — the Scryfall grammar knows nothing about it. */
+  minCopies?: number
+  /** Copy-count filter: keep rows holding at most this many copies (the server 422s a
+   * `max_copies` below `min_copies`). */
+  maxCopies?: number
+  /** Which counter the copy bounds read: `any` (regular + foil, the default), `regular` or
+   * `foil` — each of the latter also requiring at least one copy of that finish, so a bare
+   * `finish=foil` means "cards I hold any foil of". */
+  finish?: HoldingFinish
 }
 
 /** A page of collection drop groups — `total`/pagination count *drops*, not cards. */
@@ -109,6 +123,11 @@ export interface CollectionDropsParams {
   pageSize?: number
   /** Scryfall-style search query (same syntax as the catalog card lists). */
   q?: string
+  /** Copy-count filter (issue #677) — the same three params the flat listing takes, applied
+   * to the held cards within each group. */
+  minCopies?: number
+  maxCopies?: number
+  finish?: HoldingFinish
 }
 
 /** A page of collection sub-type groups — `total`/pagination count *sub-types*, not cards. */
@@ -136,6 +155,14 @@ export const getCollectionSummary = api.summary
 /** The sets the user owns cards in, newest set first — the per-set collection landing.
  * `bulkMaxCents` sets each tile's bulk cutoff, matching the summary header. */
 export const getCollectionSets = api.sets
+
+/** Relative `/api/collection/{game}/breakdown` path (issue #680). */
+export const collectionBreakdownPath = api.breakdownPath
+
+/** Where the collection's value sits — by rarity, colour identity, card type and finish,
+ * plus the top holdings by held value. Carries the bulk-threshold preference so the
+ * embedded summary's bulk slice matches the landing header. */
+export const getCollectionBreakdown = api.breakdown
 
 /** Relative `/api/collection/{game}/sets/{code}/drops` path (paginated by drop). */
 export const collectionSetDropsPath = api.setDropsPath
