@@ -7,6 +7,7 @@ import type {
   CreateDeckRequest,
   Deck,
   DeckDetail,
+  DeckDiff,
   DeckFolder,
   DeckImportRequest,
   DeckImportResponse,
@@ -36,6 +37,12 @@ export type {
   DeckCardEntry,
   DeckCommander,
   DeckDetail,
+  DeckDiff,
+  DeckDiffChange,
+  DeckDiffEntry,
+  DeckDiffSection,
+  DeckDiffSide,
+  DeckDiffSummary,
   DeckFolder,
   DeckImportFileFormat,
   DeckImportRequest,
@@ -148,6 +155,27 @@ export function setDeckVisibility(
     body: { public: isPublic },
     token,
   })
+}
+
+/** Duplicate one of the caller's own decks (issue #674) — the same clone `copyPublicDeck`
+ * makes, without publishing first. The copy is named `"<name> (copy)"`, starts private, and
+ * is filed in the source's folder. Returns the new deck's list header; the page navigates to
+ * it and loads the detail there. */
+export function copyDeck(token: string, game: string, deckId: number): Promise<Deck> {
+  return request<Deck>(`${deckBase(game, deckId)}/copy`, { method: 'POST', token })
+}
+
+/** What changed between two of the caller's decks (issue #674): per card — added, removed,
+ * a different copy count, or only a different regular/foil split — deck-wide over the deck
+ * proper and per section matched by name. Folded by card *name*, so a printing swap is not a
+ * change and a playset split across arts is one card. A read: a read-only key may call it. */
+export function getDeckDiff(
+  token: string,
+  game: string,
+  deckId: number,
+  otherId: number,
+): Promise<DeckDiff> {
+  return request<DeckDiff>(`${deckBase(game, deckId)}/diff/${otherId}`, { token })
 }
 
 // ----- Folders -----

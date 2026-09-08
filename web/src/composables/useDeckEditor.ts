@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   useAddDeckToCollectionMutation,
+  useCopyDeckMutation,
   useCreateSectionMutation,
   useDeckQuery,
   useDeleteDeckMutation,
@@ -76,6 +77,23 @@ export function useDeckEditor(props: DeckEditorProps) {
   const addToCollection = useAddDeckToCollectionMutation()
   function addDeckToCollection() {
     return addToCollection.mutateAsync({ game: props.game, deckId: deckId.value })
+  }
+
+  // "Make a v2" (issue #674): duplicate this deck and open the copy. Nothing to confirm —
+  // the copy is a new private deck the user can delete, unlike the add-to-collection write.
+  const copyDeck = useCopyDeckMutation()
+  const duplicateError = ref('')
+  async function duplicateDeck() {
+    const current = deck.value
+    if (!current || copyDeck.isPending.value) return
+    duplicateError.value = ''
+    try {
+      const copy = await copyDeck.mutateAsync({ game: props.game, deckId: current.id })
+      await router.push(`/decks/${props.game}/${copy.id}`)
+    } catch (error) {
+      duplicateError.value =
+        error instanceof ApiError ? error.message : 'Could not duplicate this deck.'
+    }
   }
 
   // Deck metadata and folder actions.
@@ -330,6 +348,9 @@ export function useDeckEditor(props: DeckEditorProps) {
     ownedInCollection,
     wantedInWishlist,
     addDeckToCollection,
+    duplicateDeck,
+    duplicating: copyDeck.isPending,
+    duplicateError,
     folders,
     renameOpen,
     editName,

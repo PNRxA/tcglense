@@ -55,12 +55,12 @@ use crate::{
         currency::currency_rates,
         decks::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
-            change_deck_card_printing, copy_public_deck, create_deck, create_folder,
+            change_deck_card_printing, copy_deck, copy_public_deck, create_deck, create_folder,
             create_section, deck_bracket, deck_goldfish, deck_legality, deck_mana, deck_stats,
             deck_tokens, decks_containing_card, delete_deck, delete_folder, delete_section,
-            export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
-            move_deck_card, move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
-            set_deck_visibility, update_deck, update_folder, update_section,
+            diff_deck, export_deck, get_deck, import_deck, list_deck_formats, list_decks,
+            list_folders, move_deck_card, move_deck_to_folder, needed_cards, reorder_sections,
+            set_deck_card, set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -420,6 +420,16 @@ pub fn build_router(state: AppState) -> Router {
             put(set_deck_visibility),
         )
         .route("/api/decks/{game}/{deck_id}/export", get(export_deck))
+        // Duplicate one of the caller's own decks (issue #674): the same clone the public copy
+        // below makes, without publishing first. A `WritableUser` write like every deck write.
+        .route("/api/decks/{game}/{deck_id}/copy", post(copy_deck))
+        // …and diff it against another of the caller's decks: a read of two decks the caller
+        // owns, so `AuthUser` (a read-only key may call it). Static `diff` is a deeper path
+        // than the analysis reads beside it, so nothing collides.
+        .route(
+            "/api/decks/{game}/{deck_id}/diff/{other_id}",
+            get(diff_deck),
+        )
         // Add the deck's cards to the caller's collection, on top of what they own ("I bought
         // this"). A write on the collection addressed by the deck it reads — filed here with
         // the deck's other actions (`export`, `visibility`, `copy`) rather than under

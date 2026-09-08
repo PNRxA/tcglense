@@ -43,6 +43,7 @@ mod analysis;
 mod cards;
 mod containing;
 mod copy;
+mod diff;
 mod export;
 mod facets;
 mod folders;
@@ -59,7 +60,10 @@ pub use analysis::{
 };
 pub use cards::{change_deck_card_printing, move_deck_card, set_deck_card};
 pub use containing::decks_containing_card;
-pub use copy::copy_public_deck;
+pub use copy::{copy_deck, copy_public_deck};
+// The diff DTOs are collected into the OpenAPI doc from the route's response body, like the
+// analysis DTOs; the fold itself stays module-private.
+pub use diff::diff_deck;
 // The whole-deck write seam, shared with the precon copy (`handlers::precons::copy`) — both
 // duplicate a source whose card ids are already internal, so both write through it.
 pub(crate) use copy::{NewDeck, NewDeckCard, NewDeckSection, insert_deck_with_cards};
@@ -89,7 +93,8 @@ pub use analysis::{
 };
 pub use cards::{__path_change_deck_card_printing, __path_move_deck_card, __path_set_deck_card};
 pub use containing::__path_decks_containing_card;
-pub use copy::__path_copy_public_deck;
+pub use copy::{__path_copy_deck, __path_copy_public_deck};
+pub use diff::__path_diff_deck;
 pub use export::__path_export_deck;
 pub use folders::{
     __path_create_folder, __path_delete_folder, __path_list_folders, __path_update_folder,

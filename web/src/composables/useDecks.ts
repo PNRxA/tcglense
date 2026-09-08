@@ -4,6 +4,7 @@ import {
   addDeckToCollection,
   addPublicDeckToCollection,
   changeDeckCardPrinting,
+  copyDeck,
   copyPublicDeck,
   createDeck,
   createFolder,
@@ -12,6 +13,7 @@ import {
   deleteFolder,
   deleteSection,
   getDeck,
+  getDeckDiff,
   getDecks,
   getDecksContaining,
   getFolders,
@@ -37,6 +39,7 @@ import type {
   CreateDeckRequest,
   Deck,
   DeckDetail,
+  DeckDiff,
   DeckFolder,
   DeckImportRequest,
   DeckImportResponse,
@@ -115,6 +118,24 @@ export function useDeckQuery(game: Ref<string>, deckId: Ref<number>, enabled?: R
   return useAuthedQuery<DeckDetail>(options)
 }
 
+/** What changed between two of the caller's decks (issue #674). Both ids are refs inside
+ * the key, so picking another deck to compare with refetches; `enabled` gates the read on
+ * a deck having been picked at all. Deck writes invalidate the family via `invalidateDeck`
+ * — a diff is derived from both decks' cards, so an edit to either side must refresh it. */
+export function useDeckDiffQuery(
+  game: Ref<string>,
+  deckId: Ref<number>,
+  otherId: Ref<number>,
+  enabled?: MaybeRefOrGetter<boolean>,
+) {
+  const options = {
+    queryKey: ['deck-diff', game, deckId, otherId],
+    queryFn: (token: string) => getDeckDiff(token, game.value, deckId.value, otherId.value),
+    enabled,
+  }
+  return useAuthedQuery<DeckDiff>(options)
+}
+
 /** The user's deck folders for a game. */
 export function useFoldersQuery(game: Ref<string>) {
   const options = {
@@ -156,6 +177,9 @@ export function invalidateDeck(qc: QueryClient, game: string, deckId?: number) {
   qc.invalidateQueries({ queryKey: ['deck-needed', game] })
   // …and the card pages' "in your decks" panels, which read the same containment.
   qc.invalidateQueries({ queryKey: ['deck-containing', game] })
+  // …and every diff for the game: a diff reads two decks, and the edited one may be the
+  // *other* side of a comparison open on a different deck's page, so the whole family goes.
+  qc.invalidateQueries({ queryKey: ['deck-diff', game] })
   // …and the server-side analysis (issue #596), whose keys are their own family and would
   // otherwise leave the page showing last edit's curve, verdict, and sample hand.
   invalidateDeckAnalysis(qc, game, deckId)
@@ -183,6 +207,10 @@ export interface ImportDeckVars {
 }
 export interface CopyPublicDeckVars {
   handle: string
+  deckId: number
+}
+export interface CopyDeckVars {
+  game: string
   deckId: number
 }
 export interface AddDeckToCollectionVars {
@@ -310,6 +338,21 @@ export function useCopyPublicDeckMutation() {
     },
   }
   return useAuthedMutation<DeckDetail, CopyPublicDeckVars>(options)
+}
+
+/** Duplicate one of the caller's own decks (issue #674). The copy is a new deck in the same
+ * game (and folder), so the deck list — and, since it lands in a folder, the folder counts —
+ * refresh off the returned header. */
+export function useCopyDeckMutation() {
+  const qc = useQueryClient()
+  const options = {
+    mutationFn: (token: string, vars: CopyDeckVars) => copyDeck(token, vars.game, vars.deckId),
+    onSettled: (_d: Deck | undefined, _e: ApiError | null, vars: CopyDeckVars) => {
+      invalidateDeck(qc, vars.game)
+      qc.invalidateQueries({ queryKey: ['deck-folders', vars.game] })
+    },
+  }
+  return useAuthedMutation<Deck, CopyDeckVars>(options)
 }
 
 /** Add a deck's cards to the caller's collection, on top of what they own ("I bought this").

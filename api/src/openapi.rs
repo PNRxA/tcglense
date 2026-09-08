@@ -204,6 +204,8 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::decks::change_deck_card_printing,
         crate::handlers::decks::export_deck,
         crate::handlers::decks::copy_public_deck,
+        crate::handlers::decks::copy_deck,
+        crate::handlers::decks::diff_deck,
         crate::handlers::decks::add_deck_to_collection,
         crate::handlers::decks::add_public_deck_to_collection,
         // Deck analysis (issue #596): composition + draw odds, the legality verdict, a
