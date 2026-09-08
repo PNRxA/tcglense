@@ -66,9 +66,9 @@ const MODES: { value: ReconcileMode; label: string; hint: string }[] = [
 // about the source is remembered.
 //
 // The paste tab exists because not every service has an API or a browser-friendly export:
-// Mythic Tools (issue #572) and ManaBox (issue #669) are phone apps, and pasting what you
-// copied out of them is much less friction than saving a file and finding it in a file
-// picker.
+// Mythic Tools (issue #572) is a phone app whose export you copy out, and pasting it is much
+// less friction than saving a file and finding it in a file picker. ManaBox (issue #669)
+// exports a file, but its contents paste here just as well.
 type SourceType = 'link' | 'csv' | 'text'
 
 const open = ref(false)

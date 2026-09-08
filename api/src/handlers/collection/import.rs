@@ -257,9 +257,16 @@ fn ensure_network_import_enabled(provider: Provider) -> Result<(), AppError> {
     if provider.network_import_enabled() {
         return Ok(());
     }
+    // Moxfield's disable is temporary (pending an approved User-Agent); the phone apps have
+    // no API to fetch from at all, so they aren't promised a link import that will never come.
+    let why = if provider.file_only() {
+        "isn't available — the app has no public collection API"
+    } else {
+        "is temporarily unavailable"
+    };
     Err(AppError::Validation(format!(
-        "{label} link import is temporarily unavailable. You can still import a {label} \
-         collection by uploading a CSV export instead.",
+        "{label} link import {why}. You can still import a {label} collection by uploading \
+         its CSV export (or pasting it) instead.",
         label = provider.label()
     )))
 }

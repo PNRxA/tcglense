@@ -618,12 +618,13 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   is the fingerprint), ManaBox CSV (its `ManaBox ID` column), **both checked before
   Archidekt's Scryfall ID** because both exports carry one too (read as Archidekt, a ManaBox
   file was refused for spelling its finish column `Foil`, not `Finish`), then Archidekt CSV,
-  Moxfield CSV, then a plain-text card list as the fallback. Keep the text list *last* or a
-  real CSV silently degrades into it. Mythic Tools and ManaBox are one parser
-  (`csv_import::parse_id_or_pair_rows`, a `HybridShape` per app) — a fifth id-else-set+number
-  export is a third `HybridShape`, not a third copy of the loop. That line grammar lives in `collection_import::text_list` and is
-  **shared with `deck_import::parser`** — extend the seam, don't fork a second dialect. A
-  text line naming no printing resolves to the newest printing of that name
+  Moxfield CSV, then a plain-text card list as the fallback. Mythic Tools and ManaBox are one
+  parser (`csv_import::parse_id_or_pair_rows`, a `HybridShape` per app) — a fifth
+  id-else-set+number export is a third `HybridShape`, not a third copy of the loop. Keep the
+  text list *last* or a real CSV silently degrades into it. That line grammar lives in
+  `collection_import::text_list` and is **shared with `deck_import::parser`** — extend the
+  seam, don't fork a second dialect. A text line naming no printing resolves to the newest
+  printing of that name
   (`reconcile::resolve_newest_printing_by_name`, also shared with deck import) — which must keep
   **excluding foil-`…★` variants**, or `4 Sol Ring` silently imports as four *foils* (the star
   shares its base's name and date, wins the id tie-break, and `consolidate` folds it on as foil).

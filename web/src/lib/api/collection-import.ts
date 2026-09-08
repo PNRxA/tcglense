@@ -111,7 +111,7 @@ export function importCollectionCsv(
  * Import a collection from text the user pasted: a card list (`2 Sol Ring (C21) 263`, one
  * per line) or the contents of a CSV export. Same sniffing, same synchronous
  * {@link ImportSummary} as {@link importCollectionCsv} — this exists because copying an
- * export out of a phone app (Mythic Tools, issue #572) is much easier than saving it to a
+ * export out of a phone app (Mythic Tools, issue #572; ManaBox, issue #669) beats saving it to a
  * file and finding it in a browser's file picker.
  */
 export function importCollectionText(

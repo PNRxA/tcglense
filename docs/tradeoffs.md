@@ -357,10 +357,9 @@ catalog) is planned but not implemented.
   Archidekt — where a ManaBox file was refused for spelling its finish `Foil` (issue #669).
   Then **Archidekt** (an id column), ahead of Moxfield because Archidekt's quantity column
   also accepts a "Count" spelling — only then does Count + Edition + Collector Number mean
-  **Moxfield**, whose
-  rows carry no card id and pre-resolve by `(set_code, collector_number)` (exact match
-  on the trimmed number, set code lowercased; validated 1058/1058 against a real
-  export). The same zero-match `Replace` guard applies, so an empty/garbage upload can't
+  **Moxfield**, whose rows carry no card id and pre-resolve by `(set_code, collector_number)`
+  (exact match on the trimmed number, set code lowercased; validated 1058/1058 against a
+  real export). The same zero-match `Replace` guard applies, so an empty/garbage upload can't
   wipe a collection. The 16 MB cap is generous for either export (Moxfield's full export
   is ~100 KB per 1000 rows) but can reject a huge *all-columns* Archidekt export — its
   user is told to export only the three needed columns.

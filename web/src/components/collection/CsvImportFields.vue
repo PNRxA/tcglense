@@ -28,8 +28,8 @@ function onChange(event: Event) {
       <div>
         <p class="text-foreground font-medium">Exporting from ManaBox</p>
         <p class="mt-1">
-          Open your collection (or a folder), choose Export, and pick CSV — the standard export
-          already includes everything we need (Scryfall ID, Foil, Quantity). Condition, language and
+          Open your collection (or a folder), choose Export, and pick CSV — then upload the file
+          as-is; the standard export already includes everything we need. Condition, language and
           purchase price aren’t imported yet.
         </p>
       </div>

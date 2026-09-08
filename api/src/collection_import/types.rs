@@ -102,6 +102,17 @@ impl Provider {
             Provider::Moxfield | Provider::MythicTools | Provider::ManaBox => false,
         }
     }
+
+    /// Whether this provider is **permanently** upload/paste-only — a mobile app with no
+    /// public collection API — as opposed to one whose live import is merely switched off
+    /// for now (Moxfield). Only the refusal copy reads this: a user shouldn't be told a
+    /// fetch that can never exist is "temporarily" unavailable.
+    pub fn file_only(self) -> bool {
+        match self {
+            Provider::MythicTools | Provider::ManaBox => true,
+            Provider::Archidekt | Provider::Moxfield => false,
+        }
+    }
 }
 
 /// Deployment-level provider settings that a fetch needs beyond the shared HTTP client
@@ -235,11 +246,26 @@ mod tests {
     #[test]
     fn every_provider_is_listed_exactly_once() {
         // `ALL` is hand-maintained; a variant missing from it would silently drop out of
-        // the file-import gate. The ids are distinct, so a duplicate shows up as a repeat.
-        let mut ids: Vec<&str> = Provider::ALL.iter().map(|p| p.as_str()).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), Provider::ALL.len(), "no duplicates");
+        // the file-import gate. Rust can't enumerate an enum, so the guard is a canary: the
+        // `match` below is exhaustive on purpose, and a new variant fails to compile here
+        // until it's given the next slot — at which point `ALL` must carry it too, or the
+        // slot stays unfilled and the assertion fails.
+        fn slot(provider: Provider) -> usize {
+            match provider {
+                Provider::Archidekt => 0,
+                Provider::Moxfield => 1,
+                Provider::MythicTools => 2,
+                Provider::ManaBox => 3,
+            }
+        }
+        const VARIANTS: usize = 4;
+        let mut filled = [false; VARIANTS];
+        for &provider in Provider::ALL {
+            assert!(!filled[slot(provider)], "{} listed twice", provider.label());
+            filled[slot(provider)] = true;
+        }
+        assert!(filled.iter().all(|&f| f), "a variant is missing from ALL");
+        assert_eq!(Provider::ALL.len(), VARIANTS);
         for &provider in Provider::ALL {
             assert!(
                 provider.supports_game(crate::scryfall::GAME),
@@ -259,5 +285,19 @@ mod tests {
         assert!(!Provider::MythicTools.network_import_enabled());
         assert!(!Provider::ManaBox.network_import_enabled());
         assert!(Provider::Archidekt.network_import_enabled());
+    }
+
+    #[test]
+    fn file_only_providers_never_advertise_a_live_import() {
+        // "Permanently file-only" is a strictly stronger claim than "live import off": a
+        // provider can't be file-only *and* fetchable. Moxfield is the one that's off but
+        // not file-only — its refusal copy may still call the disable temporary.
+        for &provider in Provider::ALL {
+            if provider.file_only() {
+                assert!(!provider.network_import_enabled(), "{}", provider.label());
+            }
+        }
+        assert!(!Provider::Moxfield.file_only());
+        assert!(Provider::ManaBox.file_only() && Provider::MythicTools.file_only());
     }
 }
