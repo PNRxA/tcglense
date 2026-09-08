@@ -33,7 +33,7 @@ import {
   SET_SORT_OPTIONS,
 } from '@/lib/cardSort'
 import { type Card, type OwnedCountsMap } from '@/lib/api'
-import { describeCopiesFilter } from '@/lib/holdingsFilter'
+import { EMPTY_COPIES_FILTER, describeCopiesFilter } from '@/lib/holdingsFilter'
 import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -179,7 +179,12 @@ export function useHoldingsBrowse(
     setIncludeRelated,
     viewSingleSet,
     setGroupView,
-  } = useSetGrouping(game, groupCode, { basePath: surface.basePath, preserveQuery: ['ghosts'] })
+  } = useSetGrouping(game, groupCode, {
+    basePath: surface.basePath,
+    // The grouping / scope nav rebuilds the query from scratch; carry the copy-count filter
+    // across it like the ghost mode — a layout change must not silently unfilter the grid.
+    preserveQuery: ['ghosts', 'copies', 'finish'],
+  })
 
   // A grouped set breaks down into either Secret Lair drops or card sub-types (never both —
   // see `groupMode`); split the flag so each mode's query can be selected.
@@ -258,7 +263,18 @@ export function useHoldingsBrowse(
   // which has no held counts to bound (`setShowGhosts` drops its keys on the way in).
   // Unlike a sort commit it never flips a grouped view to the flat grid: the bounds narrow
   // the cards within each drop / sub-type just as well.
-  const { copies: copiesFilter, copiesToken, finish, active: copiesActive } = useCopiesFilter()
+  const {
+    copies: rawCopies,
+    copiesToken,
+    finish,
+    active: rawCopiesActive,
+    clear: clearCopies,
+  } = useCopiesFilter()
+  // Show-ghosts lists the public catalog, which ignores these params — so the filter reads as
+  // OFF there (the chip is hidden, and no label may claim a filter the grid isn't applying), even
+  // when a hand-edited URL arrives carrying the keys that `setShowGhosts` drops on the toggle.
+  const copiesFilter = computed(() => (showGhosts.value ? EMPTY_COPIES_FILTER : rawCopies.value))
+  const copiesActive = computed(() => !showGhosts.value && rawCopiesActive.value)
 
   // A cold scoped link must wait for the set list (which decides byDrop/hasDrops) before
   // firing a flat fetch, so a drop-set link doesn't flash the flat grid then discard it. The
@@ -595,6 +611,7 @@ export function useHoldingsBrowse(
     finish,
     copiesActive,
     copiesDescription,
+    clearCopies,
     heldUnique,
     scopeTotal,
     scopeTotalValue,

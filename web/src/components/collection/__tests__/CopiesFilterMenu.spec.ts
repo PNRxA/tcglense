@@ -112,7 +112,11 @@ describe('CopiesFilterMenu', () => {
 
     const wrapper = mountMenu({ copies: '2-3', finish: 'foil' })
     await pick(wrapper, 'Clear filter')
-    expect(lastEmit(wrapper, 'update:copies')).toEqual([''])
-    expect(lastEmit(wrapper, 'update:finish')).toEqual(['any'])
+    // One `clear` event for the owner's single URL write — never two model writes, whose
+    // second `router.replace` would snapshot the route before the first landed and re-add
+    // the key it had just dropped.
+    expect(wrapper.emitted('clear')).toHaveLength(1)
+    expect(wrapper.emitted('update:copies')).toBeUndefined()
+    expect(wrapper.emitted('update:finish')).toBeUndefined()
   })
 })

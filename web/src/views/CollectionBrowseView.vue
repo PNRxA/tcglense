@@ -82,6 +82,7 @@ const {
   finish,
   copiesActive,
   copiesDescription,
+  clearCopies,
   scopeTotalValue,
   scopeBulkValue,
   scopeCopiesLabel,
@@ -215,6 +216,7 @@ const {
               v-if="!showGhosts"
               v-model:copies="copiesToken"
               v-model:finish="finish"
+              @clear="clearCopies"
             />
           </div>
           <div v-if="hasCards" class="flex gap-2">

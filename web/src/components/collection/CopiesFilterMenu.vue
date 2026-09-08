@@ -34,6 +34,11 @@ import { cn } from '@/lib/utils'
 // show-ghosts mode rather than offering a filter the endpoint would ignore.
 const copies = defineModel<string>('copies', { required: true })
 const finish = defineModel<HoldingFinish>('finish', { required: true })
+// "Clear filter" is one event, not two model writes: each v-model write lands its own
+// `router.replace`, and the second one snapshots the route *before* the first navigation
+// commits — so it would re-land the very key the first just dropped. The owner clears both
+// halves (and the page) in the composable's single write.
+const emit = defineEmits<{ clear: [] }>()
 
 const filter = computed(() => ({ ...parseCopiesToken(copies.value), finish: finish.value }))
 const active = computed(() => isCopiesFilterActive(filter.value))
@@ -48,11 +53,6 @@ function onSelectFinish(value: string | undefined) {
   // The radio group hands back a bare string; only a token the API knows is committed.
   const option = FINISH_OPTIONS.find((candidate) => candidate.value === value)
   if (option) finish.value = option.value
-}
-
-function clear() {
-  copies.value = ''
-  finish.value = 'any'
 }
 
 // Keep the menu open while a radio item is picked, so both groups can be set in one visit
@@ -111,7 +111,7 @@ const keepOpen = (event: Event) => event.preventDefault()
       <!-- One click back to the unfiltered list; only worth offering while something is set. -->
       <template v-if="active">
         <DropdownMenuSeparator />
-        <DropdownMenuItem @select="clear">Clear filter</DropdownMenuItem>
+        <DropdownMenuItem @select="emit('clear')">Clear filter</DropdownMenuItem>
       </template>
     </DropdownMenuContent>
   </DropdownMenu>

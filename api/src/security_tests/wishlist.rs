@@ -512,9 +512,6 @@ async fn unknown_sort_or_dir_is_rejected() {
     }
 }
 
-/// `POST .../counts` — the wish-list browse-grid badge lookup — is scoped to the
-/// caller: it returns only the caller's own wanted cards, never another user's. The
-/// wish-list mirror of the collection's `owned_batch_is_isolated_per_user`.
 /// The wish list honours the shared copy-count / finish filter (issue #677) through its
 /// own query — the collection twin's semantics, pinned here so the seam can't silently
 /// apply to one surface only.
@@ -573,6 +570,9 @@ async fn copy_count_filter_narrows_the_wanted_list() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// `POST .../counts` — the wish-list browse-grid badge lookup — is scoped to the
+/// caller: it returns only the caller's own wanted cards, never another user's. The
+/// wish-list mirror of the collection's `owned_batch_is_isolated_per_user`.
 #[tokio::test]
 async fn counts_batch_is_isolated_per_user() {
     let app = test_app_with_catalog().await;
