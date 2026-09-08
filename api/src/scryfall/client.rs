@@ -128,7 +128,7 @@ pub async fn download_stream(
 /// different reader types decided at runtime; borrowed (`'a`) so a caller can wrap the
 /// stream in a closure over borrowed state first — that's how the card import counts
 /// wire bytes for its progress bar.
-pub(super) type BulkLines<'a> = Lines<Box<dyn AsyncBufRead + Send + Unpin + 'a>>;
+pub(crate) type BulkLines<'a> = Lines<Box<dyn AsyncBufRead + Send + Unpin + 'a>>;
 
 /// First byte of the gzip magic number (`1f 8b`).
 const GZIP_MAGIC_FIRST: u8 = 0x1f;
@@ -145,7 +145,20 @@ const GZIP_MAGIC_FIRST: u8 = 0x1f;
 /// JSON's first non-space byte can never be a control character — which also means no
 /// short-read retry loop, since [`AsyncBufReadExt::fill_buf`] only refills an empty
 /// buffer and could otherwise spin on a 1-byte first chunk.
-pub(super) async fn json_lines<'a, S>(stream: S) -> Result<BulkLines<'a>, IngestError>
+pub(crate) async fn json_lines<'a, S>(stream: S) -> Result<BulkLines<'a>, IngestError>
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin + 'a,
+{
+    Ok(inflated(stream).await?.lines())
+}
+
+/// The buffered, possibly-inflated byte reader behind [`json_lines`] — the sniff-and-inflate
+/// half on its own, for a dataset that isn't line-delimited (Commander Spellbook's combo
+/// export is one gzipped JSON document, read by [`crate::spellbook::stream`]). Same seam,
+/// same sniff, so a second provider can't drift on what "gzipped" means.
+pub(crate) async fn inflated<'a, S>(
+    stream: S,
+) -> Result<Box<dyn AsyncBufRead + Send + Unpin + 'a>, IngestError>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin + 'a,
 {
@@ -163,7 +176,7 @@ where
     } else {
         Box::new(reader)
     };
-    Ok(reader.lines())
+    Ok(reader)
 }
 
 /// Where to stream `kind`'s bulk file from: the mirror when that's the dataset source,

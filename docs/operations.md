@@ -125,7 +125,7 @@ permission only. Four independent jobs:
 | Job | Runs from | What it does |
 |-----|-----------|--------------|
 | `backend-tests` | `api/` | `cargo test --locked` (the default in-memory SQLite suite), then a **ts-rs drift check**: `cargo test` regenerates `web/src/lib/api/generated/` from the Rust DTOs, so the job fails if `git status --porcelain -- web/src/lib/api/generated` is non-empty (the API contract drifted — run `cargo test` in `api/` and commit the regenerated files) |
-| `postgres-redis-tests` | `api/` | `cargo test --locked -- --ignored` — the **only** `#[ignore]`-gated tests in the crate (the `src/integration_pg.rs` Postgres suite + `ratelimit/backend.rs`'s Redis suite), pointed at service containers via `TCGLENSE_TEST_POSTGRES_URL`/`TCGLENSE_TEST_REDIS_URL`. Service containers: `postgres:17` (user/pw/db all `postgres`, `:5432`) and `redis:7` (`:6379`), both health-checked. The ts-rs export only fires for the non-ignored DTO tests (which this job doesn't run), so that drift check stays owned by `backend-tests` |
+| `postgres-redis-tests` | `api/` | `cargo test --locked -- --ignored --skip live_bulk_catalog --skip live_spellbook_export` — the `#[ignore]`-gated **service** tests (the `src/integration_pg.rs` Postgres suite + `ratelimit/backend.rs`'s Redis suite; the two skipped names are the manual network canaries against Scryfall and Commander Spellbook), pointed at service containers via `TCGLENSE_TEST_POSTGRES_URL`/`TCGLENSE_TEST_REDIS_URL`. Service containers: `postgres:17` (user/pw/db all `postgres`, `:5432`) and `redis:7` (`:6379`), both health-checked. The ts-rs export only fires for the non-ignored DTO tests (which this job doesn't run), so that drift check stays owned by `backend-tests` |
 | `web-unit-tests` | `web/` | Node 24 + `npm ci`, then `npm run type-check` and `npm run test:unit -- --run` (Vitest) |
 | `e2e-tests` | repo root | Playwright — see the build/run detail below |
 
@@ -416,6 +416,20 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   in the bulk card API, so the mirror origin scrapes Scryfall's gallery and re-serves them.
   On by default; ignored on the mirror origin (`MIRROR_ENABLED` scrapes the source itself);
   set `false` to keep only the committed fallback snapshot / opt out of the outbound pull),
+  `COMBOS_SYNC_ENABLED` (`true`; sync the Commander Spellbook combo database (issue #683) on
+  the card-sync tick — a self-host pulls the mirror's compact snapshot at
+  `DATASET_MIRROR_URL/api/mirror/spellbook/combos`, ETag-gated so an unchanged day is one
+  `304`; the mirror origin (`SYNC_FROM_UPSTREAM=true`) fetches the upstream ~28 MB gzipped
+  export itself. Set `false` to stop syncing the dataset: on a fresh instance the tables stay
+  empty and the deck page's "Combos" panel / the card page's "Combos with" report that no
+  combo data is present; an instance that already synced keeps serving what it holds. A
+  failed or missing combo sync never fails the card-sync tick — a mirror origin that doesn't
+  offer the snapshot yet is a steady state the consumer just retries),
+  `COMBOS_UPSTREAM_INTERVAL_DAYS` (`30`; how often the mirror origin asks Commander Spellbook
+  for the export at all — a completed import younger than this isn't even revalidated, since
+  their terms ask for sparse traffic and combos change on the order of a set release; `0` =
+  every card-sync tick; a failed import retries next tick regardless; mirror consumers are
+  not gated, their daily poll hits this app's own origin),
   `FINGERPRINT_ALGO_VERSION` (`1`; stamped on built fingerprints + used to load the
   match index — bump to invalidate every fingerprint and force a rebuild + client
   cache-bust when the hash algorithm changes), `FINGERPRINT_TOP_K` (`8`; how many

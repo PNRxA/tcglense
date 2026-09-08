@@ -157,6 +157,23 @@ pub async fn refresh_all(
                     tracing::error!(game = game.id, error = %err, "art tags refresh failed");
                     providers_succeeded = false;
                 }
+                // The Commander Spellbook combo database (issue #683): which cards go
+                // infinite together, keyed by oracle_id. Its own document with its own
+                // conditional-GET version gate (an unchanged day is one 304), pulled from
+                // the mirror's compact snapshot — or, on the origin, the upstream export.
+                // **Deliberately not in the providers flag**: the dataset is optional (its
+                // own off-switch, and the reads degrade to `available: false`), and its
+                // mirror source legitimately answers 404 until the origin has completed an
+                // import — an origin still on a pre-#683 build, or one that opted out. Were
+                // that fatal, every self-host behind such an origin would never record a
+                // completed tick: hourly full retries, no boot deferral, and on a fresh
+                // install neither the price backfill nor the fingerprint build ever
+                // spawned. So a failure is logged, left in `ingest_state` (status `error`,
+                // retried next tick) and otherwise stands aside — the sld-drops /
+                // fingerprint-import stance for the other two origin-derived datasets.
+                if let Err(err) = crate::spellbook::refresh(db, client, source).await {
+                    tracing::error!(game = game.id, error = %err, "combo database refresh failed");
+                }
                 // Sealed products (TCGCSV). Runs after the card sync so cards exist for
                 // the later historic price backfill to join against.
                 if let Err(err) =
@@ -335,7 +352,11 @@ mod tests {
 pub async fn seed_all(db: &DatabaseConnection) {
     for game in GAMES {
         let result = match game.id {
-            crate::scryfall::GAME => crate::scryfall::seed(db).await,
+            crate::scryfall::GAME => match crate::scryfall::seed(db).await {
+                // The dummy combos ride the dummy cards' oracle ids, so they seed after.
+                Ok(()) => crate::spellbook::dummy::seed(db).await,
+                Err(err) => Err(err),
+            },
             other => {
                 tracing::warn!(game = other, "no dummy seeder wired for game; skipping");
                 continue;

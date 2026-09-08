@@ -62,7 +62,7 @@ impl IngestError {
     /// wrap an external error whose `Display` can leak internal URLs, host paths, or SQL
     /// detail, so they collapse to a coarse category; `Other` is already a hand-written
     /// message, so it passes through. The full error stays in the logs.
-    pub(super) fn public_detail(&self) -> String {
+    pub(crate) fn public_detail(&self) -> String {
         match self {
             IngestError::Http(_) => "network error contacting the card-data source".to_string(),
             IngestError::Io(_) => "i/o error while importing card data".to_string(),

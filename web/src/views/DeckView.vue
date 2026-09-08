@@ -61,6 +61,7 @@ import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
 import DeckToFinish from '@/components/decks/DeckToFinish.vue'
+import DeckCombos from '@/components/decks/DeckCombos.vue'
 import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
@@ -643,6 +644,11 @@ function copyDeckList() {
           </section>
         </div>
       </div>
+
+      <!-- What these cards do together: the curated combos the deck can assemble, and the
+        ones it is one card short of. Above the packing list because it's about the deck
+        itself, and hidden entirely for an empty deck. -->
+      <DeckCombos v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
       <!-- What this deck needs that isn't in it: the tokens and emblems its cards make.
         Last on the page because it's the packing list, not the deck — and hidden entirely

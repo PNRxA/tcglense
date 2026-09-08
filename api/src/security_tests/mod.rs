@@ -27,6 +27,7 @@ mod cli_auth;
 mod collection;
 mod collection_import;
 mod collection_products;
+mod combos;
 mod cors;
 mod deck_analysis;
 mod decks;
