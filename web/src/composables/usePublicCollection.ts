@@ -29,6 +29,7 @@ import type {
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
 import { PRODUCT_HOLDING_PAGE_SIZE } from '@/composables/productHoldingQueries'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { EMPTY_COPIES_FILTER, copiesFilterParams, type CopiesFilter } from '@/lib/holdingsFilter'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
 // Read-only public collection queries (issues #361/#362). These are the unauthenticated
@@ -143,12 +144,19 @@ export function usePublicCollectionQuery(
   query: Ref<string>,
   sort: Ref<string>,
   set?: Ref<string | undefined>,
-  opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
+  opts: {
+    includeRelated?: Ref<boolean>
+    enabled?: Ref<boolean>
+    copies?: Ref<CopiesFilter>
+  } = {},
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
   const related = opts.includeRelated ?? ref(false)
+  // The copy-count filter (issue #677) is honoured on the public reads too, so a shared
+  // collection browses with the same controls as the owner's. In the key as the REF.
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionPage, ApiError>({
-    queryKey: ['public-collection', handle, game, setCode, related, query, sort, page],
+    queryKey: ['public-collection', handle, game, setCode, related, query, sort, page, copies],
     queryFn: () =>
       getPublicCollection(handle.value, game.value, {
         page: page.value,
@@ -159,6 +167,7 @@ export function usePublicCollectionQuery(
         // sub-sets) — the backend honours include_related on the public list too.
         includeRelated: related.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,
@@ -175,15 +184,17 @@ export function usePublicCollectionDropsQuery(
   code: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
 ) {
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionDropGroupPage, ApiError>({
-    queryKey: ['public-drops', handle, game, code, query, page],
+    queryKey: ['public-drops', handle, game, code, query, page, copies],
     queryFn: () =>
       getPublicCollectionDrops(handle.value, game.value, code.value, {
         page: page.value,
         pageSize: DROP_PAGE_SIZE,
         q: query.value || undefined,
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,
@@ -199,15 +210,17 @@ export function usePublicCollectionSubtypesQuery(
   code: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
 ) {
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionSubtypeGroupPage, ApiError>({
-    queryKey: ['public-subtypes', handle, game, code, query, page],
+    queryKey: ['public-subtypes', handle, game, code, query, page, copies],
     queryFn: () =>
       getPublicCollectionSubtypes(handle.value, game.value, code.value, {
         page: page.value,
         pageSize: SUBTYPE_PAGE_SIZE,
         q: query.value || undefined,
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,

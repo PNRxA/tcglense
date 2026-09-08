@@ -9,7 +9,7 @@
 // Those are different kinds of number, and the copy built here keeps them visibly different —
 // a booster's ~600-card pull pool must never be worded as "600 cards in this product".
 
-import type { ProductCardSection, ProductComponent } from '@/lib/api'
+import type { PackOpening, ProductCardSection, ProductComponent, ProductEv } from '@/lib/api'
 
 /**
  * The sections the product page actually renders. A plain `booster`/`exclusive` section
@@ -212,4 +212,171 @@ export function productCardChips(
  */
 export function boxItemCount(components: ProductComponent[]): number {
   return components.reduce((sum, component) => sum + Math.max(0, component.quantity), 0)
+}
+
+// ---------- Booster expected value + the seeded opener (issue #682) ----------
+//
+// The booster sheets add two NEW kinds of number to this page, and neither one is a count of
+// what a copy contains: an **expectation** (what an average pack is worth over many openings,
+// at today's prices) and a **simulation** (what one seeded roll of the dice happened to deal).
+// Both are money figures a visitor will read as a promise unless the words around them say
+// otherwise, which is why their wording lives here beside the manifest's — the same seam, the
+// same rule. Every string below is written so it cannot be read as containment or as a
+// guarantee: an average is always said to be an average, a run is always said to be one run,
+// and the only per-pack card count on the page ({@link cardsPerPackLabel}) is worded *per
+// pack*, never as the product's contents.
+
+/** The EV panel's heading: the title, the unit its money figure is in, and the sentence that
+ * keeps that figure honest. */
+export type ProductEvHeading = { title: string; unit: string; blurb: string }
+
+/** The half of the blurb every EV heading carries, whatever the unit: what the number IS
+ * (an average, at today's prices) and what it is NOT (this pack's worth). */
+const EV_AVERAGE_BLURB =
+  "An average over many openings at today's prices — not what any one pack holds."
+
+/**
+ * Word the expected-value headline for one copy of the product. The unit is the whole
+ * distinction: a single booster's EV is quoted **per pack**, while a box's is **per copy** —
+ * and a per-copy figure is meaningless until the reader knows how many packs a copy opens, so
+ * the blurb says so outright. Neither form ever states a copy's *contents*.
+ */
+export function expectedValueHeading(ev: ProductEv): ProductEvHeading {
+  const packs = ev.packs.reduce((sum, pack) => sum + Math.max(0, pack.quantity), 0)
+  const title = 'Expected value'
+  if (packs === 1) return { title, unit: 'per pack, on average', blurb: EV_AVERAGE_BLURB }
+  // 0 packs shouldn't reach here (the API answers `null` for a product with no boosters), but
+  // "one copy opens 0 packs" would be a worse thing to print than nothing at all.
+  const opens = packs > 1 ? `One copy opens ${packs.toLocaleString()} packs. ` : ''
+  return { title, unit: 'per copy, on average', blurb: `${opens}${EV_AVERAGE_BLURB}` }
+}
+
+/** The EV read against what the product actually costs today. */
+export type EvVersusPrice = { ratio: number; label: string }
+
+/**
+ * Compare the expected value with the current market price, as a share of it — never as a
+ * gain, a loss, or anything a reader could act on as advice ("you'll get back", "profit"):
+ * an expectation over many openings says nothing about the copy in front of them, and the
+ * label keeps the word "Expected" in front of the number so the comparison inherits it.
+ * `null` when the product has no price to compare against.
+ */
+export function evVersusPrice(
+  evUsd: string,
+  priceUsd: string | null | undefined,
+): EvVersusPrice | null {
+  if (!priceUsd) return null
+  const ev = Number(evUsd)
+  const price = Number(priceUsd)
+  if (!Number.isFinite(ev) || !Number.isFinite(price) || price <= 0) return null
+  const ratio = ev / price
+  return { ratio, label: `Expected value is ${Math.round(ratio * 100)}% of the current price` }
+}
+
+/**
+ * How often a card is pulled, from the API's `one_in` ("one in N packs, on average").
+ * Under 10 the figure keeps a decimal — the difference between one pack in 2 and one in 2.5
+ * is the whole answer at that end — and above it rounds to a whole number, where a decimal
+ * would imply a precision the with-replacement approximation doesn't have. At 1.5 or under
+ * the ratio stops being informative ("1 in 1.2 packs" reads as a guarantee), so it's worded
+ * as frequency instead.
+ */
+export function oddsLabel(oneIn: number): string {
+  if (!Number.isFinite(oneIn)) return 'rarely'
+  if (oneIn <= 0) return 'rarely'
+  if (oneIn <= 1.5) return 'most packs'
+  const rounded = oneIn < 10 ? Math.round(oneIn * 10) / 10 : Math.round(oneIn)
+  return `1 in ${rounded.toLocaleString()} packs`
+}
+
+/**
+ * The one legitimate per-pack card count on a sealed product's page: it comes from the
+ * booster's own sheet configuration, so it says how many cards a pack deals — and it is
+ * worded **per pack** for exactly that reason, never as "cards in this product". A booster
+ * whose variants deal different numbers of cards has a fractional expectation, which is
+ * rendered as the range it really is (`14–15 cards per pack`) rather than a fake decimal.
+ * Empty string when there is no count to state, so the caller renders nothing.
+ */
+/**
+ * A `0..1` priced share as the "N% of picks priced" annotation, shown only below one. It
+ * mirrors the API's own `percent` guard at both ends: a share short of one is never printed
+ * as `100%` (the line only exists because something is unpriced, so "100% of picks priced"
+ * would contradict the caveat beside it — `>99%` is what a 99.7% share honestly is), and a
+ * non-zero share is never `0%`. Empty string at or above one, where the caller shows nothing.
+ */
+export function pricedShareLabel(share: number): string {
+  if (!Number.isFinite(share) || share >= 1) return ''
+  if (share <= 0) return '0% of picks priced'
+  const pct = share * 100
+  if (pct < 0.5) return '<1% of picks priced'
+  if (pct >= 99.5) return '>99% of picks priced'
+  return `${Math.round(pct)}% of picks priced`
+}
+
+export function cardsPerPackLabel(cardsPerPack: number): string {
+  if (!Number.isFinite(cardsPerPack) || cardsPerPack <= 0) return ''
+  const rounded = Math.round(cardsPerPack)
+  if (Math.abs(cardsPerPack - rounded) < 0.005) {
+    return `${rounded.toLocaleString()} ${rounded === 1 ? 'card' : 'cards'} per pack`
+  }
+  return `${Math.floor(cardsPerPack).toLocaleString()}–${Math.ceil(
+    cardsPerPack,
+  ).toLocaleString()} cards per pack`
+}
+
+/**
+ * A booster's display name for a heading — upstream's own key (`play`, `collector`) when it
+ * states none. Shared by the EV panel and the opener so one booster is never named two ways
+ * on the same page.
+ */
+export function boosterLabel(pack: { name: string | null; booster_code: string }): string {
+  return pack.name ?? `${pack.booster_code} booster`
+}
+
+/** The opener's result heading: what the run was, the caption its money figure carries, and
+ * the sentence that stops that figure being read as the product's worth. */
+export type OpeningSummary = { title: string; value: string; blurb: string }
+
+/**
+ * Word a simulated opening's total. Everything here is past tense and singular to this run —
+ * "dealt", "this run", "one roll of the dice" — because the number is a sample of one, and a
+ * lucky roll printed as a bare total is the most misleading figure this page could show. When
+ * some pulls had no market price the blurb says how many, so the total is never read as
+ * complete.
+ */
+export function openingSummary(opening: PackOpening): OpeningSummary {
+  const packs = opening.packs.length
+  const dealt = opening.priced_count + opening.unpriced_count
+  const title =
+    packs === 1
+      ? 'What this run dealt'
+      : `What this run dealt across ${packs.toLocaleString()} packs`
+  const parts = ['This run is one roll of the dice, not what a pack is worth.']
+  if (opening.unpriced_count > 0) {
+    parts.push(
+      `${opening.unpriced_count.toLocaleString()} of the ${dealt.toLocaleString()} cards dealt had no market price and count as $0.`,
+    )
+  }
+  return { title, value: 'pulled in this run', blurb: parts.join(' ') }
+}
+
+/**
+ * The run's total read against what those copies cost at today's price — the same "share of"
+ * framing {@link evVersusPrice} uses, and for the same reason: a total is not a promise. The
+ * subject stays *this run* throughout, because a simulation's total says even less about the
+ * next copy than an expectation does. `null` when the product has no price to compare with.
+ */
+export function openingVersusPrice(
+  opening: PackOpening,
+  priceUsd: string | null | undefined,
+): string | null {
+  if (!priceUsd) return null
+  const price = Number(priceUsd)
+  const value = Number(opening.value_usd)
+  const copies = Math.max(1, opening.copies)
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(value)) return null
+  const share = Math.round((value / (price * copies)) * 100)
+  return copies === 1
+    ? `This run dealt ${share}% of what one copy costs at today's price`
+    : `This run dealt ${share}% of what ${copies.toLocaleString()} copies cost at today's price`
 }

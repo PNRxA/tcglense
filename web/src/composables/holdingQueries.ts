@@ -20,6 +20,7 @@ import {
   refetchUnlessFrozen,
 } from '@/composables/holdingListFreeze'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { EMPTY_COPIES_FILTER, copiesFilterParams, type CopiesFilter } from '@/lib/holdingsFilter'
 import { useAuthedMutation, useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
@@ -249,14 +250,21 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     query: Ref<string>,
     sort: Ref<string>,
     set?: Ref<string | undefined>,
-    opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
+    opts: {
+      includeRelated?: Ref<boolean>
+      enabled?: Ref<boolean>
+      copies?: Ref<CopiesFilter>
+    } = {},
   ) {
-    // Fall back to stable "no scope" / "not grouped" refs so the query key is well-formed
-    // either way.
+    // Fall back to stable "no scope" / "not grouped" / "unfiltered" refs so the query key is
+    // well-formed either way.
     const setCode = set ?? ref<string | undefined>(undefined)
     const includeRelated = opts.includeRelated ?? ref(false)
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [prefix, game, setCode, query, sort, page, includeRelated],
+      // The copies filter rides the key as the REF (not `.value`), like every other reactive
+      // param here, so flipping it refetches.
+      queryKey: [prefix, game, setCode, query, sort, page, includeRelated, copies],
       queryFn: (token: string) =>
         cfg.getList(token, game.value, {
           page: page.value,
@@ -266,6 +274,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
           set: setCode.value || undefined,
           includeRelated: includeRelated.value || undefined,
           ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+          ...copiesFilterParams(copies.value),
         }),
       // Keep the current grid visible while the next page loads (smoother paging).
       placeholderData: keepPreviousData,
@@ -296,15 +305,17 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     code: Ref<string>,
     page: Ref<number>,
     query: Ref<string>,
-    opts: { enabled?: Ref<boolean> } = {},
+    opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
   ) {
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [`${prefix}-drops`, game, code, query, page],
+      queryKey: [`${prefix}-drops`, game, code, query, page, copies],
       queryFn: (token: string) =>
         cfg.getSetDrops(token, game.value, code.value, {
           page: page.value,
           pageSize: DROP_PAGE_SIZE,
           q: query.value || undefined,
+          ...copiesFilterParams(copies.value),
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,
@@ -322,15 +333,17 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     code: Ref<string>,
     page: Ref<number>,
     query: Ref<string>,
-    opts: { enabled?: Ref<boolean> } = {},
+    opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
   ) {
+    const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
     const options = {
-      queryKey: [`${prefix}-subtypes`, game, code, query, page],
+      queryKey: [`${prefix}-subtypes`, game, code, query, page, copies],
       queryFn: (token: string) =>
         cfg.getSetSubtypes(token, game.value, code.value, {
           page: page.value,
           pageSize: SUBTYPE_PAGE_SIZE,
           q: query.value || undefined,
+          ...copiesFilterParams(copies.value),
         }),
       placeholderData: keepPreviousData,
       enabled: opts.enabled,

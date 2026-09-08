@@ -38,8 +38,9 @@ use crate::{
             card_sealed, export_cards, export_set_cards, get_card, get_product, get_set,
             ingest_status, list_art_tags, list_cards, list_games, list_keywords, list_products,
             list_releases, list_set_cards, list_set_drops, list_set_subtypes, list_sets,
-            preview_cards, product_card_sections, product_cards, product_containers,
-            product_contents, product_facets, product_image, product_prices, scan_cards, set_icon,
+            open_product, preview_cards, product_card_sections, product_cards, product_containers,
+            product_contents, product_ev, product_facets, product_image, product_prices,
+            scan_cards, set_icon,
         },
         cli_auth::{cli_authorize, cli_token},
         collection::{
@@ -718,6 +719,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/games/{game}/products/{id}/prices",
             get(product_prices),
         )
+        // What a copy of the product is worth on average, and one simulated opening of it
+        // (issue #682) — read off the booster sheet/slot tables the sealed sync writes.
+        // Static-suffix siblings of `/prices`, and public catalog data like it: an EV moves
+        // with the prices it is computed from, and a *seeded* opening is a pure function of
+        // its URL. `open` without a `?seed=` sets its own `no-store`, exactly as the
+        // goldfish does — a random roll must never be pinned as everyone's box.
+        .route("/api/games/{game}/products/{id}/ev", get(product_ev))
+        .route("/api/games/{game}/products/{id}/open", get(open_product))
         // The structural composition — "what's in the box" (packs, decks, promos, extras),
         // linking the sub-products it contains. A static-suffix sibling of `/prices`.
         .route(
