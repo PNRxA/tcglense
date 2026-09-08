@@ -117,12 +117,19 @@ export const useSetCollectionProductEntryMutation = productQueries.useSetEntryMu
  * cached, keyed by window), so switching to a new window pays one request while switching back
  * to an already-viewed one is instant off the client cache; the Singles/Sealed switch stays a
  * pure client-side toggle since both kinds are returned for each window. */
-export function useCollectionMoversQuery(game: Ref<string>, window: Ref<MoverWindow>) {
+export function useCollectionMoversQuery(
+  game: Ref<string>,
+  window: Ref<MoverWindow>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
   const options = {
     // `window` is a ref inside the key (not `.value`) so a change refetches — see the footgun
     // note in `lib/queries.ts`.
     queryKey: ['collection-movers', game, window],
     queryFn: (token: string) => getCollectionMovers(token, game.value, window.value),
+    // The panel rests collapsed; it hands its open state in so a collapsed panel never
+    // fetches.
+    enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionMovers>(options)
 }

@@ -58,6 +58,7 @@ function mountPanel(props: Partial<InstanceType<typeof HoldingBreakdownPanel>['$
       pending: false,
       error: false,
       countNoun: 'owned' as const,
+      expanded: true,
       ...props,
     },
     global: {
@@ -118,11 +119,24 @@ describe('HoldingBreakdownPanel', () => {
     expect(rows[0]!.attributes('href')).toBe('/cards/mtg/cards/card-1')
   })
 
-  it('renders nothing for an empty breakdown but keeps the pending and error states', () => {
-    expect(mountPanel({ breakdown: empty }).html()).toBe('<!--v-if-->')
-    expect(mountPanel({ breakdown: undefined, pending: true }).text()).toContain(
-      'Where the value is',
-    )
+  it('rests collapsed with only the disclosure header, and opens on click', async () => {
+    const wrapper = mountPanel({ expanded: false })
+    expect(wrapper.text()).toContain('Where the value is')
+    expect(wrapper.text()).toContain('most valuable holdings')
+    expect(wrapper.text()).not.toContain('Dear card')
+    expect(wrapper.findAll('[role="img"]')).toHaveLength(0)
+    const disclosure = wrapper.find('button[aria-expanded]')
+    expect(disclosure.attributes('aria-expanded')).toBe('false')
+    await disclosure.trigger('click')
+    expect(wrapper.emitted('update:expanded')?.[0]).toEqual([true])
+    expect(wrapper.text()).toContain('Dear card')
+  })
+
+  it('words an empty breakdown, and keeps the pending and error states, once open', () => {
+    expect(mountPanel({ breakdown: empty }).text()).toContain('Nothing to break down yet.')
+    expect(
+      mountPanel({ breakdown: undefined, pending: true }).find('[aria-hidden="true"]').exists(),
+    ).toBe(true)
     expect(mountPanel({ breakdown: undefined, error: true }).text()).toContain(
       "Couldn't load the breakdown.",
     )

@@ -64,6 +64,7 @@ const {
   breakdown,
   breakdownPending,
   breakdownError,
+  breakdownExpanded,
 } = useHoldingsLanding(props, {
   useSummaryQuery: useWishlistSummaryQuery,
   useHeldSetsQuery: useWishlistSetsQuery,
@@ -195,9 +196,11 @@ usePageMeta({
       <HoldingStatList :items="cardStats" class="mb-6" />
 
       <!-- Where the wanted cards' cost sits (issue #680): the collection breakdown's twin,
-           worded for a shopping list. Beside the stats it slices; gated like them. -->
+           worded for a shopping list. Beside the stats it slices; gated like them, and
+           collapsed by default — the engine gates the query on the bound open state. -->
       <HoldingBreakdownPanel
         v-if="hasStats"
+        v-model:expanded="breakdownExpanded"
         :game="game"
         :breakdown="breakdown"
         :pending="breakdownPending"

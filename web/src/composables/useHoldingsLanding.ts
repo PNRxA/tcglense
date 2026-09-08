@@ -1,4 +1,4 @@
-import { computed, toRef, type Ref } from 'vue'
+import { computed, ref, toRef, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { UseQueryReturnType } from '@tanstack/vue-query'
 import { useSetsQuery } from '@/composables/useCatalog'
@@ -155,9 +155,13 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
   const hasStats = computed(() => (summary.value?.unique_cards ?? 0) > 0)
 
   // The breakdown panel's query (issue #680), held back until the summary says something is
-  // held: it folds every held card server-side, so an empty holding shouldn't pay for it,
-  // and the panel has nothing to draw before then anyway. Absent for the public landings.
-  const breakdownQuery = surface.useBreakdownQuery?.(game, { enabled: hasStats })
+  // held — it folds every held card server-side, so an empty holding shouldn't pay for it —
+  // AND until the panel is opened: it rests collapsed, and a collapsed panel fetches
+  // nothing. `breakdownExpanded` is the panel's `v-model:expanded`. Absent for the public
+  // landings.
+  const breakdownExpanded = ref(false)
+  const breakdownEnabled = computed(() => hasStats.value && breakdownExpanded.value)
+  const breakdownQuery = surface.useBreakdownQuery?.(game, { enabled: breakdownEnabled })
   const breakdown = computed(() => breakdownQuery?.data.value)
   // The panel's loading/error state, reduced here (like `activePending`/`activeError`) so the
   // twins bind two booleans rather than unwrapping the query object; a surface with no
@@ -188,5 +192,6 @@ export function useHoldingsLanding(props: { game: string }, surface: HoldingLand
     breakdown,
     breakdownPending,
     breakdownError,
+    breakdownExpanded,
   }
 }

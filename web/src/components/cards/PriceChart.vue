@@ -47,10 +47,15 @@ const props = withDefaults(
      * logo at each notable release in the plotted window) so price moves read against the
      * drops that drove them. All three surfaces (card, sealed product, collection) pass it. */
     game?: string
+    /** Render without the card frame and title — for a caller that already frames it (the
+     * collection landing's collapsible "Collection value" section). The range group keeps
+     * `title` as its accessible label. */
+    frameless?: boolean
   }>(),
   {
     title: 'Price history',
     emptyText: 'No price history for this range.',
+    frameless: false,
   },
 )
 const money = useCurrency()
@@ -124,12 +129,20 @@ const isEmpty = computed(
 </script>
 
 <template>
-  <Card>
-    <CardHeader>
+  <!-- One markup either way: `frameless` swaps the card frame for plain blocks and drops the
+       title, so the framed and frameless charts can never draw different bodies. -->
+  <component :is="props.frameless ? 'div' : Card">
+    <component
+      :is="props.frameless ? 'div' : CardHeader"
+      :class="props.frameless ? 'mb-4' : undefined"
+    >
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <CardTitle class="text-sm font-semibold">{{ props.title }}</CardTitle>
+        <CardTitle v-if="!props.frameless" class="text-sm font-semibold">
+          {{ props.title }}
+        </CardTitle>
         <div
           class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5"
+          :class="props.frameless ? 'ml-auto' : undefined"
           role="group"
           :aria-label="`${props.title} range`"
         >
@@ -153,8 +166,8 @@ const isEmpty = computed(
           </Button>
         </div>
       </div>
-    </CardHeader>
-    <CardContent>
+    </component>
+    <component :is="props.frameless ? 'div' : CardContent">
       <Skeleton v-if="query.isPending.value" class="h-64 w-full rounded-xl" aria-hidden="true" />
       <p v-else-if="query.isError.value" class="text-muted-foreground py-12 text-sm">
         Couldn't load price history.
@@ -174,6 +187,6 @@ const isEmpty = computed(
         :sets="sets"
         :game="props.game"
       />
-    </CardContent>
-  </Card>
+    </component>
+  </component>
 </template>
