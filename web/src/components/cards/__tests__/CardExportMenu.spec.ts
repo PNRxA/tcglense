@@ -113,6 +113,30 @@ describe('CardExportMenu', () => {
     expect(downloadBlob).toHaveBeenCalledWith(blob, 'tcglense-mtg-collection-cards.txt')
   })
 
+  it('carries the browse grid’s copy-count filter into the holdings export', async () => {
+    // Issue #677: the file must be the rows on screen, so the active filter rides along as
+    // its own params (never folded into `q`).
+    const wrapper = mountMenu({ list: 'collection', copies: { min: 5, finish: 'foil' } })
+    await pick(wrapper, 'Card list')
+
+    expect(exportCollectionCards).toHaveBeenCalledWith(
+      'tok',
+      'mtg',
+      expect.objectContaining({ minCopies: 5, finish: 'foil' }),
+    )
+  })
+
+  it('never sends the copy filter on a catalog export', async () => {
+    // No `list`: this is the public catalog search, which has no held counts to bound —
+    // the endpoint doesn't take these params at all.
+    const wrapper = mountMenu({ copies: { min: 5, finish: 'foil' } })
+    await pick(wrapper, 'Card list')
+
+    const [, params] = exportCards.mock.calls[0] as [string, Record<string, unknown>]
+    expect(params).not.toHaveProperty('minCopies')
+    expect(params).not.toHaveProperty('finish')
+  })
+
   it('describes holdings lines as carrying your counts', async () => {
     const wrapper = mountMenu({ list: 'collection' })
     await wrapper.get('button').trigger('click')

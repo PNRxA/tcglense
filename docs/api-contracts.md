@@ -477,7 +477,8 @@ property above holds: uncapped, two-phase drain, bounded channel, no size hint/E
   (`ratelimit/per_user.rs`), same as the CSV export: an uncapped whole-holdings drain is
   too heavy for the General browse budget.
 - Params are the *holdings listing's* own — `q`, `set`, `include_related`, `sort`
-  (`updated`/`quantity`/card sorts), `dir`, plus `?format=` — resolved and built through
+  (`updated`/`quantity`/card sorts), `dir`, the copy-count filter (`min_copies` /
+  `max_copies` / `finish`, issue #677), plus `?format=` — resolved and built through
   the very seams the listing uses (`resolve_holdings_list` +
   `collection_query`/`wishlist_query`), so the file can never disagree with the browse grid.
 - `text` lines carry the **real held counts**, one line per non-empty finish: regular
@@ -811,13 +812,13 @@ surface.
 
 | Method & path | Body | Returns |
 |---------------|------|---------|
-| `GET /api/collection/{game}?…&set&include_related` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`) |
+| `GET /api/collection/{game}?…&set&include_related&min_copies&max_copies&finish` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`). `min_copies`/`max_copies`/`finish` narrow by how many copies are held — see **Copy-count filter** below |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
 | `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
-| `GET /api/collection/{game}/sets/{code}/drops?q&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
-| `GET /api/collection/{game}/sets/{code}/subtypes?q&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
+| `GET /api/collection/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a drop-grouped set (e.g. Secret Lair), grouped by **Secret Lair drop** and **paginated by drop** — `{ data: CollectionDropGroup[], page, page_size, total, has_more }` where `CollectionDropGroup = { slug, title, card_count, cards: CollectionEntry[] }` and `total` counts drops. The collection mirror of the catalog's set-drops endpoint (owned cards only, each carrying its owned counts); a drop the user owns nothing in is absent, cards not in the snapshot fall into a trailing `"Other"` group. `404` if the set isn't drop-grouped (use `has_drops`); optional `q` filters, dropping now-empty drops |
+| `GET /api/collection/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | — | the signed-in user's **owned** cards in a set, grouped by **sub-type** (card treatment) and **paginated by sub-type** — `{ data: CollectionSubtypeGroup[], page, page_size, total, has_more }`, `CollectionSubtypeGroup = { slug, title, card_count, cards: CollectionEntry[] }`, `total` counts sub-types. The collection mirror of the catalog's `/subtypes` endpoint (owned cards only, each carrying its owned counts); a sub-type the user owns nothing in is absent. Any set works (no drop-table gate; the SPA gates on `has_subtypes`); optional `q` filters, dropping now-empty sub-types |
 | `GET /api/collection/{game}/cards/{id}` | — | `{ quantity, foil_quantity }` — the owned counts for one card (zeros if not owned) |
 | `PUT /api/collection/{game}/cards/{id}` | `{ quantity, foil_quantity }` | `{ quantity, foil_quantity }` — sets the **absolute** counts (not a delta); both zero removes the card; a negative or oversized (`> 1_000_000`) count is `422`. Upserts on the unique key (a concurrent first-add that loses the race falls back to an update) |
 | `POST /api/collection/{game}/owned` | `{ ids: string[] }` | `{ data: { [externalId]: { quantity, foil_quantity } } }` — batch owned counts for the given cards, **owned cards only** (unowned ids are absent, so nothing owned → `{ "data": {} }`). Blank/duplicate ids are trimmed away; **> 500 ids** is `422`. A `POST` (not a `GET` query) so a big browse page's id list can't blow the request-line length behind a proxy. Powers the owned-count badges overlaid on the public browse grids |
@@ -826,10 +827,32 @@ surface.
 | `POST /api/collection/{game}/import/text?mode=` | raw text body (`text/plain`) | **`200`** `ImportSummary` — the same import from **pasted** text rather than a file (issue #572: Mythic Tools is a phone app, where copying an export out beats saving it and finding it in a file picker; ManaBox, issue #669, is the same case). Identical sniffing, validation, body limit, quota class and response as `import/csv` — a pasted card list *and* a pasted CSV both work, so the client never asks the user to name their format. `422` when nothing was pasted or the text holds no readable card lines |
 | `GET /api/collection/{game}/import/jobs/{job_id}` | — | `ImportJob` `{ job_id, status, progress?, summary?, error? }` — poll an import job. `status` ∈ `queued`/`running`/`complete`/`error`; `progress` (`ImportProgress = { fetched, total? }` — provider rows fetched so far + the provider-reported total, absent until the first page reports it) present only while `running`; `summary` (an `ImportSummary`) present on `complete`, `error` message on `error`. `404` for an unknown job or another user's |
 | `GET /api/collection/{game}/export?format=` | — | **`text/csv`** download (`Content-Disposition: attachment; filename="tcglense-{game}-collection-{format}.csv"`) of the whole collection in a provider shape — `?format=archidekt` (default) or `moxfield`. Unpaginated; one row per non-empty finish bucket (a card owned in both finishes yields a Normal/regular row **and** a Foil row), name-sorted. The inverse of the CSV upload, and a re-importable round trip (see **Export** below). `422` for an unknown `format` |
-| `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/`format` |
+| `GET /api/collection/{game}/cards/export?q&set&include_related&sort&dir&min_copies&max_copies&finish&format` | — | the **whole result set** of the owned-card listing above, streamed as a `text/plain` attachment with the real owned counts (foil copies on a ` *F*`-tagged line) — the collection twin of the catalog's search export; see **Search export** in the catalog section. `422` malformed `q`/`sort`/copy-count filter/`format` |
 
 `CollectionEntry = { card: Card, quantity: number, foil_quantity: number }` — `card` is
 the full catalog `Card` shape (reusing the shared `CardResponse`).
+
+**Copy-count filter** (issue #677 — "which cards do I own more than four of?", "which
+playsets am I one short of?"). Three optional params on every holdings *listing* — the flat
+list, the by-drop and by-sub-type views, the `.txt` card export, and the public `/api/u/…`
+mirrors of each — for both twins:
+
+| Param | Meaning |
+|---|---|
+| `min_copies=<n>` | keep only holdings with **at least** `n` copies |
+| `max_copies=<n>` | keep only holdings with **at most** `n` copies |
+| `finish=any\|regular\|foil` | which counter the bounds read: `any` (default) is the regular + foil **total** — the same key `sort=quantity` orders on; `regular` / `foil` read that one counter **and require at least one copy of it**, so `finish=foil` alone is "every card I hold a foil of" |
+
+So `min_copies=5` is the trade fodder, `min_copies=1&max_copies=3` the playsets to finish,
+`finish=foil&min_copies=4` the foil playsets. Both bounds are inclusive and non-negative; a
+negative bound, `max_copies < min_copies`, or an unknown `finish` is `422` (like a malformed
+`q`). The filter is **not** a `q:` leaf and never will be: the search compiler is shared with
+the public, CDN-cached catalog listing and must not learn per-user state — `is:foil` in `q`
+matches the *catalog's* finishes, which is why `finish=` exists. It lives on the shared
+`ListParams` and is resolved once (`resolve_holdings_list` → `CopyFilter`, applied inside
+`collection_query`/`wishlist_query`), so the export and the grouped views inherit it and can't
+disagree with the grid. The three params are silently ignored by the public catalog routes,
+which don't read them (a `security_tests/collection.rs` case pins that).
 
 `CollectionSummary = { unique_cards, total_cards, total_value_usd, bulk_value_usd }`
 (`api/src/handlers/shared/holdings.rs`): distinct cards owned, total copies (regular +
@@ -1064,13 +1087,13 @@ mirror their collection twin exactly (params, ordering, errors, caps):
 
 | Method & path | Mirrors |
 |---------------|---------|
-| `GET /api/wishlist/{game}?q&sort&dir&set&include_related&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope) |
+| `GET /api/wishlist/{game}?q&sort&dir&set&include_related&min_copies&max_copies&finish&page&page_size` | the collection list (most-recently-updated first, Scryfall `q`, set/group scope, the **copy-count filter** — read on the wanted counts) |
 | `GET /api/wishlist/{game}/summary?set&include_related` | the collection summary (unique / copies / value of what's wanted) |
 | `GET /api/wishlist/{game}/sets` | the collection per-set aggregates (sets holding wishlisted cards, newest first, counts + value) |
-| `GET /api/wishlist/{game}/sets/{code}/drops?q&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
-| `GET /api/wishlist/{game}/sets/{code}/subtypes?q&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
+| `GET /api/wishlist/{game}/sets/{code}/drops?q&min_copies&max_copies&finish&page&page_size` | the collection by-drop view (`404` if the set isn't drop-grouped) |
+| `GET /api/wishlist/{game}/sets/{code}/subtypes?q&min_copies&max_copies&finish&page&page_size` | the collection by-sub-type view (any set; the SPA gates on `has_subtypes`) |
 | `POST /api/wishlist/{game}/counts` `{ ids }` | `POST .../owned` (batch counts, listed cards only, > 500 ids `422`) — named `/counts` because a wish list doesn't track ownership |
-| `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
+| `GET /api/wishlist/{game}/cards/export?q&set&include_related&sort&dir&min_copies&max_copies&finish&format` | `GET /api/collection/{game}/cards/export` (the streamed `.txt` search export with real wanted counts; filename `tcglense-{game}-wishlist-…`) — see **Search export** in the catalog section |
 | `GET /api/wishlist/{game}/cards/{id}` | the single-card counts read (zeros if absent) |
 | `PUT /api/wishlist/{game}/cards/{id}` `{ quantity, foil_quantity }` | the absolute-count upsert (both-zero deletes, negative/oversized `422`) |
 

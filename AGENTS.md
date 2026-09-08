@@ -178,7 +178,14 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `X-Forwarded-For` (else clients spoof their IP).
 - Collection and wish list are **independent tables** that share the ts-rs DTOs in
   `handlers/shared/holdings.rs` — editing a shared card shape changes both wire surfaces.
-  Card holdings use **external** card ids; both counts zero deletes the row. Both surfaces
+  Card holdings use **external** card ids; both counts zero deletes the row. A filter on
+  *what is held* (the copy-count filter, `min_copies`/`max_copies`/`finish`, issue #677) is a
+  `ListParams` field resolved once in `resolve_holdings_list` and applied inside each twin's
+  query builder — **never a `q:` leaf**: the search compiler is shared with the public,
+  CDN-cached catalog listing and must not learn per-user state (`is:foil` matches the
+  catalog's finishes, not the user's). Landing in the seam is what lets the `.txt` export and
+  the grouped views inherit it, and the SPA mirrors the one URL grammar for it in
+  `lib/holdingsFilter.ts`. Both surfaces
   also hold sealed products in independent `collection_product_items` /
   `wishlist_product_items` tables (`/api/{collection,wishlist}/{game}/products*`, external
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:

@@ -20,6 +20,7 @@ import {
   exportWishlistCards,
 } from '@/lib/api'
 import { toSortParam } from '@/lib/cardSort'
+import { copiesFilterParams, type CopiesFilter } from '@/lib/holdingsFilter'
 import { downloadBlob } from '@/lib/download'
 import { useAuthStore } from '@/stores/auth'
 
@@ -49,6 +50,10 @@ const props = defineProps<{
   defaultSort: string
   /** Set views only: whether the listing spans the set's related group. */
   includeRelated?: boolean
+  /** Holdings surfaces only: the copy-count + finish filter the grid is showing (issue
+   * #677), so the file is the rows on screen. Ignored without `list` — the catalog
+   * exports have no held counts to bound, and the endpoint doesn't take these params. */
+  copies?: CopiesFilter
   /** How many cards the search matched, so the menu can flag a large download. */
   total?: number
   /** Nothing to export (no results yet, or the query is in flight). */
@@ -81,6 +86,11 @@ const params = computed(() => ({
   includeRelated: props.includeRelated,
 }))
 
+// The copy-count filter rides the holdings export only (see the prop).
+const copiesParams = computed(() =>
+  props.list && props.copies ? copiesFilterParams(props.copies) : {},
+)
+
 // Mirrors the server's own filename, so a visitor who opens the API directly and one who
 // clicks this button end up with identically-named files. Holdings filenames are
 // scope-free (no set code): the server never puts the visitor-typed `?set=` in one.
@@ -104,7 +114,7 @@ async function download(format: CardExportFormat) {
       const exportHolding = props.list === 'wishlist' ? exportWishlistCards : exportCollectionCards
       const auth = useAuthStore()
       blob = await auth.authFetch((token) =>
-        exportHolding(token, props.game, { ...request, set: props.setCode }),
+        exportHolding(token, props.game, { ...request, ...copiesParams.value, set: props.setCode }),
       )
     } else {
       blob = props.setCode

@@ -27,6 +27,7 @@ import type {
 import { CARD_PAGE_SIZE, DROP_PAGE_SIZE, SUBTYPE_PAGE_SIZE } from '@/composables/useCatalog'
 import { PRODUCT_HOLDING_PAGE_SIZE } from '@/composables/productHoldingQueries'
 import { COLLECTION_DEFAULT_SORT, toSortParam } from '@/lib/cardSort'
+import { EMPTY_COPIES_FILTER, copiesFilterParams, type CopiesFilter } from '@/lib/holdingsFilter'
 import { useBulkThresholdStore } from '@/stores/bulkThreshold'
 
 // Read-only public wish-list queries (issue #493) — the unauthenticated wish-list twin of
@@ -116,12 +117,19 @@ export function usePublicWishlistQuery(
   query: Ref<string>,
   sort: Ref<string>,
   set?: Ref<string | undefined>,
-  opts: { includeRelated?: Ref<boolean>; enabled?: Ref<boolean> } = {},
+  opts: {
+    includeRelated?: Ref<boolean>
+    enabled?: Ref<boolean>
+    copies?: Ref<CopiesFilter>
+  } = {},
 ) {
   const setCode = set ?? ref<string | undefined>(undefined)
   const related = opts.includeRelated ?? ref(false)
+  // The copy-count filter (issue #677), honoured on the public reads too. In the key as
+  // the REF, like every other reactive param here.
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionPage, ApiError>({
-    queryKey: ['public-wishlist', handle, game, setCode, related, query, sort, page],
+    queryKey: ['public-wishlist', handle, game, setCode, related, query, sort, page, copies],
     queryFn: () =>
       getPublicWishlist(handle.value, game.value, {
         page: page.value,
@@ -130,6 +138,7 @@ export function usePublicWishlistQuery(
         set: setCode.value || undefined,
         includeRelated: related.value || undefined,
         ...toSortParam(sort.value, COLLECTION_DEFAULT_SORT),
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,
@@ -144,15 +153,17 @@ export function usePublicWishlistDropsQuery(
   code: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
 ) {
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionDropGroupPage, ApiError>({
-    queryKey: ['public-wishlist-drops', handle, game, code, query, page],
+    queryKey: ['public-wishlist-drops', handle, game, code, query, page, copies],
     queryFn: () =>
       getPublicWishlistDrops(handle.value, game.value, code.value, {
         page: page.value,
         pageSize: DROP_PAGE_SIZE,
         q: query.value || undefined,
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,
@@ -167,15 +178,17 @@ export function usePublicWishlistSubtypesQuery(
   code: Ref<string>,
   page: Ref<number>,
   query: Ref<string>,
-  opts: { enabled?: Ref<boolean> } = {},
+  opts: { enabled?: Ref<boolean>; copies?: Ref<CopiesFilter> } = {},
 ) {
+  const copies = opts.copies ?? ref<CopiesFilter>(EMPTY_COPIES_FILTER)
   return useQuery<CollectionSubtypeGroupPage, ApiError>({
-    queryKey: ['public-wishlist-subtypes', handle, game, code, query, page],
+    queryKey: ['public-wishlist-subtypes', handle, game, code, query, page, copies],
     queryFn: () =>
       getPublicWishlistSubtypes(handle.value, game.value, code.value, {
         page: page.value,
         pageSize: SUBTYPE_PAGE_SIZE,
         q: query.value || undefined,
+        ...copiesFilterParams(copies.value),
       }),
     placeholderData: keepPreviousData,
     enabled: opts.enabled,

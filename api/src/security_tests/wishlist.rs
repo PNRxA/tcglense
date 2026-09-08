@@ -515,6 +515,64 @@ async fn unknown_sort_or_dir_is_rejected() {
 /// `POST .../counts` — the wish-list browse-grid badge lookup — is scoped to the
 /// caller: it returns only the caller's own wanted cards, never another user's. The
 /// wish-list mirror of the collection's `owned_batch_is_isolated_per_user`.
+/// The wish list honours the shared copy-count / finish filter (issue #677) through its
+/// own query — the collection twin's semantics, pinned here so the seam can't silently
+/// apply to one surface only.
+#[tokio::test]
+async fn copy_count_filter_narrows_the_wanted_list() {
+    let app = test_app_with_catalog().await;
+    let (token, _) = register(&app, "want-copies@example.com", "password123").await;
+
+    let ids = sample_card_ids(&app, 3).await;
+    want_card(&app, &token, &ids[0], 1).await;
+    want_card(&app, &token, &ids[1], 4).await;
+    let (status, _, body) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            &card_path(&ids[2]),
+            &token,
+            json!({ "quantity": 0, "foil_quantity": 2 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "want foil failed: {body:?}");
+
+    async fn wanted_ids(app: &Router, token: &str, query: &str) -> Vec<String> {
+        let (status, _, body) = send(
+            app,
+            get_with_bearer(&format!("/api/wishlist/mtg?{query}"), token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body:?}");
+        body["data"]
+            .as_array()
+            .expect("wishlist data array")
+            .iter()
+            .map(|e| e["card"]["id"].as_str().expect("id").to_string())
+            .collect()
+    }
+
+    assert_eq!(
+        wanted_ids(&app, &token, "min_copies=4").await,
+        [ids[1].clone()]
+    );
+    assert_eq!(
+        wanted_ids(&app, &token, "finish=foil").await,
+        [ids[2].clone()]
+    );
+    assert_eq!(
+        wanted_ids(&app, &token, "finish=regular&max_copies=1").await,
+        [ids[0].clone()]
+    );
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/wishlist/mtg?finish=holo", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 #[tokio::test]
 async fn counts_batch_is_isolated_per_user() {
     let app = test_app_with_catalog().await;

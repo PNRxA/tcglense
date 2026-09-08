@@ -1,6 +1,7 @@
 import { computed, ref, toRef, type ComputedRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchErrorMessage, useCardSearch } from '@/composables/useCardSearch'
+import { useCopiesFilter } from '@/composables/useCopiesFilter'
 import {
   CARD_PAGE_SIZE,
   DROP_PAGE_SIZE,
@@ -32,6 +33,7 @@ import {
   SET_SORT_OPTIONS,
 } from '@/lib/cardSort'
 import { type Card, type OwnedCountsMap } from '@/lib/api'
+import { describeCopiesFilter } from '@/lib/holdingsFilter'
 import { formatCompletion, formatCopies, type CountNoun } from '@/lib/ownership'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
@@ -146,9 +148,14 @@ export function useHoldingsBrowse(
     // The two modes list different cards and sort differently, so a page number and a
     // mode-specific sort don't carry across the toggle — drop both so the target mode
     // starts on page 1 at its own default order (held = recency; ghosts = catalog order).
+    // The copy-count filter goes the same way: the ghost list is the public CATALOG listing,
+    // which has no held counts to bound and ignores these params, so carrying them would
+    // leave the chip claiming a filter the grid isn't applying.
     // The by-drop / include-related scope (view / related / from) is preserved.
     delete next.page
     delete next.sort
+    delete next.copies
+    delete next.finish
     router.replace({ query: next })
   }
 
@@ -246,6 +253,13 @@ export function useHoldingsBrowse(
     grouped.value ? { view: 'all' } : {},
   )
 
+  // The copy-count + finish filter (issue #677), URL-backed beside the search/sort. It rides
+  // the HELD queries only — the show-ghosts mode's source is the public catalog listing,
+  // which has no held counts to bound (`setShowGhosts` drops its keys on the way in).
+  // Unlike a sort commit it never flips a grouped view to the flat grid: the bounds narrow
+  // the cards within each drop / sub-type just as well.
+  const { copies: copiesFilter, copiesToken, finish, active: copiesActive } = useCopiesFilter()
+
   // A cold scoped link must wait for the set list (which decides byDrop/hasDrops) before
   // firing a flat fetch, so a drop-set link doesn't flash the flat grid then discard it. The
   // unscoped view has no drops/related, so it never waits.
@@ -258,15 +272,18 @@ export function useHoldingsBrowse(
   // Held + flat (the default). Idle when ghosts or a grouped view is active.
   const listQuery = surface.useListQuery(game, page, query, sort, setCode, {
     includeRelated,
+    copies: copiesFilter,
     enabled: computed(() => !showGhosts.value && !grouped.value && flatReady.value),
   })
   const entries = computed(() => listQuery.data.value?.data ?? [])
 
   // Held + grouped: the user's held cards grouped into Secret Lair drops or card sub-types.
   const heldDropsQuery = surface.useDropsQuery(game, groupCode, page, query, {
+    copies: copiesFilter,
     enabled: computed(() => !showGhosts.value && byDrop.value),
   })
   const heldSubtypesQuery = surface.useSubtypesQuery(game, groupCode, page, query, {
+    copies: copiesFilter,
     enabled: computed(() => !showGhosts.value && bySubtype.value),
   })
   const heldGroupsQuery = computed(() => (bySubtype.value ? heldSubtypesQuery : heldDropsQuery))
@@ -403,22 +420,31 @@ export function useHoldingsBrowse(
     }
     return setQuery.data.value?.card_count ?? null
   })
+  // Whether the visible list is narrowed at all — by the search box or by the copy-count
+  // filter. The summary is always the WHOLE scope's, so every figure read off it is hidden
+  // while either narrows the list rather than pairing a scope total with a filtered count.
+  const filtered = computed(() => !!query.value || copiesActive.value)
+
+  // The active copy filter in words ("5 or more foil copies"), or null — the chip's own
+  // prose, reused by the count line and by each view's filtered-but-empty message.
+  const copiesDescription = computed(() => describeCopiesFilter(copiesFilter.value))
+
   // The scope's held value, split into the total and its bulk (< $1/card) slice, both formatted
   // (null while loading or when nothing in scope is priced). The wish-list template never
   // renders the bulk slice (a shopping list only cares about cost), but computing it here is
-  // harmless. Shown only when there's no active search — the values are the whole scope's, so
-  // pairing them with a search-filtered count would misread.
+  // harmless. Shown only when the list is unfiltered — the values are the whole scope's, so
+  // pairing them with a filtered count would misread.
   const scopeTotalValue = computed(() =>
-    query.value ? null : money.formatUsd(summaryQuery.data.value?.total_value_usd),
+    filtered.value ? null : money.formatUsd(summaryQuery.data.value?.total_value_usd),
   )
   const scopeBulkValue = computed(() =>
-    query.value ? null : money.formatUsd(summaryQuery.data.value?.bulk_value_usd),
+    filtered.value ? null : money.formatUsd(summaryQuery.data.value?.bulk_value_usd),
   )
   // The scope's total held copies (with duplicates) as "N copies", shown next to the count when
   // there are more copies than distinct cards. Like the value, it's the whole scope's figure,
-  // so it's hidden while a search filters the list.
+  // so it's hidden while anything filters the list.
   const scopeCopiesLabel = computed(() => {
-    if (query.value) return null
+    if (filtered.value) return null
     const s = summaryQuery.data.value
     return s && s.total_cards > s.unique_cards ? formatCopies(s.total_cards) : null
   })
@@ -467,13 +493,23 @@ export function useHoldingsBrowse(
 
   const countLabel = computed(() => {
     const n = total.value
+    // How the copy-count filter reads in prose ("5 or more foil copies"), or '' when off —
+    // the same wording the filter chip's trigger shows, so the two can't disagree.
+    const copiesPhrase = copiesDescription.value
     // A grouped view counts its groups (drops or sub-types).
     if (grouped.value) {
       const unit = bySubtype.value ? 'sub-type' : dropNoun.value
       const label = `${n.toLocaleString()} ${n === 1 ? unit : `${unit}s`}`
-      return query.value ? `${label} matching “${query.value}”` : label
+      const withCopies = copiesPhrase ? `${label} with ${copiesPhrase}` : label
+      return query.value ? `${withCopies} matching “${query.value}”` : withCopies
     }
     const word = n === 1 ? 'card' : 'cards'
+    // Filtered: say what by, and skip the completion forms below — "X/Y owned" is a claim
+    // about the whole scope, which a narrowed list is not.
+    if (copiesPhrase) {
+      const label = `${n.toLocaleString()} ${word} with ${copiesPhrase}`
+      return query.value ? `${label} matching “${query.value}”` : label
+    }
     if (query.value) return `${n.toLocaleString()} ${word} matching “${query.value}”`
     // Show-ghosts (flat) leads with completion (held ⊆ scope): `n` is the catalog total in
     // scope, `heldUnique` how many you hold. Only once both the (unfiltered) summary and the
@@ -554,6 +590,11 @@ export function useHoldingsBrowse(
     collectionCounts,
     wishlistCounts,
     wishlistReady,
+    copiesFilter,
+    copiesToken,
+    finish,
+    copiesActive,
+    copiesDescription,
     heldUnique,
     scopeTotal,
     scopeTotalValue,
