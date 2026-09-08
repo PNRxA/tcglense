@@ -235,7 +235,7 @@ function fetchValueHistory(range: PriceRange) {
       <CollectionMovers
         v-if="(hasStats || hasProductStats) && showMovers"
         :game="game"
-        class="mb-8"
+        class="mb-10"
       />
 
       <!-- Keep the sealed holdings grid directly below the collection analytics. -->
