@@ -12,7 +12,7 @@ import type {
   DeckImportResponse,
   DeckSection,
   DeckVisibility,
-  NeededCard,
+  NeededCards,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
@@ -44,6 +44,8 @@ export type {
   DeckVisibility,
   NeededCard,
   NeededCardDeck,
+  NeededCards,
+  NeededTotals,
   SetDeckCardRequest,
   UpdateDeckRequest,
 } from './generated'
@@ -67,14 +69,20 @@ export function getDeck(token: string, game: string, deckId: number): Promise<De
   return request<DeckDetail>(deckBase(game, deckId), { token })
 }
 
-/** Cards the caller's decks collectively need beyond their collection (issue #499).
- * `mode` = `card` (any printing counts) or `printing` (exact missing printing). */
+/** Cards the caller's decks collectively need beyond their collection (issue #499), priced
+ * at the printings the decks hold and at each card's cheapest printing (issue #675).
+ * `mode` = `card` (any printing counts) or `printing` (exact missing printing); `deckId`
+ * scopes the list to one deck — what *it* still needs, as its share of the shortfall
+ * across every deck (a deck that isn't the caller's is a 404). */
 export function getNeededCards(
   token: string,
   game: string,
   mode: NeedMode = 'card',
-): Promise<{ data: NeededCard[] }> {
-  return request<{ data: NeededCard[] }>(`${base(game)}/needed?mode=${mode}`, { token })
+  deckId?: number | null,
+): Promise<NeededCards> {
+  const params = new URLSearchParams({ mode })
+  if (deckId != null) params.set('deck_id', String(deckId))
+  return request<NeededCards>(`${base(game)}/needed?${params}`, { token })
 }
 
 /** The caller's decks containing a card — **any printing** of it (gameplay identity) —

@@ -53,10 +53,12 @@ import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckPricing from '@/components/decks/DeckPricing.vue'
+import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckTextList from '@/components/decks/DeckTextList.vue'
+import DeckToFinish from '@/components/decks/DeckToFinish.vue'
 import DeckTokens from '@/components/decks/DeckTokens.vue'
 import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
@@ -85,8 +87,11 @@ const {
   showEmpty,
   visibleSections,
   sectionNavItems,
+  rolesQuery,
+  roles,
   filterQuery,
   filterColors,
+  filterRole,
   filterActive,
   clearFilters,
   matchCount,
@@ -214,6 +219,15 @@ function copyDeckList() {
               · +{{ deck.maybeboard_summary.total_cards }} maybeboard</span
             >
           </p>
+          <!-- What's still to buy for this deck, priced (issue #675) — its share of the
+               shortfall across every deck, linking to the shopping list scoped to it. Hidden
+               for an empty deck: nothing to finish. -->
+          <DeckToFinish
+            v-if="deck.summary.total_cards > 0"
+            class="mt-1"
+            :game="game"
+            :deck-id="deck.id"
+          />
           <!-- How this deck has actually done in games tracked with the life counter. Renders
                nothing until it has been played, so a deck page never grows an empty 0-0 line. -->
           <DeckMatchRecord class="mt-1" :game="game" :deck-id="deck.id" />
@@ -345,6 +359,16 @@ function copyDeckList() {
 
       <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
 
+      <!-- What the deck's cards *do* (issue #671). The bars double as a filter for the card
+        list below, which is why the query lives in the editor engine rather than in here. -->
+      <DeckRoles
+        v-model:role="filterRole"
+        :game="game"
+        :roles="roles"
+        :pending="rolesQuery.isPending.value"
+        :failed="rolesQuery.isLoadingError.value"
+        :stale="rolesQuery.isRefetchError.value"
+      />
       <!-- Colour sources against pip requirements (issue #670). Hidden for an empty deck,
         which has nothing to cast and nothing to cast it with. -->
       <DeckMana v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />

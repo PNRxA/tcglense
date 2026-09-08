@@ -15,6 +15,7 @@ import {
 } from '@/composables/useDecks'
 import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
+import { useDeckRolesQuery } from '@/composables/useDeckAnalysis'
 import { useWishlistCounts } from '@/composables/useWishlist'
 import { ApiError, exportDeckFile } from '@/lib/api'
 import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
@@ -43,9 +44,16 @@ export function useDeckEditor(props: DeckEditorProps) {
   // the user can still target them from the add box (which always lists every section).
   // Filtering + grouping live in the display engine shared with the public view (#562).
   const showEmpty = ref(false)
+  // What each card does (issue #671). Fetched here rather than by the panel that draws it,
+  // because the same answer feeds two things: the roles bars and the card list's role
+  // filter — exactly as the view fetches legality once for its banner and its per-card
+  // chips. A deck write invalidates it (`invalidateDeckAnalysis`).
+  const rolesQuery = useDeckRolesQuery(game, deckId)
+  const roles = computed(() => rolesQuery.data.value)
   const {
     filterQuery,
     filterColors,
+    filterRole,
     filterActive,
     clearFilters,
     cardsBySection,
@@ -55,7 +63,7 @@ export function useDeckEditor(props: DeckEditorProps) {
     sectionNavItems,
     matchCount,
     totalCount,
-  } = useDeckCardDisplay({ cards: allCards, sections, showEmpty })
+  } = useDeckCardDisplay({ cards: allCards, sections, showEmpty, roles })
 
   // Owner-only collection/wish-list overlays, batched over the deck's catalog card ids.
   const catalogCards = computed<Card[]>(() => allCards.value.map((entry) => entry.card))
@@ -321,8 +329,11 @@ export function useDeckEditor(props: DeckEditorProps) {
     showEmpty,
     visibleSections,
     sectionNavItems,
+    rolesQuery,
+    roles,
     filterQuery,
     filterColors,
+    filterRole,
     filterActive,
     clearFilters,
     matchCount,

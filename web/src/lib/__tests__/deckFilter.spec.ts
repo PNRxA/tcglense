@@ -139,4 +139,34 @@ describe('filterDeckEntries', () => {
     // Never falls through to rules text: "#3" must not surface "deals 3 damage".
     expect(filterDeckEntries(all, '#3', [])).toEqual([])
   })
+
+  // The role set (issue #671) is resolved by the caller from the server's `card_roles` map,
+  // so all this layer owes is the AND — and the difference between "no role selected" and
+  // "a role nothing filled".
+  describe('the card-role set', () => {
+    it('is no constraint at all when null', () => {
+      expect(filterDeckEntries(all, '   ', [], null)).toBe(all)
+      expect(filterDeckEntries(all, 'lightning', [], null)).toEqual([bolt])
+    })
+
+    it('narrows to the cards in the set', () => {
+      expect(filterDeckEntries(all, '', [], new Set(['sol', 'island']))).toEqual([island, sol])
+    })
+
+    it('matches nothing for an empty set, rather than everything', () => {
+      expect(filterDeckEntries(all, '', [], new Set())).toEqual([])
+      // …even with no other filter typed, which is the case a `!size` shortcut would break.
+      expect(filterDeckEntries(all, '   ', [], new Set())).toEqual([])
+    })
+
+    it('ANDs with both the text query and the colour selection', () => {
+      const ramp = new Set(['sol', 'island'])
+      expect(filterDeckEntries(all, 'artifact', [], ramp)).toEqual([sol])
+      expect(filterDeckEntries(all, '', ['C'], ramp)).toEqual([sol])
+      // A card in the role but out of the colour selection is still excluded...
+      expect(filterDeckEntries(all, '', ['R'], ramp)).toEqual([])
+      // ...and one matching the text but outside the role likewise.
+      expect(filterDeckEntries(all, 'lightning', [], ramp)).toEqual([])
+    })
+  })
 })
