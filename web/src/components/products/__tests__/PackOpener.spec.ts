@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Ref } from 'vue'
 import { ApiError } from '@/lib/api'
 import type { Card, OpenedPack, PackEv, PackOpening, Product, ProductEv } from '@/lib/api'
+import { PRODUCT_OPENER_MODAL_KEYS, type PackOpenerKeys } from '@/composables/useProductCardsSearch'
 import PackOpener from '../PackOpener.vue'
 
 // Drive the opener off controlled query state, stubbing both composables so no API is
@@ -112,6 +113,7 @@ async function mountOpener(
     pending?: boolean
     product?: Product
     path?: string
+    keys?: PackOpenerKeys
   } = {},
 ) {
   state.ev = opts.ev === undefined ? productEv() : opts.ev
@@ -121,6 +123,8 @@ async function mountOpener(
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      // The browse route the detail modal overlays — where the namespaced keys apply.
+      { path: '/sealed/:game', component: { template: '<div />' } },
       { path: '/sealed/:game/:id', component: { template: '<div />' } },
       { path: '/cards/:game/cards/:id', component: { template: '<div />' } },
     ],
@@ -129,7 +133,7 @@ async function mountOpener(
   await router.isReady()
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = mount(PackOpener, {
-    props: { game: 'mtg', id: '900002', product: opts.product },
+    props: { game: 'mtg', id: '900002', product: opts.product, keys: opts.keys },
     global: {
       plugins: [createPinia(), router, [VueQueryPlugin, { queryClient }]],
       stubs: { CardImage: true },
@@ -225,10 +229,92 @@ describe('PackOpener', () => {
     expect(wrapper.text()).toContain('Sheoldred, the Apocalypse')
   })
 
-  it('ignores a hand-written seed outside the API’s u32 range', async () => {
+  it('ignores a malformed ?pack=', async () => {
     const { wrapper } = await mountOpener({ path: '/sealed/mtg/900002?pack=nonsense' })
     expect(captured.seed.value).toBeNull()
     expect(wrapper.text()).not.toContain('Sheoldred')
+  })
+
+  it('ignores a seed outside the API’s u32 range', async () => {
+    // The API's seed is a u32; anything the request couldn't carry is not a run, so the panel
+    // rests rather than asking for an opening that would 422.
+    for (const pack of ['4294967296', '-1', '1.5']) {
+      const { wrapper } = await mountOpener({ path: `/sealed/mtg/900002?pack=${pack}` })
+      expect(captured.seed.value).toBeNull()
+      expect(wrapper.text()).not.toContain('Sheoldred')
+    }
+    // The boundary itself is a legal seed.
+    await mountOpener({ path: '/sealed/mtg/900002?pack=4294967295' })
+    expect(captured.seed.value).toBe(4294967295)
+  })
+
+  it('clamps a hand-written ?copies= back to one', async () => {
+    const { wrapper } = await mountOpener({ path: '/sealed/mtg/900002?pack=42&copies=99' })
+    expect(captured.copies.value).toBe(1)
+    expect((wrapper.get('select').element as HTMLSelectElement).value).toBe('1')
+  })
+
+  it('stands a carried ?copies= down for a product a copy of which is not one pack', async () => {
+    // The control is hidden here, so a value carried in from a URL (or from the product before
+    // this one) would be stuck: 4 copies of a 36-pack box is 144 packs, a guaranteed 422 with
+    // nothing on screen to undo it.
+    const { wrapper } = await mountOpener({
+      ev: productEv(36),
+      path: '/sealed/mtg/900002?pack=42&copies=4',
+    })
+    expect(captured.copies.value).toBe(1)
+    expect(wrapper.find('select').exists()).toBe(false)
+  })
+
+  it('resyncs the run when the modal steps to another product', async () => {
+    // The detail modal keeps this component mounted and swaps `id`, so a seed read once at
+    // setup would carry one product's run onto the next and deal an opening nobody asked for.
+    const { wrapper, router } = await mountOpener({ path: '/sealed/mtg/900002?pack=4242' })
+    expect(captured.seed.value).toBe(4242)
+
+    await router.replace({ path: '/sealed/mtg/900003', query: {} })
+    await wrapper.setProps({ id: '900003' })
+    await flushPromises()
+    expect(captured.seed.value).toBeNull()
+    expect(wrapper.text()).not.toContain('Sheoldred')
+  })
+
+  it('adopts the destination product’s own seed on that step', async () => {
+    const { wrapper, router } = await mountOpener({ path: '/sealed/mtg/900002?pack=4242&copies=2' })
+    await router.replace({ path: '/sealed/mtg/900003', query: { pack: '77', copies: '4' } })
+    await wrapper.setProps({ id: '900003' })
+    await flushPromises()
+    expect(captured.seed.value).toBe(77)
+    expect(captured.copies.value).toBe(4)
+    // Adopting a deep link's own values must not rewrite the URL back at it.
+    expect(router.currentRoute.value.query).toEqual({ pack: '77', copies: '4' })
+  })
+
+  it('writes the namespaced pair when the modal hands it one', async () => {
+    // Over a browse route the plain `?pack=` would be left behind for the next product to
+    // auto-deal from, so the modal namespaces both keys (ProductDetailDialog owns them).
+    const { wrapper, router } = await mountOpener({
+      path: '/sealed/mtg?product=900002&sort=name',
+      keys: PRODUCT_OPENER_MODAL_KEYS,
+    })
+    await wrapper.get('select').setValue(2)
+    await openButton(wrapper)!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.ppack).toBe(String(captured.seed.value))
+    expect(router.currentRoute.value.query.pcopies).toBe('2')
+    expect(router.currentRoute.value.query.pack).toBeUndefined()
+    expect(router.currentRoute.value.query.copies).toBeUndefined()
+    // The browse's own list state is untouched.
+    expect(router.currentRoute.value.query.sort).toBe('name')
+  })
+
+  it('reads the namespaced pair back on a deep link', async () => {
+    await mountOpener({
+      path: '/sealed/mtg?product=900002&ppack=4242&pcopies=2',
+      keys: PRODUCT_OPENER_MODAL_KEYS,
+    })
+    expect(captured.seed.value).toBe(4242)
+    expect(captured.copies.value).toBe(2)
   })
 
   it('mirrors the copies choice alongside the seed', async () => {

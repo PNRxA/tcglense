@@ -88,7 +88,10 @@ pub struct RawSheet {
     /// **before** dropping cards that didn't resolve (see the module note).
     pub total_weight: u64,
     /// `(scryfall id, weight)` in **upstream order**: a `fixed` sheet's slot takes its
-    /// first `count` cards, so the order is load-bearing, not cosmetic.
+    /// first `count` cards, so the order is load-bearing, not cosmetic — which is why a
+    /// card that didn't resolve is kept there as an **empty** scryfall id (a position we
+    /// can't name) rather than compacted out, shifting every card after it. On any other
+    /// sheet, drawn by weight where position means nothing, it is dropped.
     pub cards: Vec<(String, u32)>,
 }
 
@@ -237,7 +240,9 @@ pub(super) fn configs_from(
 }
 
 /// Resolve one configuration: its variants (weight-0 ones dropped, slots sorted by sheet
-/// name) and its sheets (sorted by name, cards resolved `uuid` -> Scryfall id).
+/// name) and its sheets (sorted by name, cards resolved `uuid` -> Scryfall id; an
+/// unresolvable card is dropped, or kept as an empty-id placeholder on a `fixed` sheet —
+/// see [`RawSheet::cards`]).
 fn build_config(
     set_code: &str,
     code: &str,
@@ -274,9 +279,15 @@ fn build_config(
             let cards: Vec<(String, u32)> = sheet
                 .cards
                 .iter()
-                .filter_map(|(uuid, weight)| {
-                    idx.scryfall_by_uuid(uuid)
-                        .map(|scryfall| (scryfall.to_string(), *weight))
+                .filter_map(|(uuid, weight)| match idx.scryfall_by_uuid(uuid) {
+                    Some(scryfall) => Some((scryfall.to_string(), *weight)),
+                    // A fixed sheet is read by *position*, so a card we can't name has to
+                    // keep its place — an empty id, which resolves to nothing downstream
+                    // and is stored as `booster_sheet::UNRESOLVED_CARD_ID`. Dropping it
+                    // would shift every later card and hand a bundle's land pack the wrong
+                    // printings.
+                    None if sheet.fixed => Some((String::new(), *weight)),
+                    None => None,
                 })
                 .collect();
             Some(RawSheet {

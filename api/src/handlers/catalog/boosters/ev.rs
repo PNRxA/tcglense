@@ -25,6 +25,8 @@
 
 use std::collections::HashSet;
 
+use crate::entities::booster_sheet::UNRESOLVED_CARD_ID;
+
 use super::{
     CardIndex, CardResponses, PackCardOdds, PackEv, ProductEv, ResolvedConfig, ResolvedPack,
     ResolvedSheet, SlotEv, any_balance_colors, percent, unaccounted_sheets, usd,
@@ -157,8 +159,9 @@ pub(super) struct EvPlan {
 
 impl EvPlan {
     /// Every card this plan will put on the wire, deduplicated, in the order it was
-    /// planned. A few dozen ids at most: the `top` lists are capped at 12 per slot, 10 per
-    /// pack and 12 per copy, whatever the sheets underneath hold.
+    /// planned. A few dozen ids at most: the `top` lists are capped at [`SLOT_TOP`] per
+    /// slot, [`PACK_TOP`] per pack and [`PRODUCT_TOP`] per copy, whatever the sheets
+    /// underneath hold.
     pub(super) fn card_ids(&self) -> Vec<i32> {
         let mut seen: HashSet<i32> = HashSet::new();
         let mut ids: Vec<i32> = Vec::new();
@@ -234,17 +237,58 @@ struct SlotTotals {
     priced_share: f64,
     /// Distinct catalog cards on the sheet.
     card_count: u32,
+    /// Whether any of this sheet's picks really can land on something we can't price.
+    ///
+    /// Tracked as a **flag** rather than read back off `priced_share < 1.0`: that share is
+    /// accumulated card by card in floating point, so a sheet of N equal-weight priced
+    /// cards lands on `0.9999999999999984` and a `< 1` test would report a fully-priced
+    /// pack as partly unpriced. The number on the wire is snapped ([`snap_share`]) so a
+    /// client's own `< 1` test agrees with this flag.
+    any_unpriced: bool,
     /// The biggest contributors, already ranked and cut to [`MAX_ODDS_KEPT`].
     contenders: Vec<Contender>,
+}
+
+/// How close a computed share has to be to an end of its range to be reported as exactly
+/// that end. Far above the drift a few hundred additions accumulate, far below any share a
+/// real sheet could express.
+const SHARE_EPSILON: f64 = 1e-9;
+
+/// Snap a computed `0..1` share to the ends of its range, and clamp it into them.
+///
+/// Whether anything is unpriced is a *fact* (the `any_unpriced` flags); this share is a
+/// float summed over the cards, and without snapping a fully-priced sheet reports
+/// `0.9999999999999984`. Clients test `priced_share < 1` to decide whether to qualify a
+/// number, so the two have to agree.
+fn snap_share(share: f64) -> f64 {
+    if !share.is_finite() {
+        return 0.0;
+    }
+    let clamped = share.clamp(0.0, 1.0);
+    if (clamped - 1.0).abs() < SHARE_EPSILON {
+        1.0
+    } else if clamped.abs() < SHARE_EPSILON {
+        0.0
+    } else {
+        clamped
+    }
 }
 
 /// Evaluate one sheet against the `(probability, count)` pairs of the variants that name it.
 fn slot_totals(sheet: &ResolvedSheet, index: &CardIndex, draws: &[(f64, u32)]) -> SlotTotals {
     let picks: f64 = draws.iter().map(|(p, count)| p * f64::from(*count)).sum();
 
+    // A random sheet's unaccounted weight is picks that land on nothing we can price. On a
+    // fixed sheet it is `UNRESOLVED_CARD_ID` positions instead, which only cost a pick when
+    // a variant actually reaches them — so that case is judged card by card below, not from
+    // the sheet's totals.
+    let mut any_unpriced = !sheet.fixed && picks > 0.0 && sheet.unaccounted_share() > 0.0;
+
     // Expected copies per card, in the sheet's own order. A random sheet spreads `picks`
     // across the weights; a fixed sheet hands out its first `count` cards, so a card's
-    // expectation is the probability of a variant deep enough to reach its position.
+    // expectation is the probability of a variant deep enough to reach its position. A
+    // placeholder position is kept in that count: it is a real card of the pack, just one
+    // we can't name, so it consumes its pick and is worth nothing.
     let mut expected: Vec<(i32, f64)> = Vec::new();
     if sheet.fixed {
         for (position, &(card_id, _)) in sheet.cards.iter().enumerate() {
@@ -278,6 +322,9 @@ fn slot_totals(sheet: &ResolvedSheet, index: &CardIndex, draws: &[(f64, u32)]) -
         ev_cents += contribution;
         if price_cents.is_some() {
             priced_expected += copies;
+        } else if copies > 0.0 {
+            // Either a card with no market price, or a fixed sheet's unnameable position.
+            any_unpriced = true;
         }
         // A card that cannot be pulled has no odds to quote, and one worth nothing is
         // never a "top contributor" — both would only be noise in a list of the biggest.
@@ -297,12 +344,18 @@ fn slot_totals(sheet: &ResolvedSheet, index: &CardIndex, draws: &[(f64, u32)]) -
     // priced weight over the *stated* total, so weight sitting on cards the catalog doesn't
     // hold counts against it, exactly as an unpriced card does.
     let priced_share = if picks > 0.0 {
-        (priced_expected / picks).clamp(0.0, 1.0)
+        snap_share(priced_expected / picks)
     } else {
         0.0
     };
 
-    let mut distinct: Vec<i32> = sheet.cards.iter().map(|&(id, _)| id).collect();
+    // Cards, so a fixed sheet's placeholder positions don't count as any.
+    let mut distinct: Vec<i32> = sheet
+        .cards
+        .iter()
+        .map(|&(id, _)| id)
+        .filter(|&id| id != UNRESOLVED_CARD_ID)
+        .collect();
     distinct.sort_unstable();
     distinct.dedup();
 
@@ -311,6 +364,7 @@ fn slot_totals(sheet: &ResolvedSheet, index: &CardIndex, draws: &[(f64, u32)]) -
         ev_cents,
         priced_share,
         card_count: distinct.len().min(u32::MAX as usize) as u32,
+        any_unpriced,
         contenders,
     }
 }
@@ -325,12 +379,21 @@ fn accumulate(expected: &mut Vec<(i32, f64)>, card_id: i32, copies: f64) {
     }
 }
 
-/// Evaluate one booster configuration: its slots, what an average pack of it is worth, and
-/// the candidates its `top` lists are drawn from.
-fn evaluate_config(
-    config: &ResolvedConfig,
-    index: &CardIndex,
-) -> (Vec<SlotPlan>, Vec<Candidate>, f64, f64, f64) {
+/// What one booster configuration works out to: its slots, what an average pack of it is
+/// worth, and the candidates its `top` lists are drawn from.
+struct ConfigTotals {
+    slots: Vec<SlotPlan>,
+    candidates: Vec<Candidate>,
+    cards_per_pack: f64,
+    ev_cents: f64,
+    priced_share: f64,
+    /// Whether any of this pack's picks can land on something we can't price — see
+    /// [`SlotTotals::any_unpriced`].
+    any_unpriced: bool,
+}
+
+/// Evaluate one booster configuration.
+fn evaluate_config(config: &ResolvedConfig, index: &CardIndex) -> ConfigTotals {
     let denominator = config.variant_denominator();
     let probability: Vec<f64> = config
         .variants
@@ -344,8 +407,12 @@ fn evaluate_config(
         })
         .collect();
 
-    // Sheets in the order they first appear in the variants — stable, and it reads the way
-    // the pack is described. A slot naming a sheet the ingest didn't store is skipped.
+    // Sheets in the order they first appear in the variants. That is *not* the order the
+    // pack reads in: the ingest sorts each variant's slots by sheet name, so this is
+    // alphabetical within a variant, with each later variant appending whatever sheets it
+    // adds. It is deterministic, which is what a stable wire order needs; the SPA labels
+    // the slots, so it never depended on them arriving in physical order. A slot naming a
+    // sheet the ingest didn't store is skipped.
     let mut order: Vec<&str> = Vec::new();
     for variant in &config.variants {
         for (name, _) in &variant.slots {
@@ -360,6 +427,7 @@ fn evaluate_config(
     let mut cards_per_pack = 0.0;
     let mut ev_cents = 0.0;
     let mut priced_picks = 0.0;
+    let mut any_unpriced = false;
 
     for name in order {
         let Some(sheet) = config.sheet(name) else {
@@ -389,6 +457,7 @@ fn evaluate_config(
         cards_per_pack += totals.picks;
         ev_cents += totals.ev_cents;
         priced_picks += totals.picks * totals.priced_share;
+        any_unpriced |= totals.any_unpriced;
 
         slots.push(SlotPlan {
             sheet: sheet.name.clone(),
@@ -415,11 +484,18 @@ fn evaluate_config(
     }
 
     let priced_share = if cards_per_pack > 0.0 {
-        (priced_picks / cards_per_pack).clamp(0.0, 1.0)
+        snap_share(priced_picks / cards_per_pack)
     } else {
         0.0
     };
-    (slots, candidates, cards_per_pack, ev_cents, priced_share)
+    ConfigTotals {
+        slots,
+        candidates,
+        cards_per_pack,
+        ev_cents,
+        priced_share,
+        any_unpriced,
+    }
 }
 
 /// What one copy of the product is worth on average, as a plan that still names its cards
@@ -435,15 +511,21 @@ pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> EvPlan {
     let mut any_unpriced = false;
 
     for pack in packs {
-        let (slots, candidates, cards_per_pack, ev_cents, priced_share) =
-            evaluate_config(&pack.config, index);
+        let ConfigTotals {
+            slots,
+            candidates,
+            cards_per_pack,
+            ev_cents,
+            priced_share,
+            any_unpriced: pack_unpriced,
+        } = evaluate_config(&pack.config, index);
         let quantity = f64::from(pack.quantity);
         total_cents += quantity * ev_cents;
         copy_picks += quantity * cards_per_pack;
         copy_priced_picks += quantity * cards_per_pack * priced_share;
-        if priced_share < 1.0 {
-            any_unpriced = true;
-        }
+        // The *fact* that something is unpriced, not `priced_share < 1.0` — which a
+        // fully-priced sheet fails by a rounding error's width.
+        any_unpriced |= pack_unpriced;
 
         let mut ranked: Vec<&Candidate> = candidates.iter().collect();
         ranked.sort_by(|a, b| rank(&a.contender, &b.contender));
@@ -485,7 +567,7 @@ pub(super) fn evaluate(packs: &[ResolvedPack], index: &CardIndex) -> EvPlan {
         .collect();
 
     let copy_priced_share = if copy_picks > 0.0 {
-        (copy_priced_picks / copy_picks).clamp(0.0, 1.0)
+        snap_share(copy_priced_picks / copy_picks)
     } else {
         0.0
     };

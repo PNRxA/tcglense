@@ -15,7 +15,7 @@ import PriceChart from '@/components/cards/PriceChart.vue'
 import PriceStatGrid from '@/components/shared/PriceStatGrid.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductQuery } from '@/composables/useProducts'
-import type { ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
+import type { PackOpenerKeys, ProductCardsSearchKeys } from '@/composables/useProductCardsSearch'
 import { useCurrency } from '@/composables/useCurrency'
 import { getProductPrices, type AlertFinish } from '@/lib/api'
 import { productTypeLabel } from '@/lib/productType'
@@ -37,10 +37,14 @@ import { formatReleaseLabel } from '@/lib/releaseDate'
 const props = defineProps<{
   game: string
   id: string
-  // Forwarded to the contained-cards list, the one part of this body with URL-backed state of
-  // its own: the modal renders over a route that already owns `?q=`/`?sort=` and so must pass
-  // namespaced keys, while the page leaves this unset and keeps the plain ones.
+  // Forwarded to the contained-cards list, one of the two parts of this body with URL-backed
+  // state of its own: the modal renders over a route that already owns `?q=`/`?sort=` and so
+  // must pass namespaced keys, while the page leaves this unset and keeps the plain ones.
   searchKeys?: ProductCardsSearchKeys
+  // The other one: the pack opener's seed + copies (issue #682), namespaced by the modal for
+  // the same reason — and there the stakes are higher than a stale search box, since a seed
+  // left in the browse URL makes the next product opened deal an opening nobody asked for.
+  openerKeys?: PackOpenerKeys
 }>()
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
@@ -258,7 +262,7 @@ function openComponent(name: string) {
           expectation above is computed from, mirrored into `?pack=`/`?copies=` so a run can
           be shared and replayed. Reads the same ['product-ev', …] key as the panel above to
           decide whether there is anything to open, so it costs no extra fetch. -->
-        <PackOpener :game="game" :id="id" :product="product" />
+        <PackOpener :game="game" :id="id" :product="product" :keys="openerKeys" />
 
         <!-- The cards this product contains / can be pulled from — the reverse of the
           card page's "Sealed products" section, guaranteed cards first, then this booster

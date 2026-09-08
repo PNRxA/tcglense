@@ -25,6 +25,7 @@
 //! anything a print sheet could express, and keeping it makes the algorithm short enough to
 //! reimplement in a client that wants to predict a pull.
 
+use crate::entities::booster_sheet::UNRESOLVED_CARD_ID;
 use crate::error::AppError;
 use crate::handlers::shared::rng::split_mix64;
 use crate::handlers::shared::valuation::{format_cents, price_cents};
@@ -199,7 +200,12 @@ fn open_one(config: &ResolvedConfig, index: &CardIndex, state: &mut u64) -> (u32
         };
         if sheet.fixed {
             // A fixed sheet is a list, not a pool: take its first `count` cards in order.
+            // A position we can't name still *takes* its place in that count — it is a real
+            // card of the pack — it simply can't be dealt, so it deals nothing.
             for &(card_id, _) in sheet.cards.iter().take(*count as usize) {
+                if card_id == UNRESOLVED_CARD_ID {
+                    continue;
+                }
                 push_card(&mut cards, index, card_id, sheet.foil, &sheet.name);
             }
             continue;

@@ -70,6 +70,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 
 use crate::entities::booster_config::Variant;
+use crate::entities::booster_sheet::UNRESOLVED_CARD_ID;
 use crate::entities::prelude::{BoosterConfig, BoosterSheet, Card, SealedPack};
 use crate::entities::{booster_config, booster_sheet, card, sealed_pack};
 use crate::error::AppError;
@@ -272,13 +273,22 @@ pub(super) struct ResolvedSheet {
     /// catalog doesn't hold — so `total_weight - Σ cards' weights` is the unaccounted
     /// share, which the caveats report rather than re-normalising away.
     pub total_weight: u64,
+    /// `(card id, weight)` in stored order. On a `fixed` sheet an entry may be
+    /// [`UNRESOLVED_CARD_ID`]: a position we can't name, kept so the cards after it stay
+    /// where they belong. It consumes its pick and is worth nothing.
     pub cards: Vec<(i32, u32)>,
 }
 
 impl ResolvedSheet {
     /// Σ of the stored cards' weights — what an opening can actually deal.
+    /// [`UNRESOLVED_CARD_ID`] placeholders don't count: they hold a fixed sheet's position,
+    /// not a card, so their weight is as unaccounted for as a dropped card's.
     fn stored_weight(&self) -> u64 {
-        self.cards.iter().map(|&(_, w)| u64::from(w)).sum()
+        self.cards
+            .iter()
+            .filter(|&&(id, _)| id != UNRESOLVED_CARD_ID)
+            .map(|&(_, w)| u64::from(w))
+            .sum()
     }
 
     /// The denominator to price against: upstream's `total_weight`, falling back to the
@@ -563,17 +573,28 @@ async fn load_boosters(
                 .remove(&pack.config_id)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(row, cards)| ResolvedSheet {
-                    name: row.name,
-                    foil: row.foil,
-                    balance_colors: row.balance_colors,
-                    allow_duplicates: row.allow_duplicates,
-                    fixed: row.fixed,
-                    total_weight: row.total_weight.max(0) as u64,
-                    cards: cards
-                        .into_iter()
-                        .filter(|&(id, _)| index.contains(id))
-                        .collect(),
+                .map(|(row, cards)| {
+                    let fixed = row.fixed;
+                    ResolvedSheet {
+                        name: row.name,
+                        foil: row.foil,
+                        balance_colors: row.balance_colors,
+                        allow_duplicates: row.allow_duplicates,
+                        fixed,
+                        total_weight: row.total_weight.max(0) as u64,
+                        cards: cards
+                            .into_iter()
+                            // A card whose row went since the sync drops out — except on a
+                            // fixed sheet, where a position has to stay a position. The
+                            // ingest already writes an unresolvable one as the sentinel;
+                            // this keeps it, and turns a vanished row into one too.
+                            .filter_map(|(id, weight)| match index.contains(id) {
+                                true => Some((id, weight)),
+                                false if fixed => Some((UNRESOLVED_CARD_ID, weight)),
+                                false => None,
+                            })
+                            .collect(),
+                    }
                 })
                 .collect();
             Some(ResolvedPack {

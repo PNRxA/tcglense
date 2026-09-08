@@ -7,6 +7,7 @@ import { ApiError, MAX_OPENING_COPIES, MAX_OPENING_PACKS, type Product } from '@
 import { usePackOpeningQuery, useProductEvQuery } from '@/composables/useProducts'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDetailModalLink } from '@/composables/useDetailModalLink'
+import { PRODUCT_OPENER_KEYS, type PackOpenerKeys } from '@/composables/useProductCardsSearch'
 import { boosterLabel, openingSummary, openingVersusPrice } from '@/lib/productCounts'
 
 // "Open a pack": a seeded simulation of opening this product (issue #682), dealt by the API
@@ -15,8 +16,9 @@ import { boosterLabel, openingSummary, openingVersusPrice } from '@/lib/productC
 //
 // The opening is a **pure function of its URL** server-side, and this panel keeps that
 // property client-side: the seed is minted here (a u32 from `crypto.getRandomValues`),
-// mirrored into the route as `?pack=<seed>&copies=<n>`, and read back on mount — so a run
-// can be linked, replayed, and argued about, and re-rendering it never costs a request
+// mirrored into the route as `?pack=<seed>&copies=<n>` (the `keys` prop names the pair — the
+// modal namespaces them), and read back on mount *and on every product change* — so a run can
+// be linked, replayed, and argued about, and re-rendering it never costs a request
 // (`staleTime: Infinity`, a new seed being a new key rather than a refetch).
 //
 // The wording is the load-bearing part. A pulled total is the single most misleading number
@@ -29,12 +31,20 @@ import { boosterLabel, openingSummary, openingVersusPrice } from '@/lib/productC
 //
 // It self-hides for a product with no booster data — the same `['product-ev', …]` key the EV
 // panel reads, so this costs no second fetch.
-const props = defineProps<{
-  game: string
-  id: string
-  // For the "vs what a copy costs" line only; the panel never waits on it.
-  product?: Product
-}>()
+const props = withDefaults(
+  defineProps<{
+    game: string
+    id: string
+    // For the "vs what a copy costs" line only; the panel never waits on it.
+    product?: Product
+    // The URL keys the seed + copies ride. The full page owns its route and keeps the plain
+    // pair (the shareable contract); the detail modal passes namespaced keys, because a seed
+    // left behind in a *browse* URL is not inert — the next product opened would read it and
+    // deal an opening nobody asked for. Fixed per mount, like the card list's `searchKeys`.
+    keys?: PackOpenerKeys
+  }>(),
+  { product: undefined, keys: () => PRODUCT_OPENER_KEYS },
+)
 const game = toRef(props, 'game')
 const id = toRef(props, 'id')
 const money = useCurrency()
@@ -66,8 +76,24 @@ function parseIntInRange(raw: string | null, min: number, max: number): number |
 
 /** The API's seed is a u32, so that is exactly what a shared link may carry. */
 const MAX_SEED = 0xffffffff
-const seed = ref<number | null>(parseIntInRange(firstQuery(route.query.pack), 0, MAX_SEED))
-const copies = ref(parseIntInRange(firstQuery(route.query.copies), 1, MAX_OPENING_COPIES) ?? 1)
+function seedFromRoute(): number | null {
+  return parseIntInRange(firstQuery(route.query[props.keys.pack]), 0, MAX_SEED)
+}
+function copiesFromRoute(): number {
+  return parseIntInRange(firstQuery(route.query[props.keys.copies]), 1, MAX_OPENING_COPIES) ?? 1
+}
+const seed = ref<number | null>(seedFromRoute())
+const copies = ref(copiesFromRoute())
+
+// A different product is a different run: re-read both from wherever we landed, exactly as
+// `useProductCardsSearch` resyncs its box on `id`. Keyed on the id, never `route.path` — the
+// detail modal steps products by rewriting only `?product=`, so a path watch never fires
+// there and the panel would carry one product's seed onto the next, dealing an opening
+// nobody asked for (issue #448's failure mode, with a request attached).
+watch(id, () => {
+  seed.value = seedFromRoute()
+  copies.value = copiesFromRoute()
+})
 
 const openQuery = usePackOpeningQuery(game, id, seed, copies)
 const opening = computed(() => openQuery.data.value ?? null)
@@ -105,14 +131,34 @@ const copyOptions = computed(() =>
   })),
 )
 
+// The copies control only renders where a copy IS a pack, so a value carried in from a URL (or
+// from the product before this one) must be stood back down once we know it isn't: six copies
+// of a booster box is 216 packs, a guaranteed 422 with no visible control to undo it. Gated on
+// the EV answer having landed — `packsPerCopy` is 0 while it's in flight, and clamping off that
+// would throw away a legitimately deep-linked `?copies=` before the panel knows anything.
+watch(
+  () => (ev.value === null ? null : singlePack.value),
+  (single) => {
+    if (single === false) copies.value = 1
+  },
+  { immediate: true },
+)
+
 // Mirror the run into the URL so it can be shared and replayed. `replace`, not `push`: a
 // re-roll is not a place in the history to go Back to, and the page underneath keeps its
 // scroll and its other query state (the product modal's `?product=` included).
 watch([seed, copies], () => {
   if (seed.value === null) return
-  const query: LocationQueryRaw = { ...route.query, pack: String(seed.value) }
-  if (copies.value > 1) query.copies = String(copies.value)
-  else delete query.copies
+  const pack = String(seed.value)
+  const copiesValue = copies.value > 1 ? String(copies.value) : undefined
+  // Nothing to write when the URL already says this — an id-resync that adopted a deep link's
+  // own values would otherwise `replace` to an identical URL.
+  const currentPack = firstQuery(route.query[props.keys.pack])
+  const currentCopies = firstQuery(route.query[props.keys.copies]) ?? undefined
+  if (currentPack === pack && currentCopies === copiesValue) return
+  const query: LocationQueryRaw = { ...route.query, [props.keys.pack]: pack }
+  if (copiesValue) query[props.keys.copies] = copiesValue
+  else delete query[props.keys.copies]
   void router.replace({ query })
 })
 

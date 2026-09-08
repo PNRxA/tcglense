@@ -11,7 +11,9 @@
 //! * A configuration's stored `total_weight` is Σ of **the variants we kept**, never
 //!   upstream's `boostersTotalWeight`, so a variant dropped for a zero weight can't leave
 //!   the shares summing to less than one.
-//! * A sheet's cards become internal `cards.id`s, dropping any our catalog doesn't hold —
+//! * A sheet's cards become internal `cards.id`s, dropping any our catalog doesn't hold
+//!   (on a **fixed** sheet, read by position, it keeps its place as
+//!   [`booster_sheet::UNRESOLVED_CARD_ID`] instead) —
 //!   but the sheet's `total_weight` still counts them, so the read can report the share it
 //!   can't price instead of quietly re-normalising ([`crate::mtgjson::boosters`]).
 //!
@@ -109,7 +111,15 @@ pub(crate) async fn rebuild<C: ConnectionTrait>(
             let cards: Vec<(i32, u32)> = sheet
                 .cards
                 .iter()
-                .filter_map(|(scryfall, weight)| card_ids.get(scryfall).map(|&id| (id, *weight)))
+                .filter_map(|(scryfall, weight)| match card_ids.get(scryfall) {
+                    Some(&id) => Some((id, *weight)),
+                    // A fixed sheet is read by position, so a card the catalog doesn't hold
+                    // keeps its place as `UNRESOLVED_CARD_ID` instead of shifting every
+                    // card after it. Everywhere else it is dropped, its weight still
+                    // standing in `total_weight`.
+                    None if sheet.fixed => Some((booster_sheet::UNRESOLVED_CARD_ID, *weight)),
+                    None => None,
+                })
                 .collect();
             buffer.push(booster_sheet::ActiveModel {
                 id: NotSet,

@@ -39,7 +39,10 @@ pub struct Model {
     /// else Σ of every parsed weight — computed **before** dropping cards our catalog
     /// doesn't hold, so `total_weight - Σ stored weights` is the unaccounted share.
     pub total_weight: i64,
-    /// JSON: `[[card_id, weight], …]` in upstream order — see [`Model::cards`].
+    /// JSON: `[[card_id, weight], …]` in upstream order — see [`Model::cards`]. On a
+    /// **fixed** sheet a card the catalog doesn't hold is kept as [`UNRESOLVED_CARD_ID`]
+    /// rather than dropped, because that sheet is read *positionally*; on every other sheet
+    /// it is dropped (its weight still stands in `total_weight` either way).
     pub cards: String,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
@@ -53,6 +56,19 @@ impl Model {
         decode_cards(&self.cards)
     }
 }
+
+/// The `card_id` standing in for a card our catalog doesn't hold, on a **fixed** sheet
+/// only. A fixed sheet's slot takes its first `count` cards *by position*, so compacting an
+/// unresolvable card out of the list would shift every card after it — a bundle's land pack
+/// would then attribute, and deal, the wrong printings. No real row can collide with it:
+/// both backends start `cards.id` at 1.
+///
+/// A placeholder position is a real card of the pack that we simply can't name: it consumes
+/// its pick (so `cards_per_pack` stays right), is priced at nothing, and its weight counts
+/// as unaccounted for — exactly like the dropped card it stands in for. Every other sheet
+/// is drawn by weight, where position means nothing, so there an unresolvable card is
+/// dropped as before.
+pub const UNRESOLVED_CARD_ID: i32 = 0;
 
 /// Parse a `cards` column; see [`Model::cards`] for the failure stance.
 pub fn decode_cards(raw: &str) -> Vec<(i32, u32)> {
