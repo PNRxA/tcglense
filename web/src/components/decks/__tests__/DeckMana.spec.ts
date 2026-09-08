@@ -179,19 +179,24 @@ async function mountExpanded(props: Record<string, unknown> = {}) {
 }
 
 describe('DeckMana', () => {
-  it('rests on one row per colour: sources against the number needed, and the verdict', () => {
+  it('rests on one chip per colour: sources against the number needed, and the verdict', () => {
     const wrapper = mountPanel()
 
-    const rows = wrapper.findAll('ul > li')
-    expect(rows).toHaveLength(2)
-    expect(rows[0]!.text()).toContain('Blue')
-    expect(rows[0]!.text()).toContain('20 / 18')
-    expect(rows[0]!.text()).toContain('Enough')
-    expect(rows[1]!.text()).toContain('Black')
-    expect(rows[1]!.text()).toContain('21 / 36')
-    // The shortfall rides the chip: it's the number to fix.
-    expect(rows[1]!.text()).toContain('Short 15')
-    expect(rows[1]!.text()).toContain('4 pips')
+    const chips = wrapper.findAll('ul > li')
+    expect(chips).toHaveLength(2)
+    // The colour's name is the pip, spelled out for a screen reader only.
+    expect(chips[0]!.text()).toContain('Blue')
+    expect(chips[0]!.find('.sr-only').text()).toBe('Blue:')
+    expect(chips[0]!.text()).toContain('20 / 18')
+    expect(chips[0]!.text()).toContain('Enough')
+    expect(chips[1]!.text()).toContain('21 / 36')
+    // The shortfall rides the badge: it's the number to fix.
+    expect(chips[1]!.text()).toContain('Short 15')
+    // The pip count and the verdict sentence are a hover away, not on the row.
+    expect(chips[1]!.text()).not.toContain('pips')
+    expect(chips[1]!.attributes('title')).toBe(
+      'Short 15 black sources: 21 of 36 needed for Necropotence. · 4 black pips · 21 sources in the library',
+    )
     // The model, so 21 is never read against a 60-card deck.
     expect(wrapper.text()).toContain('Judged as a 99-card deck')
     expect(wrapper.text()).toContain('25 lands in a 28-card library')
@@ -290,11 +295,11 @@ describe('DeckMana', () => {
     })
     const wrapper = await mountExpanded()
     // No requirement, so the sources stand alone rather than against a made-up number.
-    expect(wrapper.get('ul > li').text()).toMatch(/Sources\s*10/)
+    expect(wrapper.get('ul > li').text()).toContain('10')
     expect(wrapper.get('ul > li').text()).not.toContain('/')
-    expect(wrapper.get('ul > li').text()).toContain('No demand')
-    // …and the reason is visible in the row, not only on hover.
-    expect(wrapper.get('ul > li').text()).toContain('8 hybrid')
+    // …and the reason is on the badge, not hidden behind a bare "No demand".
+    expect(wrapper.get('ul > li').text()).toContain('Hybrid only')
+    expect(wrapper.get('ul > li').attributes('title')).toContain('8 hybrid pips')
     // The verdict already says it, so the note that would repeat it stays out…
     expect(wrapper.text()).toContain('Only hybrid pips ask for white')
     expect(wrapper.text()).not.toContain('Plus 8 hybrid pips')
