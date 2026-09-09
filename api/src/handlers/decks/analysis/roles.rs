@@ -38,7 +38,7 @@ use super::{CardFacts, DeckAnalysisInput, fold_by_name};
 const MAX_LISTED_CARDS: usize = 50;
 
 /// A deckbuilding role a card can fill.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, utoipa::ToSchema)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum DeckRole {
@@ -63,7 +63,7 @@ pub enum DeckRole {
 
 /// The roles in the order a builder counts them — the six everyone counts first, then the
 /// two that round a list out.
-const ROLES: &[(DeckRole, &str, &str)] = &[
+pub(super) const ROLES: &[(DeckRole, &str, &str)] = &[
     (
         DeckRole::Ramp,
         "Ramp",
@@ -120,8 +120,9 @@ fn matches_role(role: DeckRole, card: &CardFacts) -> bool {
 }
 
 /// Every role one card fills, in the reported order. Pure, so the same reading fills both
-/// the per-role lists and the per-printing map — the two can't disagree.
-fn roles_of(card: &CardFacts) -> Vec<DeckRole> {
+/// the per-role lists and the per-printing map — the two can't disagree. Shared with the
+/// suggestions read, so "you have N, you own M more" counts both sides with one grammar.
+pub(super) fn roles_of(card: &CardFacts) -> Vec<DeckRole> {
     ROLES
         .iter()
         .map(|(role, _, _)| *role)

@@ -140,6 +140,7 @@ async fn analysis_reads_require_authentication() {
         "/api/decks/mtg/1/bracket",
         "/api/decks/mtg/1/roles",
         "/api/decks/mtg/1/goldfish",
+        "/api/decks/mtg/1/suggestions",
     ] {
         let (status, headers, _) = send(&app, get(path)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
@@ -164,7 +165,15 @@ async fn another_users_deck_is_404_never_403() {
     .await;
 
     for path in [
-        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "combos",
+        "stats",
+        "legality",
+        "bracket",
+        "tokens",
+        "mana",
+        "roles",
+        "goldfish",
+        "combos",
+        "suggestions",
     ] {
         let (status, _, _) = send(
             &app,
@@ -195,7 +204,16 @@ async fn a_read_only_key_may_analyse() {
     .await;
 
     for path in [
-        "stats", "legality", "bracket", "tokens", "mana", "roles", "goldfish", "pricing", "combos",
+        "stats",
+        "legality",
+        "bracket",
+        "tokens",
+        "mana",
+        "roles",
+        "goldfish",
+        "pricing",
+        "combos",
+        "suggestions",
     ] {
         let (status, _, body) = send(
             &app,
@@ -1204,4 +1222,220 @@ async fn a_nonfoil_copy_of_a_foil_only_printing_is_unpriced_not_zero() {
     );
     assert_eq!(pricing["unpriced_count"], 1);
     assert!(pricing["total_usd"].is_null() || pricing["total_usd"] == "0.00");
+}
+
+/// Own one card, absolute counts, for the token's user.
+async fn own_card(app: &Router, token: &str, id: &str, quantity: i64, foil: i64) {
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/collection/mtg/cards/{id}"),
+            token,
+            json!({ "quantity": quantity, "foil_quantity": foil }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {body:?}");
+}
+
+/// File one card in the deck's section named `section`.
+async fn put_in_section(app: &Router, token: &str, deck_id: i64, section: &str, card: &str) {
+    let (status, _, deck) = send(
+        app,
+        get_with_bearer(&format!("/api/decks/mtg/{deck_id}"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "read deck failed: {deck:?}");
+    let section_id = deck["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|s| s["name"] == section)
+        .unwrap_or_else(|| panic!("a {section} section is seeded"))["id"]
+        .as_i64()
+        .expect("section id");
+    let (status, _, body) = send(
+        app,
+        json_with_bearer(
+            "PUT",
+            &format!("/api/decks/mtg/{deck_id}/cards/{card}"),
+            token,
+            json!({ "quantity": 1, "foil_quantity": 0, "section_id": section_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "add card failed: {body:?}");
+}
+
+/// Suggestions (issue #684): the cards you own that the deck could play — inside the
+/// commander's colours, legal in the format, not already in the deck, most popular first,
+/// with the role each fills — and the answer follows both the deck and the collection as
+/// they change (the cached body is keyed on both).
+///
+/// The seed ranks three cards on EDHREC: `dummy-dmb-0001` (white, rank 42, a mana dork),
+/// `0002` (blue, 1204, a counterspell) and `0003` (black, 87, a wrath); every other card is
+/// unranked. `0006` is white and exiles a creature, `0007` is blue.
+#[tokio::test]
+async fn suggestions_are_owned_in_colour_legal_and_not_in_the_deck() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "suggest@example.com", PW).await;
+    own_card(&app, &access, "dummy-dmb-0001", 2, 1).await;
+    own_card(&app, &access, "dummy-dmb-0002", 1, 0).await;
+    own_card(&app, &access, "dummy-dmb-0003", 1, 0).await;
+
+    // A Commander deck led by the white removal creature: the identity is its, so of the
+    // three ranked cards only the white dork fits.
+    let (deck_id, _) = deck_with_cards(&app, &access, "Led", "Commander", &[]).await;
+    put_in_section(&app, &access, deck_id, "Commander", "dummy-dmb-0006").await;
+
+    let path = format!("/api/decks/mtg/{deck_id}/suggestions");
+    let (status, headers, body) = send(&app, get_with_bearer(&path, &access)).await;
+    assert_eq!(status, StatusCode::OK, "suggestions failed: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"), "per-user data");
+    assert_eq!(body["format_key"], "commander");
+    assert_eq!(body["format_label"], "Commander");
+    assert_eq!(body["color_identity"], json!(["W"]));
+    assert_eq!(body["commanders"][0]["card_id"], "dummy-dmb-0006");
+    assert_eq!(body["candidate_count"], 1, "{body:?}");
+    assert_eq!(body["scanned_count"], 1);
+    assert_eq!(body["top"], json!(["dummy-dmb-0001"]));
+    let cards = body["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 1, "the pool holds every named card once");
+    assert_eq!(cards[0]["card"]["id"], "dummy-dmb-0001");
+    assert_eq!(cards[0]["edhrec_rank"], 42);
+    assert_eq!(cards[0]["owned"], 3, "regular + foil across the collection");
+    assert_eq!(cards[0]["roles"], json!(["ramp"]));
+    let roles = body["roles"].as_array().expect("roles");
+    assert_eq!(roles.len(), 8, "every role is always reported");
+    let group = |role: &str| -> &serde_json::Value {
+        roles
+            .iter()
+            .find(|g| g["role"] == role)
+            .unwrap_or_else(|| panic!("{role} missing from {body:?}"))
+    };
+    assert_eq!(group("ramp")["count"], 1);
+    assert_eq!(group("ramp")["in_deck"], 0);
+    assert_eq!(group("ramp")["card_ids"], json!(["dummy-dmb-0001"]));
+    assert_eq!(group("removal")["count"], 0);
+    assert_eq!(
+        group("removal")["in_deck"],
+        1,
+        "the commander's own role counts as in the deck"
+    );
+    assert_eq!(body["unclassified_count"], 0);
+    let caveats = body["caveats"].as_array().expect("caveats");
+    assert!(
+        caveats
+            .iter()
+            .any(|c| c.as_str().is_some_and(|c| c.contains("global popularity"))),
+        "the ranking is named for what it is: {caveats:?}"
+    );
+
+    // Put the dork in the deck: it stops being a suggestion — and the cached body is
+    // keyed on the deck's rows, so the edit misses rather than serving the old answer.
+    put_in_section(&app, &access, deck_id, "Creatures", "dummy-dmb-0001").await;
+    let (status, _, body) = send(&app, get_with_bearer(&path, &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["candidate_count"], 0, "{body:?}");
+    assert!(body["top"].as_array().expect("top").is_empty());
+
+    // A Modern deck has no command zone: the colours are the union over what it holds (the
+    // blue card), no commander is named, and the counterspell you own fits. Then owning more
+    // of it changes the answer too — the holdings version keys the cache.
+    let (flat_id, _) = deck_with_cards(
+        &app,
+        &access,
+        "Flat",
+        "Modern",
+        &[("dummy-dmu-0007".to_string(), 4)],
+    )
+    .await;
+    let flat_path = format!("/api/decks/mtg/{flat_id}/suggestions");
+    let (status, _, body) = send(&app, get_with_bearer(&flat_path, &access)).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["format_key"], "modern");
+    assert_eq!(body["color_identity"], json!(["U"]));
+    assert!(
+        body["commanders"]
+            .as_array()
+            .expect("commanders")
+            .is_empty()
+    );
+    assert_eq!(body["candidate_count"], 1, "{body:?}");
+    assert_eq!(body["top"], json!(["dummy-dmb-0002"]));
+    assert_eq!(body["cards"][0]["card"]["id"], "dummy-dmb-0002");
+    assert_eq!(body["cards"][0]["owned"], 1);
+    assert_eq!(body["cards"][0]["roles"], json!(["counterspell"]));
+
+    own_card(&app, &access, "dummy-dmb-0002", 4, 0).await;
+    let (status, _, body) = send(&app, get_with_bearer(&flat_path, &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["cards"][0]["owned"], 4,
+        "the collection edit is seen: {body:?}"
+    );
+
+    // An empty deck in an untracked format applies neither filter and says so: every
+    // ranked card you own that isn't in it is a candidate.
+    let (open_id, _) = deck_with_cards(&app, &access, "Open", "Cube", &[]).await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer(&format!("/api/decks/mtg/{open_id}/suggestions"), &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(body["format_key"].is_null());
+    assert!(body["color_identity"].is_null());
+    assert_eq!(body["candidate_count"], 3, "{body:?}");
+    assert_eq!(
+        body["top"],
+        json!(["dummy-dmb-0001", "dummy-dmb-0003", "dummy-dmb-0002"]),
+        "most popular first"
+    );
+    let pool: Vec<&str> = body["cards"]
+        .as_array()
+        .expect("cards")
+        .iter()
+        .map(|c| c["card"]["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        pool,
+        ["dummy-dmb-0001", "dummy-dmb-0003", "dummy-dmb-0002"],
+        "the pool is rank-ordered and holds each named card once"
+    );
+    let caveats = body["caveats"].as_array().expect("caveats");
+    assert!(
+        caveats
+            .iter()
+            .any(|c| c.as_str().is_some_and(|c| c.contains("no legality filter")))
+    );
+    assert!(
+        caveats
+            .iter()
+            .any(|c| c.as_str().is_some_and(|c| c.contains("no colour filter")))
+    );
+}
+
+/// The suggestions read has no public mirror: it reads the caller's collection.
+#[tokio::test]
+async fn suggestions_are_never_mirrored_publicly() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "private-suggest@example.com", PW).await;
+    let cards = sample_card_ids(&app, 1).await;
+    let (deck_id, _) = deck_with_cards(
+        &app,
+        &access,
+        "Shared",
+        "Commander",
+        &[(cards[0].clone(), 1)],
+    )
+    .await;
+    let handle = share(&app, &access, "suggester", deck_id).await;
+    let (status, _, _) = send(
+        &app,
+        get(&format!("/api/u/{handle}/decks/{deck_id}/suggestions")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

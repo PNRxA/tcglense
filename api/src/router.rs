@@ -59,11 +59,11 @@ use crate::{
             MAX_DECK_UPLOAD_BYTES, add_deck_to_collection, add_public_deck_to_collection,
             change_deck_card_printing, copy_deck, copy_public_deck, create_deck, create_folder,
             create_section, deck_bracket, deck_combos, deck_goldfish, deck_legality, deck_mana,
-            deck_pricing, deck_roles, deck_stats, deck_tokens, decks_containing_card, delete_deck,
-            delete_folder, delete_section, diff_deck, export_deck, get_deck, import_deck,
-            list_deck_formats, list_decks, list_folders, move_deck_card, move_deck_to_folder,
-            needed_buy_list, needed_cards, reorder_sections, set_deck_card, set_deck_visibility,
-            update_deck, update_folder, update_section,
+            deck_pricing, deck_roles, deck_stats, deck_suggestions, deck_tokens,
+            decks_containing_card, delete_deck, delete_folder, delete_section, diff_deck,
+            export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
+            move_deck_card, move_deck_to_folder, needed_buy_list, needed_cards, reorder_sections,
+            set_deck_card, set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -475,6 +475,12 @@ pub fn build_router(state: AppState) -> Router {
         // Combos (issue #683): the Commander Spellbook combos the deck can assemble, and the
         // ones it is a card short of — the same read shape as the eight above.
         .route("/api/decks/{game}/{deck_id}/combos", get(deck_combos))
+        // …and the cards the caller already owns that the deck could play (issue #684). The
+        // one analysis read with no public mirror: it reads the caller's collection.
+        .route(
+            "/api/decks/{game}/{deck_id}/suggestions",
+            get(deck_suggestions),
+        )
         .route("/api/decks/{game}/{deck_id}/sections", post(create_section))
         .route(
             "/api/decks/{game}/{deck_id}/sections/reorder",

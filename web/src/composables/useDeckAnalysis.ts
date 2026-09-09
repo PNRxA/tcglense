@@ -18,6 +18,7 @@ import {
   getDeckPricing,
   getDeckRoles,
   getDeckStats,
+  getDeckSuggestions,
   getDeckTokens,
   getPublicDeckBracket,
   getPublicDeckCombos,
@@ -40,6 +41,7 @@ import type {
   DeckManaBase,
   DeckPricing,
   DeckRoles,
+  DeckSuggestions,
   DeckTokens,
   GoldfishHand,
 } from '@/lib/api'
@@ -156,6 +158,23 @@ export function useDeckPricingQuery(
     placeholderData: keepPreviousData,
   }
   return useAuthedQuery<DeckPricing>(options)
+}
+
+/** Cards you own that the deck could play (issue #684), most popular first and by role. Its
+ * own key family: invalidated by deck writes (through `invalidateDeckAnalysis`) AND by
+ * collection writes (through the collection's `invalidate`), since the answer reads both. */
+export function useDeckSuggestionsQuery(
+  game: Ref<string>,
+  deckId: Ref<number>,
+  enabled?: Ref<boolean>,
+) {
+  const options = {
+    queryKey: ['deck-suggestions', game, deckId],
+    queryFn: (token: string) => getDeckSuggestions(token, game.value, deckId.value),
+    enabled,
+    placeholderData: keepPreviousData,
+  }
+  return useAuthedQuery<DeckSuggestions>(options)
 }
 
 /** A deck's mana base: pips demanded against sources present, per colour. */
@@ -356,6 +375,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-roles', game],
           ['deck-goldfish', game],
           ['deck-pricing', game],
+          ['deck-suggestions', game],
         ]
       : [
           ['deck-stats', game, deckId],
@@ -367,6 +387,7 @@ export function invalidateDeckAnalysis(qc: QueryClient, game: string, deckId?: n
           ['deck-roles', game, deckId],
           ['deck-goldfish', game, deckId],
           ['deck-pricing', game, deckId],
+          ['deck-suggestions', game, deckId],
         ]
   for (const queryKey of keys) qc.invalidateQueries({ queryKey })
 }

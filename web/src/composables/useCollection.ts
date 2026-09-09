@@ -45,7 +45,7 @@ const queries = makeHoldingQueries({
   getCounts: getCollectionOwned,
   setEntry: setCollectionEntry,
   withBulkThreshold: true,
-  invalidateValueHistory: true,
+  invalidateCollectionAnalytics: true,
   deferListRefetch: false,
 })
 

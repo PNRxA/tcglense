@@ -74,14 +74,15 @@ pub(crate) mod roles;
 pub(crate) mod rules;
 pub(super) mod signals;
 pub(crate) mod stats;
+pub(crate) mod suggestions;
 pub(crate) mod tokens;
 
 pub use formats::{__path_list_deck_formats, list_deck_formats};
 pub use read::{
     __path_deck_bracket, __path_deck_combos, __path_deck_goldfish, __path_deck_legality,
     __path_deck_mana, __path_deck_pricing, __path_deck_roles, __path_deck_stats,
-    __path_deck_tokens, deck_bracket, deck_combos, deck_goldfish, deck_legality, deck_mana,
-    deck_pricing, deck_roles, deck_stats, deck_tokens,
+    __path_deck_suggestions, __path_deck_tokens, deck_bracket, deck_combos, deck_goldfish,
+    deck_legality, deck_mana, deck_pricing, deck_roles, deck_stats, deck_suggestions, deck_tokens,
 };
 
 // The public-sharing mirrors (`/api/u/{handle}/decks/{deck_id}/…`) drive these directly, so
@@ -94,6 +95,7 @@ pub(crate) use mana::{DeckManaBase, analyse_mana};
 pub(crate) use pricing::{DeckPricing, analyse_pricing};
 pub(crate) use roles::{DeckRoles, analyse_roles};
 pub(crate) use stats::{DeckAnalytics, StatsParams, analyse_stats};
+pub(crate) use suggestions::{DeckSuggestions, analyse_suggestions};
 pub(crate) use tokens::{DeckTokens, analyse_tokens};
 
 /// Everything the analysis reads off one catalog row, extracted once per deck card so the
@@ -151,6 +153,30 @@ pub(crate) struct CardFacts {
     /// list is "produces none"; [`mana`] is the reader that tells them apart, and it must keep
     /// doing so (the same stance `token_parts` takes above).
     pub produced_mana: Option<Vec<String>>,
+}
+
+impl CardFacts {
+    /// A card with nothing known about it — no name, no text, no data. What a reader builds
+    /// when it has only one column to judge by (the suggestions scan hands the per-card
+    /// legality check a legality object and nothing else).
+    pub(crate) fn empty() -> Self {
+        Self {
+            id: String::new(),
+            oracle_id: None,
+            name: String::new(),
+            type_line: None,
+            front_type_line: String::new(),
+            oracle_text: String::new(),
+            has_power_toughness_box: false,
+            color_identity: Vec::new(),
+            cmc: None,
+            legalities: None,
+            game_changer: None,
+            token_parts: None,
+            mana_cost: None,
+            produced_mana: None,
+        }
+    }
 }
 
 impl From<&card::Model> for CardFacts {
@@ -421,17 +447,7 @@ pub(crate) mod test_fixtures {
             id: id.to_string(),
             oracle_id: None,
             name: name.to_string(),
-            type_line: None,
-            front_type_line: String::new(),
-            oracle_text: String::new(),
-            has_power_toughness_box: false,
-            color_identity: Vec::new(),
-            cmc: None,
-            legalities: None,
-            game_changer: None,
-            token_parts: None,
-            mana_cost: None,
-            produced_mana: None,
+            ..CardFacts::empty()
         }
     }
 
