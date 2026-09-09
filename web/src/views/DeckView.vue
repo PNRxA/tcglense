@@ -53,6 +53,7 @@ import DeckFormatField from '@/components/decks/DeckFormatField.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckMatchRecord from '@/components/life/DeckMatchRecord.vue'
+import DeckOverview from '@/components/decks/DeckOverview.vue'
 import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckPricing from '@/components/decks/DeckPricing.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
@@ -356,60 +357,73 @@ function copyDeckList() {
         {{ duplicateError }}
       </p>
 
-      <!-- Is this deck legal in its format? (issue #557) — a verdict the server works out
-        (#596), so it arrives after the deck does and says so while it's on its way. -->
-      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
-        <UpdatingCue label="Checking format legality…" />
-      </p>
-      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
-
-      <!-- Estimated Commander bracket — renders nothing for a deck in any other format,
-        and nothing at all until the deck has cards in it (an empty list has no power
-        level to read). -->
-      <DeckBracket
-        v-if="deck.summary.total_cards > 0"
+      <!-- The overview (the one collapsible between the header and the list): collapsed, a
+        strip of chips summarising every panel below; expanded, the panels themselves. The
+        description names what the stack holds, beside the slot that holds it. -->
+      <DeckOverview
         :game="game"
         :deck-id="deck.id"
         :format="deck.format"
-      />
+        :legality="legality"
+        :legality-pending="legalityQuery.isPending.value"
+        :total-cards="deck.summary.total_cards"
+        description="Format legality, the estimated bracket, deck analytics, card roles, the mana base, where the money is, cards you own that fit, a test hand and a comparison with another deck."
+      >
+        <!-- Is this deck legal in its format? (issue #557) — a verdict the server works out
+        (#596), so it arrives after the deck does and says so while it's on its way. -->
+        <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+          <UpdatingCue label="Checking format legality…" />
+        </p>
+        <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
 
-      <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+        <!-- Estimated Commander bracket — renders nothing for a deck in any other format,
+        and nothing at all until the deck has cards in it (an empty list has no power
+        level to read). -->
+        <DeckBracket
+          v-if="deck.summary.total_cards > 0"
+          :game="game"
+          :deck-id="deck.id"
+          :format="deck.format"
+        />
 
-      <!-- What the deck's cards *do* (issue #671). The bars double as a filter for the card
+        <DeckStats :game="game" :deck-id="deck.id" :sections="sections" />
+
+        <!-- What the deck's cards *do* (issue #671). The bars double as a filter for the card
         list below, which is why the query lives in the editor engine rather than in here. -->
-      <DeckRoles
-        v-model:role="filterRole"
-        :game="game"
-        :roles="roles"
-        :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isLoadingError.value"
-        :stale="rolesQuery.isRefetchError.value"
-      />
-      <!-- Colour sources against pip requirements (issue #670). Hidden for an empty deck,
+        <DeckRoles
+          v-model:role="filterRole"
+          :game="game"
+          :roles="roles"
+          :pending="rolesQuery.isPending.value"
+          :failed="rolesQuery.isLoadingError.value"
+          :stale="rolesQuery.isRefetchError.value"
+        />
+        <!-- Colour sources against pip requirements (issue #670). Hidden for an empty deck,
         which has nothing to cast and nothing to cast it with. -->
-      <DeckMana v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
+        <DeckMana v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
-      <!-- Where the money is (issue #672): the value per card, the cheapest printing of
+        <!-- Where the money is (issue #672): the value per card, the cheapest printing of
         each, and the swaps that would realise the saving. Nothing to price in an empty deck. -->
-      <DeckPricing v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
+        <DeckPricing v-if="deck.summary.total_cards > 0" :game="game" :deck-id="deck.id" />
 
-      <!-- Cards you already own that the deck could play (issue #684): in its colours, legal
+        <!-- Cards you already own that the deck could play (issue #684): in its colours, legal
         in its format, not in it yet, most popular first. Owner-only — it reads the caller's
         collection — and hidden for an empty deck, which has no colours to fit. -->
-      <DeckSuggestions
-        v-if="deck.summary.total_cards > 0"
-        :game="game"
-        :deck-id="deck.id"
-        :sections="sections"
-        :cards="allCards"
-      />
+        <DeckSuggestions
+          v-if="deck.summary.total_cards > 0"
+          :game="game"
+          :deck-id="deck.id"
+          :sections="sections"
+          :cards="allCards"
+        />
 
-      <!-- Goldfish a sample hand (issue #596). -->
-      <DeckGoldfish :game="game" :deck-id="deck.id" />
+        <!-- Goldfish a sample hand (issue #596). -->
+        <DeckGoldfish :game="game" :deck-id="deck.id" />
 
-      <!-- What changed against another of your decks (issue #674). Keyed on the deck id so
+        <!-- What changed against another of your decks (issue #674). Keyed on the deck id so
         navigating v1 → v2 (as the Duplicate action does) remounts it with a fresh pick. -->
-      <DeckCompare :key="deck.id" class="mb-6" :game="game" :deck-id="deck.id" />
+        <DeckCompare :key="deck.id" class="mb-6" :game="game" :deck-id="deck.id" />
+      </DeckOverview>
 
       <!-- Add cards -->
       <DeckAddCard

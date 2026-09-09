@@ -587,6 +587,25 @@ catalog) is planned but not implemented.
   filters `user_id` directly — a deck route must first `load_deck` to prove the parent is the
   caller's, returning **404** (not 403) for someone else's deck so a deck id can't be probed.
   A security test pins this.
+- **The deck page's top is one collapsible, and its state is remembered.** By issue #684 nine
+  analysis panels — each already resting collapsed on two rows — stood between a deck's header
+  and its card list (~1,900px on a desktop, most of three screens on a phone). Rather than
+  trimming panels or shrinking their resting rows further, `DeckOverview` wraps the whole
+  stack behind one disclosure and shows a chip strip in its place, each chip a pure function
+  (`lib/deckOverview.ts`) of the very response the corresponding panel renders — so a reader
+  who never expands still gets every verdict, and the strip can't disagree with the stack.
+  Two choices were deliberate. The strip's reads are the panels' own, under the same query
+  keys, so a collapsed page asks the server exactly what the old page did and expanding asks
+  nothing new — the alternative, deferring every read until expanded, would make the chips a
+  second round trip after the deck. And the toggle is **persisted** (`stores/deckView`),
+  overturning the panels' per-mount precedent on purpose: that precedent guards two sibling
+  disclosures from disagreeing across a reload and phone visitors from a remembered
+  full-height panel, but this disclosure is the page's layout rather than one deck's question,
+  and someone who wants the whole picture shouldn't re-open it on every deck. The rejected
+  alternative was folding the strip into the header line: a breach chip in red beside the
+  deck's name reads as a title, not a verdict, and the header already carries the actions.
+  `DeckRoles` is the one panel the strip doesn't summarise — its resting row *is* the card
+  list's role filter, and a count of roles is not a verdict.
 - **The web editor is extended, not forked.** The debounced/serialized/dirty-guarded
   absolute-count editor (`useOwnedCountEditor`) gained an optional `saveFn` injection: decks
   pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush
