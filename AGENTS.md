@@ -322,6 +322,16 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   because neither list endpoint paginates. Every `DeckResponse` producer (authed list, public
   list, import, rename, folder move) builds through the one `deck_headers`/`deck_header` seam —
   a third derived field belongs there, not at a call site.
+  **The deck pages' analysis stack sits behind one collapsible** (`components/decks/DeckOverview.vue`,
+  on the owner, public and precon pages): collapsed by default to a chip strip whose every chip is a
+  pure function (`lib/deckOverview.ts`) of the response the matching panel renders — never a second
+  read, never a second rule — so the strip can't disagree with the stack it hides; its toggle is
+  **persisted** (`stores/deckView`'s `overviewExpanded`) while each panel's own "Details" stays
+  per-mount, on purpose (`docs/tradeoffs.md` §Decks). A tenth panel goes inside the slot (with a glance in
+  that lib if it has a verdict to state before being asked), or stands outside like the add-cards
+  box because it belongs to the list; a control that lives inside must be reset on the overview's
+  `collapse` event (the role filter is), and URL-addressed state inside it must open the overview
+  (the owner view does for `?compare=`).
   **Deck analysis is server-side** (issue #596): composition + draw odds
   (`/stats`), the legality verdict (`/legality`), the estimated Commander bracket
   (`/bracket`), the tokens the deck makes (`/tokens`), the mana base (`/mana`, issue #670),

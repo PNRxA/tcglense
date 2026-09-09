@@ -18,6 +18,7 @@ import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
+import DeckOverview from '@/components/decks/DeckOverview.vue'
 import DeckSectionNav from '@/components/decks/DeckSectionNav.vue'
 import DeckStats from '@/components/decks/DeckStats.vue'
 import DeckCombos from '@/components/decks/DeckCombos.vue'
@@ -352,22 +353,33 @@ usePageMeta({
            between a filter box that moves because something announced was arriving and one
            that moves for no reason the reader was given. It reserves the clean verdict's
            single line exactly; a breach banner lists its cards and is taller. -->
-      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
-        <UpdatingCue label="Checking format legality…" />
-      </p>
-      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
-      <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
-      <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
-      <DeckRoles
-        v-model:role="filterRole"
+      <DeckOverview
         :game="game"
-        :roles="roles"
-        :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isLoadingError.value"
-        :stale="rolesQuery.isRefetchError.value"
-      />
-      <DeckMana v-if="entries.length > 0" :game="game" :precon-slug="slug" class="mb-4" />
-      <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
+        :precon-slug="slug"
+        :format="precon.format"
+        :legality="legality"
+        :legality-pending="legalityQuery.isPending.value"
+        :total-cards="entries.length"
+        description="Format legality, the estimated bracket, deck analytics, card roles, the mana base and a test hand."
+        @collapse="filterRole = null"
+      >
+        <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+          <UpdatingCue label="Checking format legality…" />
+        </p>
+        <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
+        <DeckBracket :game="game" :precon-slug="slug" :format="precon.format" class="mb-4" />
+        <DeckStats :game="game" :precon-slug="slug" :sections="sections" class="mb-4" />
+        <DeckRoles
+          v-model:role="filterRole"
+          :game="game"
+          :roles="roles"
+          :pending="rolesQuery.isPending.value"
+          :failed="rolesQuery.isLoadingError.value"
+          :stale="rolesQuery.isRefetchError.value"
+        />
+        <DeckMana v-if="entries.length > 0" :game="game" :precon-slug="slug" class="mb-4" />
+        <DeckGoldfish :game="game" :precon-slug="slug" class="mb-6" />
+      </DeckOverview>
 
       <!-- Card list controls, the same set the deck pages carry. -->
       <div v-if="entries.length > 0" class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">

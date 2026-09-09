@@ -13,6 +13,7 @@ import DeckBracket from '@/components/decks/DeckBracket.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
+import DeckOverview from '@/components/decks/DeckOverview.vue'
 import DeckPricing from '@/components/decks/DeckPricing.vue'
 import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
@@ -202,53 +203,72 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         </div>
       </header>
 
-      <!-- Is this deck legal in its format? (issue #557) — the server's verdict (#596), so
-        it lands after the deck itself; the owner view says the same while it's in flight. -->
-      <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
-        <UpdatingCue label="Checking format legality…" />
-      </p>
-      <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
-
-      <!-- Estimated Commander bracket, mirroring the owner view: the same server read, so a
-        shared deck and its owner's copy can't disagree about its power level either. -->
-      <DeckBracket
-        v-if="deck.summary.total_cards > 0"
+      <!-- The overview, as on the owner's page: a strip of chips collapsed, the panels
+        expanded. What it holds is named here, beside the slot that holds it. -->
+      <DeckOverview
         :game="deck.game"
         :deck-id="deck.id"
+        :handle="handle"
         :format="deck.format"
-        :handle="handle"
-      />
+        :legality="legality"
+        :legality-pending="legalityQuery.isPending.value"
+        :total-cards="deck.summary.total_cards"
+        description="Format legality, the estimated bracket, deck analytics, card roles, the mana base, where the money is and a test hand."
+        @collapse="filterRole = null"
+      >
+        <!-- Is this deck legal in its format? (issue #557) — the server's verdict (#596), so
+        it lands after the deck itself; the owner view says the same while it's in flight. -->
+        <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
+          <UpdatingCue label="Checking format legality…" />
+        </p>
+        <DeckLegalityBanner v-else-if="legality" :legality="legality" class="mb-4" />
 
-      <DeckStats :game="deck.game" :deck-id="deck.id" :sections="deck.sections" :handle="handle" />
+        <!-- Estimated Commander bracket, mirroring the owner view: the same server read, so a
+        shared deck and its owner's copy can't disagree about its power level either. -->
+        <DeckBracket
+          v-if="deck.summary.total_cards > 0"
+          :game="deck.game"
+          :deck-id="deck.id"
+          :format="deck.format"
+          :handle="handle"
+        />
 
-      <DeckRoles
-        v-model:role="filterRole"
-        :game="deck.game"
-        :roles="roles"
-        :pending="rolesQuery.isPending.value"
-        :failed="rolesQuery.isLoadingError.value"
-        :stale="rolesQuery.isRefetchError.value"
-      />
+        <DeckStats
+          :game="deck.game"
+          :deck-id="deck.id"
+          :sections="deck.sections"
+          :handle="handle"
+        />
 
-      <!-- The mana base, mirroring the owner view through the same server read (issue #670). -->
-      <DeckMana
-        v-if="deck.summary.total_cards > 0"
-        :game="deck.game"
-        :deck-id="deck.id"
-        :handle="handle"
-      />
+        <DeckRoles
+          v-model:role="filterRole"
+          :game="deck.game"
+          :roles="roles"
+          :pending="rolesQuery.isPending.value"
+          :failed="rolesQuery.isLoadingError.value"
+          :stale="rolesQuery.isRefetchError.value"
+        />
 
-      <!-- The same money breakdown the owner sees, read-only: which cards cost what, and
+        <!-- The mana base, mirroring the owner view through the same server read (issue #670). -->
+        <DeckMana
+          v-if="deck.summary.total_cards > 0"
+          :game="deck.game"
+          :deck-id="deck.id"
+          :handle="handle"
+        />
+
+        <!-- The same money breakdown the owner sees, read-only: which cards cost what, and
         what the list would cost at the cheapest printings (issue #672). -->
-      <DeckPricing
-        v-if="deck.summary.total_cards > 0"
-        :game="deck.game"
-        :deck-id="deck.id"
-        :handle="handle"
-      />
+        <DeckPricing
+          v-if="deck.summary.total_cards > 0"
+          :game="deck.game"
+          :deck-id="deck.id"
+          :handle="handle"
+        />
 
-      <!-- Goldfish a sample hand from the shared deck (issue #596). -->
-      <DeckGoldfish :game="deck.game" :deck-id="deck.id" :handle="handle" />
+        <!-- Goldfish a sample hand from the shared deck (issue #596). -->
+        <DeckGoldfish :game="deck.game" :deck-id="deck.id" :handle="handle" />
+      </DeckOverview>
 
       <!-- Card list controls (issue #562), mirroring the owner view: client-side text +
         colour filters over the loaded deck, and the shared card-size preference. -->
