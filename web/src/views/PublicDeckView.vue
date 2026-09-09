@@ -214,6 +214,7 @@ const legality = computed(() => legalityQuery.data.value?.data ?? null)
         :legality-pending="legalityQuery.isPending.value"
         :total-cards="deck.summary.total_cards"
         description="Format legality, the estimated bracket, deck analytics, card roles, the mana base, where the money is and a test hand."
+        @collapse="filterRole = null"
       >
         <!-- Is this deck legal in its format? (issue #557) — the server's verdict (#596), so
         it lands after the deck itself; the owner view says the same while it's in flight. -->

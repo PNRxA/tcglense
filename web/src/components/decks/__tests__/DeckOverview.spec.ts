@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { hashKey } from '@tanstack/vue-query'
 import type { DeckAnalytics, DeckLegality, DeckManaBase } from '@/lib/api'
 
 // Which hooks the component asked, and with what `enabled` — the addressing mode is chosen
@@ -14,6 +15,7 @@ const answers = vi.hoisted(() => ({
   stats: null as DeckAnalytics | null,
   mana: null as DeckManaBase | null,
   statsPending: false,
+  manaFailed: false,
 }))
 
 vi.mock('@/composables/useDeckAnalysis', async () => {
@@ -21,11 +23,12 @@ vi.mock('@/composables/useDeckAnalysis', async () => {
   function settled<T>(name: string, data: () => T, enabled?: Ref<boolean>, pending = false) {
     calls.names.push(name)
     calls.enabled[name] = enabled?.value ?? true
-    // A disabled read never answers, as vue-query's wouldn't.
+    // A disabled read never answers, as vue-query's wouldn't — and it sits in `pending`
+    // forever, which is what the component's own gates have to keep skeletons off.
     return {
       data: vueComputed(() => (enabled?.value === false ? undefined : data())),
-      isPending: vueRef(pending),
-      isLoadingError: vueRef(false),
+      isPending: vueComputed(() => enabled?.value === false || pending),
+      isLoadingError: vueRef(name.endsWith('mana') && answers.manaFailed),
     }
   }
   const stats =
@@ -125,6 +128,7 @@ beforeEach(() => {
   answers.stats = analytics()
   answers.mana = null
   answers.statsPending = false
+  answers.manaFailed = false
 })
 
 afterEach(() => {
@@ -151,6 +155,7 @@ describe('DeckOverview', () => {
   it('mounts the stack on demand and remembers the choice across mounts', async () => {
     const wrapper = mountOverview()
     await disclosure(wrapper).trigger('click')
+    expect(wrapper.emitted('collapse')).toBeUndefined()
     expect(disclosure(wrapper).attributes('aria-expanded')).toBe('true')
     const bodyId = disclosure(wrapper).attributes('aria-controls')
     expect(bodyId).toBeTruthy()
@@ -168,6 +173,8 @@ describe('DeckOverview', () => {
     await disclosure(again).trigger('click')
     expect(again.find('[data-testid="panels"]').exists()).toBe(false)
     expect(localStorage.getItem(STORAGE_KEY)).toBe('0')
+    // Closing is announced, so a view can reset a control the stack just took with it.
+    expect(again.emitted('collapse')).toHaveLength(1)
     again.unmount()
   })
 
@@ -231,15 +238,35 @@ describe('DeckOverview', () => {
   })
 
   it('gates the bracket on Commander and every read on the deck having cards', () => {
-    mountOverview({ format: 'modern' }).unmount()
+    const modern = mountOverview({ format: 'modern' })
     expect(calls.enabled['deck-bracket']).toBe(false)
     expect(calls.enabled['deck-stats']).toBe(true)
+    // A read that will never be asked must not hold a placeholder open for it.
+    expect(modern.find('[data-slot="skeleton"]').exists()).toBe(false)
+    modern.unmount()
 
     calls.enabled = {}
     const empty = mountOverview({ totalCards: 0, legality: null })
     expect(Object.values(calls.enabled).every((on) => on === false)).toBe(true)
-    expect(empty.text()).toContain('Add cards to see the deck’s numbers here.')
+    expect(empty.find('[data-slot="skeleton"]').exists()).toBe(false)
+    expect(empty.text()).toContain('Nothing to summarise until the deck has cards.')
     empty.unmount()
+  })
+
+  it('says when a read failed instead of silently dropping its chip', () => {
+    answers.manaFailed = true
+    const wrapper = mountOverview()
+    expect(wrapper.text()).toContain("Some numbers couldn't be worked out")
+    wrapper.unmount()
+  })
+
+  it('shares the analytics panel’s cache entry: its untouched params hash to the strip’s', () => {
+    // DeckStats sends `{ sections: undefined, card: undefined }` until a control is touched;
+    // the strip sends `{}`. TanStack drops undefined values when hashing, so the two are one
+    // key — the load-bearing half of "expanding asks nothing new".
+    expect(hashKey(['deck-stats', 'mtg', 7, {}])).toBe(
+      hashKey(['deck-stats', 'mtg', 7, { sections: undefined, card: undefined }]),
+    )
   })
 
   it('holds the strip’s shape with placeholders while a read is on its first trip', () => {

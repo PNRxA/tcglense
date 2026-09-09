@@ -124,11 +124,14 @@ describe('legalityGlance', () => {
     })
   })
 
-  it('names the construction breach when an illegal deck has no card issues', () => {
+  it('names the breach that made it illegal, not a warning listed ahead of it', () => {
     const glance = legalityGlance(
       legality({
         legal: false,
-        violations: [{ rule: 'colour-identity', severity: 'error', message: 'Off colour.' }],
+        violations: [
+          { rule: 'deck-size', severity: 'warning', message: '98 of 100 cards.' },
+          { rule: 'colour-identity', severity: 'error', message: 'Off colour.' },
+        ],
       }),
     )
     expect(glance.title).toBe('Off colour.')
@@ -250,5 +253,15 @@ describe('suggestionsGlance', () => {
     expect(suggestionsGlance(suggestions(1))?.label).toBe('1 card you own fits')
     expect(suggestionsGlance(suggestions(1200))?.label).toBe('1,200 cards you own fit')
     expect(suggestionsGlance(suggestions(0))).toBeNull()
+  })
+
+  it('words the filters as the panel does, and never implies one the server skipped', () => {
+    expect(suggestionsGlance(suggestions(3))?.title).toBe(
+      "From your collection — in the deck's colours (G) · legal in Commander · not in the deck yet",
+    )
+    const untracked = { ...suggestions(3), format_key: null, format_label: null }
+    expect(suggestionsGlance(untracked)?.title).toContain(
+      'any format (the deck’s format isn’t tracked)',
+    )
   })
 })

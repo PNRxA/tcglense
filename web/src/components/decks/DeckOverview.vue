@@ -46,9 +46,12 @@ import { useDeckViewStore } from '@/stores/deckView'
 // analytics, roles, mana base, pricing, suggestions, the test hand and the comparison.
 //
 // Every read it fires is one the panels fire on mount anyway, under the same query key, so
-// opening the stack costs no second request and the collapsed page costs no more than the
-// old one. `DeckRoles` is deliberately not summarised here: its resting row *is* the card
-// list's role filter, and a count of roles is not a verdict.
+// the collapsed page costs no more than the old one and the panels open onto the cache
+// entries the strip already filled (a panel still revalidates a stale entry on mount, as it
+// always did). `DeckRoles` is deliberately not summarised here: its resting row *is* the
+// card list's role filter, and a count of roles is not a verdict — which is also why the
+// view is told when the stack closes (`collapse`), so a role filter never outlives the only
+// control that names it.
 //
 // The disclosure is `DeckBracket`'s (rotating chevron, `aria-expanded`, body mounted only
 // while open) but its state is **remembered** (`stores/deckView`), unlike the panels' own
@@ -75,12 +78,18 @@ const props = defineProps<{
   /** What the expanded stack holds, named beside it by the view that owns the slot. */
   description: string
 }>()
+const emit = defineEmits<{
+  /** The stack was just closed by the toggle — the moment a control inside it disappears. */
+  collapse: []
+}>()
 
 const deckView = useDeckViewStore()
 const expanded = computed(() => deckView.overviewExpanded)
 const bodyId = useId()
 function toggle() {
-  deckView.setOverviewExpanded(!expanded.value)
+  const next = !expanded.value
+  deckView.setOverviewExpanded(next)
+  if (!next) emit('collapse')
 }
 
 const game = toRef(props, 'game')
@@ -235,7 +244,7 @@ const TONE_CLASS: Record<GlanceTone, string> = {
             v-if="!hasCards && !legalityPending && chips.length === 0"
             class="text-muted-foreground text-xs"
           >
-            Add cards to see the deck’s numbers here.
+            Nothing to summarise until the deck has cards.
           </li>
         </ul>
         <p v-if="!expanded" class="text-muted-foreground text-xs">{{ description }}</p>
@@ -243,7 +252,7 @@ const TONE_CLASS: Record<GlanceTone, string> = {
     </Card>
 
     <!-- The stack, mounted only while open: every panel below fires its read on mount, and
-      each shares its key with the read above, so nothing is asked twice. -->
+      each shares its key with the read above, so it opens onto the entry the strip filled. -->
     <div v-if="expanded" :id="bodyId" class="mt-6">
       <slot />
     </div>

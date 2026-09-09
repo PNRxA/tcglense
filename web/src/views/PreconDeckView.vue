@@ -361,6 +361,7 @@ usePageMeta({
         :legality-pending="legalityQuery.isPending.value"
         :total-cards="entries.length"
         description="Format legality, the estimated bracket, deck analytics, card roles, the mana base and a test hand."
+        @collapse="filterRole = null"
       >
         <p v-if="legalityQuery.isPending.value" class="text-muted-foreground mb-4 text-sm">
           <UpdatingCue label="Checking format legality…" />

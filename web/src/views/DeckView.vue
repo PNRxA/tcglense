@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import {
   ArrowLeft,
   ChevronDown,
@@ -145,6 +145,15 @@ const {
 } = useDeckEditor(props)
 const cardSize = useCardSizeStore()
 const deckView = useDeckViewStore()
+
+// A comparison is a link (`?compare=<id>`, issue #674) and its panel lives inside the
+// overview, so a page opened on one opens the overview too — otherwise the link would land
+// on a page showing no comparison at all. Decided once, at setup, so the first paint is
+// already the expanded one; it writes the remembered choice, which the toggle can undo.
+const route = useRoute()
+if (typeof route.query.compare === 'string' && /^\d+$/.test(route.query.compare)) {
+  deckView.setOverviewExpanded(true)
+}
 
 usePageMeta({ title: computed(() => deck.value?.name ?? 'Deck'), noindex: true })
 
@@ -368,6 +377,7 @@ function copyDeckList() {
         :legality-pending="legalityQuery.isPending.value"
         :total-cards="deck.summary.total_cards"
         description="Format legality, the estimated bracket, deck analytics, card roles, the mana base, where the money is, cards you own that fit, a test hand and a comparison with another deck."
+        @collapse="filterRole = null"
       >
         <!-- Is this deck legal in its format? (issue #557) — a verdict the server works out
         (#596), so it arrives after the deck does and says so while it's on its way. -->

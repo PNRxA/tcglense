@@ -595,17 +595,25 @@ catalog) is planned but not implemented.
   (`lib/deckOverview.ts`) of the very response the corresponding panel renders — so a reader
   who never expands still gets every verdict, and the strip can't disagree with the stack.
   Two choices were deliberate. The strip's reads are the panels' own, under the same query
-  keys, so a collapsed page asks the server exactly what the old page did and expanding asks
-  nothing new — the alternative, deferring every read until expanded, would make the chips a
-  second round trip after the deck. And the toggle is **persisted** (`stores/deckView`),
+  keys, so a collapsed page asks the server exactly what the old page did and expanding
+  opens the panels onto entries the strip already filled (a stale entry still revalidates on
+  the panel's mount, and the comparison panel's deck-list read is its own, as before) — the
+  alternative, deferring every read until expanded, would make the chips a second round trip
+  after the deck. And the toggle is **persisted** (`stores/deckView`),
   overturning the panels' per-mount precedent on purpose: that precedent guards two sibling
   disclosures from disagreeing across a reload and phone visitors from a remembered
   full-height panel, but this disclosure is the page's layout rather than one deck's question,
   and someone who wants the whole picture shouldn't re-open it on every deck. The rejected
   alternative was folding the strip into the header line: a breach chip in red beside the
   deck's name reads as a title, not a verdict, and the header already carries the actions.
-  `DeckRoles` is the one panel the strip doesn't summarise — its resting row *is* the card
-  list's role filter, and a count of roles is not a verdict.
+  `DeckRoles` is the one panel with a verdict-shaped answer the strip doesn't carry — its
+  resting row *is* the card list's role filter, and a count of roles is not a verdict; since
+  that control now unmounts with the stack, the views clear the role filter on the overview's
+  `collapse` event rather than leave a narrowed list with nothing on the page naming why. Two
+  panels inside the stack have no chip at all because they have nothing to say until asked
+  (the test hand, the comparison) — and the comparison is a link (`?compare=`), so the owner
+  view opens the overview once at setup when the page is entered on one, or the link would
+  land on a page showing no comparison.
 - **The web editor is extended, not forked.** The debounced/serialized/dirty-guarded
   absolute-count editor (`useOwnedCountEditor`) gained an optional `saveFn` injection: decks
   pass a writer that PUTs a `(deck, section, card)` row while reusing all the tricky flush

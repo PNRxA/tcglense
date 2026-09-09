@@ -6,6 +6,7 @@ import type {
   DeckPricing,
   DeckSuggestions,
 } from '@/lib/api'
+import { colourFilterLabel, formatFilterLabel } from '@/lib/deckSuggestions'
 
 // The deck page's collapsed **overview strip** (`components/decks/DeckOverview.vue`): one
 // chip per analysis panel, worded so a reader who never expands the page still gets the
@@ -41,11 +42,14 @@ export function legalityGlance(legality: DeckLegality): Glance {
   const issues = legality.issues.length
   const issueText = issues === 1 ? '1 card issue' : `${issues} card issues`
   if (!legality.legal) {
+    // The breach that made it illegal, not the first warning in the list: the server sorts
+    // neither, and the banner leads with errors for the same reason.
+    const breach = legality.violations.find((v) => v.severity === 'error')?.message
     return {
       key: 'legality',
       label: `Not legal in ${legality.format_label}`,
       tone: 'destructive',
-      title: issues > 0 ? issueText : legality.violations[0]?.message,
+      title: issues > 0 ? issueText : breach,
     }
   }
   if (legality.violations.length > 0) {
@@ -152,7 +156,12 @@ export function savingGlance(
   }
 }
 
-/** How many cards the owner already holds that the deck could play — the count alone. */
+/**
+ * How many cards the owner already holds that the deck could play — the count alone. The
+ * tooltip states the two filters through the panel's own wording (`lib/deckSuggestions`),
+ * because a filter the server didn't apply — no format, no colour to read — must not be
+ * implied by the chip either.
+ */
 export function suggestionsGlance(suggestions: DeckSuggestions): Glance | null {
   const n = suggestions.candidate_count
   if (n === 0) return null
@@ -160,6 +169,6 @@ export function suggestionsGlance(suggestions: DeckSuggestions): Glance | null {
     key: 'suggestions',
     label: n === 1 ? '1 card you own fits' : `${n.toLocaleString()} cards you own fit`,
     tone: 'neutral',
-    title: 'From your collection — in the deck’s colours, legal in its format, not in it yet',
+    title: `From your collection — ${colourFilterLabel(suggestions)} · ${formatFilterLabel(suggestions)} · not in the deck yet`,
   }
 }
