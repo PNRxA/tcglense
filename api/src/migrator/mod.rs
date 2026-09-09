@@ -82,6 +82,7 @@ mod m20240101_000079_backfill_cards_produced_mana;
 mod m20240101_000080_create_booster_tables;
 mod m20240101_000081_add_card_price_history_etched;
 mod m20240101_000082_create_combos_tables;
+mod m20240101_000083_add_cards_external_ids;
 
 #[cfg(test)]
 pub(crate) use m20240101_000023_consolidate_foil_star_holdings::consolidate_foil_star_holdings;
@@ -174,6 +175,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000080_create_booster_tables::Migration),
             Box::new(m20240101_000081_add_card_price_history_etched::Migration),
             Box::new(m20240101_000082_create_combos_tables::Migration),
+            Box::new(m20240101_000083_add_cards_external_ids::Migration),
         ]
     }
 }

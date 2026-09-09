@@ -15,6 +15,7 @@ import CardRulings from '@/components/cards/CardRulings.vue'
 import CardSealedProducts from '@/components/products/CardSealedProducts.vue'
 import CardDecks from '@/components/decks/CardDecks.vue'
 import CardBuyLinks from '@/components/cards/CardBuyLinks.vue'
+import CardReferenceLinks from '@/components/cards/CardReferenceLinks.vue'
 import PriceChart from '@/components/cards/PriceChart.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCardQuery } from '@/composables/useCatalog'
@@ -359,10 +360,14 @@ const alertFinishes = computed<AlertFinish[]>(() => cardAlertFinishes(card.value
         <CardRulings :game="game" :id="id" :card-name="card?.name" />
       </div>
 
-      <!-- Outbound "buy this card" links, grouped by region (issue #175). The rail's second
-        row on md+ (right under the price/ownership stack) but LAST in source order, so the
-        long store list doesn't push the card's actual content down on mobile. -->
-      <CardBuyLinks v-if="card" class="md:col-start-1 md:row-start-2" :game="game" :card="card" />
+      <!-- Outbound "buy this card" links, grouped by region (issue #175), then the card's
+        reference pages (Gatherer / EDHREC, issue #686). The rail's second row on md+ (right
+        under the price/ownership stack) but LAST in source order, so the long store list
+        doesn't push the card's actual content down on mobile. -->
+      <div v-if="card" class="space-y-4 md:col-start-1 md:row-start-2">
+        <CardBuyLinks :game="game" :card="card" />
+        <CardReferenceLinks :game="game" :card="card" />
+      </div>
     </div>
   </template>
 </template>

@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import UpdatingOverlay from '@/components/cards/UpdatingOverlay.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import { buttonVariants } from '@/components/ui/button'
 import CardExportMenu from '@/components/cards/CardExportMenu.vue'
+import BuyListDialog from '@/components/wishlist/BuyListDialog.vue'
 import CardGrid from '@/components/cards/CardGrid.vue'
 import CardGridSkeleton from '@/components/cards/CardGridSkeleton.vue'
 import GhostToggle from '@/components/cards/GhostToggle.vue'
@@ -30,6 +32,8 @@ import {
   useWishlistSummaryQuery,
 } from '@/composables/useWishlist'
 import { useHoldingsBrowse } from '@/composables/useHoldingsBrowse'
+import { toSortParam } from '@/lib/cardSort'
+import { copiesFilterParams } from '@/lib/holdingsFilter'
 import { useAuthStore } from '@/stores/auth'
 
 // Wishlisted cards for a game, either the whole wish list (`/wishlist/:game/cards`) or
@@ -122,6 +126,17 @@ const {
     ownErrorMessage: "Couldn't load your wish list. Please retry.",
   },
 })
+
+// The shopping list's params (issue #292) — exactly the export's: this grid's committed
+// `q`, its set scope, the non-default sort and the copy-count filter, so "Buy all" is the
+// rows on screen and can never disagree with the export beside it.
+const buyListParams = computed(() => ({
+  q: query.value || undefined,
+  set: setCode.value,
+  ...toSortParam(sort.value, defaultSort.value),
+  includeRelated: includeRelated.value,
+  ...copiesFilterParams(copiesFilter.value),
+}))
 </script>
 
 <template>
@@ -240,6 +255,16 @@ const {
               :include-related="includeRelated"
               :copies="copiesFilter"
               :total="total"
+            />
+            <!-- "Buy all" (issue #292) over the same rows the export drains: the wish-list
+                 listing with this grid's `q` / set scope / copy-count filter. Gated like the
+                 export — flat list mode only (a grouped view serves other endpoints, and
+                 ghost mode is the catalog listing, which isn't a shopping list). -->
+            <BuyListDialog
+              v-if="!grouped && !showGhosts"
+              :game="game"
+              :params="buyListParams"
+              cards-only
             />
             <CardSizeMenu />
             <CardSortMenu v-model="sort" :options="sortOptions" />

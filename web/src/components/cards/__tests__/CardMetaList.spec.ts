@@ -67,6 +67,13 @@ function makeDetail(overrides: Partial<CardDetail> = {}): CardDetail {
     content_warning: false,
     edhrec_rank: null,
     penny_rank: null,
+    tcgplayer_id: null,
+    tcgplayer_etched_id: null,
+    cardmarket_id: null,
+    multiverse_ids: [],
+    mtgo_id: null,
+    mtgo_foil_id: null,
+    arena_id: null,
     ...overrides,
   }
 }

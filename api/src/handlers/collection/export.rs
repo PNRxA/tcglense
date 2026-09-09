@@ -12,8 +12,9 @@
 //! export emits one row per non-empty finish bucket and fills the provider columns we
 //! can't know (condition, language, price, tags) with the neutral defaults a fresh export
 //! from those services uses (`NM`/`Near Mint`, `EN`/`English`, blank). Card metadata comes
-//! from the joined `cards` row; the few Archidekt columns we don't store (Multiverse Id,
-//! MTGO ID) are emitted as `0`, matching Archidekt's own default for a card it can't map.
+//! from the joined `cards` row, including the Archidekt `Multiverse Id` / `MTGO ID` columns
+//! (the catalog's Gatherer and Magic Online ids, issue #686), which fall back to `0` — Archidekt's
+//! own default for a card it can't map — only where the printing has no such id.
 //!
 //! **Text** ([`export_collection_cards`]): the collection browse's mirror of the public
 //! catalog's card-search export, streamed through the shared engine
@@ -337,6 +338,12 @@ fn archidekt_record(
     count: i32,
 ) -> Vec<String> {
     let (types, subtypes, supertypes) = split_type_line(card.type_line.as_deref());
+    // A foil row carries the foil printing's own Magic Online id where MTGO lists one
+    // separately, else the printing's id; a regular row always the latter.
+    let mtgo_id = match finish {
+        Finish::Regular => card.mtgo_id,
+        Finish::Foil => card.mtgo_foil_id.or(card.mtgo_id),
+    };
     let finish = match finish {
         Finish::Regular => "Normal",
         Finish::Foil => "Foil",
@@ -352,9 +359,9 @@ fn archidekt_record(
         String::new(), // Tags — not tracked
         card.set_name.clone(),
         card.set_code.clone(),
-        "0".to_string(), // Multiverse Id — not stored
+        archidekt_id(card.multiverse_ids.as_deref().and_then(first_id)),
         card.external_id.clone(),
-        "0".to_string(), // MTGO ID — not stored
+        archidekt_id(mtgo_id),
         card.collector_number.clone(),
         format_mana_value(card.cmc),
         colors_to_names(card.colors.as_deref()),
@@ -366,6 +373,19 @@ fn archidekt_record(
         card.rarity.clone().unwrap_or_default(),
         card.oracle_id.clone().unwrap_or_default(),
     ]
+}
+
+/// An Archidekt id column: the id when the catalog holds one, else `0` — Archidekt's own
+/// default for a card it can't map, and what every row wrote before the ingest captured
+/// these ids (issue #686).
+fn archidekt_id(id: Option<i32>) -> String {
+    id.unwrap_or(0).to_string()
+}
+
+/// The first id of a comma-joined Gatherer `multiverse_ids` column: Archidekt keys a
+/// card on one multiverse id, and a double-faced card's first is its front face's.
+fn first_id(ids: &str) -> Option<i32> {
+    ids.split(',').next()?.trim().parse().ok()
 }
 
 /// Build the 13-column Moxfield row for one holding-finish.
@@ -524,14 +544,13 @@ mod tests {
 
     #[test]
     fn archidekt_csv_has_the_right_header_and_a_row_per_finish() {
-        let rows = vec![(
-            holding(1, 2, 1),
-            Some(card(
-                1,
-                "Aang, Air Nomad",
-                "Legendary Creature — Human Avatar",
-            )),
-        )];
+        let mut aang = card(1, "Aang, Air Nomad", "Legendary Creature — Human Avatar");
+        // The ids the export used to zero (issue #686): Gatherer's first id, and the
+        // foil row's own Magic Online id where MTGO lists one.
+        aang.multiverse_ids = Some("700001,700002".into());
+        aang.mtgo_id = Some(130001);
+        aang.mtgo_foil_id = Some(130002);
+        let rows = vec![(holding(1, 2, 1), Some(aang))];
         let csv = build_csv(ExportFormat::Archidekt, &rows).unwrap();
         let lines: Vec<&str> = csv.lines().collect();
 
@@ -539,9 +558,14 @@ mod tests {
         // A regular row (2 copies) then a foil row (1 copy), both for the same card.
         assert_eq!(
             lines[1],
-            "2,\"Aang, Air Nomad\",Normal,NM,2026-06-24,EN,,,Avatar: The Last Airbender,tla,0,sf-1,0,1,3,White,\"White,Green\",{2}{W},Creature,\"Human,Avatar\",Legendary,rare,or-1"
+            "2,\"Aang, Air Nomad\",Normal,NM,2026-06-24,EN,,,Avatar: The Last Airbender,tla,700001,sf-1,130001,1,3,White,\"White,Green\",{2}{W},Creature,\"Human,Avatar\",Legendary,rare,or-1"
         );
         assert!(lines[2].starts_with("1,\"Aang, Air Nomad\",Foil,NM,"));
+        assert!(
+            lines[2].contains(",tla,700001,sf-1,130002,1,"),
+            "the foil row carries the foil MTGO id: {}",
+            lines[2]
+        );
         assert_eq!(lines.len(), 3);
         // CRLF line terminators, matching a genuine Archidekt export.
         assert!(csv.contains("\r\n"));

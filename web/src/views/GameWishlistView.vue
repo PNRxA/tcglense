@@ -11,6 +11,7 @@ import StickySearchBar from '@/components/cards/StickySearchBar.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
 import QuickAddBox from '@/components/collection/QuickAddBox.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
+import BuyListDialog from '@/components/wishlist/BuyListDialog.vue'
 import WishlistSettingsMenu from '@/components/wishlist/WishlistSettingsMenu.vue'
 import HoldingBreakdownPanel from '@/components/holdings/HoldingBreakdownPanel.vue'
 import ProductHoldingSection from '@/components/products/ProductHoldingSection.vue'
@@ -160,7 +161,13 @@ usePageMeta({
               <template v-if="filtering"> matching “{{ trimmedFilter }}”</template>
             </p>
           </div>
-          <WishlistSettingsMenu :game="game" />
+          <!-- "Buy all" (issue #292) beside the gear: the whole list — cards and sealed
+               products — to a store's bulk-entry page. Disabled until there's something on
+               it, of either kind (the same pair the combined overview gates on). -->
+          <div class="flex shrink-0 gap-2">
+            <BuyListDialog :game="game" :disabled="!hasStats && !hasProductStats" />
+            <WishlistSettingsMenu :game="game" />
+          </div>
         </div>
 
         <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under

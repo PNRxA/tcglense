@@ -7,7 +7,9 @@ import type { CardPrices } from "./CardPrices";
  * shared [`CardResponse`] every listing carries, **flattened**, plus the print + collector
  * details only the card page reads — who painted it, its flavour text, the finishes it
  * comes in, frame/border/stamp/promo facts, the Reserved List flag, its EDHREC / Penny
- * rank, the mana it produces, and a Battle's printed defense.
+ * rank, the mana it produces, a Battle's printed defense, and its external ids (issue
+ * #686: TCGplayer, Cardmarket, Gatherer, Magic Online, Arena — each `null` where the
+ * provider has no mapping, so a client shows a link only when there is one).
  *
  * Detail-only on purpose: `CardResponse` rides every list payload (a grid page is up to 200
  * of them, CDN/ETag-cached), so these ~20 columns stay off it and live here, on the one
@@ -102,7 +104,37 @@ edhrec_rank: number | null,
 /**
  * Popularity rank in Penny Dreadful; `null` when unranked.
  */
-penny_rank: number | null, id: string, name: string, set_code: string, set_name: string, collector_number: string, rarity: string | null, lang: string, released_at: string | null, mana_cost: string | null, cmc: number | null, type_line: string | null, oracle_text: string | null, power: string | null, toughness: string | null, loyalty: string | null, color_identity: Array<string>, colors: Array<string>, layout: string | null, prices: CardPrices, 
+penny_rank: number | null, 
+/**
+ * TCGplayer product id of the regular/foil printing (`tcgplayer.com/product/{id}`);
+ * `null` when TCGplayer doesn't list it.
+ */
+tcgplayer_id: number | null, 
+/**
+ * TCGplayer product id of the etched printing, when it is a distinct product.
+ */
+tcgplayer_etched_id: number | null, 
+/**
+ * Cardmarket product id (`cardmarket.com/en/Magic/Products?idProduct={id}`).
+ */
+cardmarket_id: number | null, 
+/**
+ * Gatherer multiverse ids — one per face for a double-faced card; empty when Gatherer
+ * never listed the printing.
+ */
+multiverse_ids: Array<number>, 
+/**
+ * Magic Online catalog id of the regular printing; only an MTGO printing carries one.
+ */
+mtgo_id: number | null, 
+/**
+ * Magic Online catalog id of the foil printing, when distinct.
+ */
+mtgo_foil_id: number | null, 
+/**
+ * MTG Arena id; only an Arena printing carries one.
+ */
+arena_id: number | null, id: string, name: string, set_code: string, set_name: string, collector_number: string, rarity: string | null, lang: string, released_at: string | null, mana_cost: string | null, cmc: number | null, type_line: string | null, oracle_text: string | null, power: string | null, toughness: string | null, loyalty: string | null, color_identity: Array<string>, colors: Array<string>, layout: string | null, prices: CardPrices, 
 /**
  * Whether an image is available through the image proxy for this card.
  */

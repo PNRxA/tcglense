@@ -1,15 +1,20 @@
-import type { Card, Product } from '@/lib/api'
+import type { Card, CardDetail, Product } from '@/lib/api'
 
 // "Where to buy" links for the card + sealed-product detail pages (issue #175).
-// Each store is a NAME search deep link — we don't ingest per-store prices or
-// product ids, so a button lands the user on the store's own search results for
-// the card/product rather than a specific listing (and deliberately shows no
-// price of its own).
+// Each store is a NAME search deep link — we don't ingest per-store prices, so a
+// button lands the user on the store's own search results for the card/product
+// rather than a specific listing (and deliberately shows no price of its own) —
+// except where the catalog holds the store's OWN id for the printing (issue #686):
+// a `CardDetail` carries TCGplayer's and Cardmarket's product ids, and those two
+// stores deep-link to the exact product page instead, falling back to the name
+// search on a listing `Card` (which carries no ids) or a printing the store
+// doesn't list (the id is null — never a dead button).
 //
 // A store's `template` holds a literal `{name}` placeholder that
-// `buildSearchUrl` replaces with the encodeURIComponent-encoded name. The
-// registries are keyed by game slug so a future TCG gets its own store list (an
-// unknown game simply renders no buy section).
+// `buildSearchUrl` replaces with the encodeURIComponent-encoded name; a
+// `productPage` template holds `{id}` instead. The registries are keyed by game
+// slug so a future TCG gets its own store list (an unknown game simply renders
+// no buy section).
 
 interface BuyStore {
   name: string
@@ -27,6 +32,10 @@ interface BuyStore {
   // (`product.url` — the exact TCGplayer product page), link straight to that
   // precise page instead of a name search. Ignored for card links.
   preferProductUrl?: boolean
+  // Cards only (issue #686): the store's product page keyed on its own id — a
+  // `{id}` template plus which `CardDetail` id fills it. Used whenever the card
+  // carries that id, else the name search above.
+  productPage?: { template: string; id: 'tcgplayer_id' | 'cardmarket_id' }
 }
 
 interface BuySection {
@@ -60,6 +69,8 @@ const MTG_SECTIONS: BuySection[] = [
         name: 'TCGplayer',
         template:
           'https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q={name}',
+        // The exact printing's product page (the same id `product.url` carries for sealed).
+        productPage: { template: 'https://www.tcgplayer.com/product/{id}', id: 'tcgplayer_id' },
         featured: true,
       },
       {
@@ -71,6 +82,12 @@ const MTG_SECTIONS: BuySection[] = [
       {
         name: 'Cardmarket',
         template: 'https://www.cardmarket.com/en/Magic/Products/Search?searchString={name}',
+        // Cardmarket resolves a product by its `idProduct` (the id Scryfall carries as
+        // `cardmarket_id`) through the redirect it publishes for exactly this purpose.
+        productPage: {
+          template: 'https://www.cardmarket.com/en/Magic/Products?idProduct={id}',
+          id: 'cardmarket_id',
+        },
       },
       {
         name: 'Star City Games',
@@ -237,9 +254,18 @@ const PRODUCT_SECTIONS_BY_GAME: Record<string, BuySection[]> = {
   mtg: MTG_PRODUCT_SECTIONS,
 }
 
+// The external ids a `CardDetail` carries that a store or reference page resolves by
+// (issue #686). Every one optional: a listing `Card` has none, and a `CardDetail` has
+// `null` where the provider doesn't list the printing.
+export type BuyCardIds = Partial<
+  Pick<CardDetail, 'tcgplayer_id' | 'cardmarket_id' | 'multiverse_ids'>
+>
+
 // The slice of `Card` the link builder needs (structural, so tests don't have
-// to fabricate full CardFace rows).
-export type BuyCard = Pick<Card, 'name' | 'layout'> & { faces: { name: string | null }[] }
+// to fabricate full CardFace rows), plus whichever external ids the caller holds.
+export type BuyCard = Pick<Card, 'name' | 'layout'> & {
+  faces: { name: string | null }[]
+} & BuyCardIds
 
 // The slice of `Product` the sealed-product link builder needs: the product name
 // to search, and its own provider page URL for the `preferProductUrl` stores.
@@ -254,6 +280,11 @@ const COMBINED_NAME_LAYOUTS = new Set(['split'])
 
 export function buildSearchUrl(template: string, cardName: string): string {
   return template.replace(/\{name\}/g, encodeURIComponent(cardName))
+}
+
+// A store's product-page template filled with the printing's own id.
+export function buildProductPageUrl(template: string, id: number): string {
+  return template.replace(/\{id\}/g, String(id))
 }
 
 // The name to search a store for. Split cards keep the full "A // B" name (the
@@ -288,9 +319,70 @@ export function buyLinksFor(game: string, card: BuyCard): BuyLinkSection[] {
   const sections = SECTIONS_BY_GAME[game]
   if (!sections) return []
   const name = searchName(card)
-  return toLinkSections(sections, (store) =>
-    buildSearchUrl(store.template, store.stripQuotes ? name.replace(/"/g, '') : name),
-  )
+  return toLinkSections(sections, (store) => {
+    // The exact product page when the card carries the store's id (issue #686) —
+    // a listing `Card` never does, and a `null` id means the store doesn't list
+    // this printing, so both fall through to the name search.
+    const id = store.productPage ? card[store.productPage.id] : null
+    if (store.productPage && id != null) return buildProductPageUrl(store.productPage.template, id)
+    return buildSearchUrl(store.template, store.stripQuotes ? name.replace(/"/g, '') : name)
+  })
+}
+
+// ---------- Card references (issue #686) ----------
+//
+// Not stores: the pages that describe the card — Gatherer (Wizards' own database, keyed
+// on the multiverse id, so only a printing Gatherer lists gets a link) and EDHREC (keyed
+// on a name slug, so every card gets one). Rendered by CardReferenceLinks.vue as a row
+// under "Where to buy", never as a dead button: a card with no multiverse id simply has
+// no Gatherer entry.
+
+export interface ReferenceLink {
+  name: string
+  href: string
+}
+
+// EDHREC's card slug: the name lower-cased, ligatures and accents flattened (Æther →
+// aether, Lim-Dûl → lim-dul), punctuation dropped (Jace, the Mind Sculptor →
+// jace-the-mind-sculptor) and every remaining run of non-alphanumerics a single dash.
+// The name to slug is `searchName`'s — EDHREC files a split card under its combined
+// name (fire-ice) but every other multi-faced card under its FRONT face alone
+// (delver-of-secrets, not delver-of-secrets-insectile-aberration), the same rule the
+// store searches follow; slugging the raw printing name 404s every transform / MDFC /
+// adventure card, and doubles a reversible printing's "Okaun // Okaun".
+export function edhrecSlug(name: string): string {
+  return name
+    .replace(/[Ææ]/g, 'ae')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/["'’.,:!?]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+const REFERENCES_BY_GAME: Record<string, (card: BuyCard) => ReferenceLink[]> = {
+  mtg: (card) => {
+    const links: ReferenceLink[] = []
+    // A double-faced card carries one multiverse id per face; the first is the front's,
+    // and Gatherer shows both faces on that page.
+    const multiverseId = card.multiverse_ids?.[0]
+    if (multiverseId != null) {
+      links.push({
+        name: 'Gatherer',
+        href: `https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=${multiverseId}`,
+      })
+    }
+    links.push({
+      name: 'EDHREC',
+      href: `https://edhrec.com/cards/${edhrecSlug(searchName(card))}`,
+    })
+    return links
+  },
+}
+
+export function cardReferenceLinksFor(game: string, card: BuyCard): ReferenceLink[] {
+  return REFERENCES_BY_GAME[game]?.(card) ?? []
 }
 
 // "Where to buy" links for a sealed product: a name search per store, except the

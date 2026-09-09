@@ -87,9 +87,12 @@ impl UserRoute {
         }
 
         // The wish list's card-list export and breakdown are the collection ones' twins:
-        // the same uncapped whole-holdings drain / scan, so the same tighter bucket.
+        // the same uncapped whole-holdings drain / scan, so the same tighter bucket. Its
+        // shopping list (`buy-list`, issue #292) is the same shape one size down — a
+        // `COUNT(*)` over the whole filtered wish list plus a 500-row projection, and a
+        // product page besides — so it rides the same bucket rather than the browse budget.
         if let Some(rest) = path.strip_prefix("/api/wishlist/")
-            && let Some((_game, "cards/export" | "breakdown")) = rest.split_once('/')
+            && let Some((_game, "cards/export" | "breakdown" | "buy-list")) = rest.split_once('/')
         {
             return Self::Analytics;
         }
@@ -99,6 +102,12 @@ impl UserRoute {
         {
             if tail == "import" {
                 return Self::Import;
+            }
+            // The deck shopping list as bulk-buy rows (issue #292): the wish-list buy list's
+            // deck twin, so the same tighter bucket it has — a whole-account demand scan
+            // against the whole collection on every call.
+            if tail == "needed/buy-list" {
+                return Self::Analytics;
             }
             // "Add to collection" (`{deck_id}/collection` and `precons/{slug}/collection`):
             // the deck's or precon's rows through the collection importer's own `merge` —
@@ -468,6 +477,8 @@ mod tests {
             "/api/collection/mtg/export",
             "/api/collection/mtg/cards/export",
             "/api/wishlist/mtg/cards/export",
+            "/api/wishlist/mtg/buy-list",
+            "/api/decks/mtg/needed/buy-list",
             // Deck analysis: each folds every card in the deck (issue #596).
             "/api/decks/mtg/7/stats",
             "/api/decks/mtg/7/legality",

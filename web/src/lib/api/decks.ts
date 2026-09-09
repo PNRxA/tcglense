@@ -1,5 +1,6 @@
 import { request, requestBlob } from './client'
 import type {
+  BuyList,
   CardDeckRef,
   ChangeDeckCardPrintingRequest,
   CollectionAddSummary,
@@ -90,6 +91,21 @@ export function getNeededCards(
   const params = new URLSearchParams({ mode })
   if (deckId != null) params.set('deck_id', String(deckId))
   return request<NeededCards>(`${base(game)}/needed?${params}`, { token })
+}
+
+/** The same shortfall as `getNeededCards`, as bulk-buy rows (issue #292's deck half): each
+ * card's `needed` copies as the row's quantity, with the printing's TCGplayer product id,
+ * never a sealed product. Same `mode` / `deckId` semantics and the same 404 for a deck that
+ * isn't the caller's. The stores that turn the rows into a cart live in `lib/bulkBuy.ts`. */
+export function getNeededBuyList(
+  token: string,
+  game: string,
+  mode: NeedMode = 'card',
+  deckId?: number | null,
+): Promise<BuyList> {
+  const params = new URLSearchParams({ mode })
+  if (deckId != null) params.set('deck_id', String(deckId))
+  return request<BuyList>(`${base(game)}/needed/buy-list?${params}`, { token })
 }
 
 /** The caller's decks containing a card — **any printing** of it (gameplay identity) —

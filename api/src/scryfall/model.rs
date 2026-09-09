@@ -199,6 +199,23 @@ pub struct ScryfallCard {
     /// TCGplayer product id for the etched printing, when Scryfall distinguishes one.
     #[serde(default)]
     pub tcgplayer_etched_id: Option<i32>,
+    // --- The other external ids (issue #686): faithful export round-trips + deep links. ---
+    /// Gatherer multiverse ids — one per face for a double-faced card, absent (or empty)
+    /// for a printing Gatherer never listed. Comma-joined on storage.
+    #[serde(default)]
+    pub multiverse_ids: Option<Vec<i32>>,
+    /// Magic Online catalog id for the regular printing; only MTGO-legal printings carry one.
+    #[serde(default)]
+    pub mtgo_id: Option<i32>,
+    /// Magic Online catalog id for the foil printing, when distinct.
+    #[serde(default)]
+    pub mtgo_foil_id: Option<i32>,
+    /// MTG Arena id; only Arena-legal printings carry one.
+    #[serde(default)]
+    pub arena_id: Option<i32>,
+    /// Cardmarket product id (`idProduct`), the key its product pages resolve by.
+    #[serde(default)]
+    pub cardmarket_id: Option<i32>,
     // --- Additional fields ingested for Scryfall search parity. ---
     /// Keyword abilities (Flying, Trample, …). Comma-joined on storage.
     #[serde(default)]

@@ -62,8 +62,8 @@ use crate::{
             deck_pricing, deck_roles, deck_stats, deck_suggestions, deck_tokens,
             decks_containing_card, delete_deck, delete_folder, delete_section, diff_deck,
             export_deck, get_deck, import_deck, list_deck_formats, list_decks, list_folders,
-            move_deck_card, move_deck_to_folder, needed_cards, reorder_sections, set_deck_card,
-            set_deck_visibility, update_deck, update_folder, update_section,
+            move_deck_card, move_deck_to_folder, needed_buy_list, needed_cards, reorder_sections,
+            set_deck_card, set_deck_visibility, update_deck, update_folder, update_section,
         },
         health::{health, maintenance, maintenance_ready, ready},
         mirror::{
@@ -99,7 +99,7 @@ use crate::{
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
-            set_wishlist_product_entry, wishlist_breakdown, wishlist_counts,
+            set_wishlist_product_entry, wishlist_breakdown, wishlist_buy_list, wishlist_counts,
             wishlist_product_counts, wishlist_product_summary, wishlist_set_drops,
             wishlist_set_subtypes, wishlist_sets, wishlist_summary,
         },
@@ -350,6 +350,10 @@ pub fn build_router(state: AppState) -> Router {
         // in, wanted counts out). POST so a big page's id list can't blow the URL
         // length. `/counts`, not `/owned` — a wish list doesn't track ownership.
         .route("/api/wishlist/{game}/counts", post(wishlist_counts))
+        // The shopping list behind "Buy all" (issue #292): the wanted cards (+ sealed
+        // products, unfiltered) as bulk-buy rows with TCGplayer ids. A read, so any
+        // `tcgl_` key may call it.
+        .route("/api/wishlist/{game}/buy-list", get(wishlist_buy_list))
         // The wanted-card search's whole result set as a `.txt` download — the wish-list
         // twin of the collection's `/cards/export` (static segment, so it never collides
         // with `/cards/{id}`).
@@ -414,6 +418,9 @@ pub fn build_router(state: AppState) -> Router {
         // Cards the caller's decks collectively need beyond their collection (issue #499).
         // Static `needed` wins over the dynamic `{deck_id}` below, like `folders`/`import`.
         .route("/api/decks/{game}/needed", get(needed_cards))
+        // The same shortfall as bulk-buy rows (issue #292's deck half); a read, so any
+        // `tcgl_` key may call it.
+        .route("/api/decks/{game}/needed/buy-list", get(needed_buy_list))
         // The caller's decks containing a card (any printing) — the card page's "in your
         // decks" panel. Static `containing` wins over `{deck_id}`, like `needed` above.
         .route(

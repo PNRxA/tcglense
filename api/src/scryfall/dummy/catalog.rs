@@ -292,6 +292,7 @@ impl SeedCard {
         // something to render offline. Seeded off the same stable byte sum as the
         // legalities, so the artist split is deterministic run to run.
         let (artist, artist_id) = ARTISTS[legality_seed % ARTISTS.len()];
+        let id_hash = external_id_hash(&self.external_id);
         ScryfallCard {
             id: self.external_id,
             oracle_id: self.oracle_id,
@@ -325,10 +326,34 @@ impl SeedCard {
             // foil-only card, an etched reprint) are stamped in [`dummy_cards`].
             finishes: Some(vec!["nonfoil".to_string(), "foil".to_string()]),
             frame: Some("2015".to_string()),
+            // External ids (issue #686), hashed off the external id so they're stable run
+            // to run and (near-)unique across the catalog: every printing carries a
+            // TCGplayer + Cardmarket id, while the Gatherer / Magic Online / Arena ids
+            // land on a subset, so the card page and the exports see both states offline.
+            tcgplayer_id: Some(500_000 + id_hash),
+            cardmarket_id: Some(700_000 + id_hash),
+            multiverse_ids: (id_hash % 3 != 0).then(|| vec![400_000 + id_hash]),
+            mtgo_id: (id_hash % 2 == 0).then_some(80_000 + id_hash),
+            mtgo_foil_id: (id_hash % 2 == 0).then_some(80_001 + id_hash),
+            arena_id: (id_hash % 4 == 0).then_some(60_000 + id_hash),
             // Parity fields the dummy catalog doesn't fabricate default to None/absent.
             ..Default::default()
         }
     }
+}
+
+/// A stable, well-spread integer off a card's external id (FNV-1a), for the fabricated
+/// external ids: a byte *sum* (the legality seed) collides between cards far too often to
+/// stand in for a product id. The range is wide (nine million) so the seed test's
+/// uniqueness assertion holds by construction rather than by luck as the catalog grows —
+/// the ids are synthetic, so a wide number costs nothing.
+fn external_id_hash(external_id: &str) -> i32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in external_id.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    (hash % 9_000_000) as i32
 }
 
 /// A standard numbered card; its attributes cycle deterministically by number.
@@ -1125,6 +1150,38 @@ mod tests {
         // Flavour text on some cards but not all (both states must be reachable).
         assert!(cards.iter().any(|c| c.flavor_text.is_some()));
         assert!(cards.iter().any(|c| c.flavor_text.is_none()));
+        // External ids (issue #686): every printing has a TCGplayer + Cardmarket id (the
+        // buy-list and deep-link paths), the rest land on a subset — both states offline.
+        assert!(
+            cards
+                .iter()
+                .all(|c| c.tcgplayer_id.is_some() && c.cardmarket_id.is_some())
+        );
+        let tcgplayer_ids: HashSet<i32> = cards.iter().filter_map(|c| c.tcgplayer_id).collect();
+        assert_eq!(
+            tcgplayer_ids.len(),
+            cards.len(),
+            "TCGplayer ids should be unique"
+        );
+        for (present, absent) in [
+            (
+                cards.iter().any(|c| c.multiverse_ids.is_some()),
+                cards.iter().any(|c| c.multiverse_ids.is_none()),
+            ),
+            (
+                cards.iter().any(|c| c.mtgo_id.is_some()),
+                cards.iter().any(|c| c.mtgo_id.is_none()),
+            ),
+            (
+                cards.iter().any(|c| c.arena_id.is_some()),
+                cards.iter().any(|c| c.arena_id.is_none()),
+            ),
+        ] {
+            assert!(
+                present && absent,
+                "expected both an id-bearing and an id-less printing"
+            );
+        }
     }
 
     #[test]

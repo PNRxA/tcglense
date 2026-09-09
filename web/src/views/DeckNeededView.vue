@@ -10,7 +10,8 @@ import { useGamesQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import { useNeededCardsQuery } from '@/composables/useDecks'
 import { useNeededWishlist } from '@/composables/useNeededWishlist'
-import type { NeedMode, NeededCard } from '@/lib/api'
+import BuyListDialog, { type BuyListSource } from '@/components/wishlist/BuyListDialog.vue'
+import { type NeedMode, type NeededCard, getNeededBuyList } from '@/lib/api'
 import { neededCostLine, neededEntryPrice } from '@/lib/neededCost'
 import { useAuthStore } from '@/stores/auth'
 import { usePageMeta } from '@/lib/seo'
@@ -92,6 +93,13 @@ function needTitle(entry: NeededCard): string {
     ? `You need ${entry.needed} more for this deck: it wants ${entry.required} and you own ${entry.owned}, but your other decks want those copies too`
     : `You need ${entry.needed} more for this deck (it wants ${entry.required}, you own ${entry.owned})`
 }
+
+// "Buy all" (issue #292's deck half): the same shortfall as bulk-buy rows, through the
+// wish list's dialog with this page's read plugged in — same mode, same deck scope.
+const buySource = computed<BuyListSource>(() => ({
+  key: ['deck-needed', game.value, mode.value, deckId.value],
+  load: (token: string) => getNeededBuyList(token, game.value, mode.value, deckId.value),
+}))
 
 const addLabel = computed(() => {
   if (adding.value) return 'Adding…'
@@ -225,6 +233,9 @@ const addLabel = computed(() => {
             >
               <Heart class="size-4" aria-hidden="true" /> {{ addLabel }}
             </Button>
+            <!-- Straight to a store's bulk-entry page with these rows (cards only — a deck
+              needs no sealed product), without the detour through the wish list. -->
+            <BuyListDialog :game="game" :source="buySource" cards-only />
           </div>
         </div>
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">

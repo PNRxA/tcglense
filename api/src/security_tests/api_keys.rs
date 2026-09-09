@@ -296,6 +296,10 @@ async fn read_only_key_can_read_but_not_write() {
     let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/mtg/products", &key)).await;
     assert_eq!(status, StatusCode::OK);
 
+    // So is the shopping list (issue #292): a read, so a read-only key may build a cart.
+    let (status, _, _) = send(&app, get_with_bearer("/api/wishlist/mtg/buy-list", &key)).await;
+    assert_eq!(status, StatusCode::OK);
+
     // The sealed-product batch-count POST is likewise a *read* — allowed for a read-only key.
     let (status, _, _) = send(
         &app,

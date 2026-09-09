@@ -111,6 +111,13 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
     let frame_effects = join_colors(&card.frame_effects);
     let promo_types = join_colors(&card.promo_types);
     let finishes = join_colors(&card.finishes);
+    // Gatherer ids are integers upstream; stored comma-joined like the string arrays, NULL
+    // when absent or empty (an empty list is Scryfall's "not on Gatherer", same as absence).
+    let multiverse_ids = card
+        .multiverse_ids
+        .as_ref()
+        .filter(|ids| !ids.is_empty())
+        .map(|ids| ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","));
 
     // Per-face fallbacks: use the top-level value, else the first face that has one
     // (mirrors the power/toughness/loyalty handling above).
@@ -198,6 +205,11 @@ pub(super) fn map_card(card: ScryfallCard, now: DateTimeUtc) -> card::ActiveMode
         price_tix: Set(price_tix),
         tcgplayer_id: Set(card.tcgplayer_id),
         tcgplayer_etched_id: Set(card.tcgplayer_etched_id),
+        multiverse_ids: Set(multiverse_ids),
+        mtgo_id: Set(card.mtgo_id),
+        mtgo_foil_id: Set(card.mtgo_foil_id),
+        arena_id: Set(card.arena_id),
+        cardmarket_id: Set(card.cardmarket_id),
         keywords: Set(keywords),
         produced_mana: Set(produced_mana),
         color_indicator: Set(color_indicator),
@@ -321,7 +333,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","oracle_text":"{T}: Add {G}.","power":"1","toughness":"1","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"tcgplayer_id":179421,"tcgplayer_etched_id":250123,"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
+    const SAMPLE_CARD: &str = r#"{"object":"card","id":"abc-123","oracle_id":"ora-1","name":"Llanowar Elves","lang":"en","released_at":"2018-07-13","set":"M19","set_name":"Core Set 2019","collector_number":"314","rarity":"common","layout":"normal","mana_cost":"{G}","cmc":1.0,"type_line":"Creature — Elf Druid","oracle_text":"{T}: Add {G}.","power":"1","toughness":"1","color_identity":["G"],"colors":["G"],"digital":false,"games":["paper","mtgo"],"tcgplayer_id":179421,"tcgplayer_etched_id":250123,"multiverse_ids":[450221,450222],"mtgo_id":68968,"mtgo_foil_id":68969,"arena_id":67890,"cardmarket_id":363117,"image_uris":{"small":"https://img/small.jpg","normal":"https://img/normal.jpg","large":"https://img/large.jpg","png":"https://img/card.png","art_crop":"https://img/art.jpg"},"prices":{"usd":"0.25","usd_foil":"1.50","eur":"0.10","tix":"0.03"}}"#;
 
     #[test]
     fn maps_a_simple_card() {
@@ -341,6 +353,16 @@ mod tests {
         // TCGplayer product ids are picked up for the historic price backfill join.
         assert_eq!(model.tcgplayer_id.as_ref(), &Some(179421));
         assert_eq!(model.tcgplayer_etched_id.as_ref(), &Some(250123));
+        // The other external ids (issue #686): Gatherer's list is stored comma-joined, the
+        // scalar ids as they came.
+        assert_eq!(
+            model.multiverse_ids.as_ref().as_deref(),
+            Some("450221,450222")
+        );
+        assert_eq!(model.mtgo_id.as_ref(), &Some(68968));
+        assert_eq!(model.mtgo_foil_id.as_ref(), &Some(68969));
+        assert_eq!(model.arena_id.as_ref(), &Some(67890));
+        assert_eq!(model.cardmarket_id.as_ref(), &Some(363117));
         assert_eq!(model.oracle_text.as_ref().as_deref(), Some("{T}: Add {G}."));
         assert_eq!(model.power.as_ref().as_deref(), Some("1"));
         assert_eq!(model.toughness.as_ref().as_deref(), Some("1"));

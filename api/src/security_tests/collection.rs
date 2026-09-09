@@ -977,6 +977,18 @@ async fn export_requires_auth_and_produces_provider_csv() {
         data.iter().any(|r| r.contains(",Foil,")),
         "no foil row: {data:?}"
     );
+    // The `Multiverse Id` / `MTGO ID` columns carry the catalog's own ids (issue #686),
+    // `0` only where the printing has none — read the seeded card's detail and expect
+    // exactly that pair between the set code and the collector number.
+    let (status, _, detail) = send(&app, get(&format!("/api/games/mtg/cards/{}", ids[0]))).await;
+    assert_eq!(status, StatusCode::OK, "card detail failed: {detail:?}");
+    let multiverse = detail["multiverse_ids"][0].as_i64().unwrap_or(0);
+    let mtgo = detail["mtgo_id"].as_i64().unwrap_or(0);
+    let expected = format!(",{multiverse},{},{mtgo},", ids[0]);
+    assert!(
+        data.iter().any(|r| r.contains(&expected)),
+        "expected {expected:?} in a row: {data:?}"
+    );
 
     // Moxfield shape: quote-every-field, its own 13-column header + filename.
     let (status, headers, body) = send_text(

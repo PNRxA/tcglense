@@ -117,7 +117,9 @@ async function mountView(path = '/decks/mtg/needed') {
     props: { game: 'mtg' },
     global: {
       plugins: [router],
-      stubs: { CardTile: CardTileStub, LoadingRow: PassThrough },
+      // The "Buy all" dialog owns its own vue-query read (fetched only once open), which
+      // this engine-mocked mount has no query client for; stub it and assert its wiring.
+      stubs: { CardTile: CardTileStub, LoadingRow: PassThrough, BuyListDialog: true },
     },
   })
 }
@@ -145,6 +147,13 @@ describe('DeckNeededView', () => {
     const hrefs = deckLinks.map((a) => a.attributes('href'))
     expect(hrefs).toContain('/decks/mtg/1')
     expect(hrefs).toContain('/decks/mtg/2')
+    // "Buy all" (issue #292's deck half) sits beside the wish-list button, cards only,
+    // with this page's own shopping-list read plugged in — keyed on the mode and scope.
+    const buyAll = wrapper.findComponent({ name: 'BuyListDialog' })
+    expect(buyAll.exists()).toBe(true)
+    expect(buyAll.props('game')).toBe('mtg')
+    expect(buyAll.props('cardsOnly')).toBe(true)
+    expect(buyAll.props('source').key).toEqual(['deck-needed', 'mtg', 'card', null])
     wrapper.unmount()
   })
 

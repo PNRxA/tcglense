@@ -740,6 +740,40 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   same `(seat, counter, source)` chain the server folds, so a 7-point commander hit is one row) and
   deliberately does **not** retry a failed commit — a request that failed in transit may still
   have applied, so re-sending could double the loss.
+- **External ids are per-printing provider data, and a bulk-buy link is rows, not a URL**
+  (issues #686/#292). `cards` holds Scryfall's `tcgplayer_id`/`tcgplayer_etched_id` (the TCGCSV
+  join key) and, since `m..083`, `multiverse_ids` (comma-joined, one per face), `mtgo_id`,
+  `mtgo_foil_id`, `arena_id`, `cardmarket_id` — all provider columns, so `flush_cards`' deny-lists
+  stay untouched and a NULL means "no mapping" (an Arena id exists only for an Arena printing).
+  They ride **`CardDetailResponse` only**, never the shared `Card`, and are never unioned from a
+  folded foil-★ star (a different product). Three readers: the Archidekt export's
+  `Multiverse Id`/`MTGO ID` columns (`0` only where the printing has none — Archidekt's own
+  default; a foil row takes `mtgo_foil_id` first), the card page's deep links
+  (`web/src/lib/buyLinks.ts`: TCGplayer + Cardmarket by product id, Gatherer by multiverse id,
+  each falling back to the name search / hidden when the id is absent — never a dead button), and
+  the wish list's **shopping list** `GET /api/wishlist/{game}/buy-list`
+  (`handlers/shared/buy_list.rs`, the one wish-list read with **no collection twin** — you don't
+  buy what you own). That read is the listing's own query through `resolve_holdings_list` +
+  `wishlist_query` (so "buy what's on screen" is the filtered grid), capped at 500 card rows with
+  the totals + `truncated` on the wire (a holding whose card row is gone counts for neither, so
+  `truncated` only ever means the cap), in the per-user **Analytics** rate-limit class like the
+  export it is shaped after, and carries the wanted sealed products (by their TCGplayer product
+  id) **only on an unfiltered request** — every card filter is a card filter, and the browse grid's
+  button passes `cards-only` so a plain `/cards` browse doesn't drag them along either. It answers
+  rows with `tcgplayer_id`, not store URLs: the stores are `web/src/lib/bulkBuy.ts` — TCGplayer's
+  mass entry (`?c=` rows `{qty}-{productId}` / `{qty} Name [SET] number`, `||`-joined, a format
+  read off TCGplayer's own bundle and pinned by the spec; the row cap doesn't bound the *link*, since
+  a name-form row is 40–70 encoded characters, so the builder also stops at a byte budget
+  (`MASS_ENTRY_URL_BUDGET`) and the note says what it left off) and MTG Mate's decklist search,
+  which has **no verifiable URL prefill**, so that option copies the `{qty} Name` list and opens
+  the page. The EDHREC reference link slugs `searchName`'s answer, never the printing name — EDHREC
+  files a split card under its combined name but every other multi-faced card under its **front
+  face**, and a reversible printing's `Okaun // Okaun` would double. The deck shopping list has
+  the same read — `GET /api/decks/{game}/needed/buy-list`, the **same `needed_rows` fold** as
+  `…/needed` (never a second shortfall computation), shaped through `shared/buy_list.rs`'s
+  `card_row_from_model` + `cap_rows` and rendered by the same `BuyListDialog` with a `source`
+  plugged in. A third store belongs in that registry; a third *reader* of the ids belongs on
+  `CardDetail`; a third shopping list belongs on that seam.
 - **Every export is a file-download response through `handlers/shared/download.rs`**
   (`csv_download`/`text_download`) — don't re-roll the Content-Type + Content-Disposition
   pair. The **card-search `.txt` export** (`/api/games/{game}/cards/export` and its

@@ -32,8 +32,10 @@ use crate::db::upsert_changed_guard;
 use crate::entities::prelude::{Card, CardSet, IngestState};
 use crate::entities::{card, card_set, ingest_state};
 
-/// Rows per upsert. ~65 card columns × 400 ≈ 26k bound parameters, under SQLite's
-/// default 32 766 parameter limit (drop this toward 350 if the column count grows).
+/// Rows per upsert. 73 bound card columns × 400 ≈ 29k bound parameters, under SQLite's
+/// default 32 766 parameter limit — eight columns of headroom, which
+/// `card_batch_stays_under_sqlites_bind_limit` below turns into a failing test rather than a
+/// failing sync (drop this toward 350 when the column count grows past it).
 pub(super) const CARD_BATCH: usize = 400;
 const SET_BATCH: usize = 300;
 /// Emit a progress update to `ingest_state` every this many flushed card batches.
@@ -625,6 +627,28 @@ mod tests {
         assert_eq!(
             other.public_detail(),
             "scryfall bulk dataset 'default_cards' not found"
+        );
+    }
+}
+
+#[cfg(test)]
+mod batch_size_tests {
+    use sea_orm::Iterable;
+
+    use super::CARD_BATCH;
+    use crate::entities::card;
+
+    /// SQLite binds one parameter per `Set` column per row (`id` and `folded_onto_id` are
+    /// the only `NotSet` ones), and its default ceiling is 32 766. A new `cards` column
+    /// must fail here, not on the first sync after it ships.
+    #[test]
+    fn card_batch_stays_under_sqlites_bind_limit() {
+        const SQLITE_MAX_VARIABLE_NUMBER: usize = 32_766;
+        let bound_columns = card::Column::iter().count() - 2;
+        assert!(
+            bound_columns * CARD_BATCH < SQLITE_MAX_VARIABLE_NUMBER,
+            "{bound_columns} columns x {CARD_BATCH} rows = {} bound parameters",
+            bound_columns * CARD_BATCH
         );
     }
 }

@@ -1718,6 +1718,96 @@ async fn needed_cards_printing_mode_reports_the_exact_missing_printing() {
     assert!(needed_entry(&body, &owned).is_none());
 }
 
+/// `GET …/needed/buy-list` (issue #292's deck half) answers the very shortfall `…/needed`
+/// reports, as bulk-buy rows: the same cards, `needed` as the quantity, the printing's
+/// TCGplayer id on the row, never a sealed product; the same `deck_id` scope and the same
+/// ownership gate (a foreign deck is a 404); per-user, so unauthenticated is a 401 no-store.
+#[tokio::test]
+async fn needed_buy_list_carries_the_shortfall_as_bulk_buy_rows() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "needy-buyer@example.com", PW).await;
+    let (other, _) = register(&app, "other-buyer@example.com", PW).await;
+
+    let (_, _, catalog) = send(&app, get("/api/games/mtg/cards?page_size=25")).await;
+    let cards = catalog["data"].as_array().expect("catalog cards");
+    let wanted = cards[0]["id"].as_str().expect("id").to_string();
+    let covered = cards
+        .iter()
+        .find(|c| c["name"] != cards[0]["name"])
+        .expect("a second card")["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // A deck wants three of one card and one of another; the collection covers the second.
+    let deck = create_deck(&app, &access, "Buy list deck").await;
+    let deck_id = deck["id"].as_i64().expect("deck id");
+    let section_id = deck["sections"][0]["id"].as_i64().expect("section id");
+    add_deck_card(&app, &access, deck_id, section_id, &wanted, 3).await;
+    add_deck_card(&app, &access, deck_id, section_id, &covered, 1).await;
+    own_card(&app, &access, &covered, 1).await;
+
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/needed/buy-list", &access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    let rows = body["cards"].as_array().expect("cards array");
+    assert_eq!(rows.len(), 1, "only the short card: {body:?}");
+    assert_eq!(rows[0]["card_id"], wanted);
+    assert_eq!(rows[0]["quantity"], 3);
+    assert_eq!(rows[0]["foil_quantity"], 0);
+    assert!(
+        rows[0]["tcgplayer_id"].is_i64(),
+        "the TCGplayer id rides the row: {body:?}"
+    );
+    assert_eq!(body["products"], json!([]));
+    assert_eq!(body["total_cards"], 1);
+    assert_eq!(body["truncated"], false);
+
+    // The rows are the needed list's, count for count.
+    let (_, _, needed) = send(&app, get_with_bearer("/api/decks/mtg/needed", &access)).await;
+    let entry = needed_entry(&needed, &wanted).expect("the card is needed");
+    assert_eq!(entry["needed"], rows[0]["quantity"]);
+
+    // Scoped to the deck: the same row; scoped to someone else's deck: a 404, like every
+    // deck route.
+    let (status, _, scoped) = send(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/needed/buy-list?deck_id={deck_id}"),
+            &access,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{scoped:?}");
+    assert_eq!(scoped["cards"][0]["card_id"], wanted);
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer(
+            &format!("/api/decks/mtg/needed/buy-list?deck_id={deck_id}"),
+            &other,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Another account's shopping list is empty, never this one.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/decks/mtg/needed/buy-list", &other),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cards"], json!([]));
+
+    // Unauthenticated -> 401, no-store.
+    let (status, headers, _) = send(&app, get("/api/decks/mtg/needed/buy-list")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+}
+
 #[tokio::test]
 async fn needed_cards_require_authentication_and_a_read_only_key_may_read() {
     let app = test_app_with_catalog().await;
