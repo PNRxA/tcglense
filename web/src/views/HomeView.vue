@@ -945,13 +945,14 @@ const rowLinkClass =
       </div>
     </section>
 
-    <!-- Built on open data: prominent credits for the three open data projects behind TCGLense. -->
+    <!-- Built on open data: prominent credits for the four open data projects behind TCGLense. -->
     <section class="mt-20 sm:mt-24">
       <h2 class="text-xl font-semibold tracking-tight">Built on open data</h2>
       <p class="text-muted-foreground mt-1 text-sm text-pretty">
-        Every price, card, and box on TCGLense traces back to three open data projects.
+        Every price, card, box, decklist, and combo on TCGLense traces back to four open data
+        projects.
       </p>
-      <div class="mt-6 grid gap-3 sm:grid-cols-3">
+      <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <a
           href="https://scryfall.com"
           target="_blank"
@@ -969,8 +970,9 @@ const rowLinkClass =
             Card data &amp; images
           </p>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            The entire card catalog — sets, cards, and the daily singles prices behind every chart —
-            is built from Scryfall's bulk data. Card images are served courtesy of Scryfall.
+            The entire card catalog — sets, cards, rulings, keywords, and the daily singles prices
+            behind every chart — is built from Scryfall's bulk data. Card images are served courtesy
+            of Scryfall.
           </p>
           <p class="text-muted-foreground mt-3 text-xs">scryfall.com</p>
         </a>
@@ -1010,17 +1012,40 @@ const rowLinkClass =
             />
           </div>
           <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
-            Sealed product contents
+            Sealed contents, booster sheets &amp; precons
           </p>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            Which cards a sealed product contains — or can be pulled from — the data behind the
-            sealed sections on every card page.
+            Which cards a sealed product contains or can be pulled from, each booster's sheet
+            configuration behind the expected value and the pack opener, and every published
+            preconstructed decklist.
           </p>
           <p class="text-muted-foreground mt-3 text-xs">mtgjson.com</p>
         </a>
+        <a
+          href="https://commanderspellbook.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group block rounded-xl border p-5 transition-colors"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold">Commander Spellbook</span>
+            <ExternalLink
+              class="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
+            Combo database
+          </p>
+          <p class="text-muted-foreground mt-2 text-sm text-pretty">
+            Which cards go infinite together — the curated combo database behind the combos panel on
+            every deck. Each combo links back to its Commander Spellbook page.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">commanderspellbook.com</p>
+        </a>
       </div>
       <p class="text-muted-foreground mt-3 text-xs text-pretty">
-        All three are independent projects. None of them produces, endorses, or is affiliated with
+        All four are independent projects. None of them produces, endorses, or is affiliated with
         TCGLense.
       </p>
 
