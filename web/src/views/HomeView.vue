@@ -3,16 +3,23 @@ import { computed, type Component } from 'vue'
 import {
   ArrowRight,
   Bell,
+  BookCopy,
+  BookOpen,
   Bot,
+  Boxes,
+  CalendarDays,
+  ChartPie,
   ChevronRight,
   CircleCheck,
   Code,
+  Dices,
   ExternalLink,
   Ghost,
   Heart,
+  HeartPulse,
+  IdCard,
   Import,
   Layers,
-  LayoutGrid,
   Library,
   LibraryBig,
   Lock,
@@ -20,13 +27,20 @@ import {
   PackageOpen,
   ScanLine,
   Search,
+  Share2,
+  ShoppingCart,
+  Sparkles,
   Terminal,
   TrendingUp,
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import GitHubMark from '@/components/GitHubMark.vue'
+import BoosterOddsDemo from '@/components/home/BoosterOddsDemo.vue'
+import DeckOverviewDemo from '@/components/home/DeckOverviewDemo.vue'
 import DemoCardTile from '@/components/home/DemoCardTile.vue'
 import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
+import LifeCounterDemo from '@/components/home/LifeCounterDemo.vue'
+import PreconDemo from '@/components/home/PreconDemo.vue'
 import ScannerFeatureDemo from '@/components/home/ScannerFeatureDemo.vue'
 import UniversalSearchBox from '@/components/search/UniversalSearchBox.vue'
 import { buttonVariants } from '@/components/ui/button'
@@ -39,9 +53,8 @@ const auth = useAuthStore()
 
 usePageMeta({
   description:
-    'Browse trading-card games, sets, cards, and sealed products, chart daily prices, scan Magic ' +
-    'cards, and track your collection and wish list — with ghost mode showing exactly which cards ' +
-    'you are missing.',
+    'Browse every set, card, sealed product, and preconstructed deck, chart daily prices, ' +
+    'build and analyse decks, and track your collection and wish list.',
   canonicalPath: '/',
 })
 
@@ -60,13 +73,59 @@ interface FeatureLink {
 }
 
 // The compact "everything else" grid — only shipped features, each linking to where it
-// lives. The sixth card (Open source, external) is rendered on its own in the template.
+// lives. The last card (Open source, external) is rendered on its own in the template.
 const otherFeatures: FeatureLink[] = [
   {
     icon: Search,
     title: 'Scryfall-style search',
     description:
       'Full search syntax on every card list — colors, types, oracle text, prices, even regex.',
+    to: '/cards',
+  },
+  {
+    icon: CalendarDays,
+    title: 'Release calendar',
+    description:
+      'Set releases and Secret Lair drops month by month, with what each one ships — and an ' +
+      'optional day-before heads-up.',
+    to: '/releases',
+  },
+  {
+    icon: BookOpen,
+    title: 'Keyword glossary',
+    description: 'Every rules keyword and ability word explained, with the cards that carry it.',
+    to: '/keywords',
+  },
+  {
+    icon: ShoppingCart,
+    title: 'Shopping lists',
+    description:
+      'Buy a whole wish list, or the cards a deck still needs, in one click — a TCGplayer ' +
+      'mass-entry link or a list for MTG Mate.',
+    to: '/wishlist',
+  },
+  {
+    icon: ChartPie,
+    title: 'Collection insights',
+    description:
+      'Value history, biggest movers, and a breakdown by rarity, colour, type, and finish — ' +
+      'plus your top holdings by value.',
+    to: '/collection',
+  },
+  {
+    icon: Share2,
+    title: 'Public profiles',
+    description:
+      'Share your collection and wish list per game, and any deck on its own, read-only at ' +
+      'your own /u/handle — only when you switch it on.',
+    to: '/collection',
+  },
+  {
+    icon: IdCard,
+    title: 'Print details & buy links',
+    description:
+      'Artist, flavour text, finishes, frame, and Reserved List on every card page — plus ' +
+      'links to TCGplayer, Cardmarket, Gatherer, and EDHREC.',
     to: '/cards',
   },
   {
@@ -85,24 +144,19 @@ const otherFeatures: FeatureLink[] = [
     to: '/cards',
   },
   {
-    icon: LayoutGrid,
-    title: 'Set-by-set browsing',
-    description: 'Browse what you own set by set, with per-set counts and value.',
-    to: '/collection',
-  },
-  {
     icon: Lock,
     title: 'Free accounts',
     description:
-      'Register with just an email address — free to track your collection and wish list.',
+      'Register with just an email address — free to track your collection, wish list, and ' +
+      'decks.',
     to: '/register',
   },
   {
     icon: Code,
     title: 'Public API',
     description:
-      'A documented public API for the catalog, plus scoped API keys for your collection and ' +
-      'wish list. Interactive reference included.',
+      'A documented public API for the catalog, plus scoped API keys for your collection, ' +
+      'wish list, and decks. Interactive reference included.',
     to: '/docs',
   },
 ]
@@ -142,16 +196,16 @@ const rowLinkClass =
         <span
           class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
         >
-          <Bell class="size-3.5" aria-hidden="true" />
-          New — price alerts for cards &amp; sealed
+          <Sparkles class="size-3.5" aria-hidden="true" />
+          New — deck analysis, precons &amp; booster odds
         </span>
         <h1 class="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           Your collection, priced every day.
         </h1>
         <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
           TCGLense is a free, open-source tracker for trading-card games: browse every set, chart
-          singles and sealed prices day by day, and see exactly which cards you own — and which ones
-          you're still missing.
+          singles and sealed prices day by day, build and analyse your decks, and see exactly which
+          cards you own — and which ones you're still missing.
         </p>
 
         <!-- Auth-branched CTAs: authed variant on a token, guest variant once resolved
@@ -269,7 +323,62 @@ const rowLinkClass =
          sides at md+. -->
     <section class="mt-20 sm:mt-24">
       <div class="space-y-20 sm:space-y-24">
-        <!-- Row (new) — Price alerts (demo left, so it alternates with Row A's right). -->
+        <!-- Row 1 — Decks (demo left): the v0.18 headline, so it leads. -->
+        <FeatureDemoRow
+          :icon="BookCopy"
+          eyebrow="Decks"
+          heading="Build a deck, then let the numbers talk"
+          :body="
+            'Build decks from the catalog or import them — an Archidekt link, or an Archidekt, ' +
+            'Moxfield, or plain-text export file — then let the analysis stack read them: draw ' +
+            'odds, a legality verdict, an ' +
+            'estimated Commander bracket, the mana base against its pips, card roles, the tokens ' +
+            'to bring, combos from Commander Spellbook, and a pricing breakdown with one-click ' +
+            'cheapest-printing swaps. Draw a test hand, diff two decks, or share one with a link.'
+          "
+          demo-side="left"
+        >
+          <template v-if="auth.isAuthenticated">
+            <RouterLink to="/decks" :class="rowLinkClass">
+              Open your decks
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <template v-else-if="auth.sessionResolved">
+            <RouterLink to="/decks" :class="rowLinkClass">
+              Start a deck
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <Skeleton v-else class="h-5 w-32" />
+          <template #demo>
+            <DeckOverviewDemo />
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row 2 — Preconstructed decks (demo right). -->
+        <FeatureDemoRow
+          :icon="Boxes"
+          eyebrow="Preconstructed decks"
+          heading="Every published precon, ready to copy"
+          :body="
+            'Browse every preconstructed decklist in the catalog — by set, by deck type, or by ' +
+            'price — with the same legality, bracket, mana, roles, tokens, combos, and draw-odds ' +
+            'analysis your own decks get. Copy one into your decks to start upgrading it, or add ' +
+            'its cards to your collection the day you buy it.'
+          "
+          demo-side="right"
+        >
+          <RouterLink to="/precons" :class="rowLinkClass">
+            Browse preconstructed decks
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
+            <PreconDemo />
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row 3 — Price alerts (demo left). -->
         <FeatureDemoRow
           :icon="Bell"
           eyebrow="Price alerts"
@@ -278,7 +387,8 @@ const rowLinkClass =
             'Set a target on any card or sealed product and TCGLense watches its price for you — ' +
             'a Discord, Telegram, or email ping the moment it crosses your threshold, up or down. ' +
             'The free Discord and Telegram channels take a minute to set up, each with its own ' +
-            'on/off switch, and nothing is sent until an alert actually fires.'
+            'on/off switch, and nothing is sent until an alert actually fires. Opt in to release ' +
+            'heads-ups too: a day-before ping for new sets and Secret Lair drops.'
           "
           demo-side="left"
         >
@@ -354,7 +464,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row A — Prices (demo right). -->
+        <!-- Row 4 — Price history (demo right). -->
         <FeatureDemoRow
           :icon="TrendingUp"
           eyebrow="Price history"
@@ -423,18 +533,43 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row B — Collection (demo left at md+). -->
+        <!-- Row 5 — Booster odds (demo left). -->
+        <FeatureDemoRow
+          :icon="Dices"
+          eyebrow="Booster odds"
+          heading="Know what a pack is worth before you open it"
+          :body="
+            'Every booster with published sheet data gets an expected value — what an average ' +
+            'pack deals, priced against today\'s singles and shown as a share of the product\'s ' +
+            'price — plus the odds of its chase slots. Then open a seeded pack, or a whole box, in ' +
+            'the browser: the same seed always deals the same packs, so a result is a link you can ' +
+            'share.'
+          "
+          demo-side="left"
+        >
+          <RouterLink to="/sealed" :class="rowLinkClass">
+            Browse sealed products
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
+            <BoosterOddsDemo />
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row 6 — Collection (demo right). -->
         <FeatureDemoRow
           :icon="Library"
           eyebrow="Collection"
           heading="Know exactly what you own"
           :body="
-            'Count regular and foil copies per game and watch the totals move — unique cards, ' +
-            'total copies, and a live estimated value. As you browse the catalog, owned-count ' +
-            'badges mark the cards already in your collection, and quick-add drops a card in by ' +
-            'name without leaving the page.'
+            'Count regular and foil copies per game — and sealed products beside them — and watch ' +
+            'the totals move: unique cards, total copies, and a live estimated value with its ' +
+            'history, biggest movers, and a breakdown by rarity, colour, type, and finish. As you ' +
+            'browse the catalog, owned-count badges mark the cards already in your collection and ' +
+            'quick-add drops a card in by name; in your collection and wish list, a copies filter ' +
+            'narrows the grid by how many you hold.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <RouterLink to="/collection" :class="rowLinkClass">
             <template v-if="auth.isAuthenticated">Open your collection</template>
@@ -469,7 +604,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row C — Visual card scanner (demo right). -->
+        <!-- Row 7 — Visual card scanner (demo left). -->
         <FeatureDemoRow
           :icon="ScanLine"
           eyebrow="Visual card scanner"
@@ -479,7 +614,7 @@ const rowLinkClass =
             'and add it as you work through a stack. Photos are processed locally and never ' +
             'uploaded; compact visual fingerprints are sent for matching.'
           "
-          demo-side="right"
+          demo-side="left"
         >
           <template v-if="auth.isAuthenticated">
             <RouterLink to="/scan" :class="rowLinkClass">
@@ -502,7 +637,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row D — Ghost mode (demo left at md+). -->
+        <!-- Row 8 — Ghost mode (demo right). -->
         <FeatureDemoRow
           :icon="Ghost"
           eyebrow="Ghost mode"
@@ -513,7 +648,7 @@ const rowLinkClass =
             'carries a quick-add button right where it sits. It works across your collection and ' +
             'your wish list, including Secret Lair by-drop views.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <template v-if="auth.isAuthenticated">
             <RouterLink to="/collection" :class="rowLinkClass">
@@ -560,17 +695,19 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row E — Import (demo right). -->
+        <!-- Row 9 — Import (demo left). -->
         <FeatureDemoRow
           :icon="Import"
           eyebrow="Import"
           heading="Bring your collection with you"
           :body="
             'Import from Archidekt by link and pick how it reconciles — overwrite matched cards, ' +
-            'mirror-replace, or add-merge. Prefer a file? Upload a CSV export from Archidekt or ' +
-            'Moxfield — or paste your list straight in — and it reconciles on the spot.'
+            'mirror-replace, or add-merge. Prefer a file? Upload a CSV export from Archidekt, ' +
+            'Moxfield, ManaBox, or Mythic Tools — or paste your list straight in — and it ' +
+            'reconciles on the spot. Bought a precon? Add the whole deck to your collection in ' +
+            'one click.'
           "
-          demo-side="right"
+          demo-side="left"
         >
           <RouterLink to="/collection" :class="rowLinkClass">
             Import into your collection
@@ -612,7 +749,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row F — Wish list (demo left at md+). -->
+        <!-- Row 10 — Wish list (demo right). -->
         <FeatureDemoRow
           :icon="Heart"
           eyebrow="Wish lists"
@@ -620,9 +757,10 @@ const rowLinkClass =
           :body="
             'A wish list works just like your collection — regular and foil counts, per-set ' +
             'views, ghosts across whole sets — but for the cards you\'re still hunting. It keeps ' +
-            'a running USD total, so you always know what buying the list would cost.'
+            'a running USD total, so you always know what buying the list would cost — and ' +
+            '\u0022Buy all\u0022 turns the list into a TCGplayer mass-entry link in one click.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <RouterLink to="/wishlist" :class="rowLinkClass">
             <template v-if="auth.isAuthenticated">Open your wish list</template>
@@ -671,7 +809,29 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row G — CLI & agents (demo right). -->
+        <!-- Row 11 — Life counter (demo left). -->
+        <FeatureDemoRow
+          :icon="HeartPulse"
+          eyebrow="Life counter"
+          heading="A life counter that remembers the game"
+          :body="
+            'Track life for a table of up to six, with poison, energy, experience, and commander ' +
+            'damage per opponent, and a full history so any tap can be undone. Name the deck each ' +
+            'seat played and every finished game builds a win record for your decks — then ' +
+            'rematch the pod with one tap.'
+          "
+          demo-side="left"
+        >
+          <RouterLink to="/tools" :class="rowLinkClass">
+            Open the play aids
+            <ArrowRight class="size-4" aria-hidden="true" />
+          </RouterLink>
+          <template #demo>
+            <LifeCounterDemo />
+          </template>
+        </FeatureDemoRow>
+
+        <!-- Row 12 — CLI & agents (demo right). -->
         <FeatureDemoRow
           :icon="Terminal"
           eyebrow="CLI & agents"
@@ -679,8 +839,8 @@ const rowLinkClass =
           :body="
             'tcglense is a standalone, open-source command-line client and TUI for this API. Sign ' +
             'in from the terminal with a quick browser handshake — no password typed at the prompt ' +
-            '— then search the catalog, check prices, and update your collection and wish list ' +
-            'without leaving the shell. Scriptable output and scoped tcgl_ API keys make it a clean ' +
+            '— then search the catalog, check prices, and update your collection, wish list, and ' +
+            'decks without leaving the shell. Scriptable output and scoped tcgl_ API keys make it a clean ' +
             'surface for automation and AI agents to work your collection on your behalf.'
           "
           demo-side="right"
@@ -785,13 +945,14 @@ const rowLinkClass =
       </div>
     </section>
 
-    <!-- Built on open data: prominent credits for the three open data projects behind TCGLense. -->
+    <!-- Built on open data: prominent credits for the four open data projects behind TCGLense. -->
     <section class="mt-20 sm:mt-24">
       <h2 class="text-xl font-semibold tracking-tight">Built on open data</h2>
       <p class="text-muted-foreground mt-1 text-sm text-pretty">
-        Every price, card, and box on TCGLense traces back to three open data projects.
+        Every price, card, box, decklist, and combo on TCGLense traces back to four open data
+        projects.
       </p>
-      <div class="mt-6 grid gap-3 sm:grid-cols-3">
+      <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <a
           href="https://scryfall.com"
           target="_blank"
@@ -809,8 +970,9 @@ const rowLinkClass =
             Card data &amp; images
           </p>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            The entire card catalog — sets, cards, and the daily singles prices behind every chart —
-            is built from Scryfall's bulk data. Card images are served courtesy of Scryfall.
+            The entire card catalog — sets, cards, rulings, keywords, and the daily singles prices
+            behind every chart — is built from Scryfall's bulk data. Card images are served courtesy
+            of Scryfall.
           </p>
           <p class="text-muted-foreground mt-3 text-xs">scryfall.com</p>
         </a>
@@ -850,17 +1012,40 @@ const rowLinkClass =
             />
           </div>
           <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
-            Sealed product contents
+            Sealed contents, booster sheets &amp; precons
           </p>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            Which cards a sealed product contains — or can be pulled from — the data behind the
-            sealed sections on every card page.
+            Which cards a sealed product contains or can be pulled from, each booster's sheet
+            configuration behind the expected value and the pack opener, and every published
+            preconstructed decklist.
           </p>
           <p class="text-muted-foreground mt-3 text-xs">mtgjson.com</p>
         </a>
+        <a
+          href="https://commanderspellbook.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 group block rounded-xl border p-5 transition-colors"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold">Commander Spellbook</span>
+            <ExternalLink
+              class="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-colors"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="text-primary mt-0.5 text-xs font-medium tracking-wide uppercase">
+            Combo database
+          </p>
+          <p class="text-muted-foreground mt-2 text-sm text-pretty">
+            Which cards go infinite together — the curated combo database behind the combos panel on
+            every deck. Each combo links back to its Commander Spellbook page.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">commanderspellbook.com</p>
+        </a>
       </div>
       <p class="text-muted-foreground mt-3 text-xs text-pretty">
-        All three are independent projects. None of them produces, endorses, or is affiliated with
+        All four are independent projects. None of them produces, endorses, or is affiliated with
         TCGLense.
       </p>
 
@@ -904,7 +1089,7 @@ const rowLinkClass =
     <section v-if="games.length" class="mt-20 sm:mt-24">
       <h2 class="text-xl font-semibold tracking-tight">Start with your game</h2>
       <p class="text-muted-foreground mt-1 text-sm">
-        Browse the full catalog and sealed products — no account needed.
+        Browse the full catalog, sealed products, and precons — no account needed.
       </p>
       <div class="mt-4 flex flex-wrap gap-2">
         <RouterLink
@@ -925,6 +1110,14 @@ const rowLinkClass =
           Sealed products
           <ChevronRight class="text-muted-foreground size-4" aria-hidden="true" />
         </RouterLink>
+        <RouterLink
+          to="/precons"
+          class="bg-card hover:border-ring/60 hover:bg-accent/40 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors"
+        >
+          <Boxes class="text-muted-foreground size-4" aria-hidden="true" />
+          Preconstructed decks
+          <ChevronRight class="text-muted-foreground size-4" aria-hidden="true" />
+        </RouterLink>
       </div>
       <p class="text-muted-foreground mt-3 text-sm text-pretty">
         Magic: The Gathering is the first game on TCGLense — the catalog is built game-agnostic, so
@@ -940,7 +1133,7 @@ const rowLinkClass =
             Pick up where you left off
           </h2>
           <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
-            Jump back into your collection and see what you're still chasing.
+            Jump back into your collection and decks and see what you're still chasing.
           </p>
           <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <RouterLink to="/collection" :class="buttonVariants({ size: 'lg' })">
@@ -957,8 +1150,8 @@ const rowLinkClass =
             Start tracking in minutes
           </h2>
           <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty">
-            Create a free account to track your collection and wish list — or keep browsing cards,
-            sealed products, and prices with no sign-up at all.
+            Create a free account to track your collection, wish list, and decks — or keep browsing
+            cards, sealed products, precons, and prices with no sign-up at all.
           </p>
           <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <RouterLink to="/register" :class="buttonVariants({ size: 'lg' })">
