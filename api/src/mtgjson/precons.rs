@@ -38,7 +38,7 @@ const MAX_SLUG: usize = 120;
 
 /// Fallback category for a deck upstream didn't type. Reads as a facet value in the UI
 /// rather than an empty chip.
-const UNTYPED: &str = "Preconstructed Deck";
+pub(super) const UNTYPED: &str = "Preconstructed Deck";
 
 /// Upstream categories that are **not preconstructed decks**, dropped before a row is built.
 ///

@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::precons::{RawPrecon, RawPreconCard};
+use super::precons::{NOT_A_DECK_TYPES, RawPrecon, RawPreconCard, UNTYPED};
 use crate::entities::precon_deck_card::PreconBoard;
 
 const OVERLAY_JSON: &str = include_str!("precon_overlay.json");
@@ -175,6 +175,16 @@ fn build(deck: &OverlayDeck, used_slugs: &mut HashMap<String, u32>) -> Option<Ra
         return None;
     }
     let set_code = deck.set_code.trim().to_lowercase();
+    // The same two readings the real walk gives a deck type, so an overlay row can't be a
+    // shape upstream's own rows never take: an untyped entry reads as a category rather than
+    // a blank facet chip, and a category we exclude at derivation stays excluded whichever
+    // door it came in by — an overlay must not be able to reintroduce a Secret Lair drop as a
+    // preconstructed deck.
+    let deck_type = match deck.deck_type.trim() {
+        "" => UNTYPED,
+        typed if NOT_A_DECK_TYPES.contains(&typed) => return None,
+        typed => typed,
+    };
     let cards: Vec<RawPreconCard> = deck
         .cards
         .iter()
@@ -201,7 +211,7 @@ fn build(deck: &OverlayDeck, used_slugs: &mut HashMap<String, u32>) -> Option<Ra
         slug: super::precons::unique_slug(name, &set_code, used_slugs),
         name: name.to_string(),
         set_code,
-        deck_type: deck.deck_type.trim().to_string(),
+        deck_type: deck_type.to_string(),
         released_at: deck
             .released_at
             .as_deref()
@@ -402,6 +412,70 @@ mod tests {
         let mut slugs = HashMap::new();
         merge_into(&mut derived, &mut slugs, |_, _| true);
         assert_eq!(derived.len(), 2, "the sld entry still lands");
+    }
+
+    /// An entry states a real category, and the shipped one is what the deck actually is —
+    /// `deck_type` drives the browse facet and, on copy, whether the deck gets a format.
+    #[test]
+    fn shipped_entries_state_a_deck_type() {
+        for deck in &data().decks {
+            let typed = deck.deck_type.trim();
+            assert!(!typed.is_empty(), "{} states a type", deck.name);
+            assert!(
+                !NOT_A_DECK_TYPES.contains(&typed),
+                "{} is not a category we exclude at derivation",
+                deck.name
+            );
+        }
+    }
+
+    /// The overlay is a second door into the same table, so the category exclusion has to
+    /// hold on it too — a drop is a product's contents, never a deck anyone plays.
+    #[test]
+    fn an_excluded_category_never_becomes_a_precon() {
+        let deck = OverlayDeck {
+            name: "A Drop".to_string(),
+            set_code: "sld".to_string(),
+            deck_type: NOT_A_DECK_TYPES[0].to_string(),
+            released_at: None,
+            product_tcgplayer_id: "1".to_string(),
+            source_url: None,
+            source_note: None,
+            cards: vec![OverlayCard {
+                board: "main".to_string(),
+                scryfall_id: "sf-1".to_string(),
+                quantity: 1,
+                foil: false,
+                position: 0,
+                card: None,
+            }],
+        };
+        assert!(build(&deck, &mut HashMap::new()).is_none());
+    }
+
+    /// An untyped entry reads as a category, not a blank chip — the fallback the real walk
+    /// gives an untyped upstream deck.
+    #[test]
+    fn an_untyped_entry_falls_back_like_upstream() {
+        let deck = OverlayDeck {
+            name: "Bare".to_string(),
+            set_code: "tmc".to_string(),
+            deck_type: "  ".to_string(),
+            released_at: None,
+            product_tcgplayer_id: "1".to_string(),
+            source_url: None,
+            source_note: None,
+            cards: vec![OverlayCard {
+                board: "main".to_string(),
+                scryfall_id: "sf-1".to_string(),
+                quantity: 1,
+                foil: false,
+                position: 0,
+                card: None,
+            }],
+        };
+        let built = build(&deck, &mut HashMap::new()).expect("builds");
+        assert_eq!(built.deck_type, UNTYPED);
     }
 
     /// Editing the file has to move the hash, or the ETag-gated sync would never rebuild and
