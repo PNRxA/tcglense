@@ -2,6 +2,27 @@
 import { Dices, PackageOpen } from '@lucide/vue'
 import DemoCardTile from './DemoCardTile.vue'
 
+// The five cards one mocked pack dealt: two chase pulls carry the real opener's rarity and
+// foil chips (`bg-rarity-mythic/15` / `bg-foil/15`), the rest are plain tiles.
+const pulls = [
+  { key: 1, gradient: 'muted' as const },
+  {
+    key: 2,
+    gradient: 'primary' as const,
+    chip: 'Mythic',
+    chipClass: 'bg-rarity-mythic/15 text-rarity-mythic',
+  },
+  { key: 3, gradient: 'muted' as const },
+  {
+    key: 4,
+    gradient: 'primary' as const,
+    foil: true,
+    chip: 'Foil',
+    chipClass: 'bg-foil/15 text-foil',
+  },
+  { key: 5, gradient: 'muted' as const },
+]
+
 // Presentational-only mock of a sealed product's expected-value panel and its seeded pack
 // opener, used by the homepage's feature-demo rows. Nothing here fetches, and nothing is
 // interactive — the whole panel sits inside FeatureDemoRow's aria-hidden demo box.
@@ -69,26 +90,24 @@ import DemoCardTile from './DemoCardTile.vue'
         <span class="text-muted-foreground text-[10px] tabular-nums"> One pack · seed 4821 </span>
       </div>
 
+      <!-- The rarity / foil chips sit in a caption row under the tiles rather than over
+           them: five tiles share a half-width panel at md, so an overlaid chip ran off its
+           tile. Every cell reserves the caption's height so the row stays aligned. -->
       <div class="mt-3 grid grid-cols-5 gap-2">
-        <DemoCardTile :bars="false" gradient="muted" />
-        <div class="relative">
-          <DemoCardTile :bars="false" />
-          <span
-            class="bg-rarity-mythic/15 text-rarity-mythic absolute -top-1 left-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-          >
-            Mythic
-          </span>
+        <div v-for="pull in pulls" :key="pull.key" class="min-w-0">
+          <div :class="pull.foil ? 'ring-foil rounded-lg ring-1' : ''">
+            <DemoCardTile :bars="false" :gradient="pull.gradient" />
+          </div>
+          <div class="mt-1 flex h-4 items-center">
+            <span
+              v-if="pull.chip"
+              class="max-w-full truncate rounded-full px-1 py-0.5 text-[10px] leading-none font-medium"
+              :class="pull.chipClass"
+            >
+              {{ pull.chip }}
+            </span>
+          </div>
         </div>
-        <DemoCardTile :bars="false" gradient="muted" />
-        <div class="ring-foil relative rounded-lg ring-1">
-          <DemoCardTile :bars="false" />
-          <span
-            class="bg-foil/15 text-foil absolute -top-1 left-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-          >
-            Foil
-          </span>
-        </div>
-        <DemoCardTile :bars="false" gradient="muted" />
       </div>
 
       <p class="text-muted-foreground mt-3 text-[10px]">
