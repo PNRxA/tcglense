@@ -114,6 +114,17 @@ pub(super) fn precons_from(all: &AllPrintings, idx: &Indexes) -> Vec<RawPrecon> 
             out.push(precon);
         }
     }
+    // Decks upstream has a product for but no card list yet. Merged last so a real row
+    // always wins the base slug: the day MTGJSON publishes one of these, the overlay entry
+    // stands down and the URL it was serving stays put.
+    super::precon_overlay::merge_into(&mut out, &mut used_slugs, |set_code, product_id| {
+        all.data.iter().any(|(code, data)| {
+            code.eq_ignore_ascii_case(set_code)
+                && data.sealed_product.iter().any(|product| {
+                    product.identifiers.tcgplayer_product_id.as_deref() == Some(product_id)
+                })
+        })
+    });
     out
 }
 
@@ -238,7 +249,7 @@ fn resolve_board(
 /// in one set *can* share a name after punctuation is stripped. The counter is per resolved
 /// slug and the walk order is deterministic, so the same document always assigns the same
 /// suffix to the same deck.
-fn unique_slug(name: &str, set_code: &str, used: &mut HashMap<String, u32>) -> String {
+pub(super) fn unique_slug(name: &str, set_code: &str, used: &mut HashMap<String, u32>) -> String {
     let base = match slugify(name) {
         // A name that slugifies to nothing (all punctuation / non-ASCII) still needs a URL.
         text if text.is_empty() => slugify(set_code),
@@ -485,6 +496,75 @@ mod tests {
         // A missing count is one copy, not zero.
         assert_eq!(deck.cards[0].quantity, 1);
         assert!(!deck.cards[0].foil);
+    }
+
+    /// The committed overlay lands through the real walk, but only for a document that holds
+    /// the sealed product it stands in for — `fixture()` describes no products, which is why
+    /// every other test here still counts only upstream's decks.
+    #[test]
+    fn the_overlay_lands_only_behind_its_product() {
+        let without = build_precons(&fixture());
+        assert!(
+            !without.iter().any(|p| p.name == "Hatsune Miku"),
+            "no product in the document, no stand-in: {:?}",
+            slugs(&without)
+        );
+
+        let json = serde_json::json!({
+            "data": { "SLD": {
+                "cards": [],
+                "decks": [],
+                "sealedProduct": [
+                    { "name": "Secret Lair Commander Deck Hatsune Miku",
+                      "identifiers": { "tcgplayerProductId": "709981" } }
+                ]
+            } }
+        });
+        let all: AllPrintings = serde_json::from_value(json).expect("parses");
+        let precons = build_precons(&all);
+        let miku = precons
+            .iter()
+            .find(|p| p.name == "Hatsune Miku")
+            .expect("the overlay stood in for the missing decklist");
+        assert_eq!(miku.slug, "hatsune-miku-sld");
+        assert_eq!(miku.set_code, "sld");
+        assert_eq!(miku.deck_type, "Commander Deck");
+        // A whole Commander deck, keyed by Scryfall id — the overlay resolves nothing
+        // through `Indexes`, which is the point: upstream lists none of these cards.
+        assert_eq!(miku.cards.iter().map(|c| c.quantity).sum::<i32>(), 100);
+        assert_eq!(
+            miku.cards.iter().filter(|c| c.board == "commander").count(),
+            1
+        );
+    }
+
+    /// Upstream publishing the decklist takes the base slug back, and the overlay adds
+    /// nothing beside it — the handover this file is built to survive.
+    #[test]
+    fn upstream_publishing_the_deck_retires_the_overlay() {
+        let json = serde_json::json!({
+            "data": { "SLD": {
+                "cards": [ { "uuid": "u-t", "identifiers": { "scryfallId": "sf-t" } } ],
+                "decks": [ { "name": "Hatsune Miku", "type": "Commander Deck",
+                             "mainBoard": [ { "uuid": "u-t", "count": 100 } ] } ],
+                "sealedProduct": [
+                    { "name": "Secret Lair Commander Deck Hatsune Miku",
+                      "identifiers": { "tcgplayerProductId": "709981" } }
+                ]
+            } }
+        });
+        let all: AllPrintings = serde_json::from_value(json).expect("parses");
+        let precons = build_precons(&all);
+        assert_eq!(
+            precons.iter().filter(|p| p.name == "Hatsune Miku").count(),
+            1,
+            "exactly one row survives: {:?}",
+            slugs(&precons)
+        );
+        let miku = find(&precons, "hatsune-miku-sld");
+        // Upstream's row, not the overlay's: one card, resolved through the index.
+        assert_eq!(miku.cards.len(), 1);
+        assert_eq!(miku.cards[0].scryfall_id, "sf-t");
     }
 
     #[test]

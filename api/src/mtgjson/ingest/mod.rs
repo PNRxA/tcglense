@@ -101,7 +101,20 @@ const VERSION_SEP: char = '\u{1f}';
 /// stores for a card the catalog can't name — `packs-2` is the fixed-sheet placeholder,
 /// without which an already-synced instance would keep serving position-shifted sheets
 /// until upstream's ETag happened to move).
-const DERIVATION_VERSION: &str = "booster-pool-2+precon-2+packs-2";
+const DERIVATION_VERSION: &str = "booster-pool-2+precon-3+packs-2";
+
+/// [`DERIVATION_VERSION`] with the committed precon overlay's content hash folded in.
+///
+/// The overlay is data, not code, so a bumped constant wouldn't notice an edit to it — and
+/// an ETag-gated sync would then keep serving the previous overlay until an unrelated
+/// derivation change happened along. Hashing the file in is what makes adding or deleting an
+/// entry take effect on the next tick, the same trick `fallback::version` plays.
+fn derivation_version() -> String {
+    format!(
+        "{DERIVATION_VERSION}+overlay-{}",
+        super::precon_overlay::version()
+    )
+}
 
 /// Sync MTG sealed-product memberships from MTGJSON, recording status in `ingest_state`.
 /// On error the state row is best-effort marked `"error"` (so the next tick retries) and
@@ -146,7 +159,8 @@ async fn refresh_inner(
     let sld_changed = prior_sld != Some(sld_version.as_str());
     // The derived booster-pool synthesis is pure code (no data file), so its version is a
     // bumped constant; a change forces one rebuild the same way a fallback/SLD edit does.
-    let derivation_changed = prior_derivation != Some(DERIVATION_VERSION);
+    let derivation = derivation_version();
+    let derivation_changed = prior_derivation != Some(derivation.as_str());
 
     let progress = SyncProgress::start("checking for updates");
 
@@ -447,12 +461,7 @@ async fn refresh_inner(
     txn.commit().await?;
 
     drop(progress);
-    let version = compose_version(
-        etag.as_deref(),
-        fallback_version,
-        &sld_version,
-        DERIVATION_VERSION,
-    );
+    let version = compose_version(etag.as_deref(), fallback_version, &sld_version, &derivation);
     let detail = format!(
         "{matched} memberships across {product_count} products \
          ({from_mtgjson} from mtgjson, {from_fallback} from fallback, {from_sld} from sld drops, \

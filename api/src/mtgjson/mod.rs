@@ -67,6 +67,7 @@ mod error;
 mod fallback;
 pub mod ingest;
 pub mod model;
+mod precon_overlay;
 pub mod precons;
 mod progress;
 pub(crate) mod sld;
