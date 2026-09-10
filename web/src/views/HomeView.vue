@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
+import { computed } from 'vue'
 import {
   ArrowRight,
   Bell,
@@ -38,6 +38,7 @@ import BoosterOddsDemo from '@/components/home/BoosterOddsDemo.vue'
 import DeckOverviewDemo from '@/components/home/DeckOverviewDemo.vue'
 import DemoCardTile from '@/components/home/DemoCardTile.vue'
 import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
+import FeatureLinkCard, { type FeatureLink } from '@/components/home/FeatureLinkCard.vue'
 import LifeCounterDemo from '@/components/home/LifeCounterDemo.vue'
 import PreconDemo from '@/components/home/PreconDemo.vue'
 import ScannerFeatureDemo from '@/components/home/ScannerFeatureDemo.vue'
@@ -64,21 +65,10 @@ usePageMeta({
 const gamesQuery = useGamesQuery()
 const games = computed(() => gamesQuery.data.value?.data ?? [])
 
-interface FeatureLink {
-  icon: Component
-  title: string
-  description: string
-  // Exactly one of the two: an in-app route, or an external URL (rendered as an <a> that
-  // opens in a new tab, with the external-link affordance instead of the chevron).
-  to?: string
-  href?: string
-}
-
-// The compact "everything else" grid — only shipped features, each linking to where it
-// lives. It leads with the features that used to carry a demo row of their own: the page
-// showed twelve full-width rows, which made it a very long scroll for a visitor who just
-// wanted to know what the app does.
-const otherFeatures: FeatureLink[] = [
+// The "everything else" section, in two weights. The headline features — the ones that
+// used to carry a full demo row of their own (the page showed twelve, which made it a very
+// long scroll), plus the search grammar and the public API — render as cards.
+const headlineFeatures: FeatureLink[] = [
   {
     icon: Library,
     title: 'Collection tracking',
@@ -128,6 +118,13 @@ const otherFeatures: FeatureLink[] = [
     to: '/collection',
   },
   {
+    icon: Search,
+    title: 'Scryfall-style search',
+    description:
+      'Full search syntax on every card list — colors, types, oracle text, prices, even regex.',
+    to: '/cards',
+  },
+  {
     icon: Terminal,
     title: 'CLI & agents',
     description:
@@ -136,12 +133,18 @@ const otherFeatures: FeatureLink[] = [
     href: 'https://github.com/PNRxA/tcglense-cli',
   },
   {
-    icon: Search,
-    title: 'Scryfall-style search',
+    icon: Code,
+    title: 'Public API',
     description:
-      'Full search syntax on every card list — colors, types, oracle text, prices, even regex.',
-    to: '/cards',
+      'A documented public API for the catalog, plus scoped API keys for your collection, ' +
+      'wish list, and decks. Interactive reference included.',
+    to: '/docs',
   },
+]
+
+// The rest render as compact rows under an "Also live" label: every one a shipped feature
+// that links to where it lives, just not one that needs a card to explain itself.
+const otherFeatures: FeatureLink[] = [
   {
     icon: CalendarDays,
     title: 'Release calendar',
@@ -210,14 +213,6 @@ const otherFeatures: FeatureLink[] = [
       'Register with just an email address — free to track your collection, wish list, and ' +
       'decks.',
     to: '/register',
-  },
-  {
-    icon: Code,
-    title: 'Public API',
-    description:
-      'A documented public API for the catalog, plus scoped API keys for your collection, ' +
-      'wish list, and decks. Interactive reference included.',
-    to: '/docs',
   },
   {
     icon: GitHubMark,
@@ -525,41 +520,32 @@ const rowLinkClass =
       </div>
     </section>
 
-    <!-- Everything else: a compact grid of shipped features, each a link to where it lives.
-         Internal cards render as a RouterLink, external ones as an <a> — one renderer, so a
-         new card is an array entry rather than another hand-written anchor. -->
+    <!-- Everything else: every other shipped feature, each a link to where it lives, in two
+         weights — headline cards, then compact rows — both through FeatureLinkCard, so an
+         internal feature is a RouterLink and an external one a new-tab anchor without a
+         hand-written element for either. -->
     <section class="mt-16 sm:mt-20">
       <h2 class="text-xl font-semibold tracking-tight">Everything else that's live today</h2>
       <p class="text-muted-foreground mt-1 text-sm">
         No roadmap padding — every line here is a shipped feature.
       </p>
-      <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <component
-          :is="feature.href ? 'a' : RouterLink"
+      <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <FeatureLinkCard
+          v-for="feature in headlineFeatures"
+          :key="feature.title"
+          :feature="feature"
+        />
+      </div>
+      <h3 class="text-muted-foreground mt-10 text-xs font-semibold tracking-wide uppercase">
+        Also live
+      </h3>
+      <div class="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+        <FeatureLinkCard
           v-for="feature in otherFeatures"
           :key="feature.title"
-          v-bind="
-            feature.href
-              ? { href: feature.href, target: '_blank', rel: 'noopener noreferrer' }
-              : { to: feature.to }
-          "
-          class="bg-card hover:border-ring/60 hover:bg-accent/40 group flex items-center gap-4 rounded-xl border p-4 transition-colors"
-        >
-          <span class="bg-muted flex size-11 shrink-0 items-center justify-center rounded-lg">
-            <component :is="feature.icon" class="text-primary size-5" aria-hidden="true" />
-          </span>
-          <span class="min-w-0">
-            <span class="text-foreground block font-medium">{{ feature.title }}</span>
-            <span class="text-muted-foreground mt-0.5 block text-sm text-pretty">
-              {{ feature.description }}
-            </span>
-          </span>
-          <component
-            :is="feature.href ? ExternalLink : ChevronRight"
-            class="text-muted-foreground ml-auto size-5 shrink-0 transition-transform group-hover:translate-x-0.5"
-            aria-hidden="true"
-          />
-        </component>
+          :feature="feature"
+          variant="row"
+        />
       </div>
     </section>
 
