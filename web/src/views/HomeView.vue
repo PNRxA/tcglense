@@ -99,8 +99,8 @@ const otherFeatures: FeatureLink[] = [
     icon: TrendingUp,
     title: 'Daily price history',
     description:
-      'Singles captured daily in USD, EUR, and foil — charted on every card and sealed ' +
-      'product, from 7 days to the full history.',
+      'Singles captured daily in USD, EUR, and foil, with USD and foil charted on every ' +
+      'card from 7 days to the full history — and a price history on every sealed product.',
     to: '/cards',
   },
   {
@@ -115,8 +115,8 @@ const otherFeatures: FeatureLink[] = [
     icon: Import,
     title: 'Import your collection',
     description:
-      'Bring one in from Archidekt, Moxfield, ManaBox, or Mythic Tools — by link, CSV upload, ' +
-      'or a pasted card list.',
+      'Archidekt by link — or a CSV export from Archidekt, Moxfield, ManaBox, or Mythic ' +
+      'Tools, or your list pasted straight in.',
     to: '/collection',
   },
   {
@@ -125,7 +125,7 @@ const otherFeatures: FeatureLink[] = [
     description:
       "Dim the cards you're missing in any set, with a live owned count and a quick-add button " +
       'on every gap.',
-    to: '/cards',
+    to: '/collection',
   },
   {
     icon: Terminal,
