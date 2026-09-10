@@ -188,6 +188,9 @@ fn spawn_derived_price_passes(db: DatabaseConnection, analytics: Arc<AnalyticsCa
         }
         refresh_foil_variant_folds(&db).await;
         refresh_precon_values(&db).await;
+        for game in crate::catalog::GAMES {
+            refresh_sealed_exclusives(&db, game.id).await;
+        }
     });
 }
 
@@ -199,6 +202,20 @@ pub(crate) async fn refresh_precon_values(db: &DatabaseConnection) {
         Ok(0) => {}
         Ok(changed) => tracing::info!(changed, "refreshed preconstructed-deck values"),
         Err(err) => tracing::error!(error = %err, "precon value refresh failed"),
+    }
+}
+
+/// Recompute `sealed_contents.exclusive` for one game, logging what moved. Shared by the
+/// boot one-shot above and the sync tick ([`crate::catalog::refresh_all`]), so the
+/// derivation can't be wired into one and not the other — the sync tick calls it inside its
+/// own per-game arm, which is why the game is a parameter rather than a loop in here.
+pub(crate) async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) {
+    match crate::catalog::sealed_exclusives::refresh_sealed_exclusives(db, game).await {
+        Ok(0) => {}
+        Ok(changed) => tracing::info!(game, changed, "refreshed booster exclusivity flags"),
+        Err(err) => {
+            tracing::error!(game, error = %err, "booster exclusivity refresh failed")
+        }
     }
 }
 

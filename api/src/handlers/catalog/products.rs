@@ -12,6 +12,7 @@
 //! set), mirroring how the collection set builder degrades gracefully.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use axum::{
     Json,
@@ -1044,7 +1045,9 @@ pub async fn product_cards(
     let component = trim_query(params.component.as_deref());
 
     // The product's cards, deduped + fully ordered, plus the membership/exclusivity lookups.
-    let index = build_product_card_index(&state, &game, &product).await?;
+    // Memoized and single-flighted: the sections endpoint below builds the very same index
+    // from the very same rows, and the SPA asks for both at once.
+    let index = cached_product_card_index(&state, &game, &product).await?;
 
     // The base ordering a `sort` imposes: every one of this product's cards in the chosen
     // card-list order. The section/component split below is unchanged; a sort only
@@ -1198,7 +1201,9 @@ pub async fn product_card_sections(
 ) -> Result<Json<DataBody<Vec<ProductCardSection>>>, AppError> {
     let game_meta = require_game(&game)?;
     let product = load_product(&state, &game, &id).await?;
-    let index = build_product_card_index(&state, &game, &product).await?;
+    // Shared with the paged `/cards` read above — same rows, same fold, and the SPA asks
+    // for both at once, so this is normally the *follower* on that request's computation.
+    let index = cached_product_card_index(&state, &game, &product).await?;
     // Restrict the counted ids to those matching the optional `q` search (issue #222) — so
     // a section with no matches drops out of the manifest. One compile + one membership
     // pass over the flat id list covers every view (a component card always has a flat row).
@@ -1307,7 +1312,7 @@ pub async fn product_card_sections(
 ///   are counted and paged over;
 /// - the **per-component** view (`components`): the cards packed in each *unlisted*
 ///   sub-product, complete per component (a card two packs share appears in both).
-struct ProductCardIndex {
+pub(crate) struct ProductCardIndex {
     /// `card_id -> (membership_rank, membership, foil)` at the card's strongest membership,
     /// over every row (any source).
     best: HashMap<i32, (u8, String, bool)>,
@@ -1349,6 +1354,21 @@ struct ComponentCards {
 }
 
 impl ProductCardIndex {
+    /// The index of a product with no membership rows at all: every view empty, no
+    /// exclusive split, no family heading.
+    pub(super) fn empty() -> Self {
+        Self {
+            best: HashMap::new(),
+            exclusive: HashSet::new(),
+            exclusive_family: None,
+            ordered: Vec::new(),
+            plain: HashMap::new(),
+            plain_ordered: Vec::new(),
+            direct: HashSet::new(),
+            components: Vec::new(),
+        }
+    }
+
     /// The display section a card falls in on the **flat** whole-product view (its
     /// strongest membership anywhere, with the booster pool split into family-exclusive vs
     /// shared), or `None` if the id isn't in the index.
@@ -1383,37 +1403,51 @@ impl ProductCardIndex {
 /// here — only the id orderings + the membership/exclusivity lookups — so both the paged
 /// read and the section count can share it cheaply. An empty (all-zero) index when the
 /// product has no contents.
+/// [`build_product_card_index`] behind the request-scoped memo, keyed `(game, product_id)`.
+///
+/// Both product-card endpoints go through here, which is the point: they fold the same rows
+/// into the same index and the SPA fires them together, so the second arrival waits on the
+/// first's computation instead of starting an identical one. See
+/// [`super::product_index_cache`] for the TTL's justification and the rejected
+/// version-keying alternatives.
+async fn cached_product_card_index(
+    state: &AppState,
+    game: &str,
+    product: &product::Model,
+) -> Result<Arc<ProductCardIndex>, AppError> {
+    state
+        .product_card_index
+        .get_or_compute(game, product.id, || {
+            build_product_card_index(state, game, product)
+        })
+        .await
+}
+
 async fn build_product_card_index(
     state: &AppState,
     game: &str,
     product: &product::Model,
 ) -> Result<ProductCardIndex, AppError> {
     // Every membership row for this product (hits the (game, product_id) prefix of
-    // idx_sealed_contents_unique), selecting only the four fields the folds below need —
+    // idx_sealed_contents_unique), selecting only the five fields the folds below need —
     // a giant product's contents run to thousands of rows, so the timestamps + game
-    // column of the full model aren't worth deserializing.
-    let rows: Vec<(i32, String, bool, Option<String>)> = SealedContent::find()
+    // column of the full model aren't worth deserializing. `exclusive` rides along rather
+    // than being re-derived: it is a cross-product fact about the set's *other* boosters,
+    // stamped once per sync tick by `catalog::sealed_exclusives`.
+    let rows: Vec<(i32, String, bool, Option<String>, bool)> = SealedContent::find()
         .select_only()
         .column(sealed_content::Column::CardId)
         .column(sealed_content::Column::Membership)
         .column(sealed_content::Column::Foil)
         .column(sealed_content::Column::Component)
+        .column(sealed_content::Column::Exclusive)
         .filter(sealed_content::Column::Game.eq(game))
         .filter(sealed_content::Column::ProductId.eq(product.id))
         .into_tuple()
         .all(&state.db)
         .await?;
     if rows.is_empty() {
-        return Ok(ProductCardIndex {
-            best: HashMap::new(),
-            exclusive: HashSet::new(),
-            exclusive_family: None,
-            ordered: Vec::new(),
-            plain: HashMap::new(),
-            plain_ordered: Vec::new(),
-            direct: HashSet::new(),
-            components: Vec::new(),
-        });
+        return Ok(ProductCardIndex::empty());
     }
 
     // Which component names are **listed** (resolve to their own catalog product): their
@@ -1452,14 +1486,25 @@ async fn build_product_card_index(
     let mut plain_rows: Vec<(i32, String, bool)> = Vec::new();
     let mut direct_rows: Vec<(i32, String, bool)> = Vec::new();
     let mut component_buckets: HashMap<String, Vec<(i32, String, bool)>> = HashMap::new();
-    for (card_id, membership, foil, component) in &rows {
+    // The cards the derivation flagged, restricted to the rows the plain view can see —
+    // the only view the exclusive/booster split applies to (a component section keeps its
+    // own certainty split). The derivation already scopes what it stamps the same way, so
+    // this is a guard against a stale flag, not a second rule.
+    let mut flagged: HashSet<i32> = HashSet::new();
+    for (card_id, membership, foil, component, exclusive) in &rows {
         match component {
             None => {
                 plain_rows.push((*card_id, membership.clone(), *foil));
                 direct_rows.push((*card_id, membership.clone(), *foil));
+                if *exclusive {
+                    flagged.insert(*card_id);
+                }
             }
             Some(name) if listed.contains(name.as_str()) => {
                 plain_rows.push((*card_id, membership.clone(), *foil));
+                if *exclusive {
+                    flagged.insert(*card_id);
+                }
             }
             Some(name) => {
                 if !component_order.contains(name) {
@@ -1479,7 +1524,7 @@ async fn build_product_card_index(
     // foil). The flat view spans every row, whatever its source.
     let all_rows: Vec<(i32, String, bool)> = rows
         .iter()
-        .map(|(card_id, membership, foil, _)| (*card_id, membership.clone(), *foil))
+        .map(|(card_id, membership, foil, ..)| (*card_id, membership.clone(), *foil))
         .collect();
     let best = best_memberships(&all_rows);
     let plain = best_memberships(&plain_rows);
@@ -1498,11 +1543,29 @@ async fn build_product_card_index(
 
     // Which of this product's booster cards are exclusive to its booster family (a
     // collector-booster-only printing, say), plus a slug naming that family for the section
-    // heading — one small cross-product lookup, empty for any non-booster product, or a set
-    // with nothing to compare against. Judged over the plain view: the exclusive/booster
-    // display split only applies there (component sections keep their own certainty split).
-    let (exclusive, exclusive_family) =
-        booster_exclusive_card_ids(state, game, product, &plain).await?;
+    // heading. Read off the stamped column rather than re-derived: judging it here meant
+    // scanning every sibling booster's whole pull pool on every request, page 2 included
+    // (`catalog::sealed_exclusives` has the measurements).
+    //
+    // Intersected with the plain view's *collapsed* membership, which the stored flag is
+    // deliberately blind to: a card this product both guarantees and can pull collapses to
+    // `contains`, and a guarantee outranks a pull, so it must not lead the booster pool as
+    // an exclusive. Only `booster` cards can be exclusive.
+    let exclusive: HashSet<i32> = flagged
+        .into_iter()
+        .filter(|cid| {
+            plain
+                .get(cid)
+                .is_some_and(|(_, membership, _)| membership == Membership::Booster.as_str())
+        })
+        .collect();
+    // The family the split names. Kept in lock-step with the set: a slug only carries
+    // meaning when something is actually exclusive, and only a booster product has a family
+    // at all — a bundle that merely wraps one never gets the call-out (issue #646).
+    let exclusive_family = (!exclusive.is_empty())
+        .then(|| booster_family(&product.product_type))
+        .flatten()
+        .map(|family| family.representative_type().to_string());
 
     // Load the sort keys for every distinct card so each list can be ordered before it's
     // paged; chunked under the bind limit. A card whose row vanished mid-reimport simply
@@ -1600,7 +1663,8 @@ async fn build_product_card_index(
 /// semi-join already collapses the duplicate `card_id` rows (a card with foil + non-foil, or
 /// several memberships, in one product), and a `DISTINCT card_id` would steer the planner onto
 /// the `(game, card_id)` index and scan the whole game partition — the same trap
-/// [`booster_exclusive_card_ids`] documents.
+/// [`crate::catalog::sealed_exclusives`] inherited from the read-time exclusivity
+/// derivation it replaced.
 async fn sorted_product_card_ids(
     state: &AppState,
     game: &str,
@@ -1747,103 +1811,6 @@ fn best_memberships(rows: &[(i32, String, bool)]) -> HashMap<i32, (u8, String, b
         }
     }
     best
-}
-
-/// The subset of this product's `booster`-membership cards that are **exclusive** to a
-/// booster family, plus a representative `product_type` slug naming that family (for the
-/// section heading). A card is exclusive when it's pullable from this product's booster line
-/// but from no booster product of a *different* family in the same set — e.g. a
-/// collector-booster-only borderless printing the play / draft / set sheets don't carry.
-///
-/// The family judged is the product's **own**, and only a booster product has one — an
-/// "Exclusive to Collector Boosters" section belongs on the collector boosters' own pages
-/// (pack, display, box), never on a bundle / gift box that merely wraps one. The split used
-/// to borrow the *contained* premium booster's family for bundles (issue #290), which put
-/// the exclusive call-out on every bundle whose inherited pool carried a direct row —
-/// exactly the duplication the inherited-section hiding exists to prevent (issue #646).
-///
-/// Returns `(∅, None)` — nothing exclusive, no heading — when the product has no booster
-/// cards, when it isn't a booster (a bundle, a deck), when the set has no other-family
-/// booster to compare against (a collector-only release where "exclusive" would be vacuously
-/// true of every card), or when the split turns up empty. Two small indexed lookups.
-async fn booster_exclusive_card_ids(
-    state: &AppState,
-    game: &str,
-    product: &product::Model,
-    best: &HashMap<i32, (u8, String, bool)>,
-) -> Result<(HashSet<i32>, Option<String>), AppError> {
-    // This product's own booster-pullable cards — the only ones exclusivity applies to.
-    // Computed first (in-memory) so a product with no booster cards (a deck) never runs the
-    // component / cross-product lookups below.
-    let booster = Membership::Booster.as_str();
-    let own_booster: HashSet<i32> = best
-        .iter()
-        .filter(|(_, (_, membership, _))| membership == booster)
-        .map(|(id, _)| *id)
-        .collect();
-    if own_booster.is_empty() {
-        return Ok((HashSet::new(), None));
-    }
-
-    // The family whose exclusives we split out: the product's own. A non-booster (a bundle,
-    // a deck) gets no split — its pool renders whole, and the exclusive call-out stays on
-    // the boosters' own pages.
-    let Some(family) = booster_family(&product.product_type) else {
-        return Ok((HashSet::new(), None));
-    };
-
-    // The set's booster products of a *different* family — the comparison pool. (Same-set
-    // scope, so a collector display/case of the same family is excluded by the type list.)
-    let comparison_products: Vec<i32> = Product::find()
-        .select_only()
-        .column(product::Column::Id)
-        .filter(product::Column::Game.eq(game))
-        .filter(product::Column::SetCode.eq(&product.set_code))
-        .filter(product::Column::ProductType.is_in(family.other_booster_types()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-    if comparison_products.is_empty() {
-        return Ok((HashSet::new(), None));
-    }
-
-    // Every card those other-family boosters can pull; one of ours not in this pool is
-    // exclusive to our family.
-    //
-    // No `SELECT DISTINCT`: we collect straight into a `HashSet`, so the DB-side dedup is
-    // redundant — and worse, it's a performance trap. With no `ANALYZE` statistics (this
-    // schema never runs `ANALYZE`), SQLite serves a `DISTINCT card_id` by scanning the
-    // `(game, card_id)` index to get pre-sorted ids, which for `game = 'mtg'` walks the
-    // *whole* ~1M-row partition plus a table lookup per row (~0.9s) — and this runs on
-    // every product-cards / sections request, i.e. every page turn through a collector
-    // booster. Dropping `DISTINCT` lets the planner use the covering
-    // `idx_sealed_contents_unique` with tight `(game, product_id)` seeks over the small
-    // comparison list instead (~1ms). The `HashSet` handles the duplicate ids.
-    let comparison_cards: HashSet<i32> = SealedContent::find()
-        .select_only()
-        .column(sealed_content::Column::CardId)
-        .filter(sealed_content::Column::Game.eq(game))
-        .filter(sealed_content::Column::Membership.eq(booster))
-        .filter(sealed_content::Column::ProductId.is_in(comparison_products))
-        .into_tuple()
-        .all(&state.db)
-        .await?
-        .into_iter()
-        .collect();
-    if comparison_cards.is_empty() {
-        return Ok((HashSet::new(), None));
-    }
-
-    let exclusive: HashSet<i32> = own_booster
-        .into_iter()
-        .filter(|id| !comparison_cards.contains(id))
-        .collect();
-    // A family slug only carries meaning when the split is non-empty (the exclusive section
-    // only renders then), so keep the two in lock-step.
-    if exclusive.is_empty() {
-        return Ok((HashSet::new(), None));
-    }
-    Ok((exclusive, Some(family.representative_type().to_string())))
 }
 
 /// Collator key for a card's numeric collector number that parks `NULL` (a non-numeric

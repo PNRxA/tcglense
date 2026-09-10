@@ -38,6 +38,19 @@ pub struct Model {
     /// display section, while a section fed only by **listed** components is flagged
     /// `inherited` so the SPA can defer to the sub-product's own page.
     pub component: Option<String>,
+    /// Whether this `booster` row names a card **only this product's booster family** can
+    /// pull — a collector booster's borderless printing that the set's play and draft
+    /// boosters never offer. Derived, not provider data: the wholesale rebuild writes
+    /// `false` and [`crate::catalog::sealed_exclusives`] recomputes the column once per
+    /// sync tick (the `precon_decks.price_cents` model, `m..077`), because the answer also
+    /// depends on `products.product_type` — TCGCSV's classification, which moves on ticks
+    /// the ETag-gated sealed rebuild doesn't run on.
+    ///
+    /// Only ever `true` on a `membership = "booster"` row of a product whose own type is a
+    /// booster family, and only on a row the *plain* view can see (`component` is `None`
+    /// or names a **listed** component): a named component section keeps its own certainty
+    /// split and never renders an exclusive bucket.
+    pub exclusive: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
