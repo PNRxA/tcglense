@@ -166,6 +166,20 @@ impl ProductCardIndexCache {
         }
     }
 
+    /// Drop every memoized entry, as the [`TTL`] eventually does.
+    ///
+    /// Test-only. A reclassified product keeps serving its cached index until the TTL
+    /// lapses (the staleness window this module's docs argue is bounded by the CDN's own),
+    /// so a test that changes `products.product_type` and asserts on the *next* read has to
+    /// step past that window to be testing the read rather than the memo.
+    #[cfg(test)]
+    pub(crate) fn clear(&self) {
+        self.entries
+            .lock()
+            .expect("product index cache mutex")
+            .clear();
+    }
+
     /// A live entry for `key`, if one is present and inside [`TTL`]. An expired entry is
     /// dropped on the way past rather than left to the capacity sweep.
     fn get(&self, key: &Key) -> Option<Arc<ProductCardIndex>> {

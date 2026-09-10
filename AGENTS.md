@@ -237,7 +237,8 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   (`sealed_contents.exclusive`, `m..085`): it is a cross-product fact — decided by every
   sibling booster's whole pull pool — so judging it per request scanned that pool on every page
   turn (7.2s over 7,968 rows in production), and it is a *sort* key too, so no page could narrow
-  it. `catalog::sealed_exclusives` stamps it **per sync tick and at boot**, wired like
+  it. `catalog::sealed_exclusives` stamps it **per sync tick and at every boot** (the boot run is
+  not optional — the first tick is deferred by up to a full `SYNC_INTERVAL_HOURS`), wired like
   `precon_values` rather than into the ETag-gated derivation, because the judgement also reads
   `products.product_type` — TCGCSV's, which moves on its own sweep — so a rebuild-time fold
   would go stale on a reclassification (and needing no `DERIVATION_VERSION` bump is the other

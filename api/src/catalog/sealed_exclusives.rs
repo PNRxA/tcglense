@@ -19,8 +19,10 @@
 //!   flag folded at rebuild time would go stale the moment a product was reclassified.
 //!   Hence the `precon_decks.price_cents` model (`m..077`): the wholesale rebuild writes
 //!   the column's `false` default and this pass recomputes it from the live rows each tick
-//!   (and once at boot on the no-sync path), which is also why `m..085` needs no
-//!   `DERIVATION_VERSION` bump — the derivation never runs inside the ETag-gated rebuild.
+//!   — and once at **every** boot, unlike `precon_values`, because the first tick is deferred
+//!   by up to a full `SYNC_INTERVAL_HOURS` and a day without the split is a visible
+//!   regression where a day of unpriced tiles is not. That is also why `m..085` needs no
+//!   `DERIVATION_VERSION` bump: the derivation never runs inside the ETag-gated rebuild.
 //!
 //! The rule reproduced here is the one `booster_exclusive_card_ids` used to apply per
 //! request, guard for guard, because the read still renders what this writes:
@@ -51,7 +53,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect, sea_query::Expr,
+    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
+    sea_query::{Expr, Query},
 };
 
 use crate::entities::prelude::{Product, SealedComponent, SealedContent};
@@ -78,7 +81,8 @@ type SetGroup = Vec<(i32, BoosterFamily)>;
 pub async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) -> Result<u64, DbErr> {
     // Every booster product of the game, with the two columns the judgement reads. A
     // non-booster is neither judged nor a comparison pool, so its rows never need loading —
-    // and they can never carry the flag, since this pass is the only thing that sets it.
+    // but a product that *used* to be a booster can still be carrying flags, which is what
+    // `clear_non_booster_flags` below is for.
     let products: Vec<(i32, String, String)> = Product::find()
         .select_only()
         .column(product::Column::Id)
@@ -89,8 +93,17 @@ pub async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) -> R
         .into_tuple()
         .all(db)
         .await?;
+
+    // Rows whose product is no longer a booster at all — TCGCSV reclassified it out of the
+    // families since the tick that raised them. Nothing below can reach those (every list
+    // there is drawn from the booster-filtered query above), so they are cleared by
+    // exclusion rather than by id: without this a bundle would keep serving flags it earned
+    // while it was still a booster, which is exactly the issue-#646 section the split must
+    // never render. Runs *before* the empty-catalog return, because "every booster was
+    // reclassified away" is precisely a case with flags to drop and no products to judge.
+    let mut changed = clear_non_booster_flags(db, game).await?;
     if products.is_empty() {
-        return Ok(0);
+        return Ok(changed);
     }
 
     // Group by set: exclusivity is judged only against the same set's boosters.
@@ -116,7 +129,7 @@ pub async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) -> R
         }
     }
 
-    let mut changed = clear_flags(db, game, &single_family).await?;
+    changed += clear_flags(db, game, &single_family).await?;
 
     // Batch whole sets together so every product's comparison pool is resident with it.
     let mut batch: Vec<SetGroup> = Vec::new();
@@ -137,9 +150,33 @@ pub async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) -> R
     Ok(changed)
 }
 
-/// Clear any flag left on products that can no longer hold one — their set lost its second
-/// booster family, or they were reclassified. A no-op in the steady state: the `= true`
-/// predicate matches nothing once the flags are already down.
+/// Clear every flag on a product whose current `product_type` is not a booster family at
+/// all. Expressed as a `NOT IN (subquery)` rather than a bound id list because the set it
+/// must cover is "everything this pass never looks at" — the id list would be the whole
+/// non-booster catalog, and would go stale the moment the vocabulary changed. A no-op in
+/// the steady state: the `= true` predicate matches nothing once the flags are down.
+async fn clear_non_booster_flags(db: &DatabaseConnection, game: &str) -> Result<u64, DbErr> {
+    let boosters = Query::select()
+        .column(product::Column::Id)
+        .from(product::Entity)
+        .and_where(Expr::col(product::Column::Game).eq(game))
+        .and_where(
+            Expr::col(product::Column::ProductType).is_in(BOOSTER_PRODUCT_TYPES.iter().copied()),
+        )
+        .to_owned();
+
+    let result = SealedContent::update_many()
+        .col_expr(sealed_content::Column::Exclusive, Expr::value(false))
+        .filter(sealed_content::Column::Game.eq(game))
+        .filter(sealed_content::Column::Exclusive.eq(true))
+        .filter(sealed_content::Column::ProductId.not_in_subquery(boosters))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
+}
+
+/// Clear any flag left on a booster product whose set lost its second family. A no-op in
+/// the steady state: the `= true` predicate matches nothing once the flags are already down.
 async fn clear_flags(
     db: &DatabaseConnection,
     game: &str,

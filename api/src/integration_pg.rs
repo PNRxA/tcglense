@@ -697,6 +697,113 @@ async fn foil_star_consolidation_folds_on_pg() {
 
 #[tokio::test]
 #[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
+async fn sealed_exclusives_derivation_on_pg() {
+    // The booster-exclusivity pass on live Postgres. The SQLite suites cover the rule; what
+    // needs a real backend is the SQL that runs on both unbranched — in particular
+    // `clear_non_booster_flags`' `NOT IN (SELECT …)` correlated against `products`, which is
+    // the only statement in the pass that isn't a plain filtered UPDATE.
+    use crate::entities::{product, sealed_content};
+    use crate::test_support::{insert_card, insert_product};
+    use sea_orm::PaginatorTrait;
+
+    let Some(base) = test_pg_url() else {
+        return;
+    };
+    let db = PgTestDb::create(&base).await;
+    let conn = db.conn();
+
+    let shared = insert_card(conn, "sf-shared").await;
+    let collector_only = insert_card(conn, "sf-collector").await;
+    let collector = insert_product(
+        conn,
+        "100",
+        "Collector Booster Pack",
+        "mkm",
+        "collector_pack",
+        Some("24.99"),
+    )
+    .await;
+    let play = insert_product(
+        conn,
+        "200",
+        "Play Booster Pack",
+        "mkm",
+        "play_pack",
+        Some("4.99"),
+    )
+    .await;
+
+    let seal = |product_id: i32, card_id: i32| async move {
+        sealed_content::ActiveModel {
+            game: Set(GAME.to_string()),
+            product_id: Set(product_id),
+            card_id: Set(card_id),
+            membership: Set("booster".to_string()),
+            foil: Set(false),
+            component: Set(None),
+            exclusive: Set(false),
+            created_at: Set(Utc::now()),
+            updated_at: Set(Utc::now()),
+            ..Default::default()
+        }
+        .insert(conn)
+        .await
+        .expect("insert sealed content");
+    };
+    seal(collector, shared).await;
+    seal(collector, collector_only).await;
+    seal(play, shared).await;
+
+    async fn flagged(conn: &DatabaseConnection, product_id: i32) -> u64 {
+        use crate::entities::prelude::SealedContent;
+        use crate::entities::sealed_content;
+        SealedContent::find()
+            .filter(sealed_content::Column::ProductId.eq(product_id))
+            .filter(sealed_content::Column::Exclusive.eq(true))
+            .count(conn)
+            .await
+            .expect("count flagged rows")
+    }
+
+    crate::catalog::sealed_exclusives::refresh_sealed_exclusives(conn, GAME)
+        .await
+        .expect("derive exclusives");
+    assert_eq!(
+        flagged(conn, collector).await,
+        1,
+        "the collector-only card is exclusive to its family"
+    );
+    assert_eq!(
+        flagged(conn, play).await,
+        0,
+        "the play booster shares its only card"
+    );
+
+    // Reclassify the collector product out of the booster families: the pass can no longer
+    // load it, so the stale flag has to be cleared by exclusion.
+    product::ActiveModel {
+        id: Set(collector),
+        product_type: Set("bundle".to_string()),
+        ..Default::default()
+    }
+    .update(conn)
+    .await
+    .expect("reclassify product");
+
+    crate::catalog::sealed_exclusives::refresh_sealed_exclusives(conn, GAME)
+        .await
+        .expect("re-derive exclusives");
+    assert_eq!(
+        flagged(conn, collector).await,
+        0,
+        "a product that left the booster families keeps no flags"
+    );
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a live Postgres; set TCGLENSE_TEST_POSTGRES_URL, run with --ignored"]
 async fn foil_star_listing_fold_on_pg() {
     // The catalog-listing fold on live Postgres. The pass itself is Rust over a bounded set,
     // so what needs a real backend is (a) `m..076`'s column + index applying, (b) the

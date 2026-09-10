@@ -1145,7 +1145,7 @@ catalog) is planned but not implemented.
   rows**, paid on every `/cards` *and* `/cards/sections` request. It now rides a
   `sealed_contents.exclusive` column (`m..085`) stamped by
   `catalog::sealed_exclusives::refresh_sealed_exclusives`. That pass is wired like
-  `precon_values`, not like the derivation — **per sync tick and at boot, not inside the
+  `precon_values`, not like the derivation — **per sync tick and at every boot, not inside the
   ETag-gated rebuild** — because its two inputs move independently: `sealed_contents` is
   rebuilt on MTGJSON's ETag, but the family judgement reads `products.product_type`, which
   the TCGCSV sweep reclassifies on its own schedule. Folding it at rebuild time would go

@@ -23,8 +23,8 @@ use sea_orm_migration::prelude::*;
 /// wholesale rebuild writes — the derivation pass fills the column afterwards, exactly as a
 /// fresh precon rebuild writes `NULL` prices for `refresh_precon_values` to fold in. So,
 /// unlike `m..075`'s `component`, this needs **no** `DERIVATION_VERSION` bump: the pass
-/// runs every tick and at boot, so the column populates on the next tick without forcing a
-/// re-walk of MTGJSON's 600 MB document.
+/// runs at every boot as well as every tick, so the column populates as soon as the
+/// migration lands without forcing a re-walk of MTGJSON's 600 MB document.
 ///
 /// `idx_sealed_contents_unique` is deliberately untouched. That index keys row *identity*
 /// (`game, product_id, card_id, membership, foil, component`); `exclusive` is an attribute

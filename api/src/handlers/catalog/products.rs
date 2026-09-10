@@ -1551,19 +1551,29 @@ async fn build_product_card_index(
     // deliberately blind to: a card this product both guarantees and can pull collapses to
     // `contains`, and a guarantee outranks a pull, so it must not lead the booster pool as
     // an exclusive. Only `booster` cards can be exclusive.
-    let exclusive: HashSet<i32> = flagged
-        .into_iter()
-        .filter(|cid| {
-            plain
-                .get(cid)
-                .is_some_and(|(_, membership, _)| membership == Membership::Booster.as_str())
-        })
-        .collect();
+    //
+    // The product's own family gates the **set**, not just the heading. Only a booster
+    // product splits at all — a bundle that merely wraps one never gets the call-out
+    // (issue #646) — and re-checking it here rather than trusting the column is what keeps
+    // that structural: the derivation stamps by `product_type` too, but a product
+    // reclassified out of the booster families between ticks would otherwise keep serving
+    // flags raised while it still was one.
+    let family = booster_family(&product.product_type);
+    let exclusive: HashSet<i32> = match family {
+        None => HashSet::new(),
+        Some(_) => flagged
+            .into_iter()
+            .filter(|cid| {
+                plain
+                    .get(cid)
+                    .is_some_and(|(_, membership, _)| membership == Membership::Booster.as_str())
+            })
+            .collect(),
+    };
     // The family the split names. Kept in lock-step with the set: a slug only carries
-    // meaning when something is actually exclusive, and only a booster product has a family
-    // at all — a bundle that merely wraps one never gets the call-out (issue #646).
+    // meaning when something is actually exclusive.
     let exclusive_family = (!exclusive.is_empty())
-        .then(|| booster_family(&product.product_type))
+        .then_some(family)
         .flatten()
         .map(|family| family.representative_type().to_string());
 

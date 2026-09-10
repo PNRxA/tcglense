@@ -188,6 +188,22 @@ fn spawn_derived_price_passes(db: DatabaseConnection, analytics: Arc<AnalyticsCa
         }
         refresh_foil_variant_folds(&db).await;
         refresh_precon_values(&db).await;
+    });
+}
+
+/// Stamp `sealed_contents.exclusive` once at boot, on **every** startup path.
+///
+/// Unlike the derived-price passes above, this one cannot ride the `SYNC_ON_STARTUP=false`
+/// branch alone. `m..085` ships the column `false` for every row, and on the sync-enabled
+/// path the first tick is deferred by `ingest_state::initial_delay` — up to a full
+/// `SYNC_INTERVAL_HOURS` on an instance whose last tick completed recently. Without this,
+/// deploying the migration would silently drop every booster's exclusive split for a day.
+///
+/// Cheap when there is nothing to do: the pass diffs against the stored column, so a boot
+/// that changes nothing issues no `UPDATE`. A no-op on a fresh/dummy catalog (the dummy
+/// seed runs its own pass over the rows it just wrote).
+fn spawn_sealed_exclusives(db: DatabaseConnection) {
+    tokio::spawn(async move {
         for game in crate::catalog::GAMES {
             refresh_sealed_exclusives(&db, game.id).await;
         }
@@ -727,6 +743,10 @@ pub async fn start(state: &AppState, http: &Client) {
         catalog::seed_all(&state.db).await;
         seed_dev_user(&state.db).await;
     } else if state.config.sync_on_startup {
+        // The exclusivity derivation owns a column the migration ships empty, and the first
+        // sync tick can be a full interval away — so it runs at boot here as well as per
+        // tick (see `spawn_sealed_exclusives`).
+        spawn_sealed_exclusives(state.db.clone());
         // The historic price backfill runs only outside dummy mode (real cards must
         // exist to join against) and when enabled.
         let backfill = state.config.price_backfill_enabled.then(|| BackfillConfig {
@@ -756,6 +776,7 @@ pub async fn start(state: &AppState, http: &Client) {
         // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
         // values at $0 (issue #209) and `m..077`'s precon values never populate.
         spawn_derived_price_passes(state.db.clone(), state.analytics_cache.clone());
+        spawn_sealed_exclusives(state.db.clone());
         // Cards already exist from a prior run (no sync this boot); if the operator opted
         // into the fingerprint build, run it against the existing catalogue.
         if state.config.fingerprint_build_enabled {
