@@ -11,7 +11,7 @@ import { prefetchRouteChunks } from '@/lib/prefetch'
 const version = import.meta.env.VITE_APP_VERSION
 
 // Site-wide footer, mounted once in App.vue so it renders on every route. It carries the
-// data-source credits (Scryfall / TCGCSV / MTGJSON), the GitHub links, the Terms/Privacy
+// data-source credits (Scryfall / TCGCSV / MTGJSON / Commander Spellbook), the GitHub links, the Terms/Privacy
 // links, and the required WotC Fan Content disclaimer — placed wherever card data/images
 // render (nearly every page). Fully static: no queries, no auth reads, identical signed in
 // or out.
@@ -49,7 +49,7 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
             <span class="text-muted-foreground text-xs font-medium">v{{ version }}</span>
           </div>
           <p class="text-muted-foreground mt-2 text-sm text-pretty">
-            Track trading-card prices and your collection.
+            Track trading-card prices, your collection, and your decks.
           </p>
           <div class="mt-3 flex items-center gap-3">
             <a
@@ -127,6 +127,16 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
                   MTGJSON
                 </a>
               </li>
+              <li>
+                <a
+                  href="https://commanderspellbook.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                >
+                  Commander Spellbook
+                </a>
+              </li>
             </ul>
           </div>
 
@@ -200,8 +210,8 @@ const warm = (to: string) => prefetchRouteChunks(router, to)
         </p>
         <p>
           Card data and images courtesy of Scryfall. Sealed product pricing from TCGCSV; sealed
-          product contents from MTGJSON. None of these projects endorses or is affiliated with
-          TCGLense.
+          product contents, booster sheets, and preconstructed decklists from MTGJSON; combo data
+          from Commander Spellbook. None of these projects endorses or is affiliated with TCGLense.
         </p>
         <p>
           Prices are estimates for informational purposes only and can lag the market. They are not
