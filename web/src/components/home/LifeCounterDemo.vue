@@ -32,9 +32,9 @@ const seats: DemoSeat[] = [
   },
   {
     name: 'Alex',
-    life: 12,
+    life: 4,
     lifeClass: 'text-warning',
-    note: 'Cmdr dmg 15 from Priya',
+    note: 'Cmdr dmg 15 · Priya',
     icon: Swords,
     delta: '−3',
     deltaClass: 'bg-destructive/15 text-destructive',

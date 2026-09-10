@@ -53,9 +53,8 @@ const auth = useAuthStore()
 
 usePageMeta({
   description:
-    'Browse trading-card games, sets, cards, sealed products, and preconstructed decks, chart ' +
-    'daily prices, scan Magic cards, build and analyse decks, and track your collection and wish ' +
-    'list — with ghost mode showing exactly which cards you are missing.',
+    'Browse every set, card, sealed product, and preconstructed deck, chart daily prices, ' +
+    'build and analyse decks, and track your collection and wish list.',
   canonicalPath: '/',
 })
 
@@ -117,8 +116,8 @@ const otherFeatures: FeatureLink[] = [
     icon: Share2,
     title: 'Public profiles',
     description:
-      'Share your collection, wish list, and any deck read-only at your own /u/handle — per ' +
-      'game, only when you switch it on.',
+      'Share your collection and wish list per game, and any deck on its own, read-only at ' +
+      'your own /u/handle — only when you switch it on.',
     to: '/collection',
   },
   {
@@ -324,40 +323,49 @@ const rowLinkClass =
          sides at md+. -->
     <section class="mt-20 sm:mt-24">
       <div class="space-y-20 sm:space-y-24">
-        <!-- Row — Decks (demo left): the v0.18 headline, so it leads. -->
+        <!-- Row 1 — Decks (demo left): the v0.18 headline, so it leads. -->
         <FeatureDemoRow
           :icon="BookCopy"
           eyebrow="Decks"
           heading="Build a deck, then let the numbers talk"
           :body="
-            'Build decks from the catalog or import them from Archidekt, Moxfield, or a pasted ' +
-            'list — then let the analysis stack read them: draw odds, a legality verdict, an ' +
+            'Build decks from the catalog or import them — an Archidekt link, or an Archidekt, ' +
+            'Moxfield, or plain-text export file — then let the analysis stack read them: draw ' +
+            'odds, a legality verdict, an ' +
             'estimated Commander bracket, the mana base against its pips, card roles, the tokens ' +
             'to bring, combos from Commander Spellbook, and a pricing breakdown with one-click ' +
             'cheapest-printing swaps. Draw a test hand, diff two decks, or share one with a link.'
           "
           demo-side="left"
         >
-          <RouterLink to="/decks" :class="rowLinkClass">
-            <template v-if="auth.isAuthenticated">Open your decks</template>
-            <template v-else-if="auth.sessionResolved">Start a deck</template>
-            <Skeleton v-else class="h-4 w-28" />
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
+          <template v-if="auth.isAuthenticated">
+            <RouterLink to="/decks" :class="rowLinkClass">
+              Open your decks
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <template v-else-if="auth.sessionResolved">
+            <RouterLink to="/decks" :class="rowLinkClass">
+              Start a deck
+              <ArrowRight class="size-4" aria-hidden="true" />
+            </RouterLink>
+          </template>
+          <Skeleton v-else class="h-5 w-32" />
           <template #demo>
             <DeckOverviewDemo />
           </template>
         </FeatureDemoRow>
 
-        <!-- Row — Preconstructed decks (demo right). -->
+        <!-- Row 2 — Preconstructed decks (demo right). -->
         <FeatureDemoRow
           :icon="Boxes"
           eyebrow="Preconstructed decks"
           heading="Every published precon, ready to copy"
           :body="
             'Browse every preconstructed decklist in the catalog — by set, by deck type, or by ' +
-            'price — with the same analysis a deck of your own gets. Copy one into your decks to ' +
-            'start upgrading it, or add its cards to your collection the day you buy it.'
+            'price — with the same legality, bracket, mana, roles, tokens, combos, and draw-odds ' +
+            'analysis your own decks get. Copy one into your decks to start upgrading it, or add ' +
+            'its cards to your collection the day you buy it.'
           "
           demo-side="right"
         >
@@ -370,7 +378,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row — Price alerts (demo left, so it alternates with Row A's right). -->
+        <!-- Row 3 — Price alerts (demo left). -->
         <FeatureDemoRow
           :icon="Bell"
           eyebrow="Price alerts"
@@ -456,7 +464,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row A — Prices (demo right). -->
+        <!-- Row 4 — Price history (demo right). -->
         <FeatureDemoRow
           :icon="TrendingUp"
           eyebrow="Price history"
@@ -525,7 +533,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row — Booster odds (demo left). -->
+        <!-- Row 5 — Booster odds (demo left). -->
         <FeatureDemoRow
           :icon="Dices"
           eyebrow="Booster odds"
@@ -548,7 +556,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row B — Collection (demo right). -->
+        <!-- Row 6 — Collection (demo right). -->
         <FeatureDemoRow
           :icon="Library"
           eyebrow="Collection"
@@ -557,9 +565,9 @@ const rowLinkClass =
             'Count regular and foil copies per game — and sealed products beside them — and watch ' +
             'the totals move: unique cards, total copies, and a live estimated value with its ' +
             'history, biggest movers, and a breakdown by rarity, colour, type, and finish. As you ' +
-            'browse the catalog, owned-count badges mark the cards already in your collection, ' +
-            'quick-add drops a card in by name, and a copies filter narrows any list to what you ' +
-            'hold.'
+            'browse the catalog, owned-count badges mark the cards already in your collection and ' +
+            'quick-add drops a card in by name; in your collection and wish list, a copies filter ' +
+            'narrows the grid by how many you hold.'
           "
           demo-side="right"
         >
@@ -596,7 +604,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row C — Visual card scanner (demo left). -->
+        <!-- Row 7 — Visual card scanner (demo left). -->
         <FeatureDemoRow
           :icon="ScanLine"
           eyebrow="Visual card scanner"
@@ -629,7 +637,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row D — Ghost mode (demo right). -->
+        <!-- Row 8 — Ghost mode (demo right). -->
         <FeatureDemoRow
           :icon="Ghost"
           eyebrow="Ghost mode"
@@ -687,7 +695,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row E — Import (demo left). -->
+        <!-- Row 9 — Import (demo left). -->
         <FeatureDemoRow
           :icon="Import"
           eyebrow="Import"
@@ -741,7 +749,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row F — Wish list (demo right). -->
+        <!-- Row 10 — Wish list (demo right). -->
         <FeatureDemoRow
           :icon="Heart"
           eyebrow="Wish lists"
@@ -801,7 +809,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row — Life counter (demo left). -->
+        <!-- Row 11 — Life counter (demo left). -->
         <FeatureDemoRow
           :icon="HeartPulse"
           eyebrow="Life counter"
@@ -823,7 +831,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row G — CLI & agents (demo right). -->
+        <!-- Row 12 — CLI & agents (demo right). -->
         <FeatureDemoRow
           :icon="Terminal"
           eyebrow="CLI & agents"

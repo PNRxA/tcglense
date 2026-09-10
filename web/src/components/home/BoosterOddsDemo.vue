@@ -19,8 +19,8 @@ import DemoCardTile from './DemoCardTile.vue'
   <div>
     <div class="flex items-center justify-between gap-2">
       <div class="min-w-0">
-        <p class="text-sm font-semibold">Collector Booster Box</p>
-        <p class="text-muted-foreground mt-0.5 text-xs">12 packs · 14–15 cards per pack</p>
+        <p class="text-sm font-semibold">Collector Booster</p>
+        <p class="text-muted-foreground mt-0.5 text-xs">14–15 cards per pack</p>
       </div>
       <span
         class="border-primary/30 bg-primary/10 text-primary shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium"
@@ -66,9 +66,7 @@ import DemoCardTile from './DemoCardTile.vue'
           <PackageOpen class="size-3.5" aria-hidden="true" />
           Open a pack
         </span>
-        <span class="text-muted-foreground text-[10px] tabular-nums">
-          Opened pack 3 of 12 · seed 4821
-        </span>
+        <span class="text-muted-foreground text-[10px] tabular-nums"> One pack · seed 4821 </span>
       </div>
 
       <div class="mt-3 grid grid-cols-5 gap-2">
@@ -83,7 +81,7 @@ import DemoCardTile from './DemoCardTile.vue'
         </div>
         <DemoCardTile :bars="false" gradient="muted" />
         <div class="ring-foil relative rounded-lg ring-1">
-          <DemoCardTile :bars="false" :foil="1" />
+          <DemoCardTile :bars="false" />
           <span
             class="bg-foil/15 text-foil absolute -top-1 left-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
           >
@@ -94,7 +92,7 @@ import DemoCardTile from './DemoCardTile.vue'
       </div>
 
       <p class="text-muted-foreground mt-3 text-[10px]">
-        This opening: $31.20 · 125% of today's price
+        This run dealt $31.20 — 125% of what one copy costs at today's price
       </p>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { BookCopy, Sparkles } from '@lucide/vue'
+import DemoCardTile from './DemoCardTile.vue'
 
 // Presentational-only mock of a deck page's collapsed overview strip (glance chips + the
 // card-roles bars), for the homepage's decorative feature rows. Every value is illustrative
@@ -73,12 +74,8 @@ const handCards = [0, 1, 2, 3, 4, 5, 6]
   <div class="mt-4 border-t pt-3">
     <div class="text-muted-foreground text-[10px]">Test hand · seed #4821</div>
     <div class="mt-2 flex gap-1.5">
-      <div
-        v-for="card in handCards"
-        :key="card"
-        class="bg-muted h-8 w-6 shrink-0 overflow-hidden rounded border"
-      >
-        <div class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"></div>
+      <div v-for="card in handCards" :key="card" class="w-6 shrink-0">
+        <DemoCardTile :bars="false" />
       </div>
     </div>
   </div>

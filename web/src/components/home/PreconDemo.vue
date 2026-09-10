@@ -16,12 +16,14 @@ const pips = [1, 2, 3, 4, 5]
 
 <template>
   <!-- Decorative mock UI — illustrative values, not real market data. -->
-  <div class="flex items-center justify-between gap-2">
-    <span class="flex items-center gap-1.5 text-sm font-semibold">
-      <Boxes class="size-4" aria-hidden="true" />
-      Preconstructed decks
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <span class="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+      <Boxes class="size-4 shrink-0" aria-hidden="true" />
+      <span class="truncate">Preconstructed decks</span>
     </span>
-    <div class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5">
+    <div
+      class="bg-muted/50 inline-flex shrink-0 items-center gap-1 rounded-lg p-0.5 whitespace-nowrap"
+    >
       <span class="bg-background text-foreground rounded px-2 py-1 text-xs font-medium">
         By set
       </span>
@@ -39,18 +41,18 @@ const pips = [1, 2, 3, 4, 5]
         <span class="text-muted-foreground inline-block rounded border px-1.5 text-[10px]">
           {{ deck.set }}
         </span>
-        <div class="flex items-center gap-1.5">
-          <span class="flex items-center gap-1">
-            <span
-              v-for="pip in pips"
-              :key="pip"
-              class="size-2 rounded-full"
-              :class="deck.colors.includes(pip) ? '' : 'bg-foreground/10'"
-              :style="deck.colors.includes(pip) ? `background: var(--chart-${pip})` : undefined"
-            ></span>
-          </span>
-          <span class="ml-auto text-xs tabular-nums">{{ deck.price }}</span>
+        <!-- Pips and price on their own lines: three tiles share a half-width panel at md,
+             and a single row clipped the price under the tile's overflow-hidden. -->
+        <div class="flex items-center gap-1">
+          <span
+            v-for="pip in pips"
+            :key="pip"
+            class="size-2 rounded-full"
+            :class="deck.colors.includes(pip) ? '' : 'bg-foreground/10'"
+            :style="deck.colors.includes(pip) ? `background: var(--chart-${pip})` : undefined"
+          ></span>
         </div>
+        <div class="text-xs tabular-nums">{{ deck.price }}</div>
       </div>
     </div>
   </div>

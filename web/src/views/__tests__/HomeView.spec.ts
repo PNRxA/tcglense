@@ -187,9 +187,10 @@ describe('HomeView recent feature rows', () => {
   it('leads with decks and links a signed-in user to their decks', async () => {
     const wrapper = await mountHome('authenticated')
     const headings = wrapper.findAll('h2').map((candidate) => candidate.text())
-    // The decks row is the first feature row, right after the hero.
-    expect(headings.indexOf('Build a deck, then let the numbers talk')).toBeLessThan(
-      headings.indexOf('Get pinged when the price is right'),
+    // The decks row is the first feature row: the first h2 after the search section's (the
+    // hero carries the page's only h1).
+    expect(headings[headings.indexOf('Search the whole catalog') + 1]).toBe(
+      'Build a deck, then let the numbers talk',
     )
 
     const decks = featureRow(wrapper, 'Build a deck, then let the numbers talk')
@@ -250,12 +251,17 @@ describe('HomeView recent feature rows', () => {
     wrapper.unmount()
   })
 
-  it('links the compact grid to the release calendar and the keyword glossary', async () => {
+  it('links the compact grid to the release calendar, the glossary and the shopping list', async () => {
     const wrapper = await mountHome('guest')
-    const hrefs = wrapper.findAll('a').map((candidate) => candidate.attributes('href'))
+    const heading = wrapper
+      .findAll('h2')
+      .find((candidate) => candidate.text() === "Everything else that's live today")
+    const grid = heading?.element.parentElement
+    if (!grid) throw new Error('missing the compact grid section')
+    const hrefs = Array.from(grid.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(hrefs).toContain('/releases')
     expect(hrefs).toContain('/keywords')
-    expect(hrefs).toContain('/precons')
+    expect(hrefs).toContain('/wishlist')
     wrapper.unmount()
   })
 })
