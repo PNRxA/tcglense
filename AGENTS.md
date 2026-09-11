@@ -233,7 +233,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   bundle never gets an `exclusive` section, however premium the booster it wraps — its pool rows
   can be direct (nameless `sealed` refs attribute nothing), which made the old contained-family
   split surface "Exclusive to Collector Boosters" on bundle pages the inherited-hiding can't
-  touch (issue #646 follow-up).
+  touch (issue #646 follow-up). **Exclusivity is a stored column, never re-derived in a read**
+  (`sealed_contents.exclusive`, `m..085`): it is a cross-product fact — decided by every
+  sibling booster's whole pull pool — so judging it per request scanned that pool on every page
+  turn (7.2s over 7,968 rows in production), and it is a *sort* key too, so no page could narrow
+  it. `catalog::sealed_exclusives` stamps it **per sync tick, and at boot only on the no-sync
+  path** — wired exactly like `precon_values` rather than into the ETag-gated derivation,
+  because the judgement also reads
+  `products.product_type` — TCGCSV's, which moves on its own sweep — so a rebuild-time fold
+  would go stale on a reclassification (and needing no `DERIVATION_VERSION` bump is the other
+  half of that choice). The rebuild writes the `false` default; the pass owns the column, and
+  a fixture that asserts *either* side of the split must run the pass or it passes vacuously.
+  The read still intersects the flag with the plain view's **collapsed** membership — a card a
+  product both guarantees and can pull is `contains`, and must not lead the booster pool.
   **Sections split by source, and the split starts at ingest:** the MTGJSON walk stamps every
   membership row inherited through a nested `sealed` reference with the top-level component's
   name (`sealed_contents.component`, same string as the `sealed_components` row, `NULL` for a

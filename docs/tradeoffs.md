@@ -1129,13 +1129,32 @@ catalog) is planned but not implemented.
   variant carrying its own curated pool (a "Sample" pack) is non-empty so it's left alone.
   Because this is **pure code** (no data file), its version is a bumped constant
   (`DERIVATION_VERSION`) folded into the gate, so changing the logic forces one rebuild.
-  The **exclusive split** is judged at read time (`booster_exclusive_card_ids`) and only for
-  a product whose *own* `product_type` is a booster family. It used to borrow a bundle's
-  contained premium booster's family (Collector, else the generic Chocobo case), but that
-  surfaced an "Exclusive to Collector Boosters" section on any bundle whose synthesized or
-  upstream pool rows were direct (unattributed) — the very duplication the inherited-section
-  hiding exists to prevent — so a bundle's pool now renders whole and the call-out lives only
-  on the wrapped boosters' own pages (issue #646 follow-up).
+  The **exclusive split** is judged only for a product whose *own* `product_type` is a
+  booster family. It used to borrow a bundle's contained premium booster's family (Collector,
+  else the generic Chocobo case), but that surfaced an "Exclusive to Collector Boosters"
+  section on any bundle whose synthesized or upstream pool rows were direct (unattributed) —
+  the very duplication the inherited-section hiding exists to prevent — so a bundle's pool
+  now renders whole and the call-out lives only on the wrapped boosters' own pages (issue
+  #646 follow-up).
+
+  It was judged **at read time** until it became a measured production cost: the answer is a
+  cross-product fact — decided by every *sibling* booster's whole pull pool, not by the row
+  it lands on — so it could not be narrowed to the page being served, and the set it produces
+  is also a sort key (exclusive printings lead the shared pool), so even page 3 of a card
+  list needed all of it. One collector booster's comparison scan measured **7.2 s over 7,968
+  rows**, paid on every `/cards` *and* `/cards/sections` request. It now rides a
+  `sealed_contents.exclusive` column (`m..085`) stamped by
+  `catalog::sealed_exclusives::refresh_sealed_exclusives`. That pass is wired like
+  `precon_values`, not like the derivation — **per sync tick, at boot only on the no-sync path,
+  never inside the ETag-gated rebuild** — because its two inputs move independently: `sealed_contents` is
+  rebuilt on MTGJSON's ETag, but the family judgement reads `products.product_type`, which
+  the TCGCSV sweep reclassifies on its own schedule. Folding it at rebuild time would go
+  stale on a reclassification and would have needed a `DERIVATION_VERSION` bump (a forced
+  re-walk of a 600 MB document) to populate at all; the per-tick pass needs neither. The
+  read still intersects the stored flag with the plain view's *collapsed* membership, because
+  the column is deliberately blind to it: a card a product both guarantees and can pull
+  collapses to `contains`, and a guarantee outranks a pull, so it must not lead the booster
+  pool as an exclusive.
 
   **Booster odds — the weights the walk used to throw away (issue #682).** The membership
   pass reads a set's `booster` map only for the *set* of cards a pack can yield, discarding

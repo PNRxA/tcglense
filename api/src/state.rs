@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::currency::CurrencyRates;
 use crate::email::Emailer;
 use crate::error::AppError;
+use crate::handlers::catalog::product_index_cache::ProductCardIndexCache;
 use crate::ratelimit::{AuthRateLimiter, UserRateLimiter};
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
@@ -66,6 +67,12 @@ pub struct AppState {
     /// (value-history / movers) — Redis-backed when configured, else in-process;
     /// see [`crate::analytics_cache::AnalyticsCache`].
     pub analytics_cache: Arc<AnalyticsCache>,
+    /// Process-local memo for a sealed product's folded card index, with single-flight
+    /// coalescing — `/products/{id}/cards` and `/products/{id}/cards/sections` build the
+    /// same index from the same rows and the SPA calls them together, so without this a
+    /// cold product page computes it twice, concurrently. See
+    /// [`crate::handlers::catalog::product_index_cache`].
+    pub product_card_index: Arc<ProductCardIndexCache>,
     /// The visual scanner's in-memory perceptual-hash match index. Empty until loaded
     /// from the `card_fingerprint` table at startup (and rebuilt after each build /
     /// sync pass) by [`crate::tasks`]. Read behind the lock — each scan clones the
@@ -155,6 +162,7 @@ impl AppState {
             rate_limiters,
             user_rate_limiters,
             analytics_cache,
+            product_card_index: Arc::new(ProductCardIndexCache::default()),
             fingerprint_index: Arc::new(RwLock::new(Arc::new(FingerprintIndex::default()))),
             // Gate open by default (harnesses build over a migrated DB); `main.rs`
             // closes it while the boot migrations run.

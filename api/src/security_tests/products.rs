@@ -4,7 +4,7 @@
 //! product fixtures straight into the harness DB.
 
 use super::harness::*;
-use crate::entities::{card, product_price_history, sealed_component, sealed_content};
+use crate::entities::{card, product, product_price_history, sealed_component, sealed_content};
 use crate::test_support::{insert_card, insert_product, set_product_msrp};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, NotSet};
@@ -594,12 +594,39 @@ async fn insert_sealed_via(
         membership: Set(membership.to_string()),
         foil: Set(foil),
         component: Set(component.map(str::to_string)),
+        // The derivation's to set, not the seeder's: a test that wants the exclusive split
+        // calls `refresh_sealed_exclusives` after seeding, so it exercises the real rule.
+        exclusive: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
     .insert(db)
     .await
     .expect("insert sealed content");
+}
+
+/// How many of a product's membership rows currently carry the stored `exclusive` flag.
+async fn stored_exclusive_count(db: &sea_orm::DatabaseConnection, product_id: i32) -> u64 {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+    crate::entities::prelude::SealedContent::find()
+        .filter(sealed_content::Column::ProductId.eq(product_id))
+        .filter(sealed_content::Column::Exclusive.eq(true))
+        .count(db)
+        .await
+        .expect("count exclusive rows")
+}
+
+/// Run the booster-exclusivity derivation over the seeded rows, as a sync tick would.
+///
+/// `sealed_contents.exclusive` is refresher-owned: the wholesale rebuild writes `false` and
+/// `catalog::sealed_exclusives` stamps it once per tick, so a seeded fixture has to do the
+/// same before the read can render the split. Every test asserting *either* side of it —
+/// that a card is flagged, or that nothing is — must call this, or it passes vacuously
+/// against a table of unset flags.
+async fn derive_exclusives(db: &sea_orm::DatabaseConnection) {
+    crate::catalog::sealed_exclusives::refresh_sealed_exclusives(db, "mtg")
+        .await
+        .expect("derive booster exclusivity");
 }
 
 #[tokio::test]
@@ -869,6 +896,7 @@ async fn product_cards_flags_and_orders_collector_booster_exclusives() {
     for cid in [shared, play_only] {
         insert_sealed(db, play, cid, "booster", false).await;
     }
+    derive_exclusives(db).await;
 
     // The collector booster: the collector-only card is flagged exclusive and leads the
     // list; the shared card is not exclusive; the play-only card isn't in this product.
@@ -897,6 +925,95 @@ async fn product_cards_flags_and_orders_collector_booster_exclusives() {
     assert_eq!(data[0]["exclusive"], true);
     assert_eq!(data[1]["card"]["id"], "sf-shared");
     assert_eq!(data[1]["exclusive"], false);
+}
+
+/// A product reclassified **out** of the booster families must stop splitting, both
+/// immediately and once the derivation next runs.
+///
+/// The read is the guard: it re-checks `booster_family(product_type)` rather than trusting
+/// the stored column, so a flag raised while the product was still a booster can never
+/// surface an "Exclusive to …" section on a bundle (issue #646) in the window before a tick
+/// clears it. The derivation is the cleanup: it only ever *loads* current boosters, so a
+/// row it can no longer reach is cleared by exclusion instead.
+#[tokio::test]
+async fn a_product_leaving_the_booster_families_stops_splitting() {
+    let app = test_app().await;
+    let db = &app.state.db;
+
+    let shared = insert_card(db, "sf-shared").await;
+    let collector_only = insert_card(db, "sf-collector").await;
+    let collector = insert_product(
+        db,
+        "100",
+        "Collector Booster Pack",
+        "mkm",
+        "collector_pack",
+        Some("24.99"),
+    )
+    .await;
+    let play = insert_product(
+        db,
+        "200",
+        "Play Booster Pack",
+        "mkm",
+        "play_pack",
+        Some("4.99"),
+    )
+    .await;
+    for cid in [shared, collector_only] {
+        insert_sealed(db, collector, cid, "booster", false).await;
+    }
+    insert_sealed(db, play, shared, "booster", false).await;
+    derive_exclusives(db).await;
+
+    // Baseline: the split is live and the flag is stored.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
+    assert_eq!(body["data"][0]["exclusive"], true);
+    assert_eq!(stored_exclusive_count(db, collector).await, 1);
+
+    // TCGCSV reclassifies the product; the stored flag is now stale.
+    product::ActiveModel {
+        id: Set(collector),
+        product_type: Set("bundle".to_string()),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .expect("reclassify product");
+
+    // Step past the index memo's TTL: a cached fold still describes the product as it was
+    // classified when it was built, which is the bounded staleness the memo documents — not
+    // what this test is about.
+    app.state.product_card_index.clear();
+
+    // The read refuses on its own, before any tick clears the column.
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
+    for entry in body["data"].as_array().unwrap() {
+        assert_eq!(
+            entry["exclusive"], false,
+            "a non-booster never splits, whatever the column says: {entry:?}"
+        );
+    }
+    app.state.product_card_index.clear();
+    let (_, _, body) = send(&app, get("/api/games/mtg/products/100/cards/sections")).await;
+    let keys: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["key"].as_str().unwrap())
+        .collect();
+    assert!(
+        !keys.contains(&"exclusive"),
+        "no exclusive section on a reclassified product, got {keys:?}"
+    );
+
+    // And the next derivation drops the flag, so the column stops lying too.
+    derive_exclusives(db).await;
+    assert_eq!(
+        stored_exclusive_count(db, collector).await,
+        0,
+        "the pass must clear a product it can no longer reach"
+    );
 }
 
 #[tokio::test]
@@ -941,6 +1058,7 @@ async fn product_cards_no_exclusives_without_a_comparison_family() {
         insert_sealed(db, pack, cid, "booster", false).await;
         insert_sealed(db, display, cid, "booster", false).await;
     }
+    derive_exclusives(db).await;
 
     let (status, _, body) = send(&app, get("/api/games/mtg/products/100/cards")).await;
     assert_eq!(status, StatusCode::OK);
@@ -954,6 +1072,7 @@ async fn product_cards_no_exclusives_without_a_comparison_family() {
 
     // A non-booster product (a deck) never flags exclusivity either.
     insert_sealed(db, _deck, a, "contains", false).await;
+    derive_exclusives(db).await;
     let (_, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
     assert_eq!(body["data"][0]["exclusive"], false);
 }
@@ -1014,6 +1133,7 @@ async fn product_cards_never_flag_bundle_exclusives() {
         None,
     )
     .await;
+    derive_exclusives(db).await;
 
     // /cards: no card on the bundle is flagged exclusive — not even the collector-only one.
     let (status, _, body) = send(&app, get("/api/games/mtg/products/300/cards")).await;
@@ -1112,6 +1232,8 @@ async fn product_card_sections_split_boosters_not_bundles() {
         None,
     )
     .await;
+
+    derive_exclusives(db).await;
 
     // The special booster's own page: the special-only card splits out, titled after the
     // generic booster family.
@@ -1231,6 +1353,8 @@ async fn seed_sectioned_collector(db: &sea_orm::DatabaseConnection) {
     }
     let variable = insert_card(db, "sf-var").await;
     insert_sealed(db, collector, variable, "variable", false).await;
+
+    derive_exclusives(db).await;
 }
 
 #[tokio::test]

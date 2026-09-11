@@ -191,6 +191,31 @@ fn spawn_derived_price_passes(db: DatabaseConnection, analytics: Arc<AnalyticsCa
     });
 }
 
+/// Stamp `sealed_contents.exclusive` once at boot on the **no-sync path**, beside
+/// [`spawn_derived_price_passes`] — the same wiring `precon_values` and the foil-variant
+/// fold have, and for the same reason: when the periodic sync is disabled nothing else would
+/// ever run the pass. Kept separate from that bundle only because it is not a price pass.
+///
+/// On the sync-enabled path it is **deliberately not run at boot**. `m..085` ships the
+/// column `false`, and the first tick is deferred by `ingest_state::initial_delay` — up to a
+/// full `SYNC_INTERVAL_HOURS` — so a deploy carrying the migration serves every booster
+/// without its exclusive split until that tick lands. That is the same one-interval gap
+/// `m..076` accepted for the foil fold (duplicate star tiles until the first tick), taken
+/// over a full read of every booster's membership rows on every restart, forever, to cover a
+/// window that occurs once. If that read is ever gated to a no-op when its inputs are
+/// unchanged, running it on both boot paths becomes free and this decision should be
+/// revisited.
+///
+/// A no-op on a fresh/dummy catalog (the dummy seed runs its own pass over the rows it just
+/// wrote).
+fn spawn_sealed_exclusives(db: DatabaseConnection) {
+    tokio::spawn(async move {
+        for game in crate::catalog::GAMES {
+            refresh_sealed_exclusives(&db, game.id).await;
+        }
+    });
+}
+
 /// Recompute `precon_decks.price_cents` from the live card prices, logging what moved.
 /// Shared by the boot one-shot above and the sync tick
 /// ([`crate::catalog::refresh_all`]), so the fold can't be wired into one and not the other.
@@ -199,6 +224,20 @@ pub(crate) async fn refresh_precon_values(db: &DatabaseConnection) {
         Ok(0) => {}
         Ok(changed) => tracing::info!(changed, "refreshed preconstructed-deck values"),
         Err(err) => tracing::error!(error = %err, "precon value refresh failed"),
+    }
+}
+
+/// Recompute `sealed_contents.exclusive` for one game, logging what moved. Shared by the
+/// boot one-shot above and the sync tick ([`crate::catalog::refresh_all`]), so the
+/// derivation can't be wired into one and not the other — the sync tick calls it inside its
+/// own per-game arm, which is why the game is a parameter rather than a loop in here.
+pub(crate) async fn refresh_sealed_exclusives(db: &DatabaseConnection, game: &str) {
+    match crate::catalog::sealed_exclusives::refresh_sealed_exclusives(db, game).await {
+        Ok(0) => {}
+        Ok(changed) => tracing::info!(game, changed, "refreshed booster exclusivity flags"),
+        Err(err) => {
+            tracing::error!(game, error = %err, "booster exclusivity refresh failed")
+        }
     }
 }
 
@@ -739,6 +778,7 @@ pub async fn start(state: &AppState, http: &Client) {
         // the existing catalog — otherwise a foil-★ holding folded by the m..023 migration
         // values at $0 (issue #209) and `m..077`'s precon values never populate.
         spawn_derived_price_passes(state.db.clone(), state.analytics_cache.clone());
+        spawn_sealed_exclusives(state.db.clone());
         // Cards already exist from a prior run (no sync this boot); if the operator opted
         // into the fingerprint build, run it against the existing catalogue.
         if state.config.fingerprint_build_enabled {

@@ -39,6 +39,8 @@ mod export;
 mod image;
 mod keywords;
 mod prices;
+/// Visible to the crate root so [`crate::state::AppState`] can hold the memo handle.
+pub(crate) mod product_index_cache;
 mod products;
 mod releases;
 mod rulings;
