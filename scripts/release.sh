@@ -70,15 +70,29 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# Without a version we have to prompt, which needs a terminal to read from.
-if [ -z "$VERSION" ] && ! [ -t 0 ]; then
-  red "no VERSION given and stdin is not a terminal (pass the version as an argument)."
+# Every prompt below (the version, "not on main?", "Proceed?") needs a terminal: with
+# a non-TTY stdin bash prints no prompt at all and `read` fails at EOF, so an unguarded
+# run would just exit 1 with no output. A non-interactive run therefore needs BOTH a
+# VERSION and --yes — refuse up front, with a message, rather than mid-way in silence.
+if $ASSUME_YES && [ -z "$VERSION" ]; then
+  red "--yes needs a VERSION argument (there is nobody to prompt)."
+  usage
+fi
+if ! $ASSUME_YES && ! [ -t 0 ]; then
+  red "stdin is not a terminal; pass --yes and a VERSION for a non-interactive run."
   usage
 fi
 
+# The merge-wait knobs (see the header). Validated here, before anything is mutated —
+# a bad value must not surface only after the branch is pushed.
+merge_attempts="${RELEASE_MERGE_ATTEMPTS:-6}"
+merge_interval="${RELEASE_MERGE_INTERVAL:-3}"
+case "$merge_attempts" in ''|*[!0-9]*|0) die "RELEASE_MERGE_ATTEMPTS must be a positive integer (got '$merge_attempts')." ;; esac
+case "$merge_interval" in ''|*[!0-9]*) die "RELEASE_MERGE_INTERVAL must be a non-negative integer of seconds (got '$merge_interval')." ;; esac
+
 # --- Preconditions ---------------------------------------------------------------
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository."
-gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run: gh auth login"
+gh auth status >/dev/null 2>&1 || die "gh is not authenticated (run: gh auth login, or set GH_TOKEN — in Actions that is the GH_PAT secret: expired or revoked?)."
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 BASE_BRANCH="main"  # the protected branch we cut from and merge the release PR into
@@ -129,8 +143,10 @@ VERSION="${VERSION#v}"  # tolerate a pasted leading 'v'
 # dot-separated non-empty identifiers (e.g. 1.2.0-rc.1). Tighter than the loose form so
 # an input `npm version` would later reject (1.02.0, 1.0.0-.) is caught HERE, before any
 # file is bumped.
-if ! printf '%s' "$VERSION" \
-  | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+# Bash's =~ anchors against the whole string (grep's ^…$ would anchor per line and let
+# a multi-line value from the dispatch API through).
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+if ! [[ "$VERSION" =~ $semver_re ]]; then
   die "'$VERSION' is not valid semver (expected X.Y.Z or X.Y.Z-prerelease, no leading zeros)."
 fi
 
@@ -180,6 +196,7 @@ committed=false
 pushed=false
 merged=false
 tagged=false
+merge_timed_out=false
 release_ok=false
 recover() {
   $release_ok && return 0
@@ -196,6 +213,14 @@ recover() {
       red "    git tag -a $TAG -m 'Release $TAG' && git push origin $TAG"
       red "    gh release create $TAG --title $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
     fi
+  elif $merge_timed_out; then
+    red "  The release PR from '$RELEASE_BRANCH' is open on GitHub but could not be merged in"
+    red "  time (required checks still running, or approvals?). The release is still on track:"
+    red "  merge the PR in the UI once it is green, then finish it:"
+    red "    git switch $BASE_BRANCH && git pull --ff-only origin $BASE_BRANCH"
+    red "    git tag -a $TAG -m 'Release $TAG' && git push origin $TAG"
+    red "    gh release create $TAG --title $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+    red "  Only if you are abandoning this release instead: close the PR and delete '$RELEASE_BRANCH'."
   elif $pushed; then
     red "  Branch '$RELEASE_BRANCH' is on origin but not merged (no tag was pushed). Remove it:"
     red "    git switch $BASE_BRANCH"
@@ -268,6 +293,14 @@ fi
 # --- Commit ----------------------------------------------------------------------
 echo "-> Committing..."
 git add api/Cargo.toml api/Cargo.lock web/package.json web/package-lock.json
+if git diff --cached --quiet; then
+  # Every file was already at $VERSION: an earlier run's bump has landed on main (its
+  # PR was merged by hand, say) and only the tag + Release remain. The generic recovery
+  # text would be wrong for this state, so clean up and say what is actually left.
+  trap - EXIT
+  git switch --quiet "$BASE_BRANCH" && git branch --quiet -D "$RELEASE_BRANCH"
+  die "api/Cargo.toml and web/package.json are already at $VERSION, so the bump is already on $BASE_BRANCH. Finish the release instead: git tag -a $TAG -m 'Release $TAG' <merge-commit> && git push origin $TAG && gh release create $TAG --title $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+fi
 git commit --quiet -m "chore(release): $TAG"
 committed=true
 
@@ -290,10 +323,10 @@ git switch --quiet "$BASE_BRANCH"
 
 echo "-> Merging the pull request..."
 # Mergeability can take a moment to compute right after the PR opens; retry briefly.
-# The window is configurable because a PR opened with a PAT (the Actions path) gets
-# a CI run, and if main requires those checks the merge has to wait for them.
-merge_attempts="${RELEASE_MERGE_ATTEMPTS:-6}"
-merge_interval="${RELEASE_MERGE_INTERVAL:-3}"
+# The window is configurable because `gh pr merge` fails outright while required checks
+# are pending (it never waits): the release PR gets a CI run on either path, but on a
+# laptop a human can merge it in the UI, while the Actions path has no hands and needs
+# a wait long enough for the checks — if main requires any — to finish.
 attempt=0
 while [ "$attempt" -lt "$merge_attempts" ]; do
   attempt=$((attempt + 1))
@@ -304,21 +337,29 @@ while [ "$attempt" -lt "$merge_attempts" ]; do
   echo "   ...not mergeable yet (attempt $attempt/$merge_attempts); retrying in ${merge_interval}s"
   sleep "$merge_interval"
 done
-$merged || die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, pull $BASE_BRANCH, then run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG && gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
+$merged || { merge_timed_out=true; die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, pull $BASE_BRANCH, then run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG && gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"; }
 
 echo "-> Fast-forwarding local $BASE_BRANCH..."
 git pull --quiet --ff-only origin "$BASE_BRANCH"
 
 # --- Tag the merge commit (NOT the pre-merge bump commit) -------------------------
-# Tag HEAD, which is now the merge commit of the release PR on $BASE_BRANCH. Tagging
-# the bump commit instead (a *parent* of the merge commit) throws GitHub's PR-based
-# `--generate-notes` off by one: this release's own "chore(release)" PR merges just
-# *after* such a tag, so it drops out of the notes, while the *previous* release's
-# bump PR — which merged after the previous tag — gets swept in. Tagging the merge
-# commit puts this release's bump PR at the end of the range (included) and the
-# previous one before its start (excluded).
+# Tag the release PR's merge commit on $BASE_BRANCH — by its SHA, asked of GitHub, not
+# "HEAD after the pull": another PR can land on main between the merge and the pull
+# (the Actions path may spend minutes in the merge wait above, and its concurrency
+# group only serialises other release runs), and tagging HEAD would then release a
+# tree the bump PR never described. Tagging the bump commit instead (a *parent* of
+# the merge commit) throws GitHub's PR-based `--generate-notes` off by one: this
+# release's own "chore(release)" PR merges just *after* such a tag, so it drops out of
+# the notes, while the *previous* release's bump PR — which merged after the previous
+# tag — gets swept in. Tagging the merge commit puts this release's bump PR at the end
+# of the range (included) and the previous one before its start (excluded).
 echo "-> Tagging $TAG on the merge commit..."
-git tag -a "$TAG" -m "Release $TAG"
+merge_sha="$(gh pr view "$RELEASE_BRANCH" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)"
+if [ -z "$merge_sha" ]; then
+  red "  (could not read the PR's merge commit from GitHub; tagging local $BASE_BRANCH HEAD instead)"
+  merge_sha="$(git rev-parse HEAD)"
+fi
+git tag -a "$TAG" -m "Release $TAG" "$merge_sha"
 git push --quiet origin "$TAG"
 tagged=true
 

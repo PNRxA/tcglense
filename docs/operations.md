@@ -242,11 +242,19 @@ split: edge Caddy [`deploy/edge.Caddyfile`] + web + api + Postgres + Redis).
 `web/package.json` (+ lock via `npm version`), commits it on a `chore/release-vX.Y.Z`
 branch, opens + merges the PR into the protected `main`, tags `vX.Y.Z` on the merge
 commit, and `gh release create`s the GitHub Release that triggers the workflow. Without a
-`VERSION` it prompts; `--yes` skips the confirmation and turns the "not on main" question
-into a hard error (for non-interactive use). Prerequisites: a clean working tree, and
-`git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The workflow file must
-already be on the default branch for the release to fire it, so land it on `main` before
-the first release.
+`VERSION` it prompts (so it needs a terminal); `--yes VERSION` is the non-interactive form:
+no confirmation, the "not on main" question becomes a hard error, and stdin is never read
+(`--yes` without a version, or a run without `--yes` and without a terminal, is refused up
+front with a usage message rather than dying silently at a prompt). The tag goes on the
+release PR's merge commit **by its SHA** (read back from GitHub), never on "whatever
+`main` is after the merge" — another PR may land in between. `gh pr merge` fails outright
+while required checks are pending, so the merge step retries for a window set by
+`RELEASE_MERGE_ATTEMPTS` × `RELEASE_MERGE_INTERVAL` seconds (default 6 × 3s — enough to
+let mergeability compute; raise it if `main` requires checks, or merge the PR in the UI
+and follow the finish-by-hand instructions the script prints). Prerequisites: a clean
+working tree, and `git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The workflow
+file must already be on the default branch for the release to fire it, so land it on
+`main` before the first release.
 
 **Cutting a release from GitHub Actions** (`.github/workflows/release-cut.yml`, "Cut
 release"): Actions → Cut release → Run workflow on `main` with the version. It runs the
@@ -257,15 +265,27 @@ delete the merged branch) and **Pull requests: read and write** (open + merge th
 Metadata: read is added automatically. Nothing else — no Workflows (the bump touches no
 workflow file), no Packages (the image push runs under `release.yml`'s own token), no
 Actions. It can't use the built-in `GITHUB_TOKEN`: events caused by that token never
-trigger other workflows, so the release PR would get no CI run and, decisively, the
-published Release would not fire "Release images". The PAT acts as its owner, so
-`main`'s branch protection applies exactly as it does locally; a PAT-opened PR *does* get
-a CI run, and the workflow gives the merge step a ~15-minute window
-(`RELEASE_MERGE_ATTEMPTS`/`RELEASE_MERGE_INTERVAL`, the script's merge-wait knobs) in
-case `main` requires those checks. Fine-grained tokens expire: when a run fails with a
-401 on the push or `gh` call, rotate the secret. If a run dies midway, the script's
-recovery message in the job log says which of branch / merge / tag / Release is done and
-how to finish or unwind by hand.
+trigger other workflows, so the published Release would not fire "Release images". The
+PAT acts as its owner, so `main`'s branch protection applies exactly as it does locally.
+The release PR gets a CI run on either path (a laptop's `gh` is a user token too); the
+difference is that on a runner nobody can merge it in the UI once the checks pass, so the
+workflow gives the merge step a ~30-minute window (120 × 15s via the script's
+`RELEASE_MERGE_ATTEMPTS`/`RELEASE_MERGE_INTERVAL` knobs) in case `main` requires them.
+The job runs its toolchain-setup actions *before* the checkout, so no third-party action
+executes on a filesystem holding the PAT, and it is gated `if: github.ref ==
+'refs/heads/main'`. That gate and the script's own off-main refusal are ergonomics, not a
+security boundary — a dispatch runs the workflow file and the script *from the selected
+ref*, and anyone with write access can dispatch — so if the repo ever has a second
+writer, create a `release` environment restricted to `main`, move `GH_PAT` (and, for the
+same reason, `release.yml`'s Docker Hub + DigitalOcean secrets) into it, and add
+`environment: release` to the jobs. Fine-grained tokens expire: an expired or revoked
+`GH_PAT` fails the **Checkout** step ("Invalid username or token"), or the Cut step with
+"gh is not authenticated" — either means rotate the secret. If a run dies midway, the
+script's recovery message in the job log says which of branch / merge / tag / Release is
+done and how to finish or unwind by hand; a merge-wait timeout in particular leaves the
+bump PR open and still good — merge it in the UI and finish with the tag + Release
+commands the log prints (re-dispatching the same version after a hand-merge is refused
+with the same instructions, since the bump is already on `main`).
 
 ## scripts/ inventory
 

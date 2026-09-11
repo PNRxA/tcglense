@@ -9,17 +9,21 @@ name: Cut release
 # build + push the Docker images.
 #
 # Why a PAT and not GITHUB_TOKEN: anything done with the workflow's own token never
-# triggers other workflows, so the release PR would get no CI run and — the part
-# that matters — the published Release would NOT fire "Release images". `GH_PAT` is
-# a fine-grained personal access token scoped to this repository with
-# Contents: read+write, Pull requests: read+write (Metadata: read is implied). It
-# is used for the checkout (so every `git push` goes through it) and as GH_TOKEN
-# for `gh`. It acts as its owner, so branch protection on main applies exactly as
-# when they run the script locally. Rotate it before it expires (docs/operations.md).
+# triggers other workflows, so the published Release would NOT fire "Release
+# images". `GH_PAT` is a fine-grained personal access token scoped to this
+# repository with Contents: read+write, Pull requests: read+write (Metadata: read is
+# implied). It is used for the checkout (so every `git push` goes through it) and as
+# GH_TOKEN for `gh`. It acts as its owner, so branch protection on main applies
+# exactly as when they run the script locally. Rotate it before it expires
+# (docs/operations.md).
 #
 # Run it from the Actions tab ("Run workflow") on `main` with the version to cut.
-# The script refuses any other branch in --yes mode, so picking another branch in
-# the dispatch dropdown fails fast instead of releasing from it.
+# The job's `if:` and the script's own --yes-mode check both refuse any other
+# branch, so a wrong pick in the dispatch dropdown fails fast. Those are ergonomics,
+# not a security boundary: a dispatch runs this file and the script *from the
+# selected ref*, and anyone with write access can dispatch, so on a repo with more
+# than one writer move GH_PAT into a `release` environment restricted to `main` and
+# add `environment: release` to the job (docs/operations.md).
 
 on:
   workflow_dispatch:
@@ -42,6 +46,8 @@ permissions:
 jobs:
   cut:
     name: Release v${{ inputs.version }}
+    # Releases are cut from main only; refuse before the PAT is even fetched.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Check the release token is configured
@@ -53,6 +59,19 @@ jobs:
             exit 1
           fi
 
+      # Toolchain setup runs BEFORE the checkout on purpose: the checkout below writes
+      # the PAT into .git/config, and third-party actions should not run on a
+      # filesystem that holds it. Nothing here needs the repo — the script only wants
+      # `cargo` (for `cargo update -p tcglense-api`) and `npm` (`npm version`, which
+      # edits package.json + package-lock.json and installs nothing, so no npm cache).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -63,16 +82,6 @@ jobs:
           # fast-forwards after the merge — no shallow-clone surprises.
           fetch-depth: 0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
       - name: Configure git identity
         run: |
           git config user.name "${GITHUB_ACTOR}"
@@ -82,8 +91,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           VERSION: ${{ inputs.version }}
-          # A PAT-opened PR gets a CI run; if main requires those checks, give the
-          # merge step up to ~15 minutes to see them go green (60 x 15s).
-          RELEASE_MERGE_ATTEMPTS: "60"
+          # `gh pr merge` fails outright while required checks are pending, and there
+          # is no human here to merge in the UI later — so if main requires CI (a
+          # full cargo test + the Playwright e2e run), give the merge step up to
+          # ~30 minutes (120 x 15s). On a timeout the job log says how to finish the
+          # release by hand; the bump PR stays open and is still good.
+          RELEASE_MERGE_ATTEMPTS: "120"
           RELEASE_MERGE_INTERVAL: "15"
         run: ./scripts/release.sh --yes "$VERSION"
