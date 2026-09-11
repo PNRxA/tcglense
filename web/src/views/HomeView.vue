@@ -233,20 +233,31 @@ const rowLinkClass =
   <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
     <!-- Universal search: its own section, front and centre above the hero — the fastest way
          off the homepage to the thing you came for. One box across cards, sealed products,
-         precons and keywords, plus your own decks once signed in. The dropdown overlays the
-         hero below it (z-40 inside the box), so nothing here needs to reserve space for it. -->
-    <section aria-labelledby="home-search-heading" class="mx-auto max-w-2xl text-center">
+         precons and keywords, plus your own decks once signed in. It sits in an accent-tinted
+         panel (the open-source strip's idiom, with a top-down wash and an icon well) so it
+         reads as the page's lead action rather than a heading floating over the hero. The
+         dropdown overlays the hero below it (z-40 inside the box), so the panel must never
+         clip overflow and nothing here needs to reserve space for it. -->
+    <section
+      aria-labelledby="home-search-heading"
+      class="border-primary/30 from-primary/10 via-primary/5 to-primary/[0.02] shadow-card mx-auto max-w-3xl rounded-2xl border bg-gradient-to-b px-5 py-8 text-center sm:px-10 sm:py-10"
+    >
+      <div
+        class="bg-primary/10 text-primary ring-primary/20 mx-auto flex size-12 items-center justify-center rounded-xl ring-1 sm:size-14"
+      >
+        <Search class="size-6 sm:size-7" aria-hidden="true" />
+      </div>
       <h2
         id="home-search-heading"
-        class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl"
+        class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl"
       >
         Search the whole catalog
       </h2>
-      <p class="text-muted-foreground mt-3 text-pretty">
+      <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty sm:text-lg">
         Cards, sealed products, preconstructed decks, and rules keywords in one box — plus your own
         decks once you're signed in.
       </p>
-      <UniversalSearchBox :games="games" class="mt-6 text-left" />
+      <UniversalSearchBox :games="games" class="mt-7 text-left" />
     </section>
 
     <!-- Hero: value prop + auth-branched CTAs, beside a decorative "show the product" vignette. -->

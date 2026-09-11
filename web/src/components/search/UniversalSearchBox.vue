@@ -124,7 +124,7 @@ const placeholder = computed(
           ref="inputRef"
           v-model="term"
           type="search"
-          class="h-12 rounded-xl pr-10 pl-11 text-base shadow-sm md:text-base"
+          class="bg-background dark:bg-background h-12 rounded-xl pr-10 pl-11 text-base shadow-sm md:text-base"
           :placeholder="placeholder"
           aria-label="Search cards, sealed products, preconstructed decks, keywords, and your decks"
           role="combobox"
@@ -146,7 +146,10 @@ const placeholder = computed(
       </div>
       <!-- Only a multi-game deployment gets a picker; today's single game needs none. -->
       <Select v-if="games.length > 1" v-model="selectedGame">
-        <SelectTrigger class="h-12 shrink-0 rounded-xl" aria-label="Game to search">
+        <SelectTrigger
+          class="bg-background dark:bg-background h-12 shrink-0 rounded-xl"
+          aria-label="Game to search"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
