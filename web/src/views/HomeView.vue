@@ -231,8 +231,8 @@ const rowLinkClass =
 <template>
   <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
     <!-- Universal search: its own section, front and centre above the hero — the fastest way
-         off the homepage to the thing you came for. One box across cards, sealed products,
-         precons and keywords, plus your own decks once signed in. It is set at hero scale
+         off the homepage to the thing you came for. One box across cards, sets, sealed
+         products, precons and keywords, plus your own decks once signed in. It is set at hero scale
          (the heading a size under the h1, a taller input with an accent-tinted border and a
          lifted shadow, and a chip row naming what the box covers) so it reads as the page's
          lead action rather than a heading floating over the hero. The dropdown overlays the
@@ -246,7 +246,7 @@ const rowLinkClass =
       </h2>
       <p class="text-muted-foreground mx-auto mt-4 max-w-xl text-pretty sm:text-lg">
         Cards, sets, sealed products, preconstructed decks, and rules keywords in one box — plus
-        your own decks once you're signed in. Name a printing by its set or number, too: “sol ring
+        your own decks once you're signed in. Name a printing by its set and number, too: “sol ring
         cmr”, “blb 12”.
       </p>
       <UniversalSearchBox

@@ -11,8 +11,7 @@ use axum::{
 };
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Select,
-    sea_query::{Expr, Func, NullOrdering},
+    QuerySelect, Select, sea_query::NullOrdering,
 };
 use serde::Serialize;
 
@@ -57,6 +56,21 @@ pub struct SetResponse {
     /// `has_drops` this is data-derived, so the `From` impl leaves it `false` — the
     /// handler fills it from a query.
     pub has_subtypes: bool,
+}
+
+/// Dress a `card_sets` row as a **tile**: the row's own fields plus the two derived facets
+/// every set-publishing read must agree on — the by-treatment gate and the folded
+/// `card_count` (see `FoldedSetCounts`). The one seam behind the set list, the universal
+/// search's sets leg and the release calendar's nested set, so a set can't publish two counts.
+pub(crate) fn dress_set(
+    model: card_set::Model,
+    with_subtypes: &HashSet<String>,
+    folded: &crate::scryfall::FoldedSetCounts,
+) -> SetResponse {
+    let mut set = SetResponse::from(model);
+    set.has_subtypes = with_subtypes.contains(&set.code);
+    set.card_count = folded.adjust(&set.code, set.card_count);
+    set
 }
 
 impl From<card_set::Model> for SetResponse {
@@ -160,12 +174,7 @@ pub async fn list_sets(
     let folded = crate::scryfall::folded_counts_by_set(&state.db, &game).await?;
     let data: Vec<SetResponse> = sets
         .into_iter()
-        .map(|m| {
-            let mut set = SetResponse::from(m);
-            set.has_subtypes = with_subtypes.contains(&set.code);
-            set.card_count = folded.adjust(&set.code, set.card_count);
-            set
-        })
+        .map(|m| dress_set(m, &with_subtypes, &folded))
         .collect();
     Ok(Json(DataBody { data }))
 }
@@ -176,25 +185,23 @@ pub async fn list_sets(
 /// code is what an enfranchised visitor types, and a substring of one names nothing) —
 /// names that start with the text first, then newest first like the set list, plus whether
 /// more matched (one row of over-fetch, never a `COUNT(*)`). The game is the caller's to
-/// validate.
+/// validate; `term` arrives trimmed (`trim_query`).
 ///
-/// Dressed exactly as a [`list_sets`] tile is — the same `has_subtypes` gate and the same
-/// folded `card_count` seam — but through the bounded, `set_code IN (…)` forms of both
-/// (`sets_with_subtypes_among`, `folded_counts_among_sets`): the list's whole-game scans run
-/// about hourly under the CDN, and a per-keystroke read must not pay them for a handful of
-/// rows. Every set the list shows is a candidate, sub-sets included — "bloomburrow" names the
-/// tokens and the Commander decks too, and each is its own page.
+/// Dressed exactly as a [`list_sets`] tile is — [`dress_set`], the same `has_subtypes` gate
+/// and the same folded `card_count` seam — but through the bounded, `set_code IN (…)` forms
+/// of both (`sets_with_subtypes_in`, `folded_counts_in_sets`): the list's whole-game scans
+/// run about hourly under the CDN, and a per-keystroke read must not pay them for a
+/// handful of rows. Every set the list shows is a candidate, sub-sets included —
+/// "bloomburrow" names the tokens and the Commander decks too, and each is its own page.
 pub(crate) async fn search_sets(
     state: &AppState,
     game: &str,
     term: &str,
     limit: usize,
 ) -> Result<SearchGroup<SetResponse>, AppError> {
-    let code_is_term = Expr::expr(Func::lower(Expr::col((
-        card_set::Entity,
-        card_set::Column::Code,
-    ))))
-    .eq(term.trim().to_ascii_lowercase());
+    // Codes are stored lower-case (`lookup.rs` lower-cases the input the same way), so the
+    // input folds and the column stays bare for its index.
+    let code_is_term = card_set::Column::Code.eq(term.to_ascii_lowercase());
     let rows = CardSet::find()
         .filter(card_set::Column::Game.eq(game))
         .filter(
@@ -219,19 +226,13 @@ pub(crate) async fn search_sets(
         .limit(limit as u64 + 1)
         .all(&state.db)
         .await?;
-    let codes: Vec<String> = rows.iter().map(|set| set.code.clone()).collect();
-    let code_refs: Vec<&str> = codes.iter().map(String::as_str).collect();
+    let codes: Vec<&str> = rows.iter().map(|set| set.code.as_str()).collect();
     let with_subtypes =
-        crate::scryfall::subtypes::sets_with_subtypes_among(&state.db, game, &codes).await?;
-    let folded = crate::scryfall::folded_counts_among_sets(&state.db, game, &code_refs).await?;
+        crate::scryfall::subtypes::sets_with_subtypes_in(&state.db, game, &codes).await?;
+    let folded = crate::scryfall::folded_counts_in_sets(&state.db, game, &codes).await?;
     let data: Vec<SetResponse> = rows
         .into_iter()
-        .map(|m| {
-            let mut set = SetResponse::from(m);
-            set.has_subtypes = with_subtypes.contains(&set.code);
-            set.card_count = folded.adjust(&set.code, set.card_count);
-            set
-        })
+        .map(|m| dress_set(m, &with_subtypes, &folded))
         .collect();
     Ok(SearchGroup::from_overfetch(data, limit))
 }

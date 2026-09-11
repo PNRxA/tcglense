@@ -263,7 +263,9 @@ const placeholder = computed(
         </template>
         <template v-else-if="status === 'error'">Search is unavailable right now.</template>
         <template v-else
-          >No cards, sets, sealed products, decks, or keywords match “{{ searchedTerm }}”.</template
+          >No cards, sets, sealed products, precons, decks, or keywords match “{{
+            searchedTerm
+          }}”.</template
         >
       </div>
 

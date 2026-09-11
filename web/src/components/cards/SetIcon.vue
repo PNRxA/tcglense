@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Layers } from '@lucide/vue'
+import { LayoutGrid } from '@lucide/vue'
 import { setIconUrl } from '@/lib/api'
 import { useImageLoad } from '@/composables/useImageLoad'
 
-// A set's icon through the caching proxy, in SetTile's idiom (a fade-in on load, the
-// generic Layers glyph when the set has no icon or the fetch fails), sized to sit where a
-// card or product thumbnail would — the universal search's set rows. Decorative: the row
-// beside it names the set, so the image carries no alt text.
+// A set's icon through the caching proxy, in SetTile's idiom (a fade-in on load, a generic
+// glyph when the set has no icon or the fetch fails), sized to sit where a card or product
+// thumbnail would — the universal search's set rows. The fallback is the Sets group's own
+// heading glyph (LayoutGrid, the set landing's), not SetTile's Layers, which is the Cards
+// group's glyph in that dropdown. Decorative: the row beside it names the set, so the
+// image carries no alt text.
 const props = defineProps<{
   game: string
   code: string
@@ -41,6 +43,6 @@ const showIcon = computed(() => props.hasIcon && !iconFailed.value)
       @load="onLoad"
       @error="onError"
     />
-    <Layers v-else class="text-muted-foreground size-4" />
+    <LayoutGrid v-else class="text-muted-foreground size-4" />
   </span>
 </template>

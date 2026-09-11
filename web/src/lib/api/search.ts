@@ -6,7 +6,7 @@ import type { SearchResults } from './generated'
 // One `q` answered across cards, sets, sealed products, preconstructed decks and the keyword
 // glossary at once — the homepage search box's read. The wire shape is generated from the
 // API's `SearchResults` DTO; each group carries the same row type its own listing does
-// (`Card`, `Product`, `PreconDeck`, `KeywordEntry`), so the tiles already built for those
+// (`Card`, `CardSet`, `Product`, `PreconDeck`, `KeywordEntry`), so the tiles already built for those
 // render a hit unchanged. The signed-in user's own decks are NOT part of this read — it is
 // the same for every visitor, which is what keeps it CDN-cacheable — the search composable
 // adds them from the deck list it already holds.

@@ -265,6 +265,10 @@ describe('setSublabel', () => {
     expect(setSublabel(set({ released_at: null, card_count: 0 }))).toBe('CMR')
     expect(setSublabel(set({ released_at: 'soon' }))).toBe('CMR · soon · 361 cards')
   })
+
+  it('reads the date as a local calendar day, so the 1st is not the month before', () => {
+    expect(setSublabel(set({ released_at: '2024-08-01' }))).toBe('CMR · Aug 2024 · 361 cards')
+  })
 })
 
 describe('buildSearchGroups', () => {

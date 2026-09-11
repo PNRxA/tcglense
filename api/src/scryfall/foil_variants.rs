@@ -488,7 +488,7 @@ pub(crate) async fn folded_counts_in_set(
 /// per request (the universal search's sets leg) and must neither pay the whole-game scan
 /// nor a query per set. Same shape again, so it applies through the same
 /// [`FoldedSetCounts::adjust`]; no codes is an empty map, with no query.
-pub(crate) async fn folded_counts_among_sets(
+pub(crate) async fn folded_counts_in_sets(
     db: &DatabaseConnection,
     game: &str,
     set_codes: &[&str],

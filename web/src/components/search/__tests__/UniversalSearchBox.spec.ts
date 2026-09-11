@@ -366,7 +366,7 @@ describe('UniversalSearchBox', () => {
     await type(wrapper, 'zzzz')
     const status = wrapper.get('[role="status"]')
     expect(status.text()).toContain(
-      'No cards, sets, sealed products, decks, or keywords match “zzzz”',
+      'No cards, sets, sealed products, precons, decks, or keywords match “zzzz”',
     )
     // The closing row is still there, so the full grammar is one Enter away.
     expect(wrapper.get('[role="listbox"]').text()).toContain('Search all cards for “zzzz”')

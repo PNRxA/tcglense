@@ -295,52 +295,57 @@ pub async fn sets_with_subtypes(
     db: &sea_orm::DatabaseConnection,
     game: &str,
 ) -> Result<HashSet<String>, DbErr> {
-    let mut codes: HashSet<String> = Card::find()
-        .select_only()
-        .column(card::Column::SetCode)
-        .distinct()
-        .filter(card::Column::Game.eq(game))
-        .filter(has_subtype_condition())
-        .into_tuple::<String>()
-        .all(db)
-        .await?
-        .into_iter()
-        .collect();
-    codes.extend(override_set_codes(game));
-    Ok(codes)
+    sets_with_subtypes_where(db, game, None).await
 }
 
-/// Which of `codes` have at least one special-treatment card — the by-treatment gate for a
-/// read that dresses a *few* named sets (the universal search's sets leg) and must not pay
-/// [`sets_with_subtypes`]' whole-game scan per keystroke: one `set_code IN (…)` query the
-/// `(game, set_code)` index answers, unioned with the curated overrides among `codes`.
-pub async fn sets_with_subtypes_among(
+/// Which of `codes` have at least one special-treatment card — the same gate for a read
+/// that dresses a *few* named sets (the universal search's sets leg) and must not pay the
+/// whole-game scan per keystroke: the `(game, set_code)` index answers a `set_code IN (…)`.
+/// No codes is an empty set, with no query.
+pub async fn sets_with_subtypes_in(
     db: &sea_orm::DatabaseConnection,
     game: &str,
-    codes: &[String],
+    codes: &[&str],
 ) -> Result<HashSet<String>, DbErr> {
     if codes.is_empty() {
         return Ok(HashSet::new());
     }
-    let mut found: HashSet<String> = Card::find()
+    sets_with_subtypes_where(db, game, Some(codes)).await
+}
+
+/// The one query behind [`sets_with_subtypes`] and [`sets_with_subtypes_in`]: distinct set
+/// codes with a treated card, optionally narrowed to `codes`, plus the curated overrides
+/// (narrowed the same way).
+async fn sets_with_subtypes_where(
+    db: &sea_orm::DatabaseConnection,
+    game: &str,
+    codes: Option<&[&str]>,
+) -> Result<HashSet<String>, DbErr> {
+    let mut query = Card::find()
         .select_only()
         .column(card::Column::SetCode)
         .distinct()
         .filter(card::Column::Game.eq(game))
-        .filter(card::Column::SetCode.is_in(codes.iter().cloned()))
-        .filter(has_subtype_condition())
+        .filter(has_subtype_condition());
+    if let Some(codes) = codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().copied()));
+    }
+    let mut found: HashSet<String> = query
         .into_tuple::<String>()
         .all(db)
         .await?
         .into_iter()
         .collect();
     let overrides = override_set_codes(game);
-    found.extend(
-        codes
-            .iter()
-            .filter(|code| overrides.contains(code.as_str()))
-            .cloned(),
-    );
+    match codes {
+        None => found.extend(overrides),
+        Some(codes) => found.extend(
+            codes
+                .iter()
+                .filter(|code| overrides.contains(**code))
+                .map(|code| (*code).to_string()),
+        ),
+    }
     Ok(found)
 }
 

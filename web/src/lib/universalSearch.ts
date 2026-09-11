@@ -9,6 +9,7 @@ import type {
   SearchResults,
 } from '@/lib/api'
 import { KIND_LABELS, glossaryPath, keywordPath } from '@/lib/keywords'
+import { parseReleaseDate } from '@/lib/releaseDate'
 import { preconsPath } from '@/lib/precons'
 import { productTypeLabel } from '@/lib/productType'
 
@@ -21,15 +22,16 @@ import { productTypeLabel } from '@/lib/productType'
 // server decides *what matches* (see `api/src/handlers/search.rs`); this only decides how a
 // match reads and where it goes. The one matching rule that lives here is the deck filter,
 // because a user's decks never leave the authed deck list: it **mirrors** the API's every-word
-// name rule so "Your decks" answers the same question as every other group — and the card
-// row reads the same mirror the other way round, to tell when a word matched the printing's
-// *set* rather than its name (issue #709) and name that set under the card.
+// name rule, the rule every group shares (the card leg widens it with set and collector
+// number words, issue #709, and the card row reads the same mirror the other way round to
+// tell when a word matched the printing rather than the name, and names the printing).
 
 /** Characters typed before the box asks the API — the quick-add autocomplete's threshold. */
 export const SEARCH_MIN_CHARS = 2
 
-/** Matches per group the box asks the API for (and shows of the user's decks). Five groups
- * of four fit a dropdown without scrolling on a laptop; the API clamps to 1–10 anyway. */
+/** Matches per group the box asks the API for (and shows of the user's decks). Four per
+ * group keeps a several-group answer inside the dropdown's own scroll on a laptop — the
+ * groups are rarely all populated at once; the API clamps to 1–10 anyway. */
 export const SEARCH_GROUP_LIMIT = 4
 
 /** What a row in the dropdown is: one of the six result kinds, a group's "see all" row, or
@@ -190,11 +192,13 @@ function cardOption(game: string, card: Card, term: string): SearchOption {
 export function setSublabel(set: CardSet): string {
   const parts = [set.code.toUpperCase()]
   if (set.released_at) {
-    const date = new Date(set.released_at)
+    // Through the release-date seam: a bare `new Date('YYYY-MM-DD')` is UTC midnight and
+    // reads a day — and on the 1st, a month — early west of UTC.
+    const date = parseReleaseDate(set.released_at)
     parts.push(
-      Number.isNaN(date.getTime())
-        ? set.released_at
-        : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short' }),
+      date
+        ? date.toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
+        : set.released_at,
     )
   }
   if (set.card_count) parts.push(`${set.card_count} cards`)

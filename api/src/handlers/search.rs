@@ -1,6 +1,6 @@
 //! The universal search (`GET /api/games/{game}/search`): one query, answered across the
-//! catalog at once — cards, sealed products, preconstructed decks and the rules-keyword
-//! glossary — as the top few matches of each kind. The homepage search box's backend, and
+//! catalog at once — cards, sets, sealed products, preconstructed decks and the
+//! rules-keyword glossary — as the top few matches of each kind. The homepage search box's backend, and
 //! the one call a CLI needs to answer "what does TCGLense know about *this*".
 //!
 //! **Composition, not a sixth search.** Each leg is the surface's own name rule, reached
@@ -16,10 +16,11 @@
 //! the text above one that merely contains it (`starts_with_rank`), the autocomplete's rule.
 //! Two legs widen the rule the same way a visitor does: the **card** leg lets a word the
 //! name lacks name the printing's set instead, or be its collector number in a set another
-//! word names (`sol ring cmr`, `lightning bolt alpha`, `cmr 129` — issue #709; the words
-//! must still identify a card — one in the name, or a set with a number — so a bare set
-//! name is the sets group's question, not the cards', and a bare number nobody's), and the
-//! **sets** leg also answers a whole set code.
+//! word names (`sol ring cmr`, `lightning bolt alpha`, `cmr 129` — issue #709; a term that
+//! *is* a set name gets the plain name rule, so it is the sets group's question, not the
+//! cards', and a bare number is nobody's — the card leg's own `card_name_search_query`
+//! ranks by `leading_words_rank` rather than the whole-text prefix rank for the same
+//! reason), and the **sets** leg also answers a whole set code.
 //! A grammar the card listing understands (`t:goblin`) is deliberately **not** applied here:
 //! a universal box is typed into by name, and a colon in a card name (`Elspeth, Sun's
 //! Champion`, `Krark's Thumb`) must never turn into a 422 for every group at once. The full
@@ -64,7 +65,8 @@ pub struct SearchResults {
     /// Distinct card names, each as one representative printing's full card payload. A word
     /// the name lacks may name the printing's set instead (a set code, or part of a set
     /// name) or be its collector number in a set another word names, in which case the
-    /// representative printing is from that set.
+    /// representative printing is from that set; a query that is itself a set name matches
+    /// cards by name alone.
     pub cards: SearchGroup<CardResponse>,
     /// Sets by name, or by exact set code — each dressed as the set list dresses it.
     pub sets: SearchGroup<SetResponse>,
@@ -104,7 +106,7 @@ impl SearchResults {
     tag = "Search",
     params(
         ("game" = String, Path, description = "Game id slug, e.g. `mtg`"),
-        ("q" = Option<String>, Query, description = "Text to match names against: every whitespace-separated word must appear (case-insensitive, any order). For cards a word the name lacks may name the printing's set (a set code, or part of a set name) or be its collector number in a set another word names, as long as the words identify a card (one in the name, or a set with a number); sets also answer their exact code. Blank/absent yields empty groups"),
+        ("q" = Option<String>, Query, description = "Text to match names against: every whitespace-separated word must appear (case-insensitive, any order). For cards a word the name lacks may name the printing's set (a set code, or part of a set name) or be its collector number in a set another word names; a query that is itself a set name matches cards by name alone. Sets also answer their exact code. Blank/absent yields empty groups"),
         ("limit" = Option<u64>, Query, description = "Max matches per group (clamped to [1, 10]); absent = 5"),
     ),
     responses(

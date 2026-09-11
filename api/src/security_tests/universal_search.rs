@@ -1,15 +1,15 @@
 //! The universal search (`GET /api/games/{game}/search`): one public, shared-cacheable read
-//! answering across cards, sealed products, precons and keywords at once. Drives the real
-//! router over the seeded dummy catalog, plus a few hand-inserted rows where the seed's
+//! answering across cards, sets, sealed products, precons and keywords at once. Drives the
+//! real router over the seeded dummy catalog, plus a few hand-inserted rows where the seed's
 //! names can't tell a rule apart (every seeded name starts with "Dummy").
 //!
 //! What these pin: the cache posture (public catalog, `ETag`, errors `no-store`); that every
 //! leg answers the **same** every-word, any-order, any-case name rule; that cards fold to one
 //! row per name; that a word the card name lacks may name the printing's set instead — and
-//! picks that set's printing — while a bare set name never answers cards (issue #709); that
-//! sets answer by name or exact code, dressed as the set list dresses them; that prefix
-//! matches lead each group; that `limit` clamps and `has_more` is honest; and that the
-//! request can neither inject nor overflow the query builder.
+//! picks that set's printing — while a term that *is* a set name never answers arbitrary
+//! cards (issue #709); that sets answer by name or exact code, dressed as the set list
+//! dresses them; that prefix matches lead each group; that `limit` clamps and `has_more` is
+//! honest; and that the request can neither inject nor overflow the query builder.
 
 use sea_orm::{ActiveModelTrait, Set};
 
@@ -311,6 +311,55 @@ async fn a_set_word_and_a_collector_number_identify_a_printing_like_a_name_does(
     // Nor does a number in a set the card isn't in.
     let (_, _, body) = send(&app, get(&format!("/api/games/{game}/search?q=lea%20129"))).await;
     assert!(body["cards"]["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_term_that_is_a_set_name_answers_the_set_and_never_its_arbitrary_cards() {
+    let game = crate::scryfall::GAME;
+    let app = test_app().await;
+
+    // "of" is too short to resolve to a set code, so without the gate it would fall back to
+    // a name leaf, satisfy the "one word in the name" idea, and let every OGW card named
+    // "… of …" through while "oath", "the" and "gatewatch" rode on the set.
+    insert_named_set(&app, "ogw", "Oath of the Gatewatch", Some("2016-01-22")).await;
+    insert_named_set(&app, "tsp", "Time Spiral", Some("2006-10-06")).await;
+    insert_named_card(&app, "sifter-ogw", "Sifter of Skulls", "ogw").await;
+    insert_named_card(&app, "nissa-ogw", "Oath of Nissa", "ogw").await;
+    insert_named_card(&app, "spiral-tsp", "Time Spiral", "tsp").await;
+    insert_named_card(&app, "rift-tsp", "Riftwing Cloudskate", "tsp").await;
+
+    let (_, _, body) = send(
+        &app,
+        get(&format!(
+            "/api/games/{game}/search?q=oath%20of%20the%20gatewatch"
+        )),
+    )
+    .await;
+    assert!(
+        body["cards"]["data"].as_array().unwrap().is_empty(),
+        "{body}"
+    );
+    assert_eq!(names(&body["sets"]), vec!["Oath of the Gatewatch"]);
+
+    // A set name that is also a card name still answers the card — by name.
+    let (_, _, body) = send(
+        &app,
+        get(&format!("/api/games/{game}/search?q=time%20spiral")),
+    )
+    .await;
+    assert_eq!(names(&body["cards"]), vec!["Time Spiral"]);
+    assert_eq!(names(&body["sets"]), vec!["Time Spiral"]);
+
+    // A prefix of the set name is the same plain rule while it is being typed…
+    let (_, _, body) = send(&app, get(&format!("/api/games/{game}/search?q=oath%20of"))).await;
+    assert_eq!(names(&body["cards"]), vec!["Oath of Nissa"]);
+    // …and past the point where it stops naming a set, the widened rule takes over.
+    let (_, _, body) = send(
+        &app,
+        get(&format!("/api/games/{game}/search?q=sifter%20gatewatch")),
+    )
+    .await;
+    assert_eq!(names(&body["cards"]), vec!["Sifter of Skulls"]);
 }
 
 #[tokio::test]
@@ -636,18 +685,20 @@ async fn search_is_injection_safe_and_a_very_long_query_is_refused() {
     assert!(body["cards"]["data"].as_array().unwrap().is_empty());
     assert!(body["sets"]["data"].as_array().unwrap().is_empty());
     // LIKE metacharacters match literally too: `%` is not a wildcard — in any leg, including
-    // the set half of the card leg (resolved in Rust, where `%` is just a character).
+    // the set half of the card leg (resolved in Rust, where `%` is just a character: a
+    // `%niverse` word that would wildcard-match "Dummy Universe" names no set and no card).
     let (status, _, body) = send(&app, get(&format!("/api/games/{game}/search?q=%25"))).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["cards"]["data"].as_array().unwrap().is_empty());
     assert!(body["sets"]["data"].as_array().unwrap().is_empty());
     let (status, _, body) = send(
         &app,
-        get(&format!("/api/games/{game}/search?q=dummy%20%25")),
+        get(&format!("/api/games/{game}/search?q=dummy%20%25niverse")),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["cards"]["data"].as_array().unwrap().is_empty());
+    assert!(body["sets"]["data"].as_array().unwrap().is_empty());
 
     let (_, _, after) = send(&app, get(&format!("/api/games/{game}/cards?page_size=1"))).await;
     assert_eq!(
@@ -680,5 +731,9 @@ async fn documented_in_the_openapi_spec() {
         "the universal search is a public JSON read, so it is documented"
     );
     assert_eq!(op["tags"][0], "Search");
-    assert!(body["components"]["schemas"]["SearchResults"].is_object());
+    let schema = &body["components"]["schemas"]["SearchResults"];
+    assert!(schema.is_object());
+    for group in ["cards", "sets", "products", "precons", "keywords"] {
+        assert!(schema["properties"][group].is_object(), "{group}: {schema}");
+    }
 }

@@ -17,7 +17,8 @@ export type SearchResults = {
  * Distinct card names, each as one representative printing's full card payload. A word
  * the name lacks may name the printing's set instead (a set code, or part of a set
  * name) or be its collector number in a set another word names, in which case the
- * representative printing is from that set.
+ * representative printing is from that set; a query that is itself a set name matches
+ * cards by name alone.
  */
 cards: SearchGroup<Card>, 
 /**

@@ -663,30 +663,35 @@ fn card_name_search_compiles_the_trgm_indexed_expression() {
         .expect("query")
         .build(sea_orm::DbBackend::Postgres)
         .to_string();
-    // Two indexed leaves per word in the outer WHERE — one in the per-word name-or-set
-    // conjunct, one in the "at least one word is in the name" disjunction — and
-    // `fold_unique_by`'s Postgres arm repeats the whole filter inside its MIN(id) subquery
-    // (eight), plus one per word in the ORDER BY's name-alone rank: ten, never zero.
+    // One indexed leaf per word in the outer WHERE, and `fold_unique_by`'s Postgres arm
+    // repeats the whole filter inside its MIN(id) subquery — so four, never zero. With no
+    // set named there is no name-alone rank in the ORDER BY either: the plain name rule.
     assert_eq!(
         s.matches("LOWER(COALESCE(name, '')) LIKE").count(),
-        10,
+        4,
         "{s}"
     );
     // The only typed-column LIKEs are the ORDER BY's `leading_words_rank` (prefix patterns);
     // a *contains* leaf on the typed column is exactly what the drift would add.
     assert!(!s.contains("LOWER(\"cards\".\"name\") LIKE '%"), "{s}");
     assert!(s.contains("ORDER BY"), "{s}");
-    // With no set named, nothing joins the set column and no collector-number arm exists:
-    // the read is the pure name search (both columns are still *selected*, as every card
-    // column is, so look at the filter alone).
+    // With no set named, nothing joins the set column and no collector-number arm exists
+    // (both columns are still *selected*, as every card column is, so look at the filter).
     let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
     assert!(!filter.contains("\"set_code\" IN"), "{filter}");
     assert!(!filter.contains("collector_number"), "{filter}");
+    assert!(
+        !filter.contains("CASE WHEN ((LOWER(COALESCE"),
+        "no name-alone rank: {filter}"
+    );
 }
 
-/// The set half of the card leg (issue #709) reaches SQL as a literal `set_code IN (…)`
-/// list resolved in Rust — never a `LIKE` on `cards.set_name` or a subquery, either of which
-/// would take the per-keystroke read off the index and onto the `cards` heap.
+/// The set half of the card leg (issue #709) reaches SQL as a bound `set_code IN (…)` list
+/// resolved in Rust — never a `LIKE` on `cards.set_name` or a subquery, either of which
+/// would take the per-keystroke read off the index and onto the `cards` heap — and the
+/// collector-number arm compares the **raw** column inside that list, so `m..024`'s
+/// composite index seeks it; a `LOWER(collector_number)` would be a heap recheck over
+/// every card of every named set.
 #[test]
 fn card_name_search_resolves_set_words_to_an_indexed_code_list() {
     let sets = std::collections::HashMap::from([
@@ -698,8 +703,16 @@ fn card_name_search_resolves_set_words_to_an_indexed_code_list() {
         .expect("query")
         .build(sea_orm::DbBackend::Postgres);
     let s = stmt.to_string();
-    // The codes are bound values, never spliced text, and only the sets a word names are
+    // Only the word that names a set gets the `IN` half (once in the outer WHERE, once in
+    // the fold's subquery); `sol` and `ring` name no set and stay pure name leaves. The
+    // codes are bound values, never spliced text, and only the sets a word names are
     // bound: Bloomburrow names no word.
+    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
+    assert_eq!(
+        filter.matches("\"cards\".\"set_code\" IN ($").count(),
+        2,
+        "{filter}"
+    );
     let bound = format!("{:?}", stmt.values);
     assert!(
         bound.contains("\"cmr\"") && bound.contains("\"leg\""),
@@ -710,33 +723,49 @@ fn card_name_search_resolves_set_words_to_an_indexed_code_list() {
         "Bloomburrow names no word: {bound}"
     );
     // The filter never touches the un-indexed `set_name` column (it is only *selected*, as
-    // every card column is) and never joins `card_sets`.
-    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
+    // every card column is), never joins `card_sets`, and — no word carrying a digit — has
+    // no collector-number arm.
     assert!(!filter.contains("set_name"), "{filter}");
     assert!(!filter.contains("card_sets"), "{filter}");
-    // Every set-column reference is a bound `IN (…)` list: one set arm for `legends`, one
-    // set-scoped collector-number arm per word (three), and the set-with-number half of the
-    // identity disjunction — five per copy of the filter, and `fold_unique_by`'s Postgres arm
-    // repeats the filter inside its MIN(id) subquery: ten.
-    assert_eq!(
-        filter.matches("\"cards\".\"set_code\" IN ($").count(),
-        10,
-        "{filter}"
+    assert!(!filter.contains("collector_number"), "{filter}");
+    // Name-alone matches lead: the rank is the first ORDER BY key.
+    let order = &s[s.find("ORDER BY").expect("ORDER BY")..];
+    assert!(
+        order.starts_with("ORDER BY (CASE WHEN ((LOWER(COALESCE(name, ''))"),
+        "{order}"
     );
-    // A collector-number arm is only ever paired with a set list — `(set_code IN (…) AND
-    // LOWER(collector_number) …)` — so the composite index leads it; a bare number
-    // comparison as its own `OR` arm would be a scan.
+
+    // A digit word gets the number arm: raw column, inside the named-set list, once per
+    // copy of the filter.
+    let stmt = card_name_search_query("mtg", "cmr 129", 6, Dialect::Postgres, &sets)
+        .expect("query")
+        .build(sea_orm::DbBackend::Postgres);
+    let s = stmt.to_string();
+    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
     assert_eq!(
         filter
-            .matches("LOWER(\"cards\".\"collector_number\")")
+            .matches("\"cards\".\"collector_number\" IN ($")
             .count(),
-        8,
-        "three per-word arms plus the identity pair, doubled: {filter}"
-    );
-    assert!(
-        !filter.contains("OR LOWER(\"cards\".\"collector_number\")"),
+        2,
         "{filter}"
     );
+    assert!(
+        !filter.contains("LOWER(\"cards\".\"collector_number\")"),
+        "{filter}"
+    );
+    assert!(
+        !filter.contains("OR \"cards\".\"collector_number\""),
+        "a number arm sits inside a set-scoped AND, never as a bare OR arm: {filter}"
+    );
+
+    // A term that names a set is the plain name rule: no set or number arm at all.
+    let stmt = card_name_search_query("mtg", "commander legends", 6, Dialect::Postgres, &sets)
+        .expect("query")
+        .build(sea_orm::DbBackend::Postgres);
+    let s = stmt.to_string();
+    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
+    assert!(!filter.contains("set_code"), "{filter}");
+    assert!(!filter.contains("collector_number"), "{filter}");
 }
 
 #[test]

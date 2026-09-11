@@ -67,13 +67,14 @@ where
 
 /// The per-word engine behind [`every_word_matches`], with the `LIKE` leaf pluggable.
 ///
-/// The typed column form above is right for `products` and `precon_decks`, but the card
-/// listing's name column is served on Postgres by an **expression** index
+/// The typed column form above is right for `products`, `precon_decks` and `card_sets`,
+/// but the card listing's name column is served on Postgres by an **expression** index
 /// (`idx_cards_name_trgm`, `m..027`, built on `LOWER(COALESCE(name, ''))`), and the planner
 /// only matches that index when the `LIKE`'s left side is spelled exactly the same way — so
-/// the universal search's card leg hands in the indexed spelling instead
-/// (`handlers::catalog::indexed_name_like`). Both callers get the one word split, the one
-/// word cap, and the one flat `Condition`, which is the part that must never be forked.
+/// a card-name caller hands in the indexed spelling instead
+/// (`handlers::catalog::indexed_name_like`). The universal search's card leg builds on the
+/// same word split, cap and pattern through [`every_word_in_name_or_set_with`], its
+/// name-or-set widening; the split and the cap are the part that must never be forked.
 ///
 /// `like` receives each word's ready-made pattern: `%word%`, `LIKE`-escaped and ASCII
 /// lower-cased (see [`every_word_matches`] for why that folding is the portable one), and
@@ -92,7 +93,7 @@ pub(crate) fn every_word_matches_with(
 /// The one word split behind every per-word name rule: whitespace-separated, capped at
 /// [`MAX_NAME_SEARCH_WORDS`] (a `Validation` error past it — see [`every_word_matches`] for
 /// why the cap is a refusal rather than a truncation).
-pub(crate) fn search_words(search: &str) -> Result<Vec<&str>, AppError> {
+fn search_words(search: &str) -> Result<Vec<&str>, AppError> {
     let words: Vec<&str> = search.split_whitespace().collect();
     if words.len() > MAX_NAME_SEARCH_WORDS {
         return Err(AppError::Validation(format!(
@@ -111,9 +112,9 @@ fn contains_pattern(word: &str) -> String {
 }
 
 /// The universal search's **card** rule (issue #709): every whitespace-separated word must
-/// appear in the card's name, **or** name its set, **or** be its collector number within a
-/// set another word names — and the words must identify a card: at least one in the name, or
-/// a set word paired with a collector number.
+/// appear in the card's name, **or** name its set, **or** — for a word carrying a digit — be
+/// its collector number within a set another word names. Unless the whole term names a
+/// set, in which case the card leg is the plain name rule.
 ///
 /// "Sol Ring" is one name printed in a hundred sets, and a visitor who types `sol ring cmr`
 /// or `lightning bolt alpha` is naming a printing — so a word the name doesn't carry may
@@ -121,113 +122,194 @@ fn contains_pattern(word: &str) -> String {
 /// the fold behind the card leg then represents the name with a printing from *that* set,
 /// because the filter runs before the fold. A set and a collector number identify a
 /// printing as surely as its name does (`cmr 129` is the Commander Legends Sol Ring; that is
-/// how a checklist, a binder page and a deck export all spell it), so a word that is the
-/// collector number of a printing in a set another word names counts too — but only paired
-/// with a set word: `129` alone names nothing (every set has a #129), and an arm on a
-/// number with no set to lead the `(game, set_code, collector_number)` index would be a
-/// scan.
+/// how a checklist, a binder page and a deck export all spell it), so a digit-bearing word
+/// that is the collector number of a printing in a set another word names counts too — but
+/// only paired with a set word: `129` alone names nothing (every set has a #129).
+///
+/// **A term that names a set asks about the set, not its cards** (`term_names_a_set`, the
+/// caller's answer from [`term_names_a_set`]). Without that gate `bloomburrow`, `commander
+/// legends` or `oath of the gatewatch` would match every card in the set — through the set
+/// arms, or through a short word like `of` that names the set but is too short to resolve
+/// to codes and so falls back to a name leaf — and answer a handful of arbitrary ones; that
+/// is the sets group's question. Gated, such a term compiles to the plain name rule, so
+/// the card "Time Spiral" still answers `time spiral` and nothing answers `oath of the
+/// gatewatch`. Past the gate no clause has to say "at least one word is in the name": a
+/// row whose every word was explained by its set would be a row whose set name carries
+/// every word, which is exactly the gated case, and the one other way to match without a
+/// name word is the set-and-number pair, which is meant.
 ///
 /// The set half is resolved in Rust from the set map the handler already holds
 /// (`set_codes_for`: a word → the codes of every set it names), so what reaches SQL is
-/// `name LIKE … OR set_code IN (…) OR (set_code IN (…) AND LOWER(collector_number) = …)` —
-/// literal lists the `(game, set_code[, collector_number])` indexes answer — and never a
+/// `name LIKE … OR set_code IN (…) OR (set_code IN (…) AND collector_number IN (…))` —
+/// bound lists the `(game, set_code[, collector_number])` indexes answer — and never a
 /// `LIKE` on `cards.set_name` (no index) or a correlated subquery, either of which turns the
 /// whole per-keystroke read into a scan of the `cards` heap (see `AGENTS.md`'s note on
-/// `m..068`).
+/// `m..068`). The number is compared **raw** (the word as typed, lower- and upper-cased,
+/// never `LOWER(collector_number)`), because `m..024`'s composite index is on the raw text
+/// column and only a raw comparison lets its third key seek.
 ///
-/// **The words must identify a card.** Without that conjunct, a bare set name —
-/// `bloomburrow`, `commander legends` — would match every card in the set and answer a
-/// handful of arbitrary ones; that is the sets group's question, not the cards'. So at
-/// least one word must be in the name, or one word must be a set another word's number
-/// sits in. The conjunct is an `OR` of the name leaves (plus the set-and-number pair), which
-/// the Postgres planner can drive from the trigram and set-code indexes as a `BitmapOr`, so
-/// nothing un-indexed is ever the driving scan.
+/// **Bounded, because every list here is bound parameters and the caller's fold repeats
+/// the filter** (Postgres allows 65,535 binds a statement, SQLite 32,766). Words are
+/// deduplicated; a word naming more than [`MAX_SET_CODES_PER_WORD`] sets names none (no
+/// three-letter word names that many today — the worst is ~200 — so only a term built to
+/// hurt hits it); and at most [`MAX_NUMBER_WORDS`] digit words get the number arm, since
+/// that arm binds the union of every named set and a printing has one number. Worst case
+/// is then under 25k binds a copy, and the unit test below pins the doubled Postgres
+/// shape under the limit.
 ///
 /// Same word split, cap and leaf-pluggable `LIKE` as [`every_word_matches_with`] — the card
 /// leg hands in its trigram-indexed spelling — and one bounded tree: a flat `AND` of
-/// per-word `OR`s plus the flat identity `OR`, never a `.filter()` chain per word.
+/// per-word `OR`s, never a `.filter()` chain per word.
 ///
 /// The widened rule can only ever **append** to what the plain name rule answers, never
 /// reorder it: a set word is any substring of a set name, so `sol ring` also matches
 /// "Soldier of the Grey Host" through "The Lord of the **Ring**s", and a caller must sort
-/// by [`NameOrSetMatch::by_name_alone`] first so every name match still leads. Hence the
-/// pair: the filter, and the name-only half of it as a rank.
+/// by [`NameOrSetMatch::by_name_alone_rank`] first so every name match still leads.
 pub(crate) fn every_word_in_name_or_set_with<C>(
     search: &str,
     mut like: impl FnMut(String) -> SimpleExpr,
     set_column: C,
     number_column: C,
     set_codes_for: impl Fn(&str) -> Vec<String>,
+    term_names_a_set: bool,
 ) -> Result<NameOrSetMatch, AppError>
 where
     C: ColumnTrait,
 {
-    let words = search_words(search)?;
-    let codes_per_word: Vec<Vec<String>> = words.iter().map(|word| set_codes_for(word)).collect();
+    let words = dedup_words(search_words(search)?);
+    let leaves: Vec<SimpleExpr> = words
+        .iter()
+        .map(|word| like(contains_pattern(word)))
+        .collect();
+    let by_name_alone = leaves
+        .iter()
+        .cloned()
+        .fold(Condition::all(), |all, leaf| all.add(leaf));
+    if term_names_a_set {
+        return Ok(NameOrSetMatch {
+            filter: by_name_alone,
+            by_name_alone: None,
+        });
+    }
+
+    let codes_per_word: Vec<Vec<String>> = words
+        .iter()
+        .map(|word| {
+            let codes = set_codes_for(word);
+            if codes.len() > MAX_SET_CODES_PER_WORD {
+                Vec::new()
+            } else {
+                codes
+            }
+        })
+        .collect();
     // Every set any word names — the sets a collector-number word may sit in.
     let mut named_sets: Vec<String> = codes_per_word.iter().flatten().cloned().collect();
     named_sets.sort();
     named_sets.dedup();
-    // Qualified (`"cards"."collector_number"`) like the `is_in` leaves beside it.
-    let lower_number = || Expr::expr(Func::lower(Expr::col(number_column.as_column_ref())));
+    let mut number_words = 0;
+    let mut widened = false;
 
     let mut every_word = Condition::all();
-    let mut every_word_in_name = Condition::all();
-    let mut identifies = Condition::any();
-    for (word, codes) in words.iter().zip(codes_per_word) {
-        let in_name = like(contains_pattern(word));
-        every_word_in_name = every_word_in_name.add(in_name.clone());
-        identifies = identifies.add(in_name.clone());
-        let mut arms = Condition::any().add(in_name);
+    for ((word, leaf), codes) in words.iter().zip(leaves).zip(codes_per_word) {
+        let mut arms = Condition::any().add(leaf);
         if !codes.is_empty() {
+            widened = true;
             arms = arms.add(set_column.is_in(codes));
         }
-        if !named_sets.is_empty() {
+        if !named_sets.is_empty()
+            && number_words < MAX_NUMBER_WORDS
+            && word.chars().any(|c| c.is_ascii_digit())
+        {
+            number_words += 1;
+            widened = true;
             arms = arms.add(
                 Condition::all()
                     .add(set_column.is_in(named_sets.iter().cloned()))
-                    .add(lower_number().eq(word.to_ascii_lowercase())),
+                    .add(number_column.is_in(number_spellings(word))),
             );
         }
         every_word = every_word.add(arms);
     }
-    if !named_sets.is_empty() {
-        identifies = identifies.add(
-            Condition::all()
-                .add(set_column.is_in(named_sets.iter().cloned()))
-                .add(lower_number().is_in(words.iter().map(|word| word.to_ascii_lowercase()))),
-        );
-    }
     Ok(NameOrSetMatch {
-        filter: every_word.add(identifies),
-        by_name_alone: every_word_in_name,
+        filter: every_word,
+        by_name_alone: widened.then_some(by_name_alone),
     })
 }
 
 /// What [`every_word_in_name_or_set_with`] compiles a term to.
 pub(crate) struct NameOrSetMatch {
     /// The row filter: every word in the name, or naming the set, or a number in a named
-    /// set — and the words identifying a card.
+    /// set — or, for a term that names a set, the plain name rule.
     pub(crate) filter: Condition,
-    /// The plain name rule alone (every word in the name), for a caller to **rank** by:
-    /// `ORDER BY CASE WHEN <this> THEN 0 ELSE 1 END` keeps every row the name rule answers
-    /// ahead of the rows only a set word let in. Pure ordering; it never filters.
-    pub(crate) by_name_alone: Condition,
+    /// The plain name rule alone (every word in the name), to **rank** by — `Some` only when
+    /// the filter was actually widened by a set or number arm; a plain name filter has
+    /// nothing to rank ahead of.
+    by_name_alone: Option<Condition>,
 }
 
 impl NameOrSetMatch {
     /// `0` for a row every word matched by name, `1` for one that needed a set word — the
     /// leading sort key of the card leg, so the widened rule appends and never reorders.
-    pub(crate) fn by_name_alone_rank(&self) -> SimpleExpr {
-        Expr::case(self.by_name_alone.clone(), 0).finally(1).into()
+    /// `None` when the filter is the plain name rule, where the key would be a constant.
+    pub(crate) fn by_name_alone_rank(&self) -> Option<SimpleExpr> {
+        self.by_name_alone
+            .as_ref()
+            .map(|by_name| Expr::case(by_name.clone(), 0).finally(1).into())
     }
 }
 
+/// Most sets one word may name before it is taken to name none: a word this vague
+/// identifies no printing, and its code list would be that many bound parameters per copy
+/// of the filter. Above the widest real word (~200 sets for a three-letter substring) so it
+/// only ever bites a term built to grow the statement.
+pub(crate) const MAX_SET_CODES_PER_WORD: usize = 256;
+
+/// Most digit-bearing words that get the set-scoped collector-number arm — the arm binds
+/// the union of every named set, so it is priced per word. A printing has one number; two
+/// covers a typo being corrected.
+pub(crate) const MAX_NUMBER_WORDS: usize = 2;
+
+/// The spellings a typed collector number is compared against, **raw**: as typed, ASCII
+/// lower-cased and upper-cased (`12a` finds a stored `12A`), deduplicated. A raw `IN` on the
+/// column is what lets `m..024`'s `(game, set_code, collector_number)` index seek its third
+/// key; `LOWER(collector_number) = …` would be a heap recheck over every card of every
+/// named set.
+fn number_spellings(word: &str) -> Vec<String> {
+    let mut spellings = vec![
+        word.to_string(),
+        word.to_ascii_lowercase(),
+        word.to_ascii_uppercase(),
+    ];
+    spellings.sort();
+    spellings.dedup();
+    spellings
+}
+
+/// Case-insensitive, order-preserving dedup: `sol sol ring` binds "sol" once.
+fn dedup_words(words: Vec<&str>) -> Vec<&str> {
+    let mut seen: Vec<String> = Vec::new();
+    words
+        .into_iter()
+        .filter(|word| {
+            let key = word.to_ascii_lowercase();
+            if seen.contains(&key) {
+                false
+            } else {
+                seen.push(key);
+                true
+            }
+        })
+        .collect()
+}
+
 /// Fewest characters a word needs before it may name a set by **substring**: every set name
-/// has an "a" and most have a "the", so a one- or two-letter word would name the whole
-/// catalog — and bind a code list the size of it, per word. A whole set **code** still
-/// matches at any length, since a code is an exact identifier.
-pub(crate) const MIN_SET_NAME_WORD_CHARS: usize = 3;
+/// has an "a" and most an "of" or "he", so a one- or two-letter word would name most of the
+/// catalog — and bind a code list that size, per word. A whole set **code** still matches
+/// at any length, since a code is an exact identifier. Three-letter words like "the" do
+/// pass (they name ~130 sets); that is what [`MAX_SET_CODES_PER_WORD`] and the
+/// [`term_names_a_set`] gate are for.
+const MIN_SET_NAME_WORD_CHARS: usize = 3;
 
 /// The set codes one search word names, out of a game's `code → name` set map: a set whose
 /// **code** is the word (`cmr`, case-insensitively, whole — a code is an identifier, and a
@@ -248,6 +330,28 @@ pub(crate) fn set_codes_matching(word: &str, sets: &HashMap<String, String>) -> 
         .collect();
     codes.sort();
     codes
+}
+
+/// Whether the whole term names a set: some set's name contains **every** word (any
+/// length — this is the one place a short word counts, since `of` and `the` are what a
+/// set name is made of), or the term is a set's code. The card leg's gate: such a term is
+/// the sets group's question, and the card leg answers it with the plain name rule alone
+/// (see [`every_word_in_name_or_set_with`]). A blank term names nothing.
+pub(crate) fn term_names_a_set(term: &str, sets: &HashMap<String, String>) -> bool {
+    let words: Vec<String> = term
+        .split_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if words.is_empty() {
+        return false;
+    }
+    let whole = words.join(" ");
+    sets.iter().any(|(code, name)| {
+        code.eq_ignore_ascii_case(&whole) || {
+            let name = name.to_ascii_lowercase();
+            words.iter().all(|word| name.contains(word.as_str()))
+        }
+    })
 }
 
 /// A sort key that surfaces the rows whose name **starts with** the whole search text
@@ -321,6 +425,8 @@ pub(crate) fn name_like(search: &str) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::card;
+    use sea_orm::sea_query::{PostgresQueryBuilder, Query, SqliteQueryBuilder};
 
     fn sets() -> HashMap<String, String> {
         HashMap::from([
@@ -331,7 +437,37 @@ mod tests {
                 "The Lord of the Rings: Tales of Middle-earth".to_string(),
             ),
             ("m10".to_string(), "Magic 2010".to_string()),
+            ("ogw".to_string(), "Oath of the Gatewatch".to_string()),
+            ("tsp".to_string(), "Time Spiral".to_string()),
         ])
+    }
+
+    fn name_like(pattern: String) -> SimpleExpr {
+        Expr::expr(Func::lower(Expr::col((card::Entity, card::Column::Name))))
+            .like(LikeExpr::new(pattern).escape('\\'))
+    }
+
+    /// The filter's SQL and bound values, as one single-copy SELECT.
+    fn compile(term: &str, sets: &HashMap<String, String>, pg: bool) -> (String, usize) {
+        let m = every_word_in_name_or_set_with(
+            term,
+            name_like,
+            card::Column::SetCode,
+            card::Column::CollectorNumber,
+            |word| set_codes_matching(word, sets),
+            term_names_a_set(term, sets),
+        )
+        .expect("compiles");
+        let mut q = Query::select();
+        q.expr(Expr::value(1))
+            .from(card::Entity)
+            .cond_where(m.filter);
+        let (sql, values) = if pg {
+            q.build(PostgresQueryBuilder)
+        } else {
+            q.build(SqliteQueryBuilder)
+        };
+        (sql, values.0.len())
     }
 
     #[test]
@@ -340,12 +476,13 @@ mod tests {
         assert_eq!(set_codes_matching("LEGENDS", &sets()), vec!["cmr", "leg"]);
         assert_eq!(set_codes_matching("CMR", &sets()), vec!["cmr"]);
         assert_eq!(set_codes_matching("ring", &sets()), vec!["ltr"]);
+        // "the" passes the floor and names what it names — the gate and the cap bound it.
+        assert_eq!(set_codes_matching("the", &sets()), vec!["ltr", "ogw"]);
         // A code matches whole, never as a substring.
         assert!(set_codes_matching("cm", &sets()).is_empty());
-        // A short word names no set by substring ("m1" is in "Magic 2010"? no — but "10"
-        // is, and a two-character word must not bind a code list the size of the catalog).
-        assert!(set_codes_matching("10", &sets()).is_empty());
+        // A one- or two-character word names no set by substring ("of" is in two names).
         assert!(set_codes_matching("of", &sets()).is_empty());
+        assert!(set_codes_matching("10", &sets()).is_empty());
         // …though a whole code still matches at any length.
         let short = HashMap::from([("5e".to_string(), "Fifth Edition".to_string())]);
         assert_eq!(set_codes_matching("5E", &short), vec!["5e"]);
@@ -353,38 +490,120 @@ mod tests {
     }
 
     #[test]
-    fn name_or_set_match_needs_a_set_before_it_touches_the_number_column() {
-        use crate::entities::card;
-        let like = |pattern: String| {
-            Expr::expr(Func::lower(Expr::col((card::Entity, card::Column::Name))))
-                .like(LikeExpr::new(pattern).escape('\\'))
-        };
-        let no_sets = HashMap::new();
-        let plain = every_word_in_name_or_set_with(
-            "sol ring",
-            like,
-            card::Column::SetCode,
-            card::Column::CollectorNumber,
-            |word| set_codes_matching(word, &no_sets),
-        )
-        .expect("compiles");
-        let sql = sea_orm::sea_query::Query::select()
-            .expr(Expr::value(1))
-            .from(card::Entity)
-            .cond_where(plain.filter)
-            .to_string(sea_orm::sea_query::PostgresQueryBuilder);
+    fn term_names_a_set_takes_every_word_of_any_length_or_a_whole_code() {
+        assert!(term_names_a_set("oath of the gatewatch", &sets()));
+        assert!(term_names_a_set("OATH of", &sets()));
+        assert!(term_names_a_set("time spiral", &sets()));
+        assert!(term_names_a_set("cmr", &sets()));
+        assert!(term_names_a_set("the", &sets()));
+        assert!(!term_names_a_set("sol ring cmr", &sets()));
+        assert!(!term_names_a_set("cmr 129", &sets()));
+        assert!(!term_names_a_set("time spiral 12", &sets()));
+        assert!(!term_names_a_set("", &sets()));
+    }
+
+    #[test]
+    fn a_term_that_names_a_set_compiles_to_the_plain_name_rule() {
+        let (sql, _) = compile("oath of the gatewatch", &sets(), true);
         assert!(!sql.contains("set_code"), "{sql}");
         assert!(!sql.contains("collector_number"), "{sql}");
+        assert_eq!(sql.matches("LIKE").count(), 4, "{sql}");
+        // And a pure-name term (naming no set) is the same plain rule, with no rank.
+        let (sql, _) = compile("sol", &HashMap::new(), true);
+        assert!(!sql.contains("set_code"), "{sql}");
+        let m = every_word_in_name_or_set_with(
+            "sol",
+            name_like,
+            card::Column::SetCode,
+            card::Column::CollectorNumber,
+            |_| Vec::new(),
+            false,
+        )
+        .expect("compiles");
+        assert!(m.by_name_alone_rank().is_none());
+    }
 
-        // Over the word cap it is the same refusal as the plain rule.
+    #[test]
+    fn the_number_arm_is_raw_digit_gated_and_inside_the_named_set_list() {
+        // A digit word gets `(set_code IN (…) AND collector_number IN (…))`, raw and
+        // three-spelled; a word without a digit gets no number arm at all.
+        let (sql, _) = compile("cmr 12a", &sets(), true);
+        assert!(
+            !sql.contains("LOWER(\"cards\".\"collector_number\")"),
+            "{sql}"
+        );
+        assert_eq!(
+            sql.matches("\"cards\".\"collector_number\" IN (").count(),
+            1,
+            "{sql}"
+        );
+        assert!(
+            sql.contains(") AND \"cards\".\"collector_number\" IN ("),
+            "the number arm sits inside the named-set AND: {sql}"
+        );
+        assert!(!sql.contains("OR \"cards\".\"collector_number\""), "{sql}");
+        let (sql, _) = compile("sol ring legends", &sets(), true);
+        assert!(!sql.contains("collector_number"), "{sql}");
+        // The cap: a third digit word matches by name only.
+        let (sql, _) = compile("cmr 1 2 3", &sets(), true);
+        assert_eq!(
+            sql.matches("\"cards\".\"collector_number\" IN (").count(),
+            MAX_NUMBER_WORDS,
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn words_are_deduplicated_and_a_vague_word_names_no_set() {
+        let (sql, binds) = compile("sol SOL sol", &sets(), true);
+        assert_eq!(sql.matches("LIKE").count(), 1, "{sql}");
+        // One bind for the leaf's pattern (the other is the `SELECT 1`).
+        assert_eq!(binds, 2);
+        // A word naming more than the cap names none: only its name leaf remains.
+        let many: HashMap<String, String> = (0..MAX_SET_CODES_PER_WORD + 1)
+            .map(|i| (format!("s{i:04}"), format!("Vague Set {i}")))
+            .collect();
+        let (sql, _) = compile("vague", &many, false);
+        assert!(!sql.contains("set_code"), "{sql}");
+        assert_eq!(number_spellings("12a"), vec!["12A", "12a"]);
+        assert_eq!(number_spellings("129"), vec!["129"]);
+    }
+
+    /// The worst term a caller can build — the word cap's worth of distinct three-letter
+    /// words, each naming the most sets a word may, two of them digit-bearing — stays under
+    /// both backends' bind limits even with the Postgres fold repeating the filter.
+    #[test]
+    fn the_worst_case_term_stays_under_the_bind_limits() {
+        let words: Vec<String> = (0..MAX_NAME_SEARCH_WORDS - MAX_NUMBER_WORDS)
+            .map(|i| format!("w{i:02}"))
+            .chain((0..MAX_NUMBER_WORDS).map(|i| format!("{i}00")))
+            .collect();
+        let all_words = words.join(" ");
+        // Every set's name carries every word, so each word names every set.
+        let many: HashMap<String, String> = (0..MAX_SET_CODES_PER_WORD)
+            .map(|i| (format!("s{i:04}"), format!("Set {i} {all_words}")))
+            .collect();
+        // Not the gated case: no set name carries the digit words as typed…
+        assert!(!term_names_a_set(&format!("{all_words} zz9"), &many));
+        let term = format!("{all_words}");
+        let (_, sqlite_binds) = compile(&term, &many, false);
+        let (_, pg_binds) = compile(&term, &many, true);
+        assert_eq!(sqlite_binds, pg_binds);
+        assert!(sqlite_binds < 32_766, "{sqlite_binds}");
+        assert!(pg_binds * 2 < 65_535, "{pg_binds}");
+    }
+
+    #[test]
+    fn over_the_word_cap_is_the_plain_rules_refusal() {
         let long = vec!["x"; MAX_NAME_SEARCH_WORDS + 1].join(" ");
         assert!(matches!(
             every_word_in_name_or_set_with(
                 &long,
-                like,
+                name_like,
                 card::Column::SetCode,
                 card::Column::CollectorNumber,
-                |_| Vec::new()
+                |_| Vec::new(),
+                false,
             ),
             Err(AppError::Validation(_))
         ));

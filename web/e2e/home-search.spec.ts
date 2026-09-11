@@ -47,22 +47,25 @@ test.describe('homepage universal search', () => {
     // Signed out, there is no "Your decks" group.
     await expect(listbox.getByRole('group', { name: 'Your decks' })).toHaveCount(0)
 
-    // A word the card name lacks may name its set: "universe" is only a set name, so the
-    // card group keeps every "Dummy …" card printed in Dummy Universe (each row naming that
-    // set), the set itself answers, and the "Dummy Universe" product and precon stay.
+    // A term that is a set name asks about the set: "dummy universe" answers the set (and
+    // the product and precon named after it), and no card — cards then match by name
+    // alone, and none is called "Dummy Universe".
     await box.fill('dummy universe')
     const precons = listbox.getByRole('group', { name: 'Preconstructed decks' })
     await expect(precons.getByRole('option', { name: /Dummy Universe Commander/ })).toBeVisible()
     const sets = listbox.getByRole('group', { name: 'Sets' })
     await expect(sets.getByRole('option', { name: /^Dummy Universe/ })).toBeVisible()
-    const cards = listbox.getByRole('group', { name: 'Cards' })
-    await expect(cards.getByRole('option').first()).toContainText('Dummy Universe')
-
-    // But a bare set name is the set's question, not the cards': no card is named
-    // "universe", so the card group drops out while the set stays.
-    await box.fill('universe')
-    await expect(sets.getByRole('option', { name: /^Dummy Universe/ })).toBeVisible()
     await expect(listbox.getByRole('group', { name: 'Cards' })).toHaveCount(0)
+
+    // But a word the card name lacks may name its set: "relic universe" is no set name, so
+    // "universe" narrows the reprinted relic to its Dummy Universe printing, and the row
+    // names that printing.
+    await box.fill('relic universe')
+    const cards = listbox.getByRole('group', { name: 'Cards' })
+    const relic = cards.getByRole('option', { name: /Dummy Reprinted Relic/ })
+    await expect(relic).toBeVisible()
+    await expect(relic).toContainText('Dummy Universe #')
+    await expect(listbox.getByRole('group', { name: 'Sets' })).toHaveCount(0)
   })
 
   test('opens a set from its row', async ({ page }) => {

@@ -29,7 +29,7 @@ use crate::error::AppError;
 use crate::handlers::shared::{
     CardExportFormat, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
     SortDir, SortField, every_word_in_name_or_set_with, leading_words_rank, resolve_page,
-    search_condition, set_codes_matching, trim_query,
+    search_condition, set_codes_matching, term_names_a_set, trim_query,
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
@@ -416,9 +416,10 @@ fn indexed_name_like(dialect: Dialect, pattern: String) -> SimpleExpr {
 /// [`every_word_in_name_or_set_with`] — the sealed-product and precon listings' all-words
 /// rule, widened (issue #709) so `sol ring cmr` and `cmr 129` name a printing: a word may
 /// instead be a set code or part of a set name, resolved through [`set_codes_matching`]
-/// over the set map the handler already holds, or a collector number in such a set, while
-/// the words must still identify a card (one in the name, or a set with a number) — spelled
-/// through [`indexed_name_like`] so the name half rides the trigram index; the
+/// over the set map the handler already holds, or a digit-bearing collector number in such
+/// a set — gated by [`term_names_a_set`], so a term that *is* a set name (`bloomburrow`,
+/// `oath of the gatewatch`) gets the plain name rule and answers no arbitrary cards —
+/// spelled through [`indexed_name_like`] so the name half rides the trigram index; the
 /// one-per-name fold is [`fold_unique_by`], the engine behind the listing's `unique:cards`,
 /// because a suggestion list filled with eight printings of the one card the visitor typed
 /// hides every other card; and the ranking is [`leading_words_rank`], the autocomplete's
@@ -448,14 +449,17 @@ pub(crate) fn card_name_search_query(
         card::Column::SetCode,
         card::Column::CollectorNumber,
         |word| set_codes_matching(word, set_names),
+        term_names_a_set(term, set_names),
     )?;
     // Name matches first — the widened rule may only append rows, never reorder the ones
     // the plain name rule answers (`sol ring` must not let a Lord of the *Rings* "Sol…"
     // card above "Parasol Ring") — then the leading-words prefix rank, then the name.
     let by_name_alone = matches.by_name_alone_rank();
-    let query = fold_unique_by(catalog_cards(game).filter(matches.filter), "name", dialect);
+    let mut query = fold_unique_by(catalog_cards(game).filter(matches.filter), "name", dialect);
+    if let Some(rank) = by_name_alone {
+        query = query.order_by_asc(rank);
+    }
     Ok(query
-        .order_by_asc(by_name_alone)
         .order_by_asc(leading_words_rank((card::Entity, card::Column::Name), term))
         .order_by_asc(card::Column::Name)
         .order_by_asc(card::Column::Id)
