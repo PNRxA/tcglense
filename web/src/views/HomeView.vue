@@ -28,7 +28,6 @@ import {
   Search,
   Share2,
   ShoppingCart,
-  Sparkles,
   Terminal,
   TrendingUp,
 } from '@lucide/vue'
@@ -233,31 +232,47 @@ const rowLinkClass =
   <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
     <!-- Universal search: its own section, front and centre above the hero — the fastest way
          off the homepage to the thing you came for. One box across cards, sealed products,
-         precons and keywords, plus your own decks once signed in. It sits in an accent-tinted
-         panel (the open-source strip's idiom, with a top-down wash and an icon well) so it
-         reads as the page's lead action rather than a heading floating over the hero. The
-         dropdown overlays the hero below it (z-40 inside the box), so the panel must never
-         clip overflow and nothing here needs to reserve space for it. -->
-    <section
-      aria-labelledby="home-search-heading"
-      class="border-primary/30 from-primary/10 via-primary/5 to-primary/[0.02] shadow-card mx-auto max-w-3xl rounded-2xl border bg-gradient-to-b px-5 py-8 text-center sm:px-10 sm:py-10"
-    >
-      <div
-        class="bg-primary/10 text-primary ring-primary/20 mx-auto flex size-12 items-center justify-center rounded-xl ring-1 sm:size-14"
-      >
-        <Search class="size-6 sm:size-7" aria-hidden="true" />
-      </div>
+         precons and keywords, plus your own decks once signed in. It is set at hero scale
+         (the heading a size under the h1, a taller input with an accent-tinted border and a
+         lifted shadow, and a chip row naming what the box covers) so it reads as the page's
+         lead action rather than a heading floating over the hero. The dropdown overlays the
+         hero below it (z-40 inside the box), so nothing here needs to reserve space for it. -->
+    <section aria-labelledby="home-search-heading" class="mx-auto max-w-3xl text-center">
       <h2
         id="home-search-heading"
-        class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl"
+        class="text-4xl font-semibold tracking-tight text-balance sm:text-5xl"
       >
         Search the whole catalog
       </h2>
-      <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-pretty sm:text-lg">
+      <p class="text-muted-foreground mx-auto mt-4 max-w-xl text-pretty sm:text-lg">
         Cards, sealed products, preconstructed decks, and rules keywords in one box — plus your own
         decks once you're signed in.
       </p>
-      <UniversalSearchBox :games="games" class="mt-7 text-left" />
+      <UniversalSearchBox
+        :games="games"
+        class="mt-8 text-left [&_input]:h-14 [&_input]:border-primary/40 [&_input]:text-lg [&_input]:shadow-lift [&_input]:ring-1 [&_input]:ring-primary/10 md:[&_input]:text-lg"
+      />
+      <ul
+        class="text-muted-foreground mt-5 flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm"
+        aria-label="What the search covers"
+      >
+        <li class="inline-flex items-center gap-1.5">
+          <Layers class="text-primary size-4" aria-hidden="true" />
+          Cards
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <Package class="text-primary size-4" aria-hidden="true" />
+          Sealed products
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <BookCopy class="text-primary size-4" aria-hidden="true" />
+          Precons
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <BookOpen class="text-primary size-4" aria-hidden="true" />
+          Keywords
+        </li>
+      </ul>
     </section>
 
     <!-- Hero: value prop + auth-branched CTAs, beside a decorative "show the product" vignette. -->
@@ -265,13 +280,7 @@ const rowLinkClass =
       class="mt-16 grid items-center gap-10 sm:mt-24 lg:grid-cols-[1fr_minmax(0,30rem)] lg:gap-14"
     >
       <div>
-        <span
-          class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
-        >
-          <Sparkles class="size-3.5" aria-hidden="true" />
-          New — deck analysis, precons &amp; booster odds
-        </span>
-        <h1 class="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+        <h1 class="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           Your collection, priced every day.
         </h1>
         <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
