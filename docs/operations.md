@@ -237,13 +237,55 @@ Two compose files run the published images: `deploy/docker-compose.homelab.yml` 
 combined image + SQLite, one container) and `deploy/docker-compose.prod.yml` (the full
 split: edge Caddy [`deploy/edge.Caddyfile`] + web + api + Postgres + Redis).
 
-**Cutting a release:** `./scripts/release.sh` prompts for the version, bumps it in
+**Cutting a release:** `./scripts/release.sh [--yes] [VERSION]` bumps the version in
 `api/Cargo.toml` (+ `Cargo.lock` via `cargo update -p tcglense-api`) and
-`web/package.json` (+ lock via `npm version`), commits, tags `vX.Y.Z`, pushes, and
-`gh release create`s the GitHub Release that triggers the workflow. Prerequisites: a
-clean working tree, and `git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The
-workflow file must already be on the default branch for the release to fire it, so land
-it on `main` before the first release.
+`web/package.json` (+ lock via `npm version`), commits it on a `chore/release-vX.Y.Z`
+branch, opens + merges the PR into the protected `main`, tags `vX.Y.Z` on the merge
+commit, and `gh release create`s the GitHub Release that triggers the workflow. Without a
+`VERSION` it prompts (so it needs a terminal); `--yes VERSION` is the non-interactive form:
+no confirmation, the "not on main" question becomes a hard error, and stdin is never read
+(`--yes` without a version, or a run without `--yes` and without a terminal, is refused up
+front with a usage message rather than dying silently at a prompt). The tag goes on the
+release PR's merge commit **by its SHA** (read back from GitHub), never on "whatever
+`main` is after the merge" — another PR may land in between. `gh pr merge` fails outright
+while required checks are pending, so the merge step retries for a window set by
+`RELEASE_MERGE_ATTEMPTS` × `RELEASE_MERGE_INTERVAL` seconds (default 6 × 3s — enough to
+let mergeability compute; raise it if `main` requires checks, or merge the PR in the UI
+and follow the finish-by-hand instructions the script prints). Prerequisites: a clean
+working tree, and `git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The workflow
+file must already be on the default branch for the release to fire it, so land it on
+`main` before the first release.
+
+**Cutting a release from GitHub Actions** (`.github/workflows/release-cut.yml`, "Cut
+release"): Actions → Cut release → Run workflow on `main` with the version. It runs the
+same script in `--yes` mode — one release procedure, two ways to start it. It needs the
+repo secret **`GH_PAT`**: a *fine-grained* personal access token scoped to this
+repository with **Contents: read and write** (push the branch + tag, create the Release,
+delete the merged branch) and **Pull requests: read and write** (open + merge the PR);
+Metadata: read is added automatically. Nothing else — no Workflows (the bump touches no
+workflow file), no Packages (the image push runs under `release.yml`'s own token), no
+Actions. It can't use the built-in `GITHUB_TOKEN`: events caused by that token never
+trigger other workflows, so the published Release would not fire "Release images". The
+PAT acts as its owner, so `main`'s branch protection applies exactly as it does locally.
+The release PR gets a CI run on either path (a laptop's `gh` is a user token too); the
+difference is that on a runner nobody can merge it in the UI once the checks pass, so the
+workflow gives the merge step a ~30-minute window (120 × 15s via the script's
+`RELEASE_MERGE_ATTEMPTS`/`RELEASE_MERGE_INTERVAL` knobs) in case `main` requires them.
+The job runs its toolchain-setup actions *before* the checkout, so no third-party action
+executes on a filesystem holding the PAT, and it is gated `if: github.ref ==
+'refs/heads/main'`. That gate and the script's own off-main refusal are ergonomics, not a
+security boundary — a dispatch runs the workflow file and the script *from the selected
+ref*, and anyone with write access can dispatch — so if the repo ever has a second
+writer, create a `release` environment restricted to `main`, move `GH_PAT` (and, for the
+same reason, `release.yml`'s Docker Hub + DigitalOcean secrets) into it, and add
+`environment: release` to the jobs. Fine-grained tokens expire: an expired or revoked
+`GH_PAT` fails the **Checkout** step ("Invalid username or token"), or the Cut step with
+"gh is not authenticated" — either means rotate the secret. If a run dies midway, the
+script's recovery message in the job log says which of branch / merge / tag / Release is
+done and how to finish or unwind by hand; a merge-wait timeout in particular leaves the
+bump PR open and still good — merge it in the UI and finish with the tag + Release
+commands the log prints (re-dispatching the same version after a hand-merge is refused
+with the same instructions, since the bump is already on `main`).
 
 ## scripts/ inventory
 
@@ -251,7 +293,7 @@ Repo-root `scripts/`:
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/release.sh` | Cut a release: prompt for a version, bump it in `api/Cargo.toml` (+ `Cargo.lock`) and `web/package.json` (+ `package-lock.json`), commit, tag `vX.Y.Z`, push, and publish the GitHub Release that fires the "Release images" workflow. Run from anywhere; needs a clean tree + authenticated `gh` |
+| `scripts/release.sh` | Cut a release: take the version (argument, else prompt), bump it in `api/Cargo.toml` (+ `Cargo.lock`) and `web/package.json` (+ `package-lock.json`), commit on a release branch, open + merge the PR into `main`, tag `vX.Y.Z` on the merge commit, and publish the GitHub Release that fires the "Release images" workflow. Run from anywhere; needs a clean tree + authenticated `gh`. `--yes` is the non-interactive form the "Cut release" workflow (`.github/workflows/release-cut.yml`) runs with a PAT |
 | `scripts/dev.sh` | Run both dev servers together — API (`api/`, `cargo run`, `:8080`) + web (`web/`, `npm run dev`, `:5173`) — streaming both to one terminal (colors/HMR intact). Ctrl+C stops both; if either exits, the other is torn down |
 
 `api/scripts/`:
