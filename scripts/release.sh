@@ -12,12 +12,23 @@
 # workflow (.github/workflows/release.yml), which builds and pushes the Docker
 # images (tcglense-api / tcglense-web / tcglense) to GHCR + Docker Hub.
 #
-# Run from anywhere:  ./scripts/release.sh
+# Run from anywhere:  ./scripts/release.sh            (prompts for the version)
+#                     ./scripts/release.sh 1.2.0      (version given; still confirms)
+#                     ./scripts/release.sh --yes 1.2.0
+#
+# `--yes` (`-y`) makes the run non-interactive: no confirmation prompt, and the
+# "not on main" question becomes a hard error. That is how the "Cut release"
+# workflow (.github/workflows/release-cut.yml) runs this same script from GitHub
+# Actions with a PAT in GH_TOKEN, so the laptop path and the Actions path share
+# one implementation. Two knobs exist for that path: RELEASE_MERGE_ATTEMPTS and
+# RELEASE_MERGE_INTERVAL (seconds) bound how long the merge step waits for the
+# release PR to become mergeable (defaults 6 x 3s; Actions passes a longer window
+# so required status checks, if any, have time to run).
 #
 # Prerequisites: a clean working tree, and git / cargo / npm / gh on PATH with
-# `gh` authenticated (`gh auth login`). The "Release images" workflow must already
-# be on the repo's default branch for the release to trigger it, so land this on
-# main before cutting the first release.
+# `gh` authenticated (`gh auth login`, or GH_TOKEN in the environment). The
+# "Release images" workflow must already be on the repo's default branch for the
+# release to trigger it, so land this on main before cutting the first release.
 
 set -euo pipefail
 
@@ -38,6 +49,33 @@ require cargo
 require npm
 require gh
 
+# --- Arguments -------------------------------------------------------------------
+usage() {
+  echo "usage: $0 [--yes|-y] [VERSION]" >&2
+  echo "  VERSION   X.Y.Z or X.Y.Z-prerelease (no leading 'v'); prompted for if omitted" >&2
+  echo "  --yes     non-interactive: skip the confirmation, refuse (don't ask) off main" >&2
+  exit 2
+}
+ASSUME_YES=false
+VERSION=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes|-y) ASSUME_YES=true ;;
+    -h|--help) usage ;;
+    -*) red "unknown option: $1"; usage ;;
+    *)
+      [ -z "$VERSION" ] || { red "unexpected argument: $1"; usage; }
+      VERSION="$1"
+      ;;
+  esac
+  shift
+done
+# Without a version we have to prompt, which needs a terminal to read from.
+if [ -z "$VERSION" ] && ! [ -t 0 ]; then
+  red "no VERSION given and stdin is not a terminal (pass the version as an argument)."
+  usage
+fi
+
 # --- Preconditions ---------------------------------------------------------------
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository."
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run: gh auth login"
@@ -46,6 +84,7 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 BASE_BRANCH="main"  # the protected branch we cut from and merge the release PR into
 if [ "$BRANCH" != "main" ]; then
   red "You are on branch '$BRANCH', not 'main'. Releases are normally cut from main."
+  $ASSUME_YES && die "refusing to cut a release off '$BRANCH' non-interactively."
   read -r -p "Continue on '$BRANCH' anyway? [y/N] " reply
   [ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted."
 fi
@@ -80,8 +119,10 @@ bold "TCGLense release"
 echo "  Current version: $current_version"
 echo
 
-# --- Prompt for the new version --------------------------------------------------
-read -r -p "New version (X.Y.Z, without a leading 'v'): " VERSION
+# --- The new version (argument, else prompt) -------------------------------------
+if [ -z "$VERSION" ]; then
+  read -r -p "New version (X.Y.Z, without a leading 'v'): " VERSION
+fi
 VERSION="${VERSION#v}"  # tolerate a pasted leading 'v'
 
 # Strict semver: X.Y.Z with no leading zeros, plus an optional pre-release suffix of
@@ -125,8 +166,12 @@ echo "  2. Commit the bump on '$RELEASE_BRANCH' and tag it $TAG"
 echo "  3. Open a PR into $BASE_BRANCH and merge it (merge commit)"
 echo "  4. Push $TAG and publish GitHub Release $TAG$( $PRERELEASE && printf ' (pre-release)' ) — this builds + pushes the Docker images"
 echo
-read -r -p "Proceed? [y/N] " reply
-[ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted (no changes made)."
+if $ASSUME_YES; then
+  echo "(--yes given; proceeding without confirmation)"
+else
+  read -r -p "Proceed? [y/N] " reply
+  [ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted (no changes made)."
+fi
 
 # From here the working tree gets mutated. On any failure/abort before we finish, tell
 # the user exactly how to recover so a partial release isn't a mystery.
@@ -245,12 +290,19 @@ git switch --quiet "$BASE_BRANCH"
 
 echo "-> Merging the pull request..."
 # Mergeability can take a moment to compute right after the PR opens; retry briefly.
-for _ in 1 2 3 4 5 6; do
+# The window is configurable because a PR opened with a PAT (the Actions path) gets
+# a CI run, and if main requires those checks the merge has to wait for them.
+merge_attempts="${RELEASE_MERGE_ATTEMPTS:-6}"
+merge_interval="${RELEASE_MERGE_INTERVAL:-3}"
+attempt=0
+while [ "$attempt" -lt "$merge_attempts" ]; do
+  attempt=$((attempt + 1))
   if gh pr merge "$RELEASE_BRANCH" --merge; then
     merged=true; break
   fi
-  echo "   ...not mergeable yet; retrying in 3s"
-  sleep 3
+  [ "$attempt" -lt "$merge_attempts" ] || break
+  echo "   ...not mergeable yet (attempt $attempt/$merge_attempts); retrying in ${merge_interval}s"
+  sleep "$merge_interval"
 done
 $merged || die "could not auto-merge the release PR (required checks or approvals?). Merge it in the UI, pull $BASE_BRANCH, then run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG && gh release create $TAG --generate-notes$( $PRERELEASE && printf ' --prerelease' )"
 

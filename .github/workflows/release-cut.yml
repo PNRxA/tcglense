@@ -1,0 +1,89 @@
+name: Cut release
+
+# Cut a TCGLense release from GitHub Actions instead of a laptop. This runs the very
+# same `scripts/release.sh` the manual path uses (in its non-interactive `--yes`
+# form), so there is one release procedure: bump the version in api/Cargo.toml (+
+# Cargo.lock) and web/package.json (+ package-lock.json), commit on a
+# `chore/release-vX.Y.Z` branch, open + merge the PR into main, tag the merge commit
+# and publish the GitHub Release — which fires "Release images" (release.yml) to
+# build + push the Docker images.
+#
+# Why a PAT and not GITHUB_TOKEN: anything done with the workflow's own token never
+# triggers other workflows, so the release PR would get no CI run and — the part
+# that matters — the published Release would NOT fire "Release images". `GH_PAT` is
+# a fine-grained personal access token scoped to this repository with
+# Contents: read+write, Pull requests: read+write (Metadata: read is implied). It
+# is used for the checkout (so every `git push` goes through it) and as GH_TOKEN
+# for `gh`. It acts as its owner, so branch protection on main applies exactly as
+# when they run the script locally. Rotate it before it expires (docs/operations.md).
+#
+# Run it from the Actions tab ("Run workflow") on `main` with the version to cut.
+# The script refuses any other branch in --yes mode, so picking another branch in
+# the dispatch dropdown fails fast instead of releasing from it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release: X.Y.Z or X.Y.Z-prerelease (no leading 'v')"
+        required: true
+        type: string
+
+# One release at a time; a second dispatch queues behind the first rather than
+# racing it for the same tag/branch.
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+# The workflow's own token needs nothing: all writes go through GH_PAT.
+permissions:
+  contents: read
+
+jobs:
+  cut:
+    name: Release v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the release token is configured
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "::error::Repository secret GH_PAT is not set. Add a fine-grained PAT (Contents + Pull requests: read/write, scoped to this repo) — see docs/operations.md."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # The PAT must be the credential git pushes with, or the pushed tag and the
+          # published Release won't trigger "Release images" (see the header).
+          token: ${{ secrets.GH_PAT }}
+          # Full history: the script fetches tags, compares against origin/main and
+          # fast-forwards after the merge — no shallow-clone surprises.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Configure git identity
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+
+      - name: Cut the release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          VERSION: ${{ inputs.version }}
+          # A PAT-opened PR gets a CI run; if main requires those checks, give the
+          # merge step up to ~15 minutes to see them go green (60 x 15s).
+          RELEASE_MERGE_ATTEMPTS: "60"
+          RELEASE_MERGE_INTERVAL: "15"
+        run: ./scripts/release.sh --yes "$VERSION"

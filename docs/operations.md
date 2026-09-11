@@ -237,13 +237,35 @@ Two compose files run the published images: `deploy/docker-compose.homelab.yml` 
 combined image + SQLite, one container) and `deploy/docker-compose.prod.yml` (the full
 split: edge Caddy [`deploy/edge.Caddyfile`] + web + api + Postgres + Redis).
 
-**Cutting a release:** `./scripts/release.sh` prompts for the version, bumps it in
+**Cutting a release:** `./scripts/release.sh [--yes] [VERSION]` bumps the version in
 `api/Cargo.toml` (+ `Cargo.lock` via `cargo update -p tcglense-api`) and
-`web/package.json` (+ lock via `npm version`), commits, tags `vX.Y.Z`, pushes, and
-`gh release create`s the GitHub Release that triggers the workflow. Prerequisites: a
-clean working tree, and `git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The
-workflow file must already be on the default branch for the release to fire it, so land
-it on `main` before the first release.
+`web/package.json` (+ lock via `npm version`), commits it on a `chore/release-vX.Y.Z`
+branch, opens + merges the PR into the protected `main`, tags `vX.Y.Z` on the merge
+commit, and `gh release create`s the GitHub Release that triggers the workflow. Without a
+`VERSION` it prompts; `--yes` skips the confirmation and turns the "not on main" question
+into a hard error (for non-interactive use). Prerequisites: a clean working tree, and
+`git`/`cargo`/`npm`/`gh` on `PATH` with `gh` authenticated. The workflow file must
+already be on the default branch for the release to fire it, so land it on `main` before
+the first release.
+
+**Cutting a release from GitHub Actions** (`.github/workflows/release-cut.yml`, "Cut
+release"): Actions → Cut release → Run workflow on `main` with the version. It runs the
+same script in `--yes` mode — one release procedure, two ways to start it. It needs the
+repo secret **`GH_PAT`**: a *fine-grained* personal access token scoped to this
+repository with **Contents: read and write** (push the branch + tag, create the Release,
+delete the merged branch) and **Pull requests: read and write** (open + merge the PR);
+Metadata: read is added automatically. Nothing else — no Workflows (the bump touches no
+workflow file), no Packages (the image push runs under `release.yml`'s own token), no
+Actions. It can't use the built-in `GITHUB_TOKEN`: events caused by that token never
+trigger other workflows, so the release PR would get no CI run and, decisively, the
+published Release would not fire "Release images". The PAT acts as its owner, so
+`main`'s branch protection applies exactly as it does locally; a PAT-opened PR *does* get
+a CI run, and the workflow gives the merge step a ~15-minute window
+(`RELEASE_MERGE_ATTEMPTS`/`RELEASE_MERGE_INTERVAL`, the script's merge-wait knobs) in
+case `main` requires those checks. Fine-grained tokens expire: when a run fails with a
+401 on the push or `gh` call, rotate the secret. If a run dies midway, the script's
+recovery message in the job log says which of branch / merge / tag / Release is done and
+how to finish or unwind by hand.
 
 ## scripts/ inventory
 
@@ -251,7 +273,7 @@ Repo-root `scripts/`:
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/release.sh` | Cut a release: prompt for a version, bump it in `api/Cargo.toml` (+ `Cargo.lock`) and `web/package.json` (+ `package-lock.json`), commit, tag `vX.Y.Z`, push, and publish the GitHub Release that fires the "Release images" workflow. Run from anywhere; needs a clean tree + authenticated `gh` |
+| `scripts/release.sh` | Cut a release: take the version (argument, else prompt), bump it in `api/Cargo.toml` (+ `Cargo.lock`) and `web/package.json` (+ `package-lock.json`), commit on a release branch, open + merge the PR into `main`, tag `vX.Y.Z` on the merge commit, and publish the GitHub Release that fires the "Release images" workflow. Run from anywhere; needs a clean tree + authenticated `gh`. `--yes` is the non-interactive form the "Cut release" workflow (`.github/workflows/release-cut.yml`) runs with a PAT |
 | `scripts/dev.sh` | Run both dev servers together — API (`api/`, `cargo run`, `:8080`) + web (`web/`, `npm run dev`, `:5173`) — streaming both to one terminal (colors/HMR intact). Ctrl+C stops both; if either exits, the other is torn down |
 
 `api/scripts/`:
