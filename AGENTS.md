@@ -649,6 +649,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `DERIVATION_VERSION` bump like any other. The SPA **mirrors** the board vocabulary in
   `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) and adapts boards into
   sections so the precon page renders through the *deck* display engine, not a second one.
+  The reader's own holdings ride that page too (issue #707): the "you own N / want N" chips
+  come from `composables/useDeckOwnership.ts`, the overlay the owner deck page reads, over the
+  adapted entries — a second, authed request that is empty while signed out, never a per-user
+  field on the public, CDN-cached precon payload.
 - **Price alerts** (`/api/alerts*`, issue #525) are **session-only** (`SessionUser` — never an
   API key: the channel settings hold delivery credentials) and **allow-listed out of the
   OpenAPI doc** (an account/session-flow surface, like username/currency). The engine is

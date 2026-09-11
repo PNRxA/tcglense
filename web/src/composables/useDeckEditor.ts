@@ -14,12 +14,11 @@ import {
   useUpdateDeckMutation,
   useUpdateSectionMutation,
 } from '@/composables/useDecks'
-import { useOwnedCounts as useCollectionOwnedCounts } from '@/composables/useCollection'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
+import { useDeckOwnership } from '@/composables/useDeckOwnership'
 import { useDeckRolesQuery } from '@/composables/useDeckAnalysis'
-import { useWishlistCounts } from '@/composables/useWishlist'
 import { ApiError, exportDeckFile } from '@/lib/api'
-import type { Card, DeckCardEntry, DeckExportFormat } from '@/lib/api'
+import type { DeckCardEntry, DeckExportFormat } from '@/lib/api'
 import { downloadBlob } from '@/lib/download'
 import { useAuthStore } from '@/stores/auth'
 
@@ -66,18 +65,9 @@ export function useDeckEditor(props: DeckEditorProps) {
     totalCount,
   } = useDeckCardDisplay({ cards: allCards, sections, showEmpty, roles })
 
-  // Owner-only collection/wish-list overlays, batched over the deck's catalog card ids.
-  const catalogCards = computed<Card[]>(() => allCards.value.map((entry) => entry.card))
-  const { ownership } = useCollectionOwnedCounts(game, catalogCards)
-  const { ownership: wishlistWanted } = useWishlistCounts(game, catalogCards)
-  function ownedInCollection(cardId: string): number {
-    const counts = ownership.value[cardId]
-    return counts ? counts.quantity + counts.foil_quantity : 0
-  }
-  function wantedInWishlist(cardId: string): number {
-    const counts = wishlistWanted.value[cardId]
-    return counts ? counts.quantity + counts.foil_quantity : 0
-  }
+  // The collection/wish-list overlays, batched over the deck's catalog card ids — the same
+  // seam the precon page reads, so the two pages' chips can't drift (issue #707).
+  const { ownedInCollection, wantedInWishlist } = useDeckOwnership(game, allCards)
 
   // "I bought this": every card outside the maybeboards into the collection, on top of what
   // is already owned. The button that calls this confirms first — the write is additive, so
