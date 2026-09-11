@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { Heart, Library } from '@lucide/vue'
 
-// "You own N / you want N" chips for a card in the owner's deck view — how many copies the
-// viewer's collection and wish list hold. Extracted so the image grid and the compact list
+// "You own N / you want N" chips for a card on a deck-shaped page — the owner's deck view and
+// a preconstructed deck's (issue #707) — how many copies the viewer's collection and wish list
+// hold, read through `useDeckOwnership`. Extracted so the image grid and the compact list
 // (issue #570) show the same pair rather than two drifting copies of the markup.
 //
 // Layout-free, and identical on both surfaces: the list row gives it a column, the image grid

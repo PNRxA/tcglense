@@ -16,6 +16,7 @@ import DeckCardRow from '@/components/decks/DeckCardRow.vue'
 import DeckColorFilter from '@/components/decks/DeckColorFilter.vue'
 import DeckGoldfish from '@/components/decks/DeckGoldfish.vue'
 import DeckLegalityBanner from '@/components/decks/DeckLegalityBanner.vue'
+import DeckOwnershipBadges from '@/components/decks/DeckOwnershipBadges.vue'
 import DeckRoles from '@/components/decks/DeckRoles.vue'
 import DeckMana from '@/components/decks/DeckMana.vue'
 import DeckOverview from '@/components/decks/DeckOverview.vue'
@@ -28,6 +29,7 @@ import DeckTileBadges from '@/components/decks/DeckTileBadges.vue'
 import DeckViewMenu from '@/components/decks/DeckViewMenu.vue'
 import { useCurrency } from '@/composables/useCurrency'
 import { useDeckCardDisplay } from '@/composables/useDeckCardDisplay'
+import { useDeckOwnership } from '@/composables/useDeckOwnership'
 import { usePreconLegalityQuery, usePreconRolesQuery } from '@/composables/useDeckAnalysis'
 import { useGameName } from '@/composables/useCatalog'
 import {
@@ -104,6 +106,13 @@ const {
 
 const cardSize = useCardSizeStore()
 const deckView = useDeckViewStore()
+
+// How many of each card the reader already holds (issue #707): the same "you own N / want N"
+// chips the owner's deck page draws, over the same two batched reads. A precon is public and
+// the page is CDN-cached, so nothing per-user rides the precon read itself — the overlay is a
+// second, authed request that the holdings seam skips while signed out (every count is then
+// zero and no chip renders), and the add-to-collection write below refreshes it.
+const { ownedInCollection, wantedInWishlist } = useDeckOwnership(game, entries)
 
 // "released 14 Nov 2026" / "releases 14 Nov 2026" — MTGJSON ships upcoming sets, and the
 // browse defaults to newest-first, so a precon that hasn't come out yet leads the grid. The
@@ -447,6 +456,12 @@ usePageMeta({
                     >×{{ entry.quantity + entry.foil_quantity }}</span
                   >
                 </template>
+                <template #badges>
+                  <DeckOwnershipBadges
+                    :owned="ownedInCollection(entry.card.id)"
+                    :wanted="wantedInWishlist(entry.card.id)"
+                  />
+                </template>
               </DeckCardRow>
             </div>
 
@@ -459,6 +474,15 @@ usePageMeta({
               >
                 <template #badge>
                   <DeckTileBadges>
+                    <!-- What the reader already holds, stacked above the count the deck
+                      ships — the owner's deck page puts them in the same column, so the two
+                      "how many?" answers read together (issue #707). -->
+                    <template #ownership>
+                      <DeckOwnershipBadges
+                        :owned="ownedInCollection(entry.card.id)"
+                        :wanted="wantedInWishlist(entry.card.id)"
+                      />
+                    </template>
                     <template #control>
                       <span
                         class="bg-background/90 text-foreground cursor-default rounded-md border px-1.5 py-0.5 text-xs font-medium shadow select-none tabular-nums"
