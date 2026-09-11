@@ -10,8 +10,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{
-    ColumnTrait, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder, Select,
-    sea_query::NullOrdering,
+    ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Select,
+    sea_query::{Expr, Func, NullOrdering},
 };
 use serde::Serialize;
 
@@ -20,10 +21,10 @@ use crate::entities::{card, card_set};
 use crate::error::AppError;
 use crate::extract::{Path, Query};
 use crate::handlers::shared::{
-    CardResponse, DataBody, Page, SortDir, SortField, apply_card_sort, build_page,
-    cheapest_single_cents, filter_drops_by_title, format_cents, group_into_drops,
-    group_into_subtypes, load_cheapest_by_oracle, load_group_set_codes, load_set, paginate_buckets,
-    require_drop_table, require_game,
+    CardResponse, DataBody, Page, SearchGroup, SortDir, SortField, apply_card_sort, build_page,
+    cheapest_single_cents, every_word_matches, filter_drops_by_title, format_cents,
+    group_into_drops, group_into_subtypes, load_cheapest_by_oracle, load_group_set_codes, load_set,
+    paginate_buckets, require_drop_table, require_game, starts_with_rank,
 };
 use crate::state::AppState;
 
@@ -167,6 +168,72 @@ pub async fn list_sets(
         })
         .collect();
     Ok(Json(DataBody { data }))
+}
+
+/// The universal search's sets leg (`GET /api/games/{game}/search`, see
+/// [`crate::handlers::search`]): up to `limit` of the game's sets whose **name** carries every
+/// whitespace-separated word of `term` — or whose **code** is the whole term (`cmr`; a set
+/// code is what an enfranchised visitor types, and a substring of one names nothing) —
+/// names that start with the text first, then newest first like the set list, plus whether
+/// more matched (one row of over-fetch, never a `COUNT(*)`). The game is the caller's to
+/// validate.
+///
+/// Dressed exactly as a [`list_sets`] tile is — the same `has_subtypes` gate and the same
+/// folded `card_count` seam — but through the bounded, `set_code IN (…)` forms of both
+/// (`sets_with_subtypes_among`, `folded_counts_among_sets`): the list's whole-game scans run
+/// about hourly under the CDN, and a per-keystroke read must not pay them for a handful of
+/// rows. Every set the list shows is a candidate, sub-sets included — "bloomburrow" names the
+/// tokens and the Commander decks too, and each is its own page.
+pub(crate) async fn search_sets(
+    state: &AppState,
+    game: &str,
+    term: &str,
+    limit: usize,
+) -> Result<SearchGroup<SetResponse>, AppError> {
+    let code_is_term = Expr::expr(Func::lower(Expr::col((
+        card_set::Entity,
+        card_set::Column::Code,
+    ))))
+    .eq(term.trim().to_ascii_lowercase());
+    let rows = CardSet::find()
+        .filter(card_set::Column::Game.eq(game))
+        .filter(
+            Condition::any()
+                .add(every_word_matches(
+                    (card_set::Entity, card_set::Column::Name),
+                    term,
+                )?)
+                .add(code_is_term),
+        )
+        .order_by_asc(starts_with_rank(
+            (card_set::Entity, card_set::Column::Name),
+            term,
+        ))
+        .order_by_with_nulls(
+            card_set::Column::ReleasedAt,
+            Order::Desc,
+            NullOrdering::Last,
+        )
+        .order_by_asc(card_set::Column::Name)
+        .order_by_asc(card_set::Column::Code)
+        .limit(limit as u64 + 1)
+        .all(&state.db)
+        .await?;
+    let codes: Vec<String> = rows.iter().map(|set| set.code.clone()).collect();
+    let code_refs: Vec<&str> = codes.iter().map(String::as_str).collect();
+    let with_subtypes =
+        crate::scryfall::subtypes::sets_with_subtypes_among(&state.db, game, &codes).await?;
+    let folded = crate::scryfall::folded_counts_among_sets(&state.db, game, &code_refs).await?;
+    let data: Vec<SetResponse> = rows
+        .into_iter()
+        .map(|m| {
+            let mut set = SetResponse::from(m);
+            set.has_subtypes = with_subtypes.contains(&set.code);
+            set.card_count = folded.adjust(&set.code, set.card_count);
+            set
+        })
+        .collect();
+    Ok(SearchGroup::from_overfetch(data, limit))
 }
 
 /// Get set

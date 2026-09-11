@@ -1,6 +1,8 @@
 //! Catalog card endpoints: the all-cards list (search + paginate), one card's full
 //! detail, and a card's other printings.
 
+use std::collections::HashMap;
+
 use axum::{Json, extract::State};
 use sea_orm::{
     ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
@@ -191,14 +193,17 @@ pub async fn card_names(
 /// [`crate::handlers::search`]): up to `limit` distinct card names matching `term`, each
 /// as the full card payload of one representative printing, plus whether more matched.
 /// The query is [`card_name_search_query`]; this runs it with one row of over-fetch so the
-/// group can say `has_more` without a `COUNT(*)`. The game is the caller's to validate.
+/// group can say `has_more` without a `COUNT(*)`. The game is the caller's to validate, and
+/// `set_names` is the game's set map the handler already loaded for the other legs — the
+/// card leg reads it to let a word name a printing's set (issue #709).
 pub(crate) async fn search_cards(
     state: &AppState,
     game: &str,
     term: &str,
     limit: usize,
+    set_names: &HashMap<String, String>,
 ) -> Result<SearchGroup<CardResponse>, AppError> {
-    let rows = card_name_search_query(game, term, limit as u64 + 1, state.dialect())?
+    let rows = card_name_search_query(game, term, limit as u64 + 1, state.dialect(), set_names)?
         .all(&state.db)
         .await?;
     let data: Vec<CardResponse> = rows.into_iter().map(CardResponse::from).collect();

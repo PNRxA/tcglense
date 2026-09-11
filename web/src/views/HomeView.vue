@@ -243,8 +243,9 @@ const rowLinkClass =
         Search the whole catalog
       </h2>
       <p class="text-muted-foreground mt-3 text-pretty">
-        Cards, sealed products, preconstructed decks, and rules keywords in one box — plus your own
-        decks once you're signed in.
+        Cards, sets, sealed products, preconstructed decks, and rules keywords in one box — plus
+        your own decks once you're signed in. Name a printing by its set or number, too: “sol ring
+        cmr”, “blb 12”.
       </p>
       <UniversalSearchBox :games="games" class="mt-6 text-left" />
     </section>

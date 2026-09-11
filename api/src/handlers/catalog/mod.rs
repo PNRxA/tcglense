@@ -11,6 +11,8 @@
 //! calendar), and [`image`] (the image proxy) — with the shared query params and card
 //! helpers kept here.
 
+use std::collections::HashMap;
+
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
     Select,
@@ -26,8 +28,8 @@ use crate::entities::prelude::Card;
 use crate::error::AppError;
 use crate::handlers::shared::{
     CardExportFormat, DEFAULT_DROP_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_DROP_PAGE_SIZE, MAX_PAGE_SIZE,
-    SortDir, SortField, every_word_matches_with, resolve_page, search_condition, starts_with_rank,
-    trim_query,
+    SortDir, SortField, every_word_in_name_or_set_with, leading_words_rank, resolve_page,
+    search_condition, set_codes_matching, trim_query,
 };
 use crate::scryfall::search::{cust_vals, escape_like};
 
@@ -70,7 +72,10 @@ pub use products::{
 pub use releases::list_releases;
 pub use rulings::card_rulings;
 pub use scan::scan_cards;
-pub use sets::{get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon};
+pub(crate) use sets::search_sets;
+pub use sets::{
+    SetResponse, get_set, list_set_cards, list_set_drops, list_set_subtypes, list_sets, set_icon,
+};
 pub use status::{ingest_status, list_games};
 
 // The `#[utoipa::path]`-generated route metadata structs, re-exported alongside the
@@ -402,36 +407,56 @@ fn indexed_name_like(dialect: Dialect, pattern: String) -> SimpleExpr {
     )
 }
 
-/// The universal search's card leg (`handlers::search`): the game's cards whose name
-/// contains every whitespace-separated word of `term`, **one row per distinct name**,
-/// prefix matches first and then by name, capped at `limit`.
+/// The universal search's card leg (`handlers::search`): the game's cards whose name —
+/// or, for a word the name lacks, whose **set**, or whose collector number within a set
+/// another word names — carries every whitespace-separated word of `term`, **one row per
+/// distinct name**, prefix matches first and then by name, capped at `limit`.
 ///
-/// Three seams, deliberately none of them new: the name match is
-/// [`every_word_matches_with`] — the same all-words rule the sealed-product and precon
-/// listings answer with, so every leg of the universal search reads "commander tarkir"
-/// identically — spelled through [`indexed_name_like`] so it rides the trigram index; the
+/// Three seams, deliberately none of them new: the match is
+/// [`every_word_in_name_or_set_with`] — the sealed-product and precon listings' all-words
+/// rule, widened (issue #709) so `sol ring cmr` and `cmr 129` name a printing: a word may
+/// instead be a set code or part of a set name, resolved through [`set_codes_matching`]
+/// over the set map the handler already holds, or a collector number in such a set, while
+/// the words must still identify a card (one in the name, or a set with a number) — spelled
+/// through [`indexed_name_like`] so the name half rides the trigram index; the
 /// one-per-name fold is [`fold_unique_by`], the engine behind the listing's `unique:cards`,
 /// because a suggestion list filled with eight printings of the one card the visitor typed
-/// hides every other card; and the ranking is [`starts_with_rank`], the autocomplete's own.
-/// Built on [`catalog_cards`] like every card grid, so a folded foil-★ variant can't be the
-/// printing that represents its name.
+/// hides every other card; and the ranking is [`leading_words_rank`], the autocomplete's
+/// prefix-first rank split by leading words, so a set word at the end of the term can't
+/// cost "Sol Ring" its lead over "Parasol Ring". Built on [`catalog_cards`] like every card
+/// grid, so a folded foil-★ variant can't be the printing that represents its name. The
+/// leading sort key is `NameOrSetMatch::by_name_alone_rank`, so the widened rule only ever
+/// appends to what the plain name rule answers.
 ///
 /// Folds by **name** rather than the listing's `oracle_id`: a name is what the visitor typed
 /// and what a row shows, and — unlike an `oracle_id`, which a reversible printing lacks —
 /// it is never NULL, so one card is always one row. Which printing represents the name is
-/// the fold's pick (`MIN(id)` on Postgres, SQLite's group representative); the row's own
-/// page lists the rest. `limit` is applied as given — a caller that wants a `has_more` asks
-/// for one extra row.
+/// the fold's pick (`MIN(id)` on Postgres, SQLite's group representative) **among the rows
+/// the filter kept** — which is what makes a set word pick that set's printing; the row's
+/// own page lists the rest. `limit` is applied as given — a caller that wants a `has_more`
+/// asks for one extra row.
 pub(crate) fn card_name_search_query(
     game: &str,
     term: &str,
     limit: u64,
     dialect: Dialect,
+    set_names: &HashMap<String, String>,
 ) -> Result<Select<card::Entity>, AppError> {
-    let matches = every_word_matches_with(term, |pattern| indexed_name_like(dialect, pattern))?;
-    let query = fold_unique_by(catalog_cards(game).filter(matches), "name", dialect);
+    let matches = every_word_in_name_or_set_with(
+        term,
+        |pattern| indexed_name_like(dialect, pattern),
+        card::Column::SetCode,
+        card::Column::CollectorNumber,
+        |word| set_codes_matching(word, set_names),
+    )?;
+    // Name matches first — the widened rule may only append rows, never reorder the ones
+    // the plain name rule answers (`sol ring` must not let a Lord of the *Rings* "Sol…"
+    // card above "Parasol Ring") — then the leading-words prefix rank, then the name.
+    let by_name_alone = matches.by_name_alone_rank();
+    let query = fold_unique_by(catalog_cards(game).filter(matches.filter), "name", dialect);
     Ok(query
-        .order_by_asc(starts_with_rank((card::Entity, card::Column::Name), term))
+        .order_by_asc(by_name_alone)
+        .order_by_asc(leading_words_rank((card::Entity, card::Column::Name), term))
         .order_by_asc(card::Column::Name)
         .order_by_asc(card::Column::Id)
         .limit(limit))

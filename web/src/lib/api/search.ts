@@ -3,7 +3,7 @@ import type { SearchResults } from './generated'
 
 // ---------- Universal search (public) ----------
 //
-// One `q` answered across cards, sealed products, preconstructed decks and the keyword
+// One `q` answered across cards, sets, sealed products, preconstructed decks and the keyword
 // glossary at once — the homepage search box's read. The wire shape is generated from the
 // API's `SearchResults` DTO; each group carries the same row type its own listing does
 // (`Card`, `Product`, `PreconDeck`, `KeywordEntry`), so the tiles already built for those

@@ -310,6 +310,40 @@ pub async fn sets_with_subtypes(
     Ok(codes)
 }
 
+/// Which of `codes` have at least one special-treatment card — the by-treatment gate for a
+/// read that dresses a *few* named sets (the universal search's sets leg) and must not pay
+/// [`sets_with_subtypes`]' whole-game scan per keystroke: one `set_code IN (…)` query the
+/// `(game, set_code)` index answers, unioned with the curated overrides among `codes`.
+pub async fn sets_with_subtypes_among(
+    db: &sea_orm::DatabaseConnection,
+    game: &str,
+    codes: &[String],
+) -> Result<HashSet<String>, DbErr> {
+    if codes.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut found: HashSet<String> = Card::find()
+        .select_only()
+        .column(card::Column::SetCode)
+        .distinct()
+        .filter(card::Column::Game.eq(game))
+        .filter(card::Column::SetCode.is_in(codes.iter().cloned()))
+        .filter(has_subtype_condition())
+        .into_tuple::<String>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let overrides = override_set_codes(game);
+    found.extend(
+        codes
+            .iter()
+            .filter(|code| overrides.contains(code.as_str()))
+            .cloned(),
+    );
+    Ok(found)
+}
+
 /// Whether a single set has any special-treatment card — the by-treatment gate for one
 /// set (its cards are index-scanned via `(game, set_code)`, so this is cheap).
 pub async fn set_has_subtypes(

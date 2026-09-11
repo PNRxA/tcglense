@@ -1,5 +1,13 @@
 import type { RouteLocationRaw } from 'vue-router'
-import type { Card, Deck, KeywordEntry, PreconDeck, Product, SearchResults } from '@/lib/api'
+import type {
+  Card,
+  CardSet,
+  Deck,
+  KeywordEntry,
+  PreconDeck,
+  Product,
+  SearchResults,
+} from '@/lib/api'
 import { KIND_LABELS, glossaryPath, keywordPath } from '@/lib/keywords'
 import { preconsPath } from '@/lib/precons'
 import { productTypeLabel } from '@/lib/productType'
@@ -13,7 +21,9 @@ import { productTypeLabel } from '@/lib/productType'
 // server decides *what matches* (see `api/src/handlers/search.rs`); this only decides how a
 // match reads and where it goes. The one matching rule that lives here is the deck filter,
 // because a user's decks never leave the authed deck list: it **mirrors** the API's every-word
-// name rule so "Your decks" answers the same question as every other group.
+// name rule so "Your decks" answers the same question as every other group — and the card
+// row reads the same mirror the other way round, to tell when a word matched the printing's
+// *set* rather than its name (issue #709) and name that set under the card.
 
 /** Characters typed before the box asks the API — the quick-add autocomplete's threshold. */
 export const SEARCH_MIN_CHARS = 2
@@ -22,13 +32,22 @@ export const SEARCH_MIN_CHARS = 2
  * of four fit a dropdown without scrolling on a laptop; the API clamps to 1–10 anyway. */
 export const SEARCH_GROUP_LIMIT = 4
 
-/** What a row in the dropdown is: one of the five result kinds, a group's "see all" row, or
+/** What a row in the dropdown is: one of the six result kinds, a group's "see all" row, or
  * the closing "search all cards" row that Enter also triggers. */
-export type SearchKind = 'card' | 'deck' | 'product' | 'precon' | 'keyword' | 'more' | 'search'
+export type SearchKind =
+  | 'card'
+  | 'deck'
+  | 'set'
+  | 'product'
+  | 'precon'
+  | 'keyword'
+  | 'more'
+  | 'search'
 
-/** The small image beside a row, drawn with the CardImage / ProductImage proxies. */
+/** The small image beside a row, drawn with the CardImage / ProductImage proxies — or, for
+ * a set, its icon through the set-icon proxy (`id` is then the set code). */
 export interface SearchThumbnail {
-  kind: 'card' | 'product'
+  kind: 'card' | 'product' | 'set'
   id: string
   name: string
   hasImage: boolean
@@ -76,6 +95,15 @@ export function cardPath(game: string, id: string): string {
 
 export function productPath(game: string, id: string): string {
   return `/sealed/${enc(game)}/${enc(id)}`
+}
+
+export function setPath(game: string, code: string): string {
+  return `/cards/${enc(game)}/sets/${enc(code)}`
+}
+
+/** The set landing — every set of the game, with its own (local, not URL-backed) filter. */
+export function setsPath(game: string): string {
+  return `/cards/${enc(game)}`
 }
 
 export function preconPath(game: string, slug: string): string {
@@ -133,16 +161,54 @@ export function filterDecks(
 
 // ----- Rows -----
 
-function cardOption(game: string, card: Card): SearchOption {
+/** What a card row says under its name. The type line identifies a card better than the
+ * set of the one printing the fold happened to pick — the set is a click away on the card
+ * page with every printing — **unless** a word of the term matched the printing's set or
+ * collector number rather than its name (`sol ring cmr`, `cmr 129`): then the visitor asked
+ * for a printing, the API folded to one from that set, and the row names it, number and all.
+ * Whether that happened is read off the API's own name rule, mirrored here: a name carrying
+ * every word matched by name alone. */
+export function cardSublabel(card: Card, term: string): string | undefined {
+  const byNameAlone = matchesEveryWord(card.name, term)
+  if (byNameAlone) return card.type_line ?? card.set_name
+  const printing = `${card.set_name} #${card.collector_number}`
+  return [card.type_line, printing].filter(Boolean).join(' · ')
+}
+
+function cardOption(game: string, card: Card, term: string): SearchOption {
   return {
     key: `card:${card.id}`,
     kind: 'card',
     label: card.name,
-    // The type line identifies a card better than the set of the one printing the fold
-    // happened to pick; the set is a click away on the card page with every printing.
-    sublabel: card.type_line ?? card.set_name,
+    sublabel: cardSublabel(card, term),
     to: cardPath(game, card.id),
     thumbnail: { kind: 'card', id: card.id, name: card.name, hasImage: card.has_image },
+  }
+}
+
+/** A set's "CODE · Mon YYYY · N cards" line, the tile's own identity line. */
+export function setSublabel(set: CardSet): string {
+  const parts = [set.code.toUpperCase()]
+  if (set.released_at) {
+    const date = new Date(set.released_at)
+    parts.push(
+      Number.isNaN(date.getTime())
+        ? set.released_at
+        : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short' }),
+    )
+  }
+  if (set.card_count) parts.push(`${set.card_count} cards`)
+  return parts.join(' · ')
+}
+
+function setOption(game: string, set: CardSet): SearchOption {
+  return {
+    key: `set:${set.code}`,
+    kind: 'set',
+    label: set.name,
+    sublabel: setSublabel(set),
+    to: setPath(game, set.code),
+    thumbnail: { kind: 'set', id: set.code, name: set.name, hasImage: !!set.icon_svg_uri },
   }
 }
 
@@ -249,7 +315,7 @@ export function buildSearchGroups({
     groups.push({
       id: 'card',
       label: 'Cards',
-      options: results.cards.data.map((card) => cardOption(game, card)),
+      options: results.cards.data.map((card) => cardOption(game, card, term)),
     })
   }
 
@@ -261,6 +327,11 @@ export function buildSearchGroups({
   }
 
   if (results) {
+    const sets = results.sets.data.map((set) => setOption(game, set))
+    // The set landing filters locally, not by URL, so "more" opens the landing itself.
+    if (results.sets.has_more) sets.push(moreOption('set', 'Browse all sets', setsPath(game)))
+    groups.push({ id: 'set', label: 'Sets', options: sets })
+
     const products = results.products.data.map((product) => productOption(game, product))
     if (results.products.has_more) {
       products.push(

@@ -658,21 +658,85 @@ fn name_suggestions_compile_the_trgm_indexed_expression() {
 /// un-indexed filter twice. Pin the compiled shape.
 #[test]
 fn card_name_search_compiles_the_trgm_indexed_expression() {
-    let s = card_name_search_query("mtg", "sol ring", 6, Dialect::Postgres)
+    let no_sets = std::collections::HashMap::new();
+    let s = card_name_search_query("mtg", "sol ring", 6, Dialect::Postgres, &no_sets)
         .expect("query")
         .build(sea_orm::DbBackend::Postgres)
         .to_string();
-    // One indexed leaf per word in the outer WHERE, and `fold_unique_by`'s Postgres arm
-    // repeats the whole filter inside its MIN(id) subquery — so four, never zero.
+    // Two indexed leaves per word in the outer WHERE — one in the per-word name-or-set
+    // conjunct, one in the "at least one word is in the name" disjunction — and
+    // `fold_unique_by`'s Postgres arm repeats the whole filter inside its MIN(id) subquery
+    // (eight), plus one per word in the ORDER BY's name-alone rank: ten, never zero.
     assert_eq!(
         s.matches("LOWER(COALESCE(name, '')) LIKE").count(),
-        4,
+        10,
         "{s}"
     );
-    // The only typed-column LIKE is the ORDER BY's `starts_with_rank` (a prefix pattern);
+    // The only typed-column LIKEs are the ORDER BY's `leading_words_rank` (prefix patterns);
     // a *contains* leaf on the typed column is exactly what the drift would add.
     assert!(!s.contains("LOWER(\"cards\".\"name\") LIKE '%"), "{s}");
     assert!(s.contains("ORDER BY"), "{s}");
+    // With no set named, nothing joins the set column and no collector-number arm exists:
+    // the read is the pure name search (both columns are still *selected*, as every card
+    // column is, so look at the filter alone).
+    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
+    assert!(!filter.contains("\"set_code\" IN"), "{filter}");
+    assert!(!filter.contains("collector_number"), "{filter}");
+}
+
+/// The set half of the card leg (issue #709) reaches SQL as a literal `set_code IN (…)`
+/// list resolved in Rust — never a `LIKE` on `cards.set_name` or a subquery, either of which
+/// would take the per-keystroke read off the index and onto the `cards` heap.
+#[test]
+fn card_name_search_resolves_set_words_to_an_indexed_code_list() {
+    let sets = std::collections::HashMap::from([
+        ("cmr".to_string(), "Commander Legends".to_string()),
+        ("leg".to_string(), "Legends".to_string()),
+        ("blb".to_string(), "Bloomburrow".to_string()),
+    ]);
+    let stmt = card_name_search_query("mtg", "sol ring legends", 6, Dialect::Postgres, &sets)
+        .expect("query")
+        .build(sea_orm::DbBackend::Postgres);
+    let s = stmt.to_string();
+    // The codes are bound values, never spliced text, and only the sets a word names are
+    // bound: Bloomburrow names no word.
+    let bound = format!("{:?}", stmt.values);
+    assert!(
+        bound.contains("\"cmr\"") && bound.contains("\"leg\""),
+        "{bound}"
+    );
+    assert!(
+        !bound.contains("\"blb\""),
+        "Bloomburrow names no word: {bound}"
+    );
+    // The filter never touches the un-indexed `set_name` column (it is only *selected*, as
+    // every card column is) and never joins `card_sets`.
+    let filter = &s[s.find(" WHERE ").expect("a WHERE clause")..];
+    assert!(!filter.contains("set_name"), "{filter}");
+    assert!(!filter.contains("card_sets"), "{filter}");
+    // Every set-column reference is a bound `IN (…)` list: one set arm for `legends`, one
+    // set-scoped collector-number arm per word (three), and the set-with-number half of the
+    // identity disjunction — five per copy of the filter, and `fold_unique_by`'s Postgres arm
+    // repeats the filter inside its MIN(id) subquery: ten.
+    assert_eq!(
+        filter.matches("\"cards\".\"set_code\" IN ($").count(),
+        10,
+        "{filter}"
+    );
+    // A collector-number arm is only ever paired with a set list — `(set_code IN (…) AND
+    // LOWER(collector_number) …)` — so the composite index leads it; a bare number
+    // comparison as its own `OR` arm would be a scan.
+    assert_eq!(
+        filter
+            .matches("LOWER(\"cards\".\"collector_number\")")
+            .count(),
+        8,
+        "three per-word arms plus the identity pair, doubled: {filter}"
+    );
+    assert!(
+        !filter.contains("OR LOWER(\"cards\".\"collector_number\")"),
+        "{filter}"
+    );
 }
 
 #[test]

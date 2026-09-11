@@ -916,14 +916,38 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
   columns are user-selectable), same refusal Moxfield's `Foil` column gets — and ManaBox's
   `Foil` column too.
-- **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a fifth
+- **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a sixth
   search.** Each leg reaches its surface through the seam that surface already exposes
-  (`catalog::search_cards` over `card_name_search_query`, `catalog::search_products`,
+  (`catalog::search_cards` over `card_name_search_query`, `catalog::search_sets` dressed through the set
+  list's own `has_subtypes` + folded-count seams, `catalog::search_products`,
   `precons::search_precons` over the browse's own `filtered_query`, `catalog::keywords::search`), and all
-  four answer the sealed/precon lists' name rule — every whitespace-separated word an order-independent,
+  five answer the sealed/precon lists' name rule — every whitespace-separated word an order-independent,
   case-insensitive substring (`shared::every_word_matches[_with]`), prefix matches first
   (`starts_with_rank`) — **never the Scryfall grammar**, which would turn a colon in a card name into a
-  422 for every group at once (the full grammar is one Enter away on the card listing). The card leg folds
+  422 for every group at once (the full grammar is one Enter away on the card listing). **The card leg
+  widens that rule by one clause (issue #709):** a word the name lacks may name the printing's **set**
+  instead — a whole set code (`cmr`) or part of a set name (`legends`) — or be its **collector number
+  within a set another word names** (`cmr 129`, how a checklist spells a printing) — and, because the
+  filter runs before the fold, the representative printing is then from that set (`sol ring cmr`
+  answers the CMR Sol Ring; the SPA's `cardSublabel` names the set and number under the row exactly when
+  a word matched by set, read off the same mirrored name rule). Two guards are load-bearing. **The words
+  must identify a card** — at least one in the name, or a set word paired with a number — or a bare set
+  name would answer a handful of arbitrary cards from that set (that is the sets group's question) and a
+  bare number every set's #129. And the set half is **resolved in Rust** (`shared::set_codes_matching`
+  over the `set_name_map` the handler already loads for the product/precon legs — a whole code at any
+  length, a name substring only from three characters, or "the" would bind a code list the size of the
+  catalog per word) into a bound `set_code IN (…)` list the `(game, set_code)` index answers, with the number arm only ever *inside*
+  that set list so the `(game, set_code, collector_number)` composite leads it — never a `LIKE` on
+  `cards.set_name` (no index), a bare `collector_number =`, or a subquery inside the `OR`, any of which
+  takes the per-keystroke read onto the `cards` heap; the SQL-shape canary in
+  `handlers/catalog/tests.rs` pins all of it. The card leg ranks **name-alone matches first** (`NameOrSetMatch::by_name_alone_rank`: a set word
+  is any substring of a set name, so `sol ring` also admits a Lord of the *Rings* "Sol…" card — the
+  widened rule may only ever *append* to what the plain name rule answers, never reorder it), then by
+  `leading_words_rank` (the prefix rank split by how many leading words the name starts with — a set
+  word at the end of the term must not let the alphabet put "Parasol Ring" above "Sol Ring"); the
+  other legs rank by `starts_with_rank`; the sets leg also answers the **whole term as a set code**, and dresses its rows
+  through the *bounded* `sets_with_subtypes_among` / `folded_counts_among_sets` forms, never the set
+  list's whole-game scans. The card leg folds
   **one row per name** through `fold_unique_by` (the engine behind `unique:cards`) and spells its `LIKE` as
   `indexed_name_like`, the exact expression Postgres's `idx_cards_name_trgm` is built on — a new per-keystroke
   name read must use that spelling or it seq-scans `cards`. `has_more` is one row of over-fetch, never a

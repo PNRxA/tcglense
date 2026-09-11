@@ -20,7 +20,7 @@ async function apiReachable(request: APIRequestContext): Promise<boolean> {
 }
 
 function searchBox(page: Page) {
-  return page.getByRole('combobox', { name: /search cards, sealed products/i })
+  return page.getByRole('combobox', { name: /search cards, sets, sealed products/i })
 }
 
 test.describe('homepage universal search', () => {
@@ -28,28 +28,53 @@ test.describe('homepage universal search', () => {
     test.skip(!(await apiReachable(request)), 'API not reachable; skipping')
   })
 
-  test('answers across cards, sealed products and precons as you type', async ({ page }) => {
+  test('answers across cards, sets, sealed products and precons as you type', async ({
+    page,
+  }) => {
     await page.goto('/')
     const box = searchBox(page)
     await box.fill('dummy')
 
     const listbox = page.getByRole('listbox', { name: 'Search results' })
     await expect(listbox).toBeVisible()
-    // Every seeded card, product and precon is named "Dummy …", so all three groups answer,
-    // and the seven products overflow the group into a "see all" row.
+    // Every seeded card, set, product and precon is named "Dummy …", so all four groups
+    // answer, and the seven products overflow the group into a "see all" row.
     await expect(listbox.getByRole('group', { name: 'Cards' })).toBeVisible()
+    await expect(listbox.getByRole('group', { name: 'Sets' })).toBeVisible()
     const sealed = listbox.getByRole('group', { name: 'Sealed products' })
     await expect(sealed.getByRole('option', { name: /All sealed products matching/ })).toBeVisible()
     await expect(listbox.getByRole('group', { name: 'Preconstructed decks' })).toBeVisible()
     // Signed out, there is no "Your decks" group.
     await expect(listbox.getByRole('group', { name: 'Your decks' })).toHaveCount(0)
 
-    // Every word must match the NAME: "universe" is only a set name, so the card group
-    // drops out while the "Dummy Universe" product and precon stay.
+    // A word the card name lacks may name its set: "universe" is only a set name, so the
+    // card group keeps every "Dummy …" card printed in Dummy Universe (each row naming that
+    // set), the set itself answers, and the "Dummy Universe" product and precon stay.
     await box.fill('dummy universe')
     const precons = listbox.getByRole('group', { name: 'Preconstructed decks' })
     await expect(precons.getByRole('option', { name: /Dummy Universe Commander/ })).toBeVisible()
+    const sets = listbox.getByRole('group', { name: 'Sets' })
+    await expect(sets.getByRole('option', { name: /^Dummy Universe/ })).toBeVisible()
+    const cards = listbox.getByRole('group', { name: 'Cards' })
+    await expect(cards.getByRole('option').first()).toContainText('Dummy Universe')
+
+    // But a bare set name is the set's question, not the cards': no card is named
+    // "universe", so the card group drops out while the set stays.
+    await box.fill('universe')
+    await expect(sets.getByRole('option', { name: /^Dummy Universe/ })).toBeVisible()
     await expect(listbox.getByRole('group', { name: 'Cards' })).toHaveCount(0)
+  })
+
+  test('opens a set from its row', async ({ page }) => {
+    await page.goto('/')
+    await searchBox(page).fill('dummy base')
+    const listbox = page.getByRole('listbox', { name: 'Search results' })
+    await listbox
+      .getByRole('group', { name: 'Sets' })
+      .getByRole('option', { name: /^Dummy Base Set/ })
+      .first()
+      .click()
+    await expect(page).toHaveURL(/\/cards\/mtg\/sets\/dmb$/)
   })
 
   test('finds a keyword by name and opens its glossary page', async ({ page }) => {
@@ -90,7 +115,7 @@ test.describe('homepage universal search', () => {
     await page.goto('/')
     await searchBox(page).fill('zzzz nothing')
     const listbox = page.getByRole('listbox', { name: 'Search results' })
-    await expect(listbox.getByRole('status')).toContainText(/no cards, sealed products/i)
+    await expect(listbox.getByRole('status')).toContainText(/no cards, sets, sealed products/i)
     await expect(listbox.getByRole('option', { name: /Search all cards for/ })).toBeVisible()
   })
 })

@@ -61,7 +61,8 @@ pub(crate) use product_holdings::{
     ProductHoldingListParams, ProductResponse, load_product, product_response, set_name_map,
 };
 pub(crate) use search::{
-    every_word_matches, every_word_matches_with, search_condition, starts_with_rank,
+    every_word_in_name_or_set_with, every_word_matches, leading_words_rank, search_condition,
+    set_codes_matching, starts_with_rank,
 };
 pub(crate) use sort::{SortDir, SortField, apply_card_sort};
 pub(crate) use type_line::split_type_line;

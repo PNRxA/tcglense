@@ -481,13 +481,28 @@ pub(crate) async fn folded_counts_in_set(
     game: &str,
     set_code: &str,
 ) -> Result<FoldedSetCounts, DbErr> {
-    folded_counts(db, game, Some(set_code)).await
+    folded_counts(db, game, Some(std::slice::from_ref(&set_code))).await
+}
+
+/// The folded-row counts of a *few* named sets, for a read that dresses a handful of them
+/// per request (the universal search's sets leg) and must neither pay the whole-game scan
+/// nor a query per set. Same shape again, so it applies through the same
+/// [`FoldedSetCounts::adjust`]; no codes is an empty map, with no query.
+pub(crate) async fn folded_counts_among_sets(
+    db: &DatabaseConnection,
+    game: &str,
+    set_codes: &[&str],
+) -> Result<FoldedSetCounts, DbErr> {
+    if set_codes.is_empty() {
+        return Ok(FoldedSetCounts::default());
+    }
+    folded_counts(db, game, Some(set_codes)).await
 }
 
 async fn folded_counts(
     db: &DatabaseConnection,
     game: &str,
-    set_code: Option<&str>,
+    set_codes: Option<&[&str]>,
 ) -> Result<FoldedSetCounts, DbErr> {
     let mut query = Card::find()
         .select_only()
@@ -496,8 +511,8 @@ async fn folded_counts(
         .filter(card::Column::Game.eq(game))
         .filter(card::Column::FoldedOntoId.is_not_null())
         .group_by(card::Column::SetCode);
-    if let Some(code) = set_code {
-        query = query.filter(card::Column::SetCode.eq(code));
+    if let Some(codes) = set_codes {
+        query = query.filter(card::Column::SetCode.is_in(codes.iter().copied()));
     }
     let rows: Vec<(String, i64)> = query.into_tuple().all(db).await?;
     Ok(rows
