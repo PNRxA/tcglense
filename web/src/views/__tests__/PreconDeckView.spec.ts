@@ -208,8 +208,11 @@ describe('PreconDeckView ownership chips (issue #707)', () => {
   })
 
   // A precon page is public: signed out there is no collection to count against, and the
-  // page must read exactly as it did before the chips existed.
-  it('shows nothing to an anonymous visitor', async () => {
+  // page must read exactly as it did before the chips existed. The gate itself is the
+  // holdings seam's (`useBatchCounts` empties the map while signed out), which the mock
+  // mirrors; what this pins is that the view draws nothing of its own when the seam answers
+  // empty — no chip from a stale prop, no gap in the tile column.
+  it('renders no chip when the holdings seam answers empty for an anonymous visitor', async () => {
     authState.isAuthenticated = false
     holdings.owned = { c1: { quantity: 1, foil_quantity: 0 } }
 

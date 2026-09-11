@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import { makeCard } from '@/test/fixtures'
 import type { DeckCardEntry, OwnedCountsMap } from '@/lib/api'
@@ -34,6 +34,13 @@ function entry(cardId: string, sectionId = 1): DeckCardEntry {
   return { card: makeCard(cardId), section_id: sectionId, quantity: 1, foil_quantity: 0 }
 }
 
+beforeEach(() => {
+  owned.value = {}
+  wanted.value = {}
+  seen.collection.length = 0
+  seen.wishlist.length = 0
+})
+
 describe('useDeckOwnership', () => {
   it('folds both finishes into one owned and one wanted count per card', () => {
     owned.value = { c1: { quantity: 2, foil_quantity: 1 } }
@@ -52,8 +59,6 @@ describe('useDeckOwnership', () => {
   // The holdings seam returns an empty map while signed out; a card absent from it is a
   // zero, not an error — which is what lets a public page render the chips ungated.
   it('answers zero for a card the maps do not hold', () => {
-    owned.value = {}
-    wanted.value = {}
     const { ownedInCollection, wantedInWishlist } = useDeckOwnership(
       ref('mtg'),
       computed(() => [entry('c1')]),
@@ -63,14 +68,14 @@ describe('useDeckOwnership', () => {
     expect(wantedInWishlist('c1')).toBe(0)
   })
 
-  it('hands both reads the catalog cards behind the entries, and tracks the list', () => {
-    seen.collection.length = 0
-    seen.wishlist.length = 0
-    const entries = ref<DeckCardEntry[]>([entry('c1'), entry('c1', 2)])
+  // A card in two sections is one id to look up: the batched read keys its cache on the id
+  // list, so a duplicate would only pad the key and the request.
+  it('hands both reads the distinct catalog cards behind the entries, and tracks the list', () => {
+    const entries = ref<DeckCardEntry[]>([entry('c1'), entry('c1', 2), entry('c2')])
     useDeckOwnership(ref('mtg'), entries)
 
     const cards = seen.collection[0] as { value: { id: string }[] }
-    expect(cards.value.map((card) => card.id)).toEqual(['c1', 'c1'])
+    expect(cards.value.map((card) => card.id)).toEqual(['c1', 'c2'])
     expect((seen.wishlist[0] as { value: unknown }).value).toBe(cards.value)
 
     entries.value = [entry('c9')]

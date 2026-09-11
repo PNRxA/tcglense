@@ -12,9 +12,21 @@ import type { Card, DeckCardEntry } from '@/lib/api'
 // Both reads ride the holdings twins' `useCounts` seam, which is gated on being signed in:
 // signed out, the maps are empty and every count is zero, so a public page renders no chip
 // without a gate of its own. Per-card lookups fold the two finishes, since the chips answer
-// "how many copies", not "which finish"; the owner's editor does the split itself when asked.
+// "how many copies", not "which finish"; a caller that needs the split (the collection count
+// editor, the needed list's wish-list top-up) reads the counts seam directly.
 export function useDeckOwnership(game: Ref<string>, entries: Ref<DeckCardEntry[]>) {
-  const catalogCards = computed<Card[]>(() => entries.value.map((entry) => entry.card))
+  // One card per printing, not per entry: a card in two sections (a precon's main board and
+  // sideboard, say) is one id to look up, and the batched read keys its cache on the id list.
+  const catalogCards = computed<Card[]>(() => {
+    const seen = new Set<string>()
+    const cards: Card[] = []
+    for (const { card } of entries.value) {
+      if (seen.has(card.id)) continue
+      seen.add(card.id)
+      cards.push(card)
+    }
+    return cards
+  })
   const { ownership } = useCollectionOwnedCounts(game, catalogCards)
   const { ownership: wishlistWanted } = useWishlistCounts(game, catalogCards)
 
