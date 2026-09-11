@@ -6,9 +6,11 @@ import { RouterLink } from 'vue-router'
 // One linked feature on the homepage's "everything else" section, in one of two weights:
 // a `card` (the headline features — a tinted icon well, the title with a corner affordance,
 // and a description, stacked) or a `row` (the rest — a small muted well beside a two-line
-// label, no border). Both weights share the one link switch: `href` renders an <a> that
-// opens in a new tab and shows the outbound arrow, `to` renders a RouterLink and shows the
-// chevron — so a feature is an array entry on the view, never a hand-written anchor.
+// label, no border; the title takes the page's text-link idiom so the row reads as a link
+// at rest, not only on hover). Both weights share the one link switch: `href` renders an
+// <a> that opens in a new tab and shows the outbound arrow, `to` renders a RouterLink and
+// shows the chevron — so a feature is an array entry on the view, never a hand-written
+// anchor.
 export interface FeatureLink {
   icon: Component
   title: string
@@ -69,14 +71,18 @@ withDefaults(
         <component :is="feature.icon" class="size-4" aria-hidden="true" />
       </span>
       <span class="min-w-0">
-        <span class="text-foreground block text-sm font-medium">{{ feature.title }}</span>
+        <span
+          class="text-primary block text-sm font-medium underline-offset-4 group-hover:underline"
+        >
+          {{ feature.title }}
+        </span>
         <span class="text-muted-foreground mt-0.5 block text-sm text-pretty">
           {{ feature.description }}
         </span>
       </span>
       <component
         :is="feature.href ? ArrowUpRight : ChevronRight"
-        class="text-muted-foreground mt-2 ml-auto size-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+        class="text-muted-foreground mt-2 ml-auto size-4 shrink-0 transition-transform group-hover:translate-x-0.5"
         aria-hidden="true"
       />
     </template>
