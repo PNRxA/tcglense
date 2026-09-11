@@ -191,17 +191,23 @@ fn spawn_derived_price_passes(db: DatabaseConnection, analytics: Arc<AnalyticsCa
     });
 }
 
-/// Stamp `sealed_contents.exclusive` once at boot, on **every** startup path.
+/// Stamp `sealed_contents.exclusive` once at boot on the **no-sync path**, beside
+/// [`spawn_derived_price_passes`] — the same wiring `precon_values` and the foil-variant
+/// fold have, and for the same reason: when the periodic sync is disabled nothing else would
+/// ever run the pass. Kept separate from that bundle only because it is not a price pass.
 ///
-/// Unlike the derived-price passes above, this one cannot ride the `SYNC_ON_STARTUP=false`
-/// branch alone. `m..085` ships the column `false` for every row, and on the sync-enabled
-/// path the first tick is deferred by `ingest_state::initial_delay` — up to a full
-/// `SYNC_INTERVAL_HOURS` on an instance whose last tick completed recently. Without this,
-/// deploying the migration would silently drop every booster's exclusive split for a day.
+/// On the sync-enabled path it is **deliberately not run at boot**. `m..085` ships the
+/// column `false`, and the first tick is deferred by `ingest_state::initial_delay` — up to a
+/// full `SYNC_INTERVAL_HOURS` — so a deploy carrying the migration serves every booster
+/// without its exclusive split until that tick lands. That is the same one-interval gap
+/// `m..076` accepted for the foil fold (duplicate star tiles until the first tick), taken
+/// over a full read of every booster's membership rows on every restart, forever, to cover a
+/// window that occurs once. If that read is ever gated to a no-op when its inputs are
+/// unchanged, running it on both boot paths becomes free and this decision should be
+/// revisited.
 ///
-/// Cheap when there is nothing to do: the pass diffs against the stored column, so a boot
-/// that changes nothing issues no `UPDATE`. A no-op on a fresh/dummy catalog (the dummy
-/// seed runs its own pass over the rows it just wrote).
+/// A no-op on a fresh/dummy catalog (the dummy seed runs its own pass over the rows it just
+/// wrote).
 fn spawn_sealed_exclusives(db: DatabaseConnection) {
     tokio::spawn(async move {
         for game in crate::catalog::GAMES {
@@ -743,10 +749,6 @@ pub async fn start(state: &AppState, http: &Client) {
         catalog::seed_all(&state.db).await;
         seed_dev_user(&state.db).await;
     } else if state.config.sync_on_startup {
-        // The exclusivity derivation owns a column the migration ships empty, and the first
-        // sync tick can be a full interval away — so it runs at boot here as well as per
-        // tick (see `spawn_sealed_exclusives`).
-        spawn_sealed_exclusives(state.db.clone());
         // The historic price backfill runs only outside dummy mode (real cards must
         // exist to join against) and when enabled.
         let backfill = state.config.price_backfill_enabled.then(|| BackfillConfig {

@@ -19,10 +19,12 @@
 //!   flag folded at rebuild time would go stale the moment a product was reclassified.
 //!   Hence the `precon_decks.price_cents` model (`m..077`): the wholesale rebuild writes
 //!   the column's `false` default and this pass recomputes it from the live rows each tick
-//!   — and once at **every** boot, unlike `precon_values`, because the first tick is deferred
-//!   by up to a full `SYNC_INTERVAL_HOURS` and a day without the split is a visible
-//!   regression where a day of unpriced tiles is not. That is also why `m..085` needs no
-//!   `DERIVATION_VERSION` bump: the derivation never runs inside the ETag-gated rebuild.
+//!   (and once at boot on the no-sync path, exactly as `precon_values` is wired). That is
+//!   also why `m..085` needs no `DERIVATION_VERSION` bump: the derivation never runs inside
+//!   the ETag-gated rebuild. The cost of that wiring is one interval of missing splits after
+//!   the deploy that lands the column — accepted, as `m..076` accepted the same gap, over a
+//!   full membership read on every restart (`tasks::spawn_sealed_exclusives` has the
+//!   reasoning).
 //!
 //! The rule reproduced here is the one `booster_exclusive_card_ids` used to apply per
 //! request, guard for guard, because the read still renders what this writes:

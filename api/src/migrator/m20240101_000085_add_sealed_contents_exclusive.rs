@@ -23,8 +23,13 @@ use sea_orm_migration::prelude::*;
 /// wholesale rebuild writes — the derivation pass fills the column afterwards, exactly as a
 /// fresh precon rebuild writes `NULL` prices for `refresh_precon_values` to fold in. So,
 /// unlike `m..075`'s `component`, this needs **no** `DERIVATION_VERSION` bump: the pass
-/// runs at every boot as well as every tick, so the column populates as soon as the
-/// migration lands without forcing a re-walk of MTGJSON's 600 MB document.
+/// runs every tick, so the column populates on the first tick after the migration lands
+/// without forcing a re-walk of MTGJSON's 600 MB document. Until that tick — up to a full
+/// `SYNC_INTERVAL_HOURS`, since `ingest_state::initial_delay` defers it — every booster
+/// serves its pool without the exclusive split. That one-interval gap is accepted on
+/// purpose, exactly as `m..076` accepted duplicate star tiles until its first tick: the
+/// alternative was a full read of every booster's membership rows on every restart,
+/// forever, to cover a window that occurs once (see `tasks::spawn_sealed_exclusives`).
 ///
 /// `idx_sealed_contents_unique` is deliberately untouched. That index keys row *identity*
 /// (`game, product_id, card_id, membership, foil, component`); `exclusive` is an attribute
