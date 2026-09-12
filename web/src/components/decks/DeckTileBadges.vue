@@ -14,11 +14,11 @@ import { DECK_ISSUE_TEXT_CLASS, deckIssueLabel } from '@/lib/legality'
 // wider than the tile the trailing chip lifts above the control instead of being clipped or
 // truncated, and the control keeps the corner it has always had.
 //
-// The left corner is a *column* for the same reason: the owner's ownership chips ("you own
-// N / want N") stack directly above the deck count they qualify rather than taking the
-// tile's top-right corner. Both answer "how many?", so reading them together beats a
-// diagonal scan — and the strip is the one edge a tile has already given up, so the art
-// keeps the rest.
+// The left corner is a *column* for the same reason: the viewer's ownership chips ("you own
+// N / want N", on the owner's and the precon grids) stack directly above the deck count they
+// qualify rather than taking the tile's top-right corner. Both answer "how many?", so
+// reading them together beats a diagonal scan — and the strip is the one edge a tile has
+// already given up, so the art keeps the rest.
 //
 // Two consequences of that reversed wrap are easy to get backwards, and both bit once the
 // left slot grew from a chip into a column:

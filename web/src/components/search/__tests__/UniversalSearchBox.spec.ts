@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { flushPromises, mount, type DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
@@ -80,6 +81,7 @@ function card(id: string, name: string): Card {
 function results(overrides: Partial<SearchResults> = {}): SearchResults {
   return {
     cards: { data: [], has_more: false },
+    sets: { data: [], has_more: false },
     products: { data: [], has_more: false },
     precons: { data: [], has_more: false },
     keywords: { data: [], has_more: false },
@@ -89,6 +91,23 @@ function results(overrides: Partial<SearchResults> = {}): SearchResults {
 
 const FULL = results({
   cards: { data: [card('c1', 'Lightning Bolt'), card('c2', 'Bolt of Lightning')], has_more: false },
+  sets: {
+    data: [
+      {
+        code: 'bolt',
+        name: 'Bolt Set',
+        set_type: 'expansion',
+        released_at: '2024-08-02',
+        card_count: 12,
+        icon_svg_uri: 'https://svgs.scryfall.io/sets/bolt.svg',
+        parent_set_code: null,
+        has_drops: false,
+        drop_noun: null,
+        has_subtypes: false,
+      },
+    ],
+    has_more: false,
+  },
   products: {
     data: [
       {
@@ -150,6 +169,11 @@ const ProductImageStub = {
   props: ['game', 'id', 'name', 'hasImage', 'size'],
   template: '<div class="product-image-stub" :data-id="id" />',
 }
+const SetIconStub = {
+  name: 'SetIcon',
+  props: ['game', 'code', 'hasIcon'],
+  template: '<div class="set-icon-stub" :data-code="code" :data-has-icon="String(hasIcon)" />',
+}
 
 let router: Router
 
@@ -184,7 +208,7 @@ async function mountBox(games: Game[] = [MTG], signedIn = false, { resolved = tr
     props: { games },
     global: {
       plugins: [pinia, router, [VueQueryPlugin, { queryClient }]],
-      stubs: { CardImage: CardImageStub, ProductImage: ProductImageStub },
+      stubs: { CardImage: CardImageStub, ProductImage: ProductImageStub, SetIcon: SetIconStub },
     },
     attachTo: document.body,
   })
@@ -240,6 +264,30 @@ describe('UniversalSearchBox', () => {
     wrapper.unmount()
   })
 
+  it('shortens the placeholder on a phone-width viewport, and swaps it back live', async () => {
+    // jsdom has no matchMedia (the wide form above); a phone answers the narrow query.
+    let onChange: ((event: { matches: boolean }) => void) | undefined
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 639px)',
+      addEventListener: (_: string, fn: (event: { matches: boolean }) => void) => {
+        onChange = fn
+      },
+      removeEventListener: () => {},
+    }))
+    try {
+      const wrapper = await mountBox()
+      const input = wrapper.get('input[role="combobox"]')
+      expect(input.attributes('placeholder')).toBe('Search cards, sets…')
+
+      onChange?.({ matches: false })
+      await nextTick()
+      expect(input.attributes('placeholder')).toContain('Magic: The Gathering')
+      wrapper.unmount()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('debounces: one request for a burst of keystrokes', async () => {
     const wrapper = await mountBox()
     const input = wrapper.get('input[role="combobox"]')
@@ -260,18 +308,20 @@ describe('UniversalSearchBox', () => {
     const listbox = wrapper.get('[role="listbox"]')
     const groups = listbox.findAll('[role="group"]')
     const labels = groups.map((g) => groupLabel(listbox, g))
-    expect(labels).toEqual(['Cards', 'Sealed products', 'Keywords'])
+    expect(labels).toEqual(['Cards', 'Sets', 'Sealed products', 'Keywords'])
 
     const hrefs = listbox.findAll('a[role="option"]').map((a) => a.attributes('href'))
     expect(hrefs).toEqual([
       '/cards/mtg/cards/c1',
       '/cards/mtg/cards/c2',
+      '/cards/mtg/sets/bolt',
       '/sealed/mtg/100',
       '/sealed/mtg/products?q=bolt',
       '/keywords/mtg/bolster',
       '/cards/mtg/cards?q=bolt',
     ])
-    // Card and product rows draw the image their tile draws; a keyword row an icon.
+    // Card and product rows draw the image their tile draws, a set row its icon, a keyword
+    // row a glyph.
     expect(listbox.findAll('.card-image-stub').map((s) => s.attributes('data-id'))).toEqual([
       'c1',
       'c2',
@@ -279,6 +329,11 @@ describe('UniversalSearchBox', () => {
     expect(listbox.findAll('.product-image-stub').map((s) => s.attributes('data-id'))).toEqual([
       '100',
     ])
+    expect(listbox.get('.set-icon-stub').attributes()).toMatchObject({
+      'data-code': 'bolt',
+      'data-has-icon': 'true',
+    })
+    expect(listbox.text()).toContain('BOLT · Aug 2024 · 12 cards')
     expect(listbox.text()).toContain('All sealed products matching “bolt”')
     expect(listbox.text()).toContain('Search all cards for “bolt”')
     // Every row is a real link, so it is a listbox option and a middle-clickable anchor.
@@ -335,7 +390,9 @@ describe('UniversalSearchBox', () => {
     const wrapper = await mountBox()
     await type(wrapper, 'zzzz')
     const status = wrapper.get('[role="status"]')
-    expect(status.text()).toContain('No cards, sealed products, decks, or keywords match “zzzz”')
+    expect(status.text()).toContain(
+      'No cards, sets, sealed products, precons, decks, or keywords match “zzzz”',
+    )
     // The closing row is still there, so the full grammar is one Enter away.
     expect(wrapper.get('[role="listbox"]').text()).toContain('Search all cards for “zzzz”')
     wrapper.unmount()
@@ -363,7 +420,7 @@ describe('UniversalSearchBox', () => {
     const listbox = signedIn.get('[role="listbox"]')
     const groups = listbox.findAll('[role="group"]')
     const labels = groups.map((g) => groupLabel(listbox, g))
-    expect(labels).toEqual(['Cards', 'Your decks', 'Sealed products', 'Keywords'])
+    expect(labels).toEqual(['Cards', 'Your decks', 'Sets', 'Sealed products', 'Keywords'])
     const mine = groups[1]
     expect(mine?.findAll('[role="option"]').map((o) => o.attributes('href'))).toEqual([
       '/decks/mtg/7',
@@ -439,21 +496,22 @@ describe('UniversalSearchBox', () => {
     api.getDecks.mockImplementation(() => decks.promise)
     const wrapper = await mountBox([MTG], true)
     const input = await type(wrapper, 'bolt')
-    // Three rows down: the product, after the two cards.
-    for (let i = 0; i < 3; i += 1) await input.trigger('keydown', { key: 'ArrowDown' })
+    // Four rows down: the product, after the two cards and the set.
+    for (let i = 0; i < 4; i += 1) await input.trigger('keydown', { key: 'ArrowDown' })
     const before = wrapper.findAll('[role="option"]')
-    expect(before[2]?.text()).toContain('Bolt Bundle')
-    const productId = before[2]?.attributes('id')
+    expect(before[3]?.text()).toContain('Bolt Bundle')
+    const productId = before[3]?.attributes('id')
     expect(input.attributes('aria-activedescendant')).toBe(productId)
 
     decks.resolve({ data: [deck(7, 'Bolt Storm')] })
     await flushPromises()
     await flushPromises()
     const after = wrapper.findAll('[role="option"]')
-    // The deck row slid in above the product, and the highlight followed the product.
+    // The deck row slid in above the set and the product, and the highlight followed the
+    // product.
     expect(after[2]?.text()).toContain('Bolt Storm')
-    expect(after[3]?.attributes('id')).toBe(productId)
-    expect(after[3]?.attributes('aria-selected')).toBe('true')
+    expect(after[4]?.attributes('id')).toBe(productId)
+    expect(after[4]?.attributes('aria-selected')).toBe('true')
     expect(input.attributes('aria-activedescendant')).toBe(productId)
 
     await input.trigger('keydown', { key: 'Enter' })

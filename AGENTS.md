@@ -233,7 +233,19 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   bundle never gets an `exclusive` section, however premium the booster it wraps — its pool rows
   can be direct (nameless `sealed` refs attribute nothing), which made the old contained-family
   split surface "Exclusive to Collector Boosters" on bundle pages the inherited-hiding can't
-  touch (issue #646 follow-up).
+  touch (issue #646 follow-up). **Exclusivity is a stored column, never re-derived in a read**
+  (`sealed_contents.exclusive`, `m..085`): it is a cross-product fact — decided by every
+  sibling booster's whole pull pool — so judging it per request scanned that pool on every page
+  turn (7.2s over 7,968 rows in production), and it is a *sort* key too, so no page could narrow
+  it. `catalog::sealed_exclusives` stamps it **per sync tick, and at boot only on the no-sync
+  path** — wired exactly like `precon_values` rather than into the ETag-gated derivation,
+  because the judgement also reads
+  `products.product_type` — TCGCSV's, which moves on its own sweep — so a rebuild-time fold
+  would go stale on a reclassification (and needing no `DERIVATION_VERSION` bump is the other
+  half of that choice). The rebuild writes the `false` default; the pass owns the column, and
+  a fixture that asserts *either* side of the split must run the pass or it passes vacuously.
+  The read still intersects the flag with the plain view's **collapsed** membership — a card a
+  product both guarantees and can pull is `contains`, and must not lead the booster pool.
   **Sections split by source, and the split starts at ingest:** the MTGJSON walk stamps every
   membership row inherited through a nested `sealed` reference with the top-level component's
   name (`sealed_contents.component`, same string as the `sealed_components` row, `NULL` for a
@@ -653,6 +665,10 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   `DERIVATION_VERSION` bump like any other. The SPA **mirrors** the board vocabulary in
   `web/src/lib/precons.ts` (tests pin both sides, like `lifeLayout.ts`) and adapts boards into
   sections so the precon page renders through the *deck* display engine, not a second one.
+  The reader's own holdings ride that page too (issue #707): the "you own N / want N" chips
+  come from `composables/useDeckOwnership.ts`, the overlay the owner deck page reads, over the
+  adapted entries — a second, authed request that is empty while signed out, never a per-user
+  field on the public, CDN-cached precon payload.
 - **Price alerts** (`/api/alerts*`, issue #525) are **session-only** (`SessionUser` — never an
   API key: the channel settings hold delivery credentials) and **allow-listed out of the
   OpenAPI doc** (an account/session-flow surface, like username/currency). The engine is
@@ -920,14 +936,46 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   to another art at another price. A Mythic Tools CSV must carry a `Finish` column (its export
   columns are user-selectable), same refusal Moxfield's `Foil` column gets — and ManaBox's
   `Foil` column too.
-- **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a fifth
+- **The universal search (`GET /api/games/{game}/search`, the homepage box) is a composition, not a sixth
   search.** Each leg reaches its surface through the seam that surface already exposes
-  (`catalog::search_cards` over `card_name_search_query`, `catalog::search_products`,
+  (`catalog::search_cards` over `card_name_search_query`, `catalog::search_sets` dressed through the set
+  list's own `has_subtypes` + folded-count seams, `catalog::search_products`,
   `precons::search_precons` over the browse's own `filtered_query`, `catalog::keywords::search`), and all
-  four answer the sealed/precon lists' name rule — every whitespace-separated word an order-independent,
+  five answer the sealed/precon lists' name rule — every whitespace-separated word an order-independent,
   case-insensitive substring (`shared::every_word_matches[_with]`), prefix matches first
   (`starts_with_rank`) — **never the Scryfall grammar**, which would turn a colon in a card name into a
-  422 for every group at once (the full grammar is one Enter away on the card listing). The card leg folds
+  422 for every group at once (the full grammar is one Enter away on the card listing). **The card leg
+  widens that rule by one clause (issue #709):** a word the name lacks may name the printing's **set**
+  instead — a whole set code (`cmr`) or part of a set name (`legends`) — or, carrying a digit, be its
+  **collector number within a set another word names** (`cmr 129`, how a checklist spells a
+  printing) — and, because the filter runs before the fold, the representative printing is then from
+  that set (`sol ring cmr` answers the CMR Sol Ring; the SPA's `cardSublabel` names the set and number
+  under the row exactly when a word matched by set, read off the same mirrored name rule). Three guards
+  are load-bearing. **A term that is itself a set name gets the plain name rule**
+  (`shared::term_names_a_set`: every word a substring of one set name, any length, or the term a
+  code) — otherwise `bloomburrow`, or `oath of the gatewatch` through its too-short-to-resolve `of`,
+  would answer a handful of arbitrary cards from the set, which is the sets group's question; past
+  that gate no "at least one word in the name" clause is needed, since a row every word explains by
+  set is exactly a term naming a set, and a set-and-number pair is meant. **Name-alone matches rank
+  first** (`NameOrSetMatch::by_name_alone_rank`: a set word is any substring of a set name, so
+  `sol ring` also admits a Lord of the *Rings* "Sol…" card — the widened rule may only ever *append*
+  to what the plain name rule answers, never reorder it), then `leading_words_rank` (the prefix rank
+  split by how many leading words the name starts with — a set word at the end of the term must not
+  let the alphabet put "Parasol Ring" above "Sol Ring"); the other legs rank by `starts_with_rank`.
+  And **the SQL is bounded and indexed**: the set half is resolved in Rust (`shared::set_codes_matching`
+  over the `set_name_map` the handler already loads for the product/precon legs — a whole code at any
+  length, a name substring only from three characters, or `a`/`of` would name most of the catalog;
+  words deduplicated; a word naming more than `MAX_SET_CODES_PER_WORD` sets names none) into bound
+  `set_code IN (…)` lists the `(game, set_code)` index answers, and the number arm — at most
+  `MAX_NUMBER_WORDS` digit words get one — compares the **raw** `collector_number` (as typed, lower,
+  upper) *inside* that list so `m..024`'s composite seeks it; never a `LIKE` on `cards.set_name` (no
+  index), a `LOWER(collector_number)` (no expression index — a heap recheck over every named set), or
+  a subquery inside the `OR`, any of which takes the per-keystroke read onto the `cards` heap. Every
+  list is bind parameters and the Postgres fold repeats the filter, so a unit test pins the worst
+  term under both backends' limits, and the SQL-shape canaries in `handlers/catalog/tests.rs` pin the
+  rest. The sets leg also answers the **whole term as a set code**, and dresses its rows through
+  `sets::dress_set` (the seam the set list and the release calendar share) over the *bounded*
+  `sets_with_subtypes_in` / `folded_counts_in_sets` forms, never the list's whole-game scans. The card leg folds
   **one row per name** through `fold_unique_by` (the engine behind `unique:cards`) and spells its `LIKE` as
   `indexed_name_like`, the exact expression Postgres's `idx_cards_name_trgm` is built on — a new per-keystroke
   name read must use that spelling or it seq-scans `cards`. `has_more` is one row of over-fetch, never a

@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
+import { computed } from 'vue'
 import {
   ArrowRight,
   Bell,
   BookCopy,
   BookOpen,
-  Bot,
   Boxes,
   CalendarDays,
   ChartPie,
@@ -29,7 +28,6 @@ import {
   Search,
   Share2,
   ShoppingCart,
-  Sparkles,
   Terminal,
   TrendingUp,
 } from '@lucide/vue'
@@ -39,6 +37,7 @@ import BoosterOddsDemo from '@/components/home/BoosterOddsDemo.vue'
 import DeckOverviewDemo from '@/components/home/DeckOverviewDemo.vue'
 import DemoCardTile from '@/components/home/DemoCardTile.vue'
 import FeatureDemoRow from '@/components/home/FeatureDemoRow.vue'
+import FeatureLinkCard, { type FeatureLink } from '@/components/home/FeatureLinkCard.vue'
 import LifeCounterDemo from '@/components/home/LifeCounterDemo.vue'
 import PreconDemo from '@/components/home/PreconDemo.vue'
 import ScannerFeatureDemo from '@/components/home/ScannerFeatureDemo.vue'
@@ -65,16 +64,58 @@ usePageMeta({
 const gamesQuery = useGamesQuery()
 const games = computed(() => gamesQuery.data.value?.data ?? [])
 
-interface FeatureLink {
-  icon: Component
-  title: string
-  description: string
-  to: string
-}
-
-// The compact "everything else" grid — only shipped features, each linking to where it
-// lives. The last card (Open source, external) is rendered on its own in the template.
-const otherFeatures: FeatureLink[] = [
+// The "everything else" section, in two weights. The headline features — the ones that
+// used to carry a full demo row of their own (the page showed twelve, which made it a very
+// long scroll), plus the search grammar and the public API — render as cards.
+const headlineFeatures: FeatureLink[] = [
+  {
+    icon: Library,
+    title: 'Collection tracking',
+    description:
+      'Regular and foil counts per game, sealed products beside them, and a live estimated ' +
+      'value with its history and biggest movers.',
+    to: '/collection',
+  },
+  {
+    icon: Bell,
+    title: 'Price alerts',
+    description:
+      'A Discord, Telegram, or email ping when a card or sealed product crosses your target ' +
+      '— plus day-before release heads-ups.',
+    to: '/alerts',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Daily price history',
+    description:
+      'Singles captured daily in USD, EUR, and foil, with USD and foil charted on every ' +
+      'card from 7 days to the full history — and a price history on every sealed product.',
+    to: '/cards',
+  },
+  {
+    icon: Heart,
+    title: 'Wish lists',
+    description:
+      "The cards you're still hunting, with a running USD total and a one-click TCGplayer " +
+      'mass-entry link for the whole list.',
+    to: '/wishlist',
+  },
+  {
+    icon: Import,
+    title: 'Import your collection',
+    description:
+      'Archidekt by link — or a CSV export from Archidekt, Moxfield, ManaBox, or Mythic ' +
+      'Tools, or your list pasted straight in.',
+    to: '/collection',
+  },
+  {
+    icon: Ghost,
+    title: 'Ghost mode',
+    description:
+      "Dim the cards you're missing in any set, with a live owned count and a quick-add button " +
+      'on every gap.',
+    to: '/collection',
+  },
   {
     icon: Search,
     title: 'Scryfall-style search',
@@ -82,6 +123,27 @@ const otherFeatures: FeatureLink[] = [
       'Full search syntax on every card list — colors, types, oracle text, prices, even regex.',
     to: '/cards',
   },
+  {
+    icon: Terminal,
+    title: 'CLI & agents',
+    description:
+      'A standalone, open-source CLI and TUI for this API — scriptable output and scoped ' +
+      'keys for automation and AI agents.',
+    href: 'https://github.com/PNRxA/tcglense-cli',
+  },
+  {
+    icon: Code,
+    title: 'Public API',
+    description:
+      'A documented public API for the catalog, plus scoped API keys for your collection, ' +
+      'wish list, and decks. Interactive reference included.',
+    to: '/docs',
+  },
+]
+
+// The rest render as compact rows under an "Also live" label: every one a shipped feature
+// that links to where it lives, just not one that needs a card to explain itself.
+const otherFeatures: FeatureLink[] = [
   {
     icon: CalendarDays,
     title: 'Release calendar',
@@ -152,12 +214,10 @@ const otherFeatures: FeatureLink[] = [
     to: '/register',
   },
   {
-    icon: Code,
-    title: 'Public API',
-    description:
-      'A documented public API for the catalog, plus scoped API keys for your collection, ' +
-      'wish list, and decks. Interactive reference included.',
-    to: '/docs',
+    icon: GitHubMark,
+    title: 'Open source',
+    description: 'The whole app — the API and this site — is public on GitHub.',
+    href: 'https://github.com/PNRxA/tcglense',
   },
 ]
 
@@ -171,21 +231,49 @@ const rowLinkClass =
 <template>
   <div class="mx-auto max-w-6xl px-4 pt-14 pb-20 sm:pt-20">
     <!-- Universal search: its own section, front and centre above the hero — the fastest way
-         off the homepage to the thing you came for. One box across cards, sealed products,
-         precons and keywords, plus your own decks once signed in. The dropdown overlays the
+         off the homepage to the thing you came for. One box across cards, sets, sealed
+         products, precons and keywords, plus your own decks once signed in. It is set at hero scale
+         (the heading a size under the h1, a taller input with an accent-tinted border and a
+         lifted shadow, and a chip row naming what the box covers) so it reads as the page's
+         lead action rather than a heading floating over the hero. The dropdown overlays the
          hero below it (z-40 inside the box), so nothing here needs to reserve space for it. -->
-    <section aria-labelledby="home-search-heading" class="mx-auto max-w-2xl text-center">
+    <section aria-labelledby="home-search-heading" class="mx-auto max-w-3xl text-center">
       <h2
         id="home-search-heading"
-        class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl"
+        class="text-4xl font-semibold tracking-tight text-balance sm:text-5xl"
       >
         Search the whole catalog
       </h2>
-      <p class="text-muted-foreground mt-3 text-pretty">
-        Cards, sealed products, preconstructed decks, and rules keywords in one box — plus your own
-        decks once you're signed in.
+      <p class="text-muted-foreground mx-auto mt-4 max-w-xl text-pretty sm:text-lg">
+        Cards, sets, sealed products, preconstructed decks, and rules keywords in one box — plus
+        your own decks once you're signed in. Name a printing by its set and number, too: “sol ring
+        cmr”, “blb 12”.
       </p>
-      <UniversalSearchBox :games="games" class="mt-6 text-left" />
+      <UniversalSearchBox
+        :games="games"
+        class="mt-8 text-left [&_input]:h-14 [&_input]:border-primary/40 [&_input]:text-lg [&_input]:shadow-lift [&_input]:ring-1 [&_input]:ring-primary/10 md:[&_input]:text-lg"
+      />
+      <ul
+        class="text-muted-foreground mt-5 flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm"
+        aria-label="What the search covers"
+      >
+        <li class="inline-flex items-center gap-1.5">
+          <Layers class="text-primary size-4" aria-hidden="true" />
+          Cards
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <Package class="text-primary size-4" aria-hidden="true" />
+          Sealed products
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <BookCopy class="text-primary size-4" aria-hidden="true" />
+          Precons
+        </li>
+        <li class="inline-flex items-center gap-1.5">
+          <BookOpen class="text-primary size-4" aria-hidden="true" />
+          Keywords
+        </li>
+      </ul>
     </section>
 
     <!-- Hero: value prop + auth-branched CTAs, beside a decorative "show the product" vignette. -->
@@ -193,13 +281,7 @@ const rowLinkClass =
       class="mt-16 grid items-center gap-10 sm:mt-24 lg:grid-cols-[1fr_minmax(0,30rem)] lg:gap-14"
     >
       <div>
-        <span
-          class="border-border bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
-        >
-          <Sparkles class="size-3.5" aria-hidden="true" />
-          New — deck analysis, precons &amp; booster odds
-        </span>
-        <h1 class="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+        <h1 class="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           Your collection, priced every day.
         </h1>
         <p class="text-muted-foreground mt-4 max-w-xl text-base text-pretty sm:text-lg">
@@ -320,9 +402,10 @@ const rowLinkClass =
     </section>
 
     <!-- Feature demo rows: each pairs a text column with a decorative mock panel, alternating
-         sides at md+. -->
-    <section class="mt-20 sm:mt-24">
-      <div class="space-y-20 sm:space-y-24">
+         sides at md+. Deliberately a short list — only the features whose demo earns the
+         vertical space it costs. Everything else is a card in the compact grid below. -->
+    <section class="mt-16 sm:mt-20">
+      <div class="space-y-16 sm:space-y-20">
         <!-- Row 1 — Decks (demo left): the v0.18 headline, so it leads. -->
         <FeatureDemoRow
           :icon="BookCopy"
@@ -378,162 +461,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row 3 — Price alerts (demo left). -->
-        <FeatureDemoRow
-          :icon="Bell"
-          eyebrow="Price alerts"
-          heading="Get pinged when the price is right"
-          :body="
-            'Set a target on any card or sealed product and TCGLense watches its price for you — ' +
-            'a Discord, Telegram, or email ping the moment it crosses your threshold, up or down. ' +
-            'The free Discord and Telegram channels take a minute to set up, each with its own ' +
-            'on/off switch, and nothing is sent until an alert actually fires. Opt in to release ' +
-            'heads-ups too: a day-before ping for new sets and Secret Lair drops.'
-          "
-          demo-side="left"
-        >
-          <RouterLink to="/alerts" :class="rowLinkClass">
-            <template v-if="auth.isAuthenticated">Manage your alerts</template>
-            <template v-else-if="auth.sessionResolved"
-              >Create a free account to set alerts</template
-            >
-            <Skeleton v-else class="h-4 w-40" />
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <div class="flex items-center justify-between gap-2">
-              <span class="flex items-center gap-1.5 text-sm font-semibold">
-                <Bell class="size-4" aria-hidden="true" />
-                Price alerts
-              </span>
-              <div class="flex items-center gap-1">
-                <span
-                  class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2 py-0.5 text-[10px] font-medium"
-                >
-                  Discord
-                </span>
-                <span
-                  class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2 py-0.5 text-[10px] font-medium"
-                >
-                  Telegram
-                </span>
-                <span class="text-muted-foreground rounded-full border px-2 py-0.5 text-[10px]">
-                  Email
-                </span>
-              </div>
-            </div>
-            <!-- A triggered alert (price dropped below the target). -->
-            <div class="mt-4 flex items-center gap-3 rounded-lg border p-2.5">
-              <div class="bg-muted h-11 w-8 shrink-0 overflow-hidden rounded border">
-                <div
-                  class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                ></div>
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="bg-foreground/15 h-1.5 w-24 rounded-full"></div>
-                <div class="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
-                  <span aria-hidden="true">↓</span>
-                  At or below <span class="text-foreground font-medium">$1.50</span>
-                  <span class="text-foreground/70">· now $1.20</span>
-                </div>
-              </div>
-              <span
-                class="bg-warning/15 text-warning shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-              >
-                Triggered
-              </span>
-            </div>
-            <!-- A pending alert (still watching). -->
-            <div class="mt-2.5 flex items-center gap-3 rounded-lg border p-2.5">
-              <div class="bg-muted h-11 w-8 shrink-0 overflow-hidden rounded border">
-                <div
-                  class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
-                ></div>
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="bg-foreground/15 h-1.5 w-28 rounded-full"></div>
-                <div class="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
-                  <span aria-hidden="true">↑</span>
-                  At or above <span class="text-foreground font-medium">$250.00</span>
-                  <span class="text-foreground/70">· now $210.00</span>
-                </div>
-              </div>
-              <span class="text-muted-foreground shrink-0 text-[10px]">Watching</span>
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 4 — Price history (demo right). -->
-        <FeatureDemoRow
-          :icon="TrendingUp"
-          eyebrow="Price history"
-          heading="Every price, charted every day"
-          :body="
-            'TCGLense captures singles prices daily — USD, EUR, and foil — and charts USD and foil ' +
-            'on every card, windowed from the last 7 days to the full history. Sealed products get ' +
-            'the same treatment: current prices and price history for booster boxes, bundles, and ' +
-            'decks.'
-          "
-          demo-side="right"
-        >
-          <RouterLink to="/cards" :class="rowLinkClass">
-            Browse cards
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <RouterLink to="/sealed" :class="rowLinkClass">
-            Browse sealed products
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <div class="flex items-center justify-between">
-              <span class="text-sm font-semibold">Price history</span>
-              <div class="bg-muted/50 inline-flex items-center gap-1 rounded-lg p-0.5">
-                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">7D</span>
-                <span
-                  class="bg-background text-foreground rounded px-2 py-1 text-xs font-medium shadow-sm"
-                  >30D</span
-                >
-                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">1Y</span>
-                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">3Y</span>
-                <span class="text-muted-foreground rounded px-2 py-1 text-xs font-medium">All</span>
-              </div>
-            </div>
-            <svg
-              viewBox="0 0 320 96"
-              class="mt-4 h-28 w-full"
-              fill="none"
-              preserveAspectRatio="none"
-            >
-              <line x1="0" y1="24" x2="320" y2="24" stroke="var(--border)" stroke-width="1" />
-              <line x1="0" y1="48" x2="320" y2="48" stroke="var(--border)" stroke-width="1" />
-              <line x1="0" y1="72" x2="320" y2="72" stroke="var(--border)" stroke-width="1" />
-              <polyline
-                points="0,74 40,70 80,76 120,58 160,62 200,44 240,48 280,30 320,34"
-                stroke="var(--chart-1)"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <polyline
-                points="0,54 40,58 80,50 120,46 160,52 200,30 240,36 280,20 320,24"
-                class="opacity-80"
-                stroke="var(--chart-2)"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <div class="text-muted-foreground mt-2 flex justify-between text-[10px]">
-              <span>Jun 5</span>
-              <span>Jun 19</span>
-              <span>Jul 3</span>
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 5 — Booster odds (demo left). -->
+        <!-- Row 3 — Booster odds (demo left). -->
         <FeatureDemoRow
           :icon="Dices"
           eyebrow="Booster odds"
@@ -556,55 +484,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row 6 — Collection (demo right). -->
-        <FeatureDemoRow
-          :icon="Library"
-          eyebrow="Collection"
-          heading="Know exactly what you own"
-          :body="
-            'Count regular and foil copies per game — and sealed products beside them — and watch ' +
-            'the totals move: unique cards, total copies, and a live estimated value with its ' +
-            'history, biggest movers, and a breakdown by rarity, colour, type, and finish. As you ' +
-            'browse the catalog, owned-count badges mark the cards already in your collection and ' +
-            'quick-add drops a card in by name; in your collection and wish list, a copies filter ' +
-            'narrows the grid by how many you hold.'
-          "
-          demo-side="right"
-        >
-          <RouterLink to="/collection" :class="rowLinkClass">
-            <template v-if="auth.isAuthenticated">Open your collection</template>
-            <template v-else-if="auth.sessionResolved">Start a collection</template>
-            <Skeleton v-else class="h-4 w-32" />
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <dl class="flex flex-wrap gap-x-8 gap-y-3">
-              <div>
-                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Unique cards</dt>
-                <dd class="text-xl font-semibold tabular-nums">1,204</dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total copies</dt>
-                <dd class="text-xl font-semibold tabular-nums">3,418</dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground text-xs tracking-wide uppercase">Total value</dt>
-                <dd class="text-xl font-semibold tabular-nums">$2,148.32</dd>
-              </div>
-            </dl>
-            <div class="mt-5 grid grid-cols-3 gap-3">
-              <!-- Tile 1: 4 owned. -->
-              <DemoCardTile :layers="4" />
-              <!-- Tile 2: 2 + 1 foil. -->
-              <DemoCardTile :layers="2" :foil="1" />
-              <!-- Tile 3: unbadged. -->
-              <DemoCardTile />
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 7 — Visual card scanner (demo left). -->
+        <!-- Row 4 — Visual card scanner (demo right). -->
         <FeatureDemoRow
           :icon="ScanLine"
           eyebrow="Visual card scanner"
@@ -614,7 +494,7 @@ const rowLinkClass =
             'and add it as you work through a stack. Photos are processed locally and never ' +
             'uploaded; compact visual fingerprints are sent for matching.'
           "
-          demo-side="left"
+          demo-side="right"
         >
           <template v-if="auth.isAuthenticated">
             <RouterLink to="/scan" :class="rowLinkClass">
@@ -637,179 +517,7 @@ const rowLinkClass =
           </template>
         </FeatureDemoRow>
 
-        <!-- Row 8 — Ghost mode (demo right). -->
-        <FeatureDemoRow
-          :icon="Ghost"
-          eyebrow="Ghost mode"
-          heading="See the gaps in every set"
-          :body="
-            'Flip on \u0022Show ghosts\u0022 in any set to dim the cards you\'re missing, with a ' +
-            'live \u0022X of Y owned\u0022 count. The gaps read at a glance — and every ghost ' +
-            'carries a quick-add button right where it sits. It works across your collection and ' +
-            'your wish list, including Secret Lair by-drop views.'
-          "
-          demo-side="right"
-        >
-          <template v-if="auth.isAuthenticated">
-            <RouterLink to="/collection" :class="rowLinkClass">
-              See your set gaps
-              <ArrowRight class="size-4" aria-hidden="true" />
-            </RouterLink>
-          </template>
-          <template v-else-if="auth.sessionResolved">
-            <RouterLink to="/register" :class="rowLinkClass">
-              Create a free account to try it
-              <ArrowRight class="size-4" aria-hidden="true" />
-            </RouterLink>
-          </template>
-          <Skeleton v-else class="h-5 w-48" />
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <div class="flex items-center justify-between">
-              <div
-                class="bg-background inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium shadow-sm"
-              >
-                <CircleCheck class="text-primary size-3.5" aria-hidden="true" />
-                5 / 8 owned
-              </div>
-              <div class="text-muted-foreground inline-flex items-center gap-2 text-xs font-medium">
-                Show ghosts
-                <span class="bg-primary inline-flex h-4 w-7 items-center rounded-full">
-                  <span class="bg-primary-foreground size-3 translate-x-3.5 rounded-full"></span>
-                </span>
-              </div>
-            </div>
-            <div class="mt-4 grid grid-cols-4 gap-2.5">
-              <!-- 5 owned. -->
-              <DemoCardTile :bars="false" />
-              <DemoCardTile :bars="false" />
-              <DemoCardTile :bars="false" />
-              <DemoCardTile :bars="false" />
-              <DemoCardTile :bars="false" />
-              <!-- Ghost with a crisp quick-add chip. -->
-              <DemoCardTile :bars="false" ghost quick-add />
-              <!-- 2 more ghosts. -->
-              <DemoCardTile :bars="false" ghost />
-              <DemoCardTile :bars="false" ghost />
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 9 — Import (demo left). -->
-        <FeatureDemoRow
-          :icon="Import"
-          eyebrow="Import"
-          heading="Bring your collection with you"
-          :body="
-            'Import from Archidekt by link and pick how it reconciles — overwrite matched cards, ' +
-            'mirror-replace, or add-merge. Prefer a file? Upload a CSV export from Archidekt, ' +
-            'Moxfield, ManaBox, or Mythic Tools — or paste your list straight in — and it ' +
-            'reconciles on the spot. Bought a precon? Add the whole deck to your collection in ' +
-            'one click.'
-          "
-          demo-side="left"
-        >
-          <RouterLink to="/collection" :class="rowLinkClass">
-            Import into your collection
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <div
-              class="bg-muted text-muted-foreground inline-flex rounded-md p-0.5 text-xs font-medium"
-            >
-              <span class="bg-background text-foreground rounded px-2.5 py-1 shadow-sm">
-                Paste a link
-              </span>
-              <span class="px-2.5 py-1">Upload a CSV</span>
-            </div>
-            <div
-              class="text-muted-foreground bg-background mt-3 flex h-8 items-center truncate rounded-md border px-2.5 text-xs"
-            >
-              archidekt.com/collection/…
-            </div>
-            <div class="mt-3 flex flex-wrap gap-1.5">
-              <!-- Selected chip mirrors the import dialog's default mode. -->
-              <span
-                class="border-primary/30 bg-primary/10 text-primary rounded-full border px-2.5 py-0.5 text-xs font-medium"
-              >
-                Overwrite
-              </span>
-              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
-                Replace
-              </span>
-              <span class="text-muted-foreground rounded-full border px-2.5 py-0.5 text-xs">
-                Merge
-              </span>
-            </div>
-            <div class="text-muted-foreground mt-4 flex items-center gap-1.5 text-xs">
-              <CircleCheck class="text-primary size-3.5" aria-hidden="true" />
-              Matched 1,204 cards · 96 foil
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 10 — Wish list (demo right). -->
-        <FeatureDemoRow
-          :icon="Heart"
-          eyebrow="Wish lists"
-          heading="Price the cards you want next"
-          :body="
-            'A wish list works just like your collection — regular and foil counts, per-set ' +
-            'views, ghosts across whole sets — but for the cards you\'re still hunting. It keeps ' +
-            'a running USD total, so you always know what buying the list would cost — and ' +
-            '\u0022Buy all\u0022 turns the list into a TCGplayer mass-entry link in one click.'
-          "
-          demo-side="right"
-        >
-          <RouterLink to="/wishlist" :class="rowLinkClass">
-            <template v-if="auth.isAuthenticated">Open your wish list</template>
-            <template v-else-if="auth.sessionResolved">Start a wish list</template>
-            <Skeleton v-else class="h-4 w-32" />
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock UI — illustrative values, not real market data. -->
-            <span class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-              Your wish list
-            </span>
-            <div class="mt-3 space-y-2.5">
-              <div class="flex items-center gap-3">
-                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-                <div class="bg-foreground/15 h-1.5 w-full max-w-32 rounded-full"></div>
-                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$4.10</span>
-              </div>
-              <div class="flex items-center gap-3">
-                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
-                  <div
-                    class="from-foreground/10 h-2/5 bg-gradient-to-br via-transparent to-muted"
-                  ></div>
-                </div>
-                <div class="bg-foreground/15 h-1.5 w-full max-w-24 rounded-full"></div>
-                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$12.25</span>
-              </div>
-              <div class="flex items-center gap-3">
-                <div class="bg-muted h-10 w-7 shrink-0 overflow-hidden rounded border">
-                  <div
-                    class="from-primary/25 via-primary/10 h-2/5 bg-gradient-to-br to-transparent"
-                  ></div>
-                </div>
-                <div class="bg-foreground/15 h-1.5 w-full max-w-28 rounded-full"></div>
-                <span class="text-muted-foreground ml-auto text-xs tabular-nums">$69.85</span>
-              </div>
-            </div>
-            <div class="mt-4 flex items-center justify-between border-t pt-3">
-              <span class="text-sm font-medium">List total</span>
-              <span class="text-sm font-semibold tabular-nums">$86.20</span>
-            </div>
-          </template>
-        </FeatureDemoRow>
-
-        <!-- Row 11 — Life counter (demo left). -->
+        <!-- Row 5 — Life counter (demo left). -->
         <FeatureDemoRow
           :icon="HeartPulse"
           eyebrow="Life counter"
@@ -830,123 +538,40 @@ const rowLinkClass =
             <LifeCounterDemo />
           </template>
         </FeatureDemoRow>
-
-        <!-- Row 12 — CLI & agents (demo right). -->
-        <FeatureDemoRow
-          :icon="Terminal"
-          eyebrow="CLI & agents"
-          heading="Drive it from your terminal — or an agent"
-          :body="
-            'tcglense is a standalone, open-source command-line client and TUI for this API. Sign ' +
-            'in from the terminal with a quick browser handshake — no password typed at the prompt ' +
-            '— then search the catalog, check prices, and update your collection, wish list, and ' +
-            'decks without leaving the shell. Scriptable output and scoped tcgl_ API keys make it a clean ' +
-            'surface for automation and AI agents to work your collection on your behalf.'
-          "
-          demo-side="right"
-        >
-          <a
-            href="https://github.com/PNRxA/tcglense-cli"
-            target="_blank"
-            rel="noopener noreferrer"
-            :class="rowLinkClass"
-          >
-            Get the CLI
-            <ExternalLink class="size-4" aria-hidden="true" />
-          </a>
-          <RouterLink to="/docs" :class="rowLinkClass">
-            Explore the API
-            <ArrowRight class="size-4" aria-hidden="true" />
-          </RouterLink>
-          <template #demo>
-            <!-- Decorative mock terminal — illustrative commands, not live output. -->
-            <div class="overflow-hidden rounded-xl border">
-              <div class="bg-muted/60 flex items-center gap-1.5 border-b px-3 py-2">
-                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
-                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
-                <span class="bg-foreground/20 size-2.5 rounded-full"></span>
-                <span class="text-muted-foreground ml-2 text-xs font-medium">tcglense</span>
-                <span
-                  class="border-primary/30 bg-primary/10 text-primary ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium"
-                >
-                  <Bot class="size-3" aria-hidden="true" />
-                  Agent-ready
-                </span>
-              </div>
-              <div class="bg-card p-4 font-mono text-xs leading-relaxed">
-                <p><span class="text-primary">$</span> tcglense login</p>
-                <p class="text-muted-foreground">→ browser authorized “workstation”</p>
-                <p class="mt-2">
-                  <span class="text-primary">$</span> tcglense cards mtg -q 't:dragon usd&lt;5'
-                </p>
-                <p class="text-muted-foreground">
-                  &nbsp;&nbsp;42 cards · Ancient Brass Dragon $3.80 …
-                </p>
-                <p class="mt-2">
-                  <span class="text-primary">$</span> tcglense collection mtg summary --json
-                </p>
-                <p class="text-muted-foreground">
-                  &nbsp;&nbsp;{ "unique": 1204, "copies": 3418, "value_usd": 2148.32 }
-                </p>
-              </div>
-            </div>
-          </template>
-        </FeatureDemoRow>
       </div>
     </section>
 
-    <!-- Everything else: a compact grid of shipped features, each a link to where it lives. -->
-    <section class="mt-20 sm:mt-24">
+    <!-- Everything else: every other shipped feature, each a link to where it lives, in two
+         weights — headline cards, then compact rows — both through FeatureLinkCard, so an
+         internal feature is a RouterLink and an external one a new-tab anchor without a
+         hand-written element for either. -->
+    <section class="mt-16 sm:mt-20">
       <h2 class="text-xl font-semibold tracking-tight">Everything else that's live today</h2>
       <p class="text-muted-foreground mt-1 text-sm">
         No roadmap padding — every line here is a shipped feature.
       </p>
-      <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <RouterLink
+      <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <FeatureLinkCard
+          v-for="feature in headlineFeatures"
+          :key="feature.title"
+          :feature="feature"
+        />
+      </div>
+      <h3 class="text-muted-foreground mt-10 text-xs font-semibold tracking-wide uppercase">
+        Also live
+      </h3>
+      <div class="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+        <FeatureLinkCard
           v-for="feature in otherFeatures"
           :key="feature.title"
-          :to="feature.to"
-          class="bg-card hover:border-ring/60 hover:bg-accent/40 group flex items-center gap-4 rounded-xl border p-5 transition-colors"
-        >
-          <span class="bg-muted flex size-12 shrink-0 items-center justify-center rounded-lg">
-            <component :is="feature.icon" class="text-primary size-6" aria-hidden="true" />
-          </span>
-          <span class="min-w-0">
-            <span class="text-foreground block font-medium">{{ feature.title }}</span>
-            <span class="text-muted-foreground mt-0.5 block text-sm text-pretty">
-              {{ feature.description }}
-            </span>
-          </span>
-          <ChevronRight
-            class="text-muted-foreground ml-auto size-5 shrink-0 transition-transform group-hover:translate-x-0.5"
-            aria-hidden="true"
-          />
-        </RouterLink>
-        <a
-          href="https://github.com/PNRxA/tcglense"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="bg-card hover:border-ring/60 hover:bg-accent/40 group flex items-center gap-4 rounded-xl border p-5 transition-colors"
-        >
-          <span class="bg-muted flex size-12 shrink-0 items-center justify-center rounded-lg">
-            <GitHubMark class="text-primary size-6" />
-          </span>
-          <span class="min-w-0">
-            <span class="text-foreground block font-medium">Open source</span>
-            <span class="text-muted-foreground mt-0.5 block text-sm text-pretty">
-              The whole app — the API and this site — is public on GitHub.
-            </span>
-          </span>
-          <ExternalLink
-            class="text-muted-foreground ml-auto size-5 shrink-0 transition-transform group-hover:translate-x-0.5"
-            aria-hidden="true"
-          />
-        </a>
+          :feature="feature"
+          variant="row"
+        />
       </div>
     </section>
 
     <!-- Built on open data: prominent credits for the four open data projects behind TCGLense. -->
-    <section class="mt-20 sm:mt-24">
+    <section class="mt-16 sm:mt-20">
       <h2 class="text-xl font-semibold tracking-tight">Built on open data</h2>
       <p class="text-muted-foreground mt-1 text-sm text-pretty">
         Every price, card, box, decklist, and combo on TCGLense traces back to four open data
@@ -1086,7 +711,7 @@ const rowLinkClass =
     </section>
 
     <!-- Games strip: jump straight into a real game's catalog or sealed products (public). -->
-    <section v-if="games.length" class="mt-20 sm:mt-24">
+    <section v-if="games.length" class="mt-16 sm:mt-20">
       <h2 class="text-xl font-semibold tracking-tight">Start with your game</h2>
       <p class="text-muted-foreground mt-1 text-sm">
         Browse the full catalog, sealed products, and precons — no account needed.
@@ -1126,7 +751,7 @@ const rowLinkClass =
     </section>
 
     <!-- Closing CTA band: repeat the primary conversion ask, auth-branched. -->
-    <section class="mt-20 sm:mt-24">
+    <section class="mt-16 sm:mt-20">
       <div class="bg-card rounded-2xl border p-8 text-center sm:p-12">
         <template v-if="auth.isAuthenticated">
           <h2 class="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">

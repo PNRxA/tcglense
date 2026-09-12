@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onScopeDispose, ref, watch, type ComponentPublicInstance } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useId } from 'reka-ui'
 import {
@@ -8,11 +8,13 @@ import {
   Boxes,
   ChevronRight,
   Layers,
+  LayoutGrid,
   Loader2,
   Package,
   Search,
 } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
+import SetIcon from '@/components/cards/SetIcon.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
 import { Input } from '@/components/ui/input'
 import {
@@ -27,9 +29,9 @@ import type { Game } from '@/lib/api'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 import { cardSearchLocation, type SearchGroupView, type SearchOption } from '@/lib/universalSearch'
 
-// The homepage's universal search: one box that answers across cards, sealed products,
-// preconstructed decks, the keyword glossary and — signed in — your own decks, as a grouped
-// dropdown of the top matches, each a link to the thing itself. Enter with nothing
+// The homepage's universal search: one box that answers across cards, sets, sealed
+// products, preconstructed decks, the keyword glossary and — signed in — your own decks, as
+// a grouped dropdown of the top matches, each a link to the thing itself. Enter with nothing
 // highlighted (or the closing row) hands off to the full card search, where the whole
 // Scryfall grammar applies.
 //
@@ -102,13 +104,33 @@ function onInputFocus() {
 const GROUP_ICONS = {
   card: Layers,
   deck: BookCopy,
+  set: LayoutGrid,
   product: Package,
   precon: Boxes,
   keyword: BookOpen,
 } as const
 
-const placeholder = computed(
-  () => `Search ${gameName.value} cards, sealed products, precons, keywords…`,
+// Below Tailwind's `sm` breakpoint the input is ~200–260px wide at the homepage's 18px text, so
+// the full list of what the box answers overflows and clips mid-word; a phone gets a short
+// form instead. A media query (KeywordTooltip's hover-probe idiom) rather than a one-shot
+// width read, so a rotated tablet or a resized window swaps it live; without `matchMedia`
+// (jsdom) the wide form stands.
+const NARROW_QUERY = '(max-width: 639px)'
+const narrow = ref(false)
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  const media = window.matchMedia(NARROW_QUERY)
+  narrow.value = media.matches
+  const onChange = (event: MediaQueryListEvent) => {
+    narrow.value = event.matches
+  }
+  media.addEventListener('change', onChange)
+  onScopeDispose(() => media.removeEventListener('change', onChange))
+}
+
+const placeholder = computed(() =>
+  narrow.value
+    ? 'Search cards, sets…'
+    : `Search ${gameName.value} cards, sets, sealed products, precons, keywords…`,
 )
 </script>
 
@@ -124,9 +146,9 @@ const placeholder = computed(
           ref="inputRef"
           v-model="term"
           type="search"
-          class="h-12 rounded-xl pr-10 pl-11 text-base shadow-sm md:text-base"
+          class="bg-background dark:bg-background h-12 rounded-xl pr-10 pl-11 text-base shadow-sm md:text-base"
           :placeholder="placeholder"
-          aria-label="Search cards, sealed products, preconstructed decks, keywords, and your decks"
+          aria-label="Search cards, sets, sealed products, preconstructed decks, keywords, and your decks"
           role="combobox"
           aria-autocomplete="list"
           autocomplete="off"
@@ -146,7 +168,10 @@ const placeholder = computed(
       </div>
       <!-- Only a multi-game deployment gets a picker; today's single game needs none. -->
       <Select v-if="games.length > 1" v-model="selectedGame">
-        <SelectTrigger class="h-12 shrink-0 rounded-xl" aria-label="Game to search">
+        <SelectTrigger
+          class="bg-background dark:bg-background h-12 shrink-0 rounded-xl"
+          aria-label="Game to search"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -222,6 +247,13 @@ const placeholder = computed(
               aria-hidden="true"
             />
           </template>
+          <template v-else-if="option.thumbnail?.kind === 'set'">
+            <SetIcon
+              :game="selectedGame"
+              :code="option.thumbnail.id"
+              :has-icon="option.thumbnail.hasImage"
+            />
+          </template>
           <span
             v-else
             class="bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-md"
@@ -250,7 +282,9 @@ const placeholder = computed(
         </template>
         <template v-else-if="status === 'error'">Search is unavailable right now.</template>
         <template v-else
-          >No cards, sealed products, decks, or keywords match “{{ searchedTerm }}”.</template
+          >No cards, sets, sealed products, precons, decks, or keywords match “{{
+            searchedTerm
+          }}”.</template
         >
       </div>
 

@@ -461,6 +461,11 @@ async fn refresh_inner(
     txn.commit().await?;
 
     drop(progress);
+    // The rebuild just left every one of those tables holding a full table's worth of dead
+    // tuples and a cleared visibility map, with the planner still costing against the rows
+    // it deleted. Re-stat them before the next reader arrives — only reached on a tick that
+    // actually rebuilt, since the version gate returns above.
+    crate::catalog::maintain_sealed_tables(db).await;
     let version = compose_version(etag.as_deref(), fallback_version, &sld_version, &derivation);
     let detail = format!(
         "{matched} memberships across {product_count} products \
@@ -526,6 +531,12 @@ fn row_to_model(
         membership: Set(membership.to_string()),
         foil: Set(foil),
         component: Set(component),
+        // Not the rebuild's to decide: booster exclusivity is a cross-product fact that
+        // also reads `products.product_type`, which the TCGCSV sweep moves on ticks this
+        // ETag-gated rebuild doesn't run on. `catalog::sealed_exclusives` stamps it every
+        // tick — the `precon_decks.price_cents` model, where the rebuild writes the empty
+        // value and the per-tick pass fills it.
+        exclusive: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -1624,6 +1635,7 @@ mod tests {
                 membership: Set(m.membership.to_string()),
                 foil: Set(m.foil),
                 component: Set(m.component.clone()),
+                exclusive: Set(false),
                 created_at: Set(now),
                 updated_at: Set(now),
             });

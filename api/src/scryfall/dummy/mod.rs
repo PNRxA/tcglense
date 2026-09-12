@@ -386,6 +386,9 @@ async fn seed_sealed_contents(db: &DatabaseConnection) -> Result<u64, IngestErro
                 membership: Set(membership.as_str().to_string()),
                 foil: Set(foil),
                 component: Set(component.map(str::to_string)),
+                // Stamped by `catalog::sealed_exclusives` after the insert below, exactly as
+                // the real ingest leaves it for the per-tick pass.
+                exclusive: Set(false),
                 created_at: Set(now),
                 updated_at: Set(now),
             })
@@ -909,6 +912,14 @@ async fn seed_inner(db: &DatabaseConnection) -> Result<(), IngestError> {
         rows = precon_values,
         "derived dummy preconstructed-deck values"
     );
+
+    // Stamp booster exclusivity through the same derived pass a sync tick runs
+    // (`sealed_contents.exclusive` is refresher-owned, never written at seed/rebuild), so
+    // the offline product page splits its "Exclusive to …" section exactly as a synced
+    // instance does. Runs after both the contents and the products exist to compare.
+    let exclusive_rows =
+        crate::catalog::sealed_exclusives::refresh_sealed_exclusives(db, GAME).await?;
+    tracing::info!(rows = exclusive_rows, "derived dummy booster exclusivity");
 
     // Card rulings ("Notes and Rules Information"), so the card-detail rulings section
     // renders offline. Keyed on the reprinted card's oracle id (seeded above).

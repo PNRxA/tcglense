@@ -13,10 +13,11 @@ import { displayManaCost } from '@/lib/mana'
 // list fits on a screen or two, and the facts you scan for (mana cost, type, price) are in
 // aligned columns instead of buried in art.
 //
-// Deliberately layout-only. Everything owner-specific arrives through slots — `#control`
-// (the quantity editor, or a static ×N on the public view) and `#badges` (collection /
-// wish-list counts) — so the owner and public views share this row exactly as they share
-// CardTile, with no `readonly` flag to thread through.
+// Deliberately layout-only. Everything page-specific arrives through slots — `#control`
+// (the quantity editor, or a static ×N on the public and precon views) and `#badges` (the
+// viewer's collection / wish-list counts, on the owner and precon views) — so the owner,
+// public and precon views share this row exactly as they share CardTile, with no `readonly`
+// flag to thread through.
 const props = defineProps<{
   game: string
   entry: DeckCardEntry

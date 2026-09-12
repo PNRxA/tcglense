@@ -14,6 +14,7 @@ pub mod ingest_state;
 pub mod keywords;
 pub mod precon_values;
 pub mod releases;
+pub mod sealed_exclusives;
 pub mod sld_product_dates;
 pub(crate) mod sync_state;
 
@@ -195,6 +196,13 @@ pub async fn refresh_all(
                 // when the version-gated syncs were skipped — because card prices move on
                 // ticks the precon tables don't (see `catalog::precon_values`).
                 crate::tasks::refresh_precon_values(db).await;
+                // Booster exclusivity (`sealed_contents.exclusive`), the cross-product
+                // "only this family's boosters pull this card" split. Runs after the
+                // contents sync (which owns the rebuild, and leaves the column `false`)
+                // and every tick — even when the version-gated syncs were skipped —
+                // because the judgement also reads `products.product_type`, which the
+                // TCGCSV sweep moves independently (see `catalog::sealed_exclusives`).
+                crate::tasks::refresh_sealed_exclusives(db, game.id).await;
                 // Secret Lair per-product release dates, derived from each product's own
                 // contents (its `contains` cards' modal release date). Runs after the contents
                 // sync so the rows exist to read, and every tick — even when the version-gated
@@ -321,6 +329,57 @@ pub async fn maintain_price_history(db: &DatabaseConnection) {
             Ok(_) => tracing::info!(table, "refreshed price-history stats + visibility map"),
             Err(err) => {
                 tracing::warn!(table, error = %err, "post-capture VACUUM (ANALYZE) failed")
+            }
+        }
+    }
+}
+
+/// Refresh the planner statistics and visibility map of the tables the sealed-contents
+/// sync rebuilds **wholesale** (**Postgres only**), right after its rebuild transaction
+/// commits.
+///
+/// Why this is needed and different from [`maintain_price_history`]'s case: that table is
+/// append-only and the problem is a slow autovacuum trigger. Here the rebuild is a
+/// `DELETE`-everything + `INSERT`-everything inside one transaction, so at commit the dead
+/// tuples are *the entire previous table* — several hundred thousand rows for
+/// `sealed_contents` alone — and every page's visibility bit is cleared. Postgres is then
+/// planning against statistics describing rows that no longer exist. That is precisely the
+/// state the product page's reads are most sensitive to: the manifest's
+/// `(game, product_id)` seeks, the booster odds' `sealed_packs`/`booster_sheets` lookups,
+/// and the precon browse's facets all degrade from index seeks into scans, and a stale
+/// visibility map turns every index-only scan into per-row heap fetches.
+///
+/// Called from `mtgjson::ingest::refresh_inner` rather than from the tick, so it runs
+/// **only on a tick that actually rebuilt** — the ETag/fallback/SLD/derivation gate returns
+/// before the transaction on an unchanged file, and a no-op tick should pay nothing. It
+/// inherits the tick's leader lock and deadline for free. Children before parents, matching
+/// the delete order. `VACUUM` cannot run inside a transaction; `execute_unprepared` runs it
+/// autocommit, and it takes only `SHARE UPDATE EXCLUSIVE` so it never blocks the catalog
+/// reads. A failure is logged and never fails the sync. A no-op on SQLite (single writer,
+/// no MVCC visibility map; its planner stats are a deliberate non-goal — several search
+/// leaves are tuned for a statistics-free planner).
+pub async fn maintain_sealed_tables(db: &DatabaseConnection) {
+    if db.get_database_backend() != DatabaseBackend::Postgres {
+        return;
+    }
+    // Every table the rebuild transaction empties and refills. Names are fixed literals,
+    // so the format! carries no untrusted input.
+    for table in [
+        "sealed_packs",
+        "booster_sheets",
+        "booster_configs",
+        "precon_deck_cards",
+        "precon_decks",
+        "sealed_components",
+        "sealed_contents",
+    ] {
+        match db
+            .execute_unprepared(&format!("VACUUM (ANALYZE) \"{table}\""))
+            .await
+        {
+            Ok(_) => tracing::info!(table, "refreshed sealed-table stats + visibility map"),
+            Err(err) => {
+                tracing::warn!(table, error = %err, "post-rebuild VACUUM (ANALYZE) failed")
             }
         }
     }

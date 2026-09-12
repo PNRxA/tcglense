@@ -9,7 +9,9 @@ name: Release images
 #   tcglense       the API + SPA in one image    (--target combined)
 #
 # Cut a release with `scripts/release.sh` (bumps the version, tags, and publishes
-# the GitHub Release that triggers this workflow).
+# the GitHub Release that triggers this workflow) — locally, or from the Actions tab
+# via the "Cut release" workflow (release-cut.yml), which runs the same script with
+# a PAT so the published Release actually fires this one.
 #
 # GHCR needs no setup to PUSH (it uses the built-in GITHUB_TOKEN) — but the first
 # push creates each package PRIVATE. To allow anonymous `docker pull`, do a one-time
