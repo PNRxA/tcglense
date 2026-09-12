@@ -45,6 +45,12 @@ use crate::state::AppState;
 /// (an index may hold 50 000 sitemaps).
 pub(crate) const MAX_URLS_PER_SITEMAP: u64 = 5_000;
 
+/// The tools that are public pages rather than per-user surfaces, as `(game, slug)` — the
+/// SPA's `lib/tools.ts` registry decides which tools exist; this mirrors only the ones a
+/// crawler should find (the stack simulator is a client-only rules page with nothing to sign
+/// in for). A new public tool is one entry here *and* a route in the SPA.
+const PUBLIC_TOOLS: &[(&str, &str)] = &[("mtg", "stack")];
+
 /// `Content-Type` for a sitemap document.
 const SITEMAP_CONTENT_TYPE: &str = "application/xml; charset=utf-8";
 
@@ -219,12 +225,16 @@ fn pages_body(base: &str) -> String {
             );
         }
     }
-    // The Tools section: the hub and each game's index. Both are public and indexable (the tools
-    // themselves are per-user, so they stop here), and like the entries above they come from a
-    // static registry rather than a query.
+    // The Tools section: the hub and each game's index. Both are public and indexable, and
+    // like the entries above they come from a static registry rather than a query. The tools
+    // themselves are per-user (the life counter) and stop here — except the ones in
+    // `PUBLIC_TOOLS`, which are entirely client-side rules pages with nothing per-user.
     push_url(&mut body, &format!("{base}/tools"), None);
     for game in catalog::GAMES {
         push_url(&mut body, &format!("{base}/tools/{}", game.id), None);
+    }
+    for (game, tool) in PUBLIC_TOOLS {
+        push_url(&mut body, &format!("{base}/tools/{game}/{tool}"), None);
     }
     // The release calendar (issue #679): the all-games hub and each game's month view are
     // public, canonical pages whose whole point is being found by a "what's releasing"
@@ -705,8 +715,10 @@ mod tests {
                 game.id
             );
         }
-        // The tools themselves are per-user, so nothing below the index is listed.
+        // The tools themselves are per-user, so nothing below the index is listed — except
+        // the client-only stack simulator, which is a public rules page.
         assert!(!body.contains("/tools/mtg/life"));
+        assert!(body.contains("<loc>https://x.test/tools/mtg/stack</loc>"));
     }
 
     #[test]

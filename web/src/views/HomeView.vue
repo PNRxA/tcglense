@@ -159,6 +159,14 @@ const otherFeatures: FeatureLink[] = [
     to: '/keywords',
   },
   {
+    icon: Layers,
+    title: 'Stack simulator',
+    description:
+      'Cast spells for both players, respond, pass priority, and read why each spell and ' +
+      'ability resolves in the order it does — with the rule behind every step.',
+    to: '/tools/mtg/stack',
+  },
+  {
     icon: ShoppingCart,
     title: 'Shopping lists',
     description:

@@ -2002,3 +2002,27 @@ interesting decisions are the ones *not* taken:
   accident. A unit spec (`useCardScanner.spec.ts`) locks the
   explicit-paths contract so a refactor can't silently fall back to the CDN. Bonus: the
   scanner now works where jsdelivr is blocked and leaks no usage/IP to a CDN.
+
+## Tools: the stack simulator
+
+* **Client-only, on purpose.** The simulator teaches the priority system and the stack; it has
+  no per-user state worth keeping (a reload is a fresh table, which is also what a lesson wants),
+  so it ships as a pure reducer in the SPA with no endpoint, migration or auth surface. The cost
+  is that a walkthrough can't be shared by URL yet — an accepted gap; adding `?scenario=` is a
+  router change, not a backend one.
+* **Narrow model over faithful engine.** Two players, no mana costs, no hand or library, no
+  combat, no static abilities, one effect per object. Every one of those is a deliberate omission:
+  the tool exists to show *ordering* — casting, responding, passing, triggers landing, targets
+  going stale, state-based actions running before priority — and a resource system would bury
+  that under bookkeeping the player didn't come for. The library is a dozen famous cards chosen
+  so each teaching point has one card that shows it, not a catalog search: a real card's Oracle
+  text can't be executed, and a wrong simulation is worse than a small one.
+* **Paraphrased citations, real paragraph numbers.** The rules table is plain-English
+  paraphrase keyed by Comprehensive Rules paragraph (`117.4`, `603.3b`, `608.2b`, …), using only
+  section-level numbers that have stayed put across CR revisions (the lettered steps under
+  `608.2` move). The point is a trail back to the authoritative text, not a quotation.
+* **Scripts, not recordings.** A walkthrough is a list of ordinary actions with commentary,
+  resolved against the live state and run through the same reducer as free play. Recording
+  expected states would drift silently the first time a rule changed; the spec instead asserts
+  that each step's narration (refused or not) matches what the engine did.
+

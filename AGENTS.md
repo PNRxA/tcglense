@@ -173,8 +173,9 @@ area**; rationale: `docs/tradeoffs.md`; wire shapes: `docs/api-contracts.md`.
 - The evaluator keyset-paginates and narrows by `updated_at` — **any new writer of `cards`/`products.price_usd*` must bump `updated_at`.**
 - Release heads-ups are two opt-ins on the same `alert_channels` row, latched in `release_notifications` on delivery; what counts as a release is decided once in `catalog::releases`, shared with the public calendar.
 
-**[Tools: the life counter](./docs/invariants.md#tools-the-life-counter)**
+**[Tools: the life counter & the stack simulator](./docs/invariants.md#tools-the-life-counter)**
 - Seats/events hang off `session_id` (`load_session` first, foreign = 404); a finished session is immutable (409); `life` is written in exactly two places (tap + replay fold); `deck_id` xor `commander_card_id` (both = 422); links are FK-less and orphan-tolerant; extra counters ride `life_events.counter`, never new columns; layout + counter vocabularies are mirrored in `lib/lifeLayout.ts` / `lib/lifeCounters.ts`.
+- The stack simulator (`/tools/mtg/stack`) is **client-only**: a pure reducer in `web/src/lib/stack/` (state in, state + narrated log out — undo is history, never reverse rules); every log line and hint cites `rules.ts`; walkthroughs are scripts of ordinary actions, never a second engine; a public tool is listed in the sitemap's `PUBLIC_TOOLS`.
 
 **[External ids, shopping lists & exports](./docs/invariants.md#external-ids-shopping-lists-and-exports)**
 - Provider ids ride `CardDetailResponse` only; a buy list is rows with `tcgplayer_id` (stores in `lib/bulkBuy.ts`); the deck buy list reuses the `needed_rows` fold.

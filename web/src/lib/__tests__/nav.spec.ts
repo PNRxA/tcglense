@@ -101,7 +101,12 @@ describe('resolveItem', () => {
   })
 
   it('drops games with no tools but still warms the hub', () => {
-    expect(warmTargets('tools')).toEqual(['/tools', '/tools/mtg/life', '/tools/mtg'])
+    expect(warmTargets('tools')).toEqual([
+      '/tools',
+      '/tools/mtg/life',
+      '/tools/mtg/stack',
+      '/tools/mtg',
+    ])
   })
 
   it('trails each game with an index link to its own tools page', () => {
@@ -110,6 +115,7 @@ describe('resolveItem', () => {
     expect(resolved.perGame[0]?.game.id).toBe('mtg')
     expect(resolved.perGame[0]?.links.map((link) => [link.label, link.kind])).toEqual([
       ['Life counter', undefined],
+      ['Stack simulator', undefined],
       ['All Magic: The Gathering tools', 'index'],
     ])
   })

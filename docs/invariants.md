@@ -653,6 +653,26 @@ and add the one-line summary to `AGENTS.md`.
   same `(seat, counter, source)` chain the server folds, so a 7-point commander hit is one row) and
   deliberately does **not** retry a failed commit — a request that failed in transit may still
   have applied, so re-sending could double the loss.
+- **The stack simulator is a client-only rules engine, and stays one.** `/tools/mtg/stack` has
+  no endpoint, table or per-user row: the whole tool is the pure reducer in
+  `web/src/lib/stack/` (`applyAction(state, action) → state`, cloning first — a refused action
+  returns the same table plus one `refused` log line, so the UI never special-cases it). Four
+  couplings: **(1) undo is history** — `useStackSimulator` keeps the states, never a reverse
+  rule, so every rule lives in exactly one direction; **(2) every log line and hint cites
+  `rules.ts`** (`stack.spec.ts` fails on a citation the table doesn't know), and the primer
+  below the simulator renders *from* that table, so the explanation a chip opens is word for
+  word the one the primer prints; **(3) walkthroughs are scripts of ordinary actions**
+  (`scenarios.ts`, each step a function of the live state) run through the same reducer — a
+  scenario that narrates a refusal must be refused and every other step must go through, which
+  the spec asserts, so a rules change can't leave a lesson telling a different story than the
+  log; **(4) a public tool is listed twice** — the SPA's `lib/tools.ts` registry (hub, index,
+  nav, prefetch) *and* the sitemap's `PUBLIC_TOOLS` in `handlers/sitemap.rs`, because only a
+  tool with nothing to sign in for belongs in a sitemap and the Rust side can't read the
+  registry. The model is deliberately narrow (two players, no mana, no hand, no combat; one
+  effect per object; targets re-checked on resolution; APNAP triggers; state-based actions
+  before priority; summoning sickness for `{T}` abilities; effect-caused destruction logged
+  as the effect's doing, never as a state-based action): extend it by adding an `Effect`/`TriggerEvent` arm and a card, never by
+  letting a component compute a rule.
 
 ## External ids, shopping lists and exports
 

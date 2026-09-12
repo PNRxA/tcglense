@@ -413,6 +413,14 @@ const router = createRouter({
       component: () => import('@/views/GameToolsView.vue'),
       props: true,
     },
+    // The stack simulator is entirely client-side (nothing per-user), so it is public and
+    // indexable like the hub pages — the one tool the sitemap lists below the game index.
+    {
+      path: '/tools/:game/stack',
+      name: 'stack-simulator',
+      component: () => import('@/views/StackSimulatorView.vue'),
+      props: true,
+    },
     {
       path: '/tools/:game/life',
       name: 'life-counter',
