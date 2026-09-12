@@ -19,8 +19,6 @@ export interface ScenarioStep {
 export interface Scenario {
   slug: string
   title: string
-  /** One line for the picker. */
-  blurb: string
   /** The lesson, shown once the script is loaded. */
   lesson: string
   setup: () => StackState
@@ -71,7 +69,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'last-in-first-out',
     title: 'Last in, first out',
-    blurb: 'A Lightning Bolt, a Counterspell in response, and why the response resolves first.',
     lesson:
       'The stack resolves from the top down. A response is put on top of what it responds to, so it always resolves first — and both players must pass in succession before each object resolves.',
     setup: () => createState(),
@@ -101,7 +98,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'counter-war',
     title: 'The counter war',
-    blurb: 'Counter the counterspell: three objects deep, resolving one at a time.',
     lesson:
       'Each object on the stack resolves separately, with a round of priority between each. Countering a counterspell leaves the original spell on the stack, and it resolves afterwards as if nothing had happened.',
     setup: () => createState(),
@@ -138,8 +134,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'fizzle',
     title: 'Responding to a pump spell ("fizzling")',
-    blurb:
-      'Giant Growth on a Grizzly Bears, Lightning Bolt in response — and the Growth has no target left.',
     lesson:
       'A spell checks its targets again as it starts to resolve. If they are all gone, it does not resolve at all ("fizzles"). The response resolves first, kills the creature, and the pump spell finds nothing to pump.',
     setup: () => stage(createState(), [['you', 'grizzly-bears']]),
@@ -168,8 +162,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'save-the-bear',
     title: 'Saving a creature in response',
-    blurb:
-      'The same cards the other way round: Bolt first, Giant Growth in response, and the Bears survive.',
     lesson:
       'Order is everything. Cast the pump spell in response to the burn spell and it resolves first: the creature is 5/5 when the 3 damage arrives, so it survives.',
     setup: () => stage(createState({ activePlayer: 'opp' }), [['you', 'grizzly-bears']]),
@@ -198,8 +190,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'cast-trigger',
     title: 'A trigger on casting',
-    blurb:
-      'Guttersnipe’s trigger goes on the stack above the spell that caused it — and resolves first.',
     lesson:
       'Triggered abilities are put on the stack the next time a player would receive priority. A "whenever you cast" trigger therefore lands on top of the spell itself and resolves before it.',
     setup: () => stage(createState(), [['you', 'guttersnipe']]),
@@ -220,7 +210,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'apnap',
     title: 'APNAP: two players’ triggers at once',
-    blurb: 'Both players control a Soul Warden. A creature enters — whose trigger resolves first?',
     lesson:
       'When abilities trigger for both players at the same time, the active player puts theirs on the stack first, then the non-active player. Last in, first out: the non-active player’s trigger resolves first.',
     setup: () =>
@@ -247,7 +236,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'split-second',
     title: 'Split second',
-    blurb: 'Krosan Grip on a Sol Ring: the opponent can’t respond — but a trigger still can.',
     lesson:
       'While a split-second spell is on the stack, nobody can cast spells or activate non-mana abilities. Triggered abilities still trigger and still go on the stack, and mana abilities still work.',
     setup: () =>
@@ -264,7 +252,7 @@ export const SCENARIOS: readonly Scenario[] = [
       { say: 'You pass.', act: pass('you') },
       {
         say: 'The opponent tries to cast Counterspell on the Grip. Refused: split second.',
-        act: cast('opp', 'counterspell', (s) => spell(s, 'lightning-bolt')),
+        act: cast('opp', 'counterspell', (s) => spell(s, 'krosan-grip')),
       },
       {
         say: 'The opponent taps Llanowar Elves for mana instead — a mana ability is still allowed, and it never touches the stack.',
@@ -286,8 +274,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'sorcery-timing',
     title: 'Sorcery timing',
-    blurb:
-      'Why Divination can’t be cast in response, and why the opponent can’t cast it on your turn.',
     lesson:
       'Sorceries, creatures, artifacts and enchantments (without flash) can only be cast during your own main phase while the stack is empty. Instants, flash and abilities are what you respond with.',
     setup: () => createState(),
@@ -302,7 +288,7 @@ export const SCENARIOS: readonly Scenario[] = [
       },
       { say: 'You pass.', act: pass('you') },
       {
-        say: 'The opponent tries to cast Divination in response. Refused twice over: the stack isn’t empty, and it isn’t their turn.',
+        say: 'The opponent tries to cast Divination in response. Refused — it isn’t their turn (the log names the first rule it hits; the non-empty stack would stop it too).',
         act: cast('opp', 'divination'),
       },
       {
@@ -318,7 +304,6 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     slug: 'stifle-a-trigger',
     title: 'Countering an ability',
-    blurb: 'Elvish Visionary enters; the opponent Stifles the draw. The Visionary stays.',
     lesson:
       'An ability on the stack is separate from its source. Countering the ability removes only the ability — the creature that triggered it is already on the battlefield and stays there.',
     setup: () => createState(),
@@ -343,31 +328,31 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     slug: 'copy',
-    title: 'Copying a spell',
-    blurb:
-      'Fork a Lightning Bolt: the copy goes on the stack directly and resolves before the original.',
+    title: 'Holding priority and copying a spell',
     lesson:
-      'A copy of a spell is created on the stack (it isn’t cast), keeps the same target, resolves like the original, and then ceases to exist instead of going to a graveyard.',
-    setup: () => createState({ activePlayer: 'opp' }),
+      'You keep priority after casting, so you can respond to your own spell before the opponent gets a chance. Fork puts a copy of the Bolt directly on the stack (it isn’t cast); the copy resolves before the original and then ceases to exist instead of going to a graveyard.',
+    setup: () => createState(),
     steps: [
       {
-        say: 'The opponent casts Lightning Bolt at you.',
-        act: cast('opp', 'lightning-bolt', () => player('you')),
+        say: 'You cast Lightning Bolt at the opponent. Priority comes straight back to you — you have not passed yet.',
+        act: cast('you', 'lightning-bolt', () => player('opp')),
       },
-      { say: 'The opponent passes.', act: pass('opp') },
       {
-        say: 'You respond with Fork, targeting the Bolt.',
+        say: 'Holding priority, you cast Fork targeting your own Bolt. The opponent has had no chance to respond to the Bolt.',
         act: cast('you', 'fork', (s) => spell(s, 'lightning-bolt')),
       },
-      { say: 'You pass.', act: pass('you') },
+      { say: 'Now you pass. The opponent sees two spells on the stack at once.', act: pass('you') },
       {
-        say: 'The opponent passes. Fork resolves and puts a copy of Lightning Bolt on the stack, above the original — still targeting you.',
+        say: 'The opponent passes. Fork resolves and puts a copy of Lightning Bolt on the stack, above the original — with the same target.',
         act: pass('opp'),
       },
-      { say: 'The opponent passes.', act: pass('opp') },
-      { say: 'You pass: the copy resolves and ceases to exist.', act: pass('you') },
-      { say: 'The opponent passes.', act: pass('opp') },
-      { say: 'You pass: the original Bolt resolves and goes to the graveyard.', act: pass('you') },
+      { say: 'You pass.', act: pass('you') },
+      { say: 'The opponent passes: the copy resolves and ceases to exist.', act: pass('opp') },
+      { say: 'You pass.', act: pass('you') },
+      {
+        say: 'The opponent passes: the original Bolt resolves and goes to the graveyard.',
+        act: pass('opp'),
+      },
     ],
   },
 ]

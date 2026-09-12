@@ -105,6 +105,7 @@ const turnLabel = computed(() => {
         :step-index="sim.stepIndex.value"
         :current-step="sim.currentStep.value"
         :done="sim.walkthroughDone.value"
+        :off-script="sim.offScript.value"
         @load="sim.loadScenario"
         @next="sim.nextStep"
         @restart="sim.reset"

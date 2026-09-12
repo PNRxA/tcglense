@@ -56,7 +56,7 @@ describe('useStackSimulator', () => {
     expect(sim.stepIndex.value).toBe(scenario.steps.length)
   })
 
-  it('leaves the walkthrough on a free action and resets to its setup until then', () => {
+  it('resets a walkthrough to its setup and clears the table for free play', () => {
     const sim = useStackSimulator()
     sim.loadScenario('fizzle')
     expect(sim.state.value.battlefield.map((p) => p.name)).toEqual(['Grizzly Bears'])
@@ -65,10 +65,32 @@ describe('useStackSimulator', () => {
     expect(sim.stepIndex.value).toBe(0)
     expect(sim.state.value.stack).toEqual([])
     expect(sim.state.value.battlefield).toHaveLength(1)
-    sim.dispatch({ type: 'pass', player: 'you' })
-    expect(sim.scenario.value).toBeNull()
     sim.loadScenario(null)
+    expect(sim.scenario.value).toBeNull()
     expect(sim.state.value.battlefield).toEqual([])
+  })
+
+  it('goes off the script on a free action mid-walkthrough, and undo rejoins it', () => {
+    const sim = useStackSimulator()
+    sim.loadScenario('fizzle')
+    sim.nextStep()
+    expect(sim.offScript.value).toBe(false)
+    sim.dispatch({ type: 'pass', player: 'you' })
+    expect(sim.scenario.value?.slug).toBe('fizzle')
+    expect(sim.offScript.value).toBe(true)
+    expect(sim.currentStep.value).toBeNull()
+    // Stepping is refused off the script; the cursor stays where the script left it.
+    sim.nextStep()
+    expect(sim.stepIndex.value).toBe(1)
+    sim.undo()
+    expect(sim.offScript.value).toBe(false)
+    expect(sim.stepIndex.value).toBe(1)
+    expect(sim.currentStep.value?.say).toBe(sim.scenario.value!.steps[1]!.say)
+    sim.redo()
+    expect(sim.offScript.value).toBe(true)
+    sim.reset()
+    expect(sim.offScript.value).toBe(false)
+    expect(sim.stepIndex.value).toBe(0)
   })
 
   it('surfaces the last refusal and the hint for the current table', () => {

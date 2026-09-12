@@ -3,8 +3,11 @@
  * can cite the rule it rests on and the UI can show the plain-English version in place.
  *
  * Paraphrased, not quoted: the point is the explanation a newer player needs, with the
- * paragraph number as the trail back to the authoritative text. Only the section-level
- * numbers that have stayed put across CR revisions are used (the letters under 608.2 move).
+ * paragraph number as the trail back to the authoritative text. Lettered subrules are cited
+ * where the letter has stayed put across CR revisions (117.3b–d, 603.3b, 608.2b, 704.5a/f/g);
+ * where the letters shuffle, the citation stays at the section (608.2 for "an instant or
+ * sorcery goes to the graveyard as the last step of resolving", whose letter has moved).
+ * Check a key against the current CR before adding one.
  */
 export interface Rule {
   id: string
@@ -61,13 +64,21 @@ export const RULES: Readonly<Record<string, Rule>> = {
       '(creatures with lethal damage die, a player at 0 life loses), then puts any waiting ' +
       'triggered abilities on the stack. Only then does the player actually get priority.',
   },
-  '405.1': {
-    id: '405.1',
+  '302.6': {
+    id: '302.6',
+    title: 'Summoning sickness',
+    text:
+      'A creature’s {T} abilities can’t be activated unless its controller has controlled it ' +
+      'continuously since the start of their most recent turn. A creature that entered this ' +
+      'turn — or on your opponent’s turn — must wait for your next turn to tap.',
+  },
+  '405.2': {
+    id: '405.2',
     title: 'The stack is last in, first out',
     text:
-      'Spells and abilities go on top of the stack when cast or activated and wait there. ' +
-      'The most recently added object is the first to resolve, so a response always resolves ' +
-      'before the thing it responds to.',
+      'Each time a spell or ability is put on the stack, it goes on top of everything already ' +
+      'there, and the stack remembers that order. The most recently added object is the first ' +
+      'to resolve, so a response always resolves before the thing it responds to.',
   },
   '500.2': {
     id: '500.2',
@@ -163,6 +174,14 @@ export const RULES: Readonly<Record<string, Rule>> = {
       'To counter a spell or ability is to remove it from the stack so it never resolves. A ' +
       'countered spell goes to its owner’s graveyard; a countered ability simply ceases to ' +
       'exist. A countered permanent spell never enters the battlefield.',
+  },
+  '701.7': {
+    id: '701.7',
+    title: 'Destroy',
+    text:
+      'To destroy a permanent is to move it from the battlefield to its owner’s graveyard. It ' +
+      'is an effect of the resolving spell, not a state-based action — though lethal damage ' +
+      'also destroys, through the state-based action that checks it.',
   },
   '702.8': {
     id: '702.8',

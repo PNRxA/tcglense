@@ -19,6 +19,8 @@ const props = defineProps<{
   stepIndex: number
   currentStep: ScenarioStep | null
   done: boolean
+  /** The player acted off the script; undo rejoins it, restart replays it. */
+  offScript: boolean
 }>()
 const emit = defineEmits<{ load: [slug: string | null]; next: []; restart: [] }>()
 
@@ -59,9 +61,19 @@ function onChange(next: unknown) {
       <p class="mt-3 text-sm leading-relaxed">{{ scenario.lesson }}</p>
       <div class="bg-background mt-3 rounded-lg border p-3">
         <p class="text-muted-foreground text-[0.65rem] font-medium tracking-wide uppercase">
-          {{ done ? 'Walkthrough complete' : `Step ${stepIndex + 1} of ${scenario.steps.length}` }}
+          {{
+            offScript
+              ? 'Off the script'
+              : done
+                ? 'Walkthrough complete'
+                : `Step ${stepIndex + 1} of ${scenario.steps.length}`
+          }}
         </p>
-        <p v-if="currentStep" class="mt-1 text-sm leading-relaxed" data-testid="step-say">
+        <p v-if="offScript" class="mt-1 text-sm leading-relaxed" data-testid="off-script">
+          You took an action of your own, so the table no longer matches the lesson. Undo to rejoin
+          the script at step {{ stepIndex + 1 }}, or restart it.
+        </p>
+        <p v-else-if="currentStep" class="mt-1 text-sm leading-relaxed" data-testid="step-say">
           {{ currentStep.say }}
         </p>
         <p v-else class="mt-1 text-sm leading-relaxed">

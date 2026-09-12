@@ -31,12 +31,18 @@ const KIND_LABEL: Record<LogKind, string> = {
 const latestIds = computed(() => new Set(props.latest.map((entry) => entry.id)))
 const scroller = ref<HTMLElement | null>(null)
 
+// Bring the lines the last action wrote into view: the first of them goes to the top of the
+// scroller (clamped to the end), so a multi-line block reads downward from its opener rather
+// than showing only its tail. `scrollTop` rather than `scrollIntoView`, which would also
+// scroll the page.
 watch(
   () => props.entries.length,
   async () => {
     await nextTick()
     const el = scroller.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const first = el.querySelector<HTMLElement>('[data-latest]')
+    el.scrollTop = first ? first.offsetTop - el.offsetTop : el.scrollHeight
   },
 )
 </script>
@@ -47,8 +53,9 @@ watch(
     <p v-if="entries.length === 0" class="text-muted-foreground mt-2 text-sm">
       Nothing yet. Every action writes its explanation here.
     </p>
+    <!-- Always mounted (an empty list is fine): a live region has to exist before its first
+         announcement for assistive tech to pick the announcement up. -->
     <ol
-      v-else
       ref="scroller"
       class="mt-2 max-h-[28rem] space-y-1.5 overflow-y-auto pr-1"
       aria-live="polite"
@@ -62,6 +69,7 @@ watch(
           KIND_CLASS[entry.kind],
           latestIds.has(entry.id) ? 'bg-accent/40' : 'text-muted-foreground',
         ]"
+        :data-latest="latestIds.has(entry.id) ? '' : null"
       >
         <span class="text-[0.65rem] font-medium tracking-wide uppercase opacity-70">{{
           KIND_LABEL[entry.kind]

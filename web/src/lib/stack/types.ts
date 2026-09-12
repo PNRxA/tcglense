@@ -104,6 +104,8 @@ export interface Permanent {
   pumpPower: number
   pumpToughness: number
   tapped: boolean
+  /** The turn it came under its controller's control; 0 for a setup-placed one ("always there"). */
+  enteredTurn: number
 }
 
 export type TargetRef =

@@ -12,21 +12,30 @@ import type { Action, LogEntry, StackState } from '@/lib/stack/types'
  * a free action is, only chosen by the script rather than the player.
  *
  * Every entry remembers whether the script chose it: undoing a scripted step rewinds the
- * cursor, undoing a free one doesn't, and taking a free action mid-walkthrough leaves the
- * script (the story it tells no longer matches the table).
+ * cursor, undoing a free one doesn't. Taking a free action mid-walkthrough leaves the script
+ * (the story it tells no longer matches the table) — but the walkthrough stays loaded and
+ * the departure rides the history, so undoing back to the last scripted state rejoins it.
  */
 interface HistoryEntry {
   state: StackState
   scripted: boolean
+  /** Whether the table had already diverged from the script when this state was reached. */
+  offScript: boolean
 }
 
 export function useStackSimulator() {
-  const history = shallowRef<HistoryEntry[]>([{ state: createState(), scripted: false }])
+  const history = shallowRef<HistoryEntry[]>([
+    { state: createState(), scripted: false, offScript: false },
+  ])
   const future = shallowRef<HistoryEntry[]>([])
   const scenario = ref<Scenario | null>(null)
   const stepIndex = ref(0)
 
   const state = computed(() => history.value[history.value.length - 1]!.state)
+  /** A walkthrough is loaded but the player has acted off its script since the last step. */
+  const offScript = computed(
+    () => !!scenario.value && history.value[history.value.length - 1]!.offScript,
+  )
   const previous = computed(() => history.value[history.value.length - 2]?.state ?? null)
   /** The log lines the most recent action added — what the log highlights. */
   const latestEntries = computed<LogEntry[]>(() => {
@@ -38,7 +47,9 @@ export function useStackSimulator() {
   const canUndo = computed(() => history.value.length > 1)
   const canRedo = computed(() => future.value.length > 0)
 
-  const currentStep = computed(() => scenario.value?.steps[stepIndex.value] ?? null)
+  const currentStep = computed(() =>
+    offScript.value ? null : (scenario.value?.steps[stepIndex.value] ?? null),
+  )
   const walkthroughDone = computed(
     () => !!scenario.value && stepIndex.value >= scenario.value.steps.length,
   )
@@ -48,19 +59,23 @@ export function useStackSimulator() {
     future.value = []
   }
 
-  /** A player's own action. Leaves the walkthrough if one was running. */
+  /** A player's own action. Mid-walkthrough it leaves the script (undo rejoins it). */
   function dispatch(action: Action) {
-    push({ state: applyAction(state.value, action), scripted: false })
-    if (scenario.value) {
-      scenario.value = null
-      stepIndex.value = 0
-    }
+    push({
+      state: applyAction(state.value, action),
+      scripted: false,
+      offScript: !!scenario.value,
+    })
   }
 
   function nextStep() {
     const step = currentStep.value
     if (!step) return
-    push({ state: applyAction(state.value, step.act(state.value)), scripted: true })
+    push({
+      state: applyAction(state.value, step.act(state.value)),
+      scripted: true,
+      offScript: false,
+    })
     stepIndex.value += 1
   }
 
@@ -84,7 +99,11 @@ export function useStackSimulator() {
   /** Start over on the same table: the walkthrough from its first step, or a clean board. */
   function reset() {
     history.value = [
-      { state: scenario.value ? scenario.value.setup() : createState(), scripted: false },
+      {
+        state: scenario.value ? scenario.value.setup() : createState(),
+        scripted: false,
+        offScript: false,
+      },
     ]
     future.value = []
     stepIndex.value = 0
@@ -107,6 +126,7 @@ export function useStackSimulator() {
     stepIndex,
     currentStep,
     walkthroughDone,
+    offScript,
     dispatch,
     nextStep,
     undo,

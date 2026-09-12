@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { activatability, applyAction, castability, lastRefusal } from '@/lib/stack/engine'
-import { nextHint } from '@/lib/stack/hints'
+import { nextHint, resolveOrderLabel } from '@/lib/stack/hints'
 import { CARDS, cardById } from '@/lib/stack/cards'
 import { RULES } from '@/lib/stack/rules'
+import { PRIMER } from '@/lib/stack/primer'
 import { SCENARIOS } from '@/lib/stack/scenarios'
 import { createState } from '@/lib/stack/state'
 import { legalTargets, preferredTargets } from '@/lib/stack/targets'
@@ -163,7 +164,41 @@ describe('stack engine: last in, first out', () => {
     expect(legalTargets(state, { kind: 'noncreature-spell' })).toEqual([])
     expect(legalTargets(state, { kind: 'spell' })).toEqual([topRef(state)])
     const refused = run(state, cast('opp', 'negate', topRef(state)))
-    expect(lastRefusal(refused)).toMatch(/needs a noncreature spell/)
+    // Castability's gate: there is no legal target at all, so the cast never starts.
+    expect(lastRefusal(refused)).toMatch(
+      /needs a noncreature spell on the stack, and there is none/,
+    )
+  })
+
+  it('refuses a Negate aimed at a creature spell when a legal target does exist', () => {
+    let state = run(createState(), cast('you', 'grizzly-bears'))
+    const bears = topRef(state)
+    state = run(state, cast('you', 'giant-growth'))
+    expect(lastRefusal(state)).toMatch(/needs a creature/)
+    state = run(state, cast('you', 'shock', { kind: 'player', id: 'opp' }), pass('you'))
+    // Shock is a legal Negate target, so the gate passes; the chosen Bears is not.
+    const refused = run(state, cast('opp', 'negate', bears))
+    expect(lastRefusal(refused)).toMatch(/isn't a legal target for Negate/)
+    expect(refused.stack).toHaveLength(2)
+  })
+
+  it('fizzles a counterspell whose target was countered off the stack first', () => {
+    let state = run(
+      createState(),
+      cast('you', 'lightning-bolt', { kind: 'player', id: 'opp' }),
+      pass('you'),
+    )
+    const bolt: TargetRef = { kind: 'stack', id: state.stack[0]!.id }
+    state = run(state, cast('opp', 'counterspell', bolt), pass('opp'))
+    state = run(state, cast('you', 'counterspell', bolt))
+    expect(names(state)).toEqual(['Lightning Bolt', 'Counterspell', 'Counterspell'])
+    // Your Counterspell resolves first and counters the Bolt out from under theirs.
+    state = run(state, pass('you'), pass('opp'))
+    expect(names(state)).toEqual(['Counterspell'])
+    state = run(state, pass('you'), pass('opp'))
+    expect(names(state)).toEqual([])
+    expect(state.log.some((e) => e.rule === '608.2b' && /Counterspell/.test(e.text))).toBe(true)
+    expect(state.players.opp.life).toBe(20)
   })
 })
 
@@ -248,10 +283,39 @@ describe('stack engine: split second and mana abilities', () => {
       target: { kind: 'player', id: 'opp' },
     })
     expect(lastRefusal(again)).toMatch(/already tapped/)
+    // The opponent's untap step doesn't untap your permanents.
+    const oppTurn = run(state, pass('you'), pass('opp'))
+    expect(oppTurn.turn).toBe(2)
+    expect(oppTurn.activePlayer).toBe('opp')
+    expect(oppTurn.battlefield[0]?.tapped).toBe(true)
     // Two turns on (back to your turn) it has untapped.
-    const later = run(state, pass('you'), pass('opp'), pass('opp'), pass('you'))
+    const later = run(oppTurn, pass('opp'), pass('you'))
     expect(later.activePlayer).toBe('you')
     expect(later.battlefield[0]?.tapped).toBe(false)
+  })
+
+  it('refuses a {T} ability on a creature the turn it entered, until its controller’s next turn', () => {
+    const state = run(createState(), cast('you', 'prodigal-sorcerer'), pass('you'), pass('opp'))
+    const tim = state.battlefield[0]!
+    const ping: Action = {
+      type: 'activate',
+      player: 'you',
+      permanentId: tim.id,
+      target: { kind: 'player', id: 'opp' },
+    }
+    const sick = run(state, ping)
+    expect(lastRefusal(sick)).toMatch(/summoning sickness/)
+    expect(sick.log[sick.log.length - 1]?.rule).toBe('302.6')
+    // Still sick on the opponent's turn: you haven't started a turn since it entered.
+    const theirTurn = run(state, pass('you'), pass('opp'), pass('opp'))
+    expect(theirTurn.priority).toBe('you')
+    expect(lastRefusal(run(theirTurn, ping))).toMatch(/summoning sickness/)
+    // Your next turn: fine. A staged permanent was "always there", so it never was sick.
+    const mine = run(theirTurn, pass('you'))
+    expect(mine.activePlayer).toBe('you')
+    expect(lastRefusal(run(mine, ping))).toBeNull()
+    const staged = run(createState(), put('you', 'prodigal-sorcerer'))
+    expect(lastRefusal(run(staged, { ...ping, permanentId: staged.battlefield[0]!.id }))).toBeNull()
   })
 })
 
@@ -376,6 +440,51 @@ describe('stack engine: resolution, targets and state-based actions', () => {
     expect(state.battlefield).toEqual([])
     // The Cutthroat sees itself and your Bears die; the opponent's Bears is not "a creature you control".
     expect(names(state)).toEqual(["Zulaport Cutthroat's trigger", "Zulaport Cutthroat's trigger"])
+    // A spell's destruction is the spell's doing, not a state-based action.
+    const destroyed = state.log.filter((e) => /is destroyed and goes to the graveyard/.test(e.text))
+    expect(destroyed).toHaveLength(3)
+    expect(destroyed.every((e) => e.kind === 'resolve' && e.rule === '701.7')).toBe(true)
+    // Life loss, not damage — and the controller gains what each opponent loses.
+    state = run(state, pass('you'), pass('opp'), pass('you'), pass('opp'))
+    expect(state.players.opp.life).toBe(18)
+    expect(state.players.you.life).toBe(22)
+    expect(state.log.some((e) => /Opponent loses 1 life/.test(e.text))).toBe(true)
+  })
+
+  it('fizzles a copy whose target left the battlefield, and the copy still ceases to exist', () => {
+    let state = run(createState(), put('opp', 'grizzly-bears'))
+    const bears = permanentRef(state, 'grizzly-bears', 'opp')
+    state = run(state, cast('you', 'lightning-bolt', bears))
+    state = run(state, cast('you', 'fork', topRef(state)), pass('you'), pass('opp'))
+    expect(names(state)).toEqual(['Lightning Bolt', 'Copy of Lightning Bolt'])
+    // Shock finishes the 2/2 before the copy resolves: the copy inherited the Bolt's target.
+    state = run(state, cast('you', 'shock', bears), pass('you'), pass('opp'))
+    expect(state.battlefield).toEqual([])
+    state = run(state, pass('you'), pass('opp'))
+    expect(names(state)).toEqual(['Lightning Bolt'])
+    expect(
+      state.log.some((e) => e.rule === '608.2b' && /Copy of Lightning Bolt/.test(e.text)),
+    ).toBe(true)
+    expect(state.graveyard.map((g) => g.name)).not.toContain('Copy of Lightning Bolt')
+  })
+
+  it('narrates state-based actions before the priority hand-over, and no hand-over once the game ends', () => {
+    let state = run(createState(), put('opp', 'grizzly-bears'))
+    state = run(
+      state,
+      cast('you', 'lightning-bolt', permanentRef(state, 'grizzly-bears')),
+      pass('you'),
+      pass('opp'),
+    )
+    const kinds = state.log.map((e) => e.kind)
+    expect(kinds.lastIndexOf('sba')).toBeLessThan(kinds.lastIndexOf('note'))
+    const over = run(
+      createState({ life: 3 }),
+      cast('you', 'lightning-bolt', { kind: 'player', id: 'opp' }),
+      pass('you'),
+      pass('opp'),
+    )
+    expect(over.log[over.log.length - 1]?.rule).toBe('704.5a')
   })
 
   it('prefers the opponent’s things for harm and your own for a pump', () => {
@@ -399,6 +508,34 @@ describe('stack engine: hints and citations', () => {
     expect(nextHint(waiting).text).toMatch(/Lightning Bolt is on top of the stack/)
     const half = run(waiting, pass('you'))
     expect(nextHint(half).text).toMatch(/You passed\. Opponent now has priority/)
+    // The pronoun and its verb agree whichever seat holds priority.
+    expect(nextHint(waiting).text).toMatch(/If you pass and Opponent passes too/)
+    const holds = run(
+      createState({ activePlayer: 'opp' }),
+      cast('opp', 'shock', { kind: 'player', id: 'you' }),
+    )
+    expect(nextHint(holds).text).toMatch(/If Opponent passes and you pass too/)
+    const onTheirTurn = run(createState({ activePlayer: 'opp' }), pass('opp'))
+    expect(nextHint(onTheirTurn).text).toMatch(
+      /you are not the active player, so you may only use instants/,
+    )
+  })
+
+  it('labels the resolution order with real ordinals', () => {
+    expect(resolveOrderLabel(0, 1)).toBe('Resolves first')
+    expect(resolveOrderLabel(0, 4)).toBe('Resolves 4th')
+    expect(resolveOrderLabel(0, 21)).toBe('Resolves 21st')
+    expect(resolveOrderLabel(0, 22)).toBe('Resolves 22nd')
+    expect(resolveOrderLabel(0, 12)).toBe('Resolves 12th')
+  })
+
+  it('reads the primer from exactly the rules the table holds', () => {
+    const primerIds = PRIMER.flatMap((s) => s.rules)
+    // A primer id with no RULES entry renders as nothing at all, so a typo would silently drop a row.
+    expect(primerIds.filter((id) => !RULES[id])).toEqual([])
+    // The primer is the reading order of the whole table: a new rule needs a home in it.
+    expect(Object.keys(RULES).filter((id) => !primerIds.includes(id))).toEqual([])
+    expect(new Set(primerIds).size).toBe(primerIds.length)
   })
 
   it('only cites rules the table knows', () => {
@@ -465,6 +602,8 @@ describe('guided scenarios', () => {
     expect(play('split-second').battlefield.map((p) => p.name)).not.toContain('Sol Ring')
     expect(play('sorcery-timing').battlefield.map((p) => p.name)).toEqual(['Ambush Viper'])
     expect(play('stifle-a-trigger').battlefield.map((p) => p.name)).toEqual(['Elvish Visionary'])
-    expect(play('copy').players.you.life).toBe(14)
+    const copied = play('copy')
+    expect(copied.players.opp.life).toBe(14)
+    expect(copied.players.you.life).toBe(20)
   })
 })

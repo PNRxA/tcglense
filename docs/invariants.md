@@ -670,7 +670,8 @@ and add the one-line summary to `AGENTS.md`.
   tool with nothing to sign in for belongs in a sitemap and the Rust side can't read the
   registry. The model is deliberately narrow (two players, no mana, no hand, no combat; one
   effect per object; targets re-checked on resolution; APNAP triggers; state-based actions
-  before priority): extend it by adding an `Effect`/`TriggerEvent` arm and a card, never by
+  before priority; summoning sickness for `{T}` abilities; effect-caused destruction logged
+  as the effect's doing, never as a state-based action): extend it by adding an `Effect`/`TriggerEvent` arm and a card, never by
   letting a component compute a rule.
 
 ## External ids, shopping lists and exports

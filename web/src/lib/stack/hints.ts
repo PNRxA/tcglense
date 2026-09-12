@@ -1,4 +1,4 @@
-import { hasSplitSecondOnStack, nameOf } from './state'
+import { hasSplitSecondOnStack, nameOf, subjectMid } from './state'
 import type { StackState } from './types'
 import { otherPlayer } from './types'
 
@@ -20,17 +20,20 @@ export function nextHint(state: StackState): Hint {
     }
   }
   const holder = nameOf(state, state.priority)
-  // "You" mid-sentence reads as a name; the pronoun wants lower case there.
-  const holderMid = state.priority === 'you' ? 'you' : holder
-  const other = nameOf(state, otherPlayer(state.priority))
+  // "You" mid-sentence reads as a name; the pronoun wants lower case there, and its verb agrees.
+  const holderMid = subjectMid(state, state.priority)
+  const otherId = otherPlayer(state.priority)
+  const otherMid = subjectMid(state, otherId)
   const has = state.priority === 'you' ? 'have' : 'has'
+  const holderPasses = state.priority === 'you' ? 'pass' : 'passes'
+  const otherPasses = otherId === 'you' ? 'pass' : 'passes'
   const top = state.stack[state.stack.length - 1]
 
   if (!top) {
     const timing =
       state.priority === state.activePlayer
         ? `It is ${state.priority === 'you' ? 'your' : 'their'} turn and the stack is empty, so anything can be cast — sorceries and creatures included.`
-        : `It is ${state.priority === 'you' ? 'the opponent’s' : 'your'} turn, so only instants, cards with flash and abilities may be used.`
+        : `It is ${state.priority === 'you' ? 'the opponent’s' : 'your'} turn, and ${holderMid} ${state.priority === 'you' ? 'are' : 'is'} not the active player, so ${holderMid} may only use instants, cards with flash and abilities.`
     return {
       text: `The stack is empty and ${holderMid} ${has} priority. ${timing} If both players pass with the stack empty, the phase ends and the turn moves on.`,
       rule: '117.1',
@@ -38,12 +41,12 @@ export function nextHint(state: StackState): Hint {
   }
 
   const splitSecond = hasSplitSecondOnStack(state)
-    ? ' A spell with split second is on the stack, so no spells or non-mana abilities can be added — only mana abilities and triggers.'
+    ? ' A spell with split second is on the stack, so no player can cast a spell or activate a non-mana ability — only triggered abilities still go on the stack, and mana abilities still work without ever using it.'
     : ''
 
   if (state.passes.length === 0) {
     return {
-      text: `${holder} ${has} priority. ${top.name} is on top of the stack, waiting. If ${holderMid} pass${state.priority === 'you' ? '' : 'es'} and ${other} passes too, ${top.name} resolves. Either player may instead respond: a new spell or ability goes on top of ${top.name} and resolves first.${splitSecond}`,
+      text: `${holder} ${has} priority. ${top.name} is on top of the stack, waiting. If ${holderMid} ${holderPasses} and ${otherMid} ${otherPasses} too, ${top.name} resolves. Either player may instead respond: a new spell or ability goes on top of ${top.name} and resolves first.${splitSecond}`,
       rule: '117.4',
     }
   }
@@ -54,11 +57,22 @@ export function nextHint(state: StackState): Hint {
   }
 }
 
+/** English ordinal suffix: 1st/2nd/3rd/4th, with the 11th–13th exception. */
+function ordinalSuffix(n: number): string {
+  const tens = n % 100
+  if (tens >= 11 && tens <= 13) return 'th'
+  const last = n % 10
+  if (last === 1) return 'st'
+  if (last === 2) return 'nd'
+  if (last === 3) return 'rd'
+  return 'th'
+}
+
 /** The ordinal each stack object resolves in, top first, for the column's labels. */
 export function resolveOrderLabel(position: number, total: number): string {
   const fromTop = total - position
   if (fromTop === 1) return 'Resolves first'
   if (fromTop === 2) return 'Resolves second'
   if (fromTop === 3) return 'Resolves third'
-  return `Resolves ${fromTop}th`
+  return `Resolves ${fromTop}${ordinalSuffix(fromTop)}`
 }

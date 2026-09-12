@@ -22,14 +22,14 @@ export const PRIMER: readonly PrimerSection[] = [
     intro:
       'Spells and abilities don’t happen when they’re cast. They wait on the stack, and the ' +
       'most recent one resolves first — that is what makes a "response" work.',
-    rules: ['601.2', '602.2', '405.1', '608.2', '608.3'],
+    rules: ['601.2', '602.2', '405.2', '608.2', '608.3'],
   },
   {
     title: 'What can be cast when',
     intro:
       'Only instants, cards with flash and abilities can be used in response. Everything ' +
       'else needs an empty stack on your own main phase.',
-    rules: ['702.8', '702.61', '605.3'],
+    rules: ['702.8', '302.6', '702.61', '605.3'],
   },
   {
     title: 'Triggered abilities',
@@ -46,9 +46,10 @@ export const PRIMER: readonly PrimerSection[] = [
     rules: ['117.5', '704.3', '704.5g', '704.5f', '704.5a'],
   },
   {
-    title: 'Countering, fizzling and copying',
-    intro: 'Three ways a spell can end other than by resolving normally.',
-    rules: ['701.5', '608.2b', '707.10'],
+    title: 'Countering, destroying, fizzling and copying',
+    intro:
+      'What the common effect words mean, and the ways a spell can end without resolving normally.',
+    rules: ['701.5', '701.7', '608.2b', '707.10'],
   },
   {
     title: 'The end of a phase',

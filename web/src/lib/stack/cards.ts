@@ -67,7 +67,7 @@ export const CARDS: readonly CardDef[] = [
     name: 'Fork',
     type: 'instant',
     manaCost: '{R}{R}',
-    text: 'Copy target instant or sorcery spell.',
+    text: 'Copy target instant or sorcery spell. (Not modelled: the real card also lets you choose new targets for the copy.)',
     target: { kind: 'instant-or-sorcery-spell' },
     effect: { kind: 'copy' },
   },
@@ -205,7 +205,7 @@ export const CARDS: readonly CardDef[] = [
       {
         event: 'dies',
         text: 'Whenever Zulaport Cutthroat or another creature you control dies, each opponent loses 1 life and you gain 1 life.',
-        effect: { kind: 'each-opponent-damage', amount: 1 },
+        effect: { kind: 'drain', amount: 1 },
       },
     ],
   },

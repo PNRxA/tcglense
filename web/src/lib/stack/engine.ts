@@ -6,7 +6,7 @@ import {
   runStateBasedActions,
   enterBattlefield,
 } from './resolve'
-import { cloneState, hasSplitSecondOnStack, nameOf, possessive, pushLog } from './state'
+import { cloneState, hasSplitSecondOnStack, nameOf, possessive, pushLog, subjectMid } from './state'
 import { legalTargets, sameTarget, describeTarget, TARGET_SPEC_LABELS } from './targets'
 import type {
   Action,
@@ -37,7 +37,7 @@ function actionGate(state: StackState, player: PlayerId): Refusal {
   if (state.priority !== player) {
     return {
       ok: false,
-      reason: `${nameOf(state, player)} ${player === 'you' ? "don't" : "doesn't"} have priority — ${nameOf(state, state.priority)} ${state.priority === 'you' ? 'do' : 'does'}. Only the player with priority may cast a spell or activate an ability.`,
+      reason: `${nameOf(state, player)} ${player === 'you' ? "don't" : "doesn't"} have priority — ${subjectMid(state, state.priority)} ${state.priority === 'you' ? 'do' : 'does'}. Only the player with priority may cast a spell or activate an ability.`,
       rule: '117.1',
     }
   }
@@ -84,6 +84,20 @@ export function castability(state: StackState, player: PlayerId, card: CardDef):
   return { ok: true }
 }
 
+/** The turn `player`'s most recent turn began — turns alternate, so it is this one or the last. */
+function mostRecentTurnStart(state: StackState, player: PlayerId): number {
+  return player === state.activePlayer ? state.turn : state.turn - 1
+}
+
+/** A creature its controller hasn't controlled since their most recent turn began (CR 302.6).
+ * A setup-placed permanent (`enteredTurn` 0) was "always there" and is never sick. */
+function isSummoningSick(state: StackState, permanent: Permanent): boolean {
+  return (
+    permanent.enteredTurn > 0 &&
+    permanent.enteredTurn >= mostRecentTurnStart(state, permanent.controller)
+  )
+}
+
 /** Whether `player` may activate `permanent`'s ability right now. */
 export function activatability(state: StackState, player: PlayerId, permanent: Permanent): Refusal {
   const ability = cardById(permanent.cardId)?.activated
@@ -102,6 +116,13 @@ export function activatability(state: StackState, player: PlayerId, permanent: P
       ok: false,
       reason: `${spell?.name ?? 'A spell'} has split second and is on the stack: only mana abilities may be activated while it is there.`,
       rule: '702.61',
+    }
+  }
+  if (ability.taps && permanent.type === 'creature' && isSummoningSick(state, permanent)) {
+    return {
+      ok: false,
+      reason: `${permanent.name} came under ${possessive(state, permanent.controller)} control this turn ("summoning sickness"): a creature's {T} abilities can't be used until its controller has controlled it since the start of their most recent turn.`,
+      rule: '302.6',
     }
   }
   if (ability.taps && permanent.tapped) {
@@ -212,7 +233,7 @@ function cast(
     state,
     'action',
     `${nameOf(state, player)} cast${player === 'you' ? '' : 's'} ${card.name}${aimed}. It goes${where}. Nothing happens yet: a spell does nothing until it resolves.`,
-    below ? '405.1' : '601.2',
+    below ? '405.2' : '601.2',
   )
   if (card.flash && state.stack.length > 1) {
     pushLog(
@@ -368,10 +389,18 @@ function pass(state: StackState, player: PlayerId): void {
     pushLog(
       state,
       'pass',
-      `${nameOf(state, player)} pass${player === 'you' ? '' : 'es'} priority. ${nameOf(state, next)} receive${next === 'you' ? '' : 's'} priority${state.stack.length ? ` and may respond to ${state.stack[state.stack.length - 1]?.name} or pass` : ''}.`,
+      `${nameOf(state, player)} pass${player === 'you' ? '' : 'es'} priority.`,
       '117.3d',
     )
     givePriority(state, next)
+    if (!state.loser) {
+      pushLog(
+        state,
+        'pass',
+        `${nameOf(state, next)} receive${next === 'you' ? '' : 's'} priority${state.stack.length ? ` and may respond to ${state.stack[state.stack.length - 1]?.name} or pass` : ''}.`,
+        '117.3d',
+      )
+    }
     return
   }
   const top = state.stack[state.stack.length - 1]
@@ -387,13 +416,17 @@ function pass(state: StackState, player: PlayerId): void {
   )
   resolveTop(state)
   state.passes = []
-  pushLog(
-    state,
-    'note',
-    `After a resolution, priority goes to the active player, ${nameOf(state, state.activePlayer)} — regardless of who cast what just resolved.`,
-    '117.3b',
-  )
+  // State-based actions and waiting triggers narrate first: they happen before anyone
+  // receives priority (CR 117.5), and a game that just ended hands priority to nobody.
   givePriority(state, state.activePlayer)
+  if (!state.loser) {
+    pushLog(
+      state,
+      'note',
+      `After a resolution, priority goes to the active player, ${subjectMid(state, state.activePlayer)} — regardless of who cast what just resolved.`,
+      '117.3b',
+    )
+  }
 }
 
 function putOntoBattlefield(state: StackState, player: PlayerId, cardId: string): void {

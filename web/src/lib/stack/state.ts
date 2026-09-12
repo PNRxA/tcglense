@@ -4,7 +4,6 @@ import type { LogEntry, LogKind, PlayerId, StackState } from './types'
 
 export interface CreateStateOptions {
   activePlayer?: PlayerId
-  names?: Partial<Record<PlayerId, string>>
   life?: number
 }
 
@@ -13,8 +12,8 @@ export function createState(options: CreateStateOptions = {}): StackState {
   const active = options.activePlayer ?? 'you'
   return {
     players: {
-      you: { id: 'you', name: options.names?.you ?? 'You', life },
-      opp: { id: 'opp', name: options.names?.opp ?? 'Opponent', life },
+      you: { id: 'you', name: 'You', life },
+      opp: { id: 'opp', name: 'Opponent', life },
     },
     activePlayer: active,
     priority: active,
@@ -49,10 +48,19 @@ export function nameOf(state: StackState, player: PlayerId): string {
   return state.players[player].name
 }
 
-/** "You" reads as a subject, "Opponent" as a name — the log needs both forms. */
+/** The determiner possessive: "your graveyard" / "Opponent's graveyard". */
 export function possessive(state: StackState, player: PlayerId): string {
-  const name = nameOf(state, player)
-  return player === 'you' && name === 'You' ? 'your' : `${name}'s`
+  return player === 'you' ? 'your' : `${nameOf(state, player)}'s`
+}
+
+/** The standalone possessive for a parenthetical tag: "(yours)" / "(Opponent's)". */
+export function ownerTag(state: StackState, player: PlayerId): string {
+  return player === 'you' ? 'yours' : `${nameOf(state, player)}'s`
+}
+
+/** The mid-sentence subject: the pronoun wants lower case, a name keeps its capital. */
+export function subjectMid(state: StackState, player: PlayerId): string {
+  return player === 'you' ? 'you' : nameOf(state, player)
 }
 
 export function hasSplitSecondOnStack(state: StackState): boolean {

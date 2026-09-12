@@ -1,7 +1,15 @@
 import { cardById } from './cards'
-import { nameOf, possessive, pushLog } from './state'
+import { nameOf, ownerTag, possessive, pushLog, subjectMid } from './state'
 import { describeTarget, targetIsLegal } from './targets'
-import type { CardDef, Permanent, PlayerId, StackObject, StackState, TriggerEvent } from './types'
+import type {
+  CardDef,
+  LogKind,
+  Permanent,
+  PlayerId,
+  StackObject,
+  StackState,
+  TriggerEvent,
+} from './types'
 import { otherPlayer, PLAYER_IDS } from './types'
 
 /**
@@ -80,7 +88,7 @@ export function queueTriggers(
       pushLog(
         state,
         'trigger',
-        `${permanent.name}'s ability triggers (${possessive(state, permanent.controller)}): "${trigger.text}" It waits until a player would receive priority.`,
+        `${permanent.name}'s ability triggers (${ownerTag(state, permanent.controller)}): "${trigger.text}" It waits until a player would receive priority.`,
         '603.2',
       )
     }
@@ -106,6 +114,7 @@ export function enterBattlefield(
     pumpPower: 0,
     pumpToughness: 0,
     tapped: false,
+    enteredTurn: options.quiet ? 0 : state.turn,
   }
   state.battlefield.push(permanent)
   if (!options.quiet) {
@@ -117,13 +126,14 @@ export function enterBattlefield(
 
 /**
  * Remove permanents from the battlefield at once (`Wrath of God` is one event, so every
- * dies trigger sees every creature). `verb` is the log's word for what happened.
+ * dies trigger sees every creature). `verb` is the log's word for what happened; `kind` is
+ * whose doing it was — a resolving effect (`resolve`) or a state-based action (`sba`).
  */
 export function leaveBattlefield(
   state: StackState,
   ids: number[],
   verb: string,
-  rule?: string,
+  options: { kind: LogKind; rule?: string },
 ): void {
   const leaving = state.battlefield.filter((p) => ids.includes(p.id))
   if (leaving.length === 0) return
@@ -131,9 +141,9 @@ export function leaveBattlefield(
   for (const permanent of leaving) {
     pushLog(
       state,
-      'sba',
-      `${permanent.name} (${possessive(state, permanent.controller)}) is ${verb} and goes to the graveyard.`,
-      rule,
+      options.kind,
+      `${permanent.name} (${ownerTag(state, permanent.controller)}) is ${verb} and goes to the graveyard.`,
+      options.rule,
     )
   }
   state.battlefield = state.battlefield.filter((p) => !ids.includes(p.id))
@@ -154,7 +164,7 @@ function dealDamageToPlayer(
   pushLog(
     state,
     'resolve',
-    `${source} deals ${amount} damage to ${nameOf(state, player)} (${before} → ${before - amount}).`,
+    `${source} deals ${amount} damage to ${subjectMid(state, player)} (${before} → ${before - amount}).`,
   )
 }
 
@@ -229,7 +239,7 @@ function applyEffect(state: StackState, object: StackObject): void {
     case 'destroy': {
       if (target?.kind !== 'permanent') return
       pushLog(state, 'resolve', `${source} resolves.`)
-      leaveBattlefield(state, [target.id], 'destroyed')
+      leaveBattlefield(state, [target.id], 'destroyed', { kind: 'resolve', rule: '701.7' })
       return
     }
     case 'destroy-all-creatures': {
@@ -241,7 +251,7 @@ function applyEffect(state: StackState, object: StackObject): void {
           ? `${source} resolves: every creature is destroyed at once.`
           : `${source} resolves, but there are no creatures to destroy.`,
       )
-      leaveBattlefield(state, ids, 'destroyed')
+      leaveBattlefield(state, ids, 'destroyed', { kind: 'resolve', rule: '701.7' })
       return
     }
     case 'draw':
@@ -299,19 +309,27 @@ function applyEffect(state: StackState, object: StackObject): void {
       return
     }
     case 'none':
-      pushLog(state, 'resolve', `${source} resolves.`)
+      // A permanent spell's resolution is narrated by `dispose` ("… resolves and enters the
+      // battlefield …"), so don't announce it twice.
+      if (!isPermanentSpell(object)) pushLog(state, 'resolve', `${source} resolves.`)
   }
+}
+
+/** Creature/artifact/enchantment spells: `dispose` narrates their resolution (CR 608.3). */
+function isPermanentSpell(object: StackObject): boolean {
+  return (
+    object.kind === 'spell' &&
+    (object.cardType === 'creature' ||
+      object.cardType === 'artifact' ||
+      object.cardType === 'enchantment')
+  )
 }
 
 /** Where an object goes after resolving or fizzling: graveyard, battlefield, or nowhere. */
 function dispose(state: StackState, object: StackObject, resolved: boolean): void {
   if (object.kind === 'spell') {
     const card = cardById(object.cardId)
-    const permanentSpell =
-      object.cardType === 'creature' ||
-      object.cardType === 'artifact' ||
-      object.cardType === 'enchantment'
-    if (resolved && permanentSpell && card) {
+    if (resolved && isPermanentSpell(object) && card) {
       pushLog(
         state,
         'resolve',
@@ -397,7 +415,7 @@ export function runStateBasedActions(state: StackState): boolean {
       state,
       zeroToughness.map((p) => p.id),
       'put into the graveyard for having 0 toughness',
-      '704.5f',
+      { kind: 'sba', rule: '704.5f' },
     )
     acted = true
   }
@@ -417,7 +435,7 @@ export function runStateBasedActions(state: StackState): boolean {
       state,
       lethal.map((p) => p.id),
       'destroyed',
-      '704.5g',
+      { kind: 'sba', rule: '704.5g' },
     )
     acted = true
   }
@@ -438,7 +456,7 @@ export function placePendingTriggers(state: StackState): boolean {
     pushLog(
       state,
       'trigger',
-      `Abilities triggered for both players at once. APNAP order: ${nameOf(state, state.activePlayer)} (the active player) put${state.activePlayer === 'you' ? '' : 's'} theirs on the stack first, then ${nameOf(state, otherPlayer(state.activePlayer))} — so ${possessive(state, otherPlayer(state.activePlayer))} resolve first.`,
+      `Abilities triggered for both players at once. APNAP order: the active player (${nameOf(state, state.activePlayer)}) puts ${possessive(state, state.activePlayer)} trigger${active.length === 1 ? '' : 's'} on the stack first, then ${nameOf(state, otherPlayer(state.activePlayer))} — and because the stack is last in, first out, ${possessive(state, otherPlayer(state.activePlayer))} trigger${passive.length === 1 ? '' : 's'} resolve${passive.length === 1 ? 's' : ''} first.`,
       '603.3b',
     )
   }
@@ -448,7 +466,7 @@ export function placePendingTriggers(state: StackState): boolean {
     pushLog(
       state,
       'trigger',
-      `${trigger.name} (${possessive(state, trigger.controller)}) is put on the stack${below ? ` above ${below.name}` : ''}.${below ? ' It resolves first.' : ''}`,
+      `${trigger.name} (${ownerTag(state, trigger.controller)}) is put on the stack${below ? ` above ${below.name}` : ''}.${below ? ' It resolves first.' : ''}`,
       '603.3',
     )
   }

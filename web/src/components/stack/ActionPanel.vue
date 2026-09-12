@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Play, SkipForward } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +11,12 @@ import {
 } from '@/components/ui/select'
 import { CARD_TYPE_LABELS, CARD_TYPE_ORDER, CARDS, cardById } from '@/lib/stack/cards'
 import { activatability, castability, type Refusal } from '@/lib/stack/engine'
-import { describeTarget, preferredTargets, TARGET_SPEC_LABELS } from '@/lib/stack/targets'
+import {
+  describeTarget,
+  preferredTargets,
+  sameTarget,
+  TARGET_SPEC_LABELS,
+} from '@/lib/stack/targets'
 import type { Action, StackState, TargetRef, TargetSpec } from '@/lib/stack/types'
 
 // What the player with priority can do right now: pass, cast any card in the library, or
@@ -28,6 +33,16 @@ const gameOver = computed(() => props.state.loser !== null)
 type Selection = { kind: 'card'; id: string } | { kind: 'permanent'; id: number } | null
 const selection = ref<Selection>(null)
 const target = ref<TargetRef | null>(null)
+const formEl = ref<HTMLElement | null>(null)
+
+/** The selection, only while what it points at still exists — a permanent can leave the
+ * battlefield under an undo, a reset or a loaded walkthrough without priority changing. */
+const resolved = computed<Selection>(() => {
+  const chosen = selection.value
+  if (!chosen) return null
+  if (chosen.kind === 'card') return cardById(chosen.id) ? chosen : null
+  return props.state.battlefield.some((p) => p.id === chosen.id) ? chosen : null
+})
 
 const cardOptions = computed(() =>
   CARD_TYPE_ORDER.map((type) => ({
@@ -105,7 +120,7 @@ watch(
   () => {
     const refs = targeting.value?.refs ?? []
     const current = target.value
-    if (current && refs.some((ref) => ref.kind === current.kind && ref.id === current.id)) return
+    if (current && refs.some((ref) => sameTarget(ref, current))) return
     target.value = refs[0] ?? null
   },
   { immediate: true },
@@ -116,6 +131,18 @@ watch(actor, () => {
   selection.value = null
 })
 
+// The detail box sits below the whole library, off-screen on a phone: bring it into view and
+// give it focus so a keyboard or screen-reader user isn't left tabbing through the rest.
+watch(resolved, (next) => {
+  if (!next) return
+  nextTick(() => {
+    const el = formEl.value
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    el.focus({ preventScroll: true })
+  })
+})
+
 const targetKey = (ref: TargetRef) => `${ref.kind}:${ref.id}`
 const targetValue = computed(() => (target.value ? targetKey(target.value) : ''))
 function onTargetChange(next: unknown) {
@@ -123,11 +150,11 @@ function onTargetChange(next: unknown) {
 }
 
 const canGo = computed(
-  () => !!selection.value && !!selectedAllowed.value?.ok && (!targeting.value || !!target.value),
+  () => !!resolved.value && !!selectedAllowed.value?.ok && (!targeting.value || !!target.value),
 )
 
 function go() {
-  const chosen = selection.value
+  const chosen = resolved.value
   if (!chosen || !canGo.value) return
   const chosenTarget = target.value ?? undefined
   if (chosen.kind === 'card') {
@@ -244,7 +271,13 @@ const optionClass = (selected: boolean, allowed: boolean) =>
       </div>
     </div>
 
-    <div v-if="selection" class="bg-background mt-3 rounded-lg border p-3" data-testid="cast-form">
+    <div
+      v-if="resolved"
+      ref="formEl"
+      class="bg-background focus-visible:ring-ring/50 mt-3 rounded-lg border p-3 focus-visible:ring-2 focus-visible:outline-none"
+      tabindex="-1"
+      data-testid="cast-form"
+    >
       <p class="text-sm font-medium">{{ selectedName }}</p>
       <p v-if="selectedText" class="text-muted-foreground mt-0.5 text-xs leading-snug">
         {{ selectedText }}
@@ -279,7 +312,7 @@ const optionClass = (selected: boolean, allowed: boolean) =>
       <div class="mt-3 flex gap-2">
         <Button size="sm" :disabled="!canGo" data-testid="confirm-action" @click="go">
           <Play class="size-4" aria-hidden="true" />
-          {{ selection.kind === 'card' ? 'Cast' : 'Activate' }}
+          {{ resolved.kind === 'card' ? 'Cast' : 'Activate' }}
         </Button>
         <Button size="sm" variant="ghost" @click="selection = null">Cancel</Button>
       </div>

@@ -1,4 +1,4 @@
-import { nameOf, possessive } from './state'
+import { nameOf, ownerTag } from './state'
 import type {
   Effect,
   Permanent,
@@ -121,7 +121,7 @@ export function describeTarget(state: StackState, ref: TargetRef): string {
     case 'permanent': {
       const found = state.battlefield.find((p) => p.id === ref.id)
       return found
-        ? `${found.name} (${possessive(state, found.controller)})`
+        ? `${found.name} (${ownerTag(state, found.controller)})`
         : 'a permanent that is gone'
     }
     case 'stack': {
