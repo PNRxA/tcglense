@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { HeartPulse } from '@lucide/vue'
+import { HeartPulse, Layers } from '@lucide/vue'
 
 /**
  * The tools registry — the play aids that sit beside the catalog rather than inside it.
@@ -31,6 +31,14 @@ export const TOOLS: Readonly<Record<string, ToolEntry[]>> = {
         'win record for your decks.',
       icon: HeartPulse,
     },
+    {
+      slug: 'stack',
+      name: 'Stack simulator',
+      blurb:
+        'Cast spells for both players, respond, pass priority, and see why each spell and ' +
+        'ability resolves in the order it does — with the rule behind every step.',
+      icon: Layers,
+    },
   ],
 }
 
@@ -52,3 +60,6 @@ export const lifePath = (game: string): string => toolPath(game, 'life')
 export const lifeSessionPath = (game: string, sessionId: number): string =>
   `${lifePath(game)}/${sessionId}`
 export const lifeDeckStatsPath = (game: string): string => `${lifePath(game)}/decks`
+
+/** The stack simulator's path — public and indexable, unlike the counter's per-user pages. */
+export const stackPath = (game: string): string => toolPath(game, 'stack')
