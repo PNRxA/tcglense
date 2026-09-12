@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onScopeDispose, ref, watch, type ComponentPublicInstance } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useId } from 'reka-ui'
 import {
@@ -110,8 +110,27 @@ const GROUP_ICONS = {
   keyword: BookOpen,
 } as const
 
-const placeholder = computed(
-  () => `Search ${gameName.value} cards, sets, sealed products, precons, keywords…`,
+// Below Tailwind's `sm` breakpoint the input is ~200–260px wide at the homepage's 18px text, so
+// the full list of what the box answers overflows and clips mid-word; a phone gets a short
+// form instead. A media query (KeywordTooltip's hover-probe idiom) rather than a one-shot
+// width read, so a rotated tablet or a resized window swaps it live; without `matchMedia`
+// (jsdom) the wide form stands.
+const NARROW_QUERY = '(max-width: 639px)'
+const narrow = ref(false)
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  const media = window.matchMedia(NARROW_QUERY)
+  narrow.value = media.matches
+  const onChange = (event: MediaQueryListEvent) => {
+    narrow.value = event.matches
+  }
+  media.addEventListener('change', onChange)
+  onScopeDispose(() => media.removeEventListener('change', onChange))
+}
+
+const placeholder = computed(() =>
+  narrow.value
+    ? 'Search cards, sets…'
+    : `Search ${gameName.value} cards, sets, sealed products, precons, keywords…`,
 )
 </script>
 

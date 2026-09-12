@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { flushPromises, mount, type DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
@@ -261,6 +262,30 @@ describe('UniversalSearchBox', () => {
     expect(api.searchCatalog.mock.calls[0]?.slice(0, 3)).toEqual(['mtg', 'bo', SEARCH_GROUP_LIMIT])
     expect(input.attributes('aria-expanded')).toBe('true')
     wrapper.unmount()
+  })
+
+  it('shortens the placeholder on a phone-width viewport, and swaps it back live', async () => {
+    // jsdom has no matchMedia (the wide form above); a phone answers the narrow query.
+    let onChange: ((event: { matches: boolean }) => void) | undefined
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 639px)',
+      addEventListener: (_: string, fn: (event: { matches: boolean }) => void) => {
+        onChange = fn
+      },
+      removeEventListener: () => {},
+    }))
+    try {
+      const wrapper = await mountBox()
+      const input = wrapper.get('input[role="combobox"]')
+      expect(input.attributes('placeholder')).toBe('Search cards, sets…')
+
+      onChange?.({ matches: false })
+      await nextTick()
+      expect(input.attributes('placeholder')).toContain('Magic: The Gathering')
+      wrapper.unmount()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('debounces: one request for a burst of keystrokes', async () => {
