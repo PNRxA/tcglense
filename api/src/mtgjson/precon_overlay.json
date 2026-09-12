@@ -1,0 +1,724 @@
+{
+  "_comment": [
+    "Preconstructed decks MTGJSON has not published a card list for yet. Each entry is",
+    "dropped automatically once upstream publishes the deck, so this file shrinks over",
+    "time and never needs a matching removal commit. See mtgjson/precon_overlay.rs."
+  ],
+  "decks": [
+    {
+      "name": "Hatsune Miku",
+      "set_code": "sld",
+      "deck_type": "Commander Deck",
+      "released_at": "2026-08-10",
+      "product_tcgplayer_id": "709981",
+      "source_url": "https://magic.wizards.com/en/news/announcements/secret-lair-commander-deck-hatsune-miku-decklist",
+      "source_note": "WotC's published decklist (its <deck-list> element) plus the name->set-code table on the same page. That table has no collector numbers, so each reprint resolves to its set's plain printing; it also misprints Nykthos Paragon as MH3, which only exists in MH2. MTGJSON's SLD sealedProduct 709981 declares contents.deck [{name: Hatsune Miku}] and cardCount 100 but lists no such deck.",
+      "cards": [
+        {
+          "board": "commander",
+          "scryfall_id": "6ab6e6c9-fe20-40d3-997e-fe3480081f03",
+          "quantity": 1,
+          "foil": true,
+          "position": 0,
+          "card": "Trostani, Selesnya's Voice [SLD 2429]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "4ce95099-9032-4c44-af25-ab02e60af168",
+          "quantity": 1,
+          "foil": true,
+          "position": 0,
+          "card": "Archangel of Thune [SLD 2430]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "af542837-77a1-462e-8dd6-b4fa8b21bb33",
+          "quantity": 1,
+          "foil": true,
+          "position": 1,
+          "card": "Halo Fountain [SLD 2431]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "59e34237-1ef5-4376-b671-11692693fc61",
+          "quantity": 1,
+          "foil": true,
+          "position": 2,
+          "card": "Grand Crescendo [SLD 2432]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "b459b25c-647b-4353-932e-f590f26ab973",
+          "quantity": 1,
+          "foil": true,
+          "position": 3,
+          "card": "Shalai, Voice of Plenty [SLD 2433]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "ea9d7b34-7c68-470e-88e1-6d3216fea368",
+          "quantity": 1,
+          "foil": true,
+          "position": 4,
+          "card": "Song of the Worldsoul [SLD 2434]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "53b54485-37e2-4ae0-be91-c77ec02c5fe0",
+          "quantity": 1,
+          "foil": true,
+          "position": 5,
+          "card": "Soul Warden [SLD 2435]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "acfe026f-75a7-45b9-b7e8-e1a76855ea94",
+          "quantity": 1,
+          "foil": true,
+          "position": 6,
+          "card": "Break Down [SLD 2436]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "ff0d8624-1f83-4150-8ef4-ce8345f8067f",
+          "quantity": 1,
+          "foil": true,
+          "position": 7,
+          "card": "Cultivate [SLD 2437]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "721ea98f-4150-4fde-a0af-4f454695e927",
+          "quantity": 1,
+          "foil": true,
+          "position": 8,
+          "card": "Finale of Devastation [SLD 2438]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "6aebcc3b-504e-40fc-b232-a2aa21a0521b",
+          "quantity": 1,
+          "foil": true,
+          "position": 9,
+          "card": "Vorinclex, Voice of Hunger [SLD 2439]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "91ede26e-8784-4631-b9e7-f8f97b2904ac",
+          "quantity": 1,
+          "foil": true,
+          "position": 10,
+          "card": "Bountiful Promenade [SLD 2440]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "8d8b415e-d077-4548-9738-15d8828e49e3",
+          "quantity": 1,
+          "foil": false,
+          "position": 11,
+          "card": "Angel of Indemnity [OTC 9]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "d9e966cb-bb42-49d8-b351-114619b31497",
+          "quantity": 1,
+          "foil": false,
+          "position": 12,
+          "card": "Angelic Chorus [BBD 87]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0d4032a7-600c-4b30-a012-fe3cde1be9c9",
+          "quantity": 1,
+          "foil": false,
+          "position": 13,
+          "card": "Boon Reflection [2XM 10]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "732fa4c9-11da-4bdb-96af-aa37c74be25f",
+          "quantity": 1,
+          "foil": false,
+          "position": 14,
+          "card": "Crested Sunmare [HOU 6]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "8e2fae80-60af-44cf-95b4-177837435d1a",
+          "quantity": 1,
+          "foil": false,
+          "position": 15,
+          "card": "Dazzling Theater // Prop Room [DSK 3]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "d12f728a-1bbb-4bee-96d4-d721292997ba",
+          "quantity": 1,
+          "foil": false,
+          "position": 16,
+          "card": "Elenda's Hierophant [LCC 71]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "32ffc8eb-9518-455c-ada5-8b7596896dcf",
+          "quantity": 1,
+          "foil": false,
+          "position": 17,
+          "card": "Excavation Technique [C21 16]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "c0ffb58f-459a-4965-b1d6-a25442baf9c2",
+          "quantity": 1,
+          "foil": false,
+          "position": 18,
+          "card": "Hour of Reckoning [MOC 190]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "2963205e-b181-44d1-809f-6577e29fa812",
+          "quantity": 1,
+          "foil": false,
+          "position": 19,
+          "card": "Nykthos Paragon [MH2 22]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "59adbd35-9959-4a0f-babf-46ea3c15f018",
+          "quantity": 1,
+          "foil": false,
+          "position": 20,
+          "card": "Resplendent Angel [LCI 32]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "507e34d0-cdc5-4226-9664-b725b702044d",
+          "quantity": 1,
+          "foil": false,
+          "position": 21,
+          "card": "Silverquill Lecturer [M3C 96]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "08241f94-8b5e-4f9b-8120-8175e3256e35",
+          "quantity": 1,
+          "foil": false,
+          "position": 22,
+          "card": "Soul of Eternity [CMR 50]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "1f44b96a-8498-414a-a4ac-54c80dfa9f23",
+          "quantity": 1,
+          "foil": false,
+          "position": 23,
+          "card": "Speaker of the Heavens [M21 38]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "2345331c-a14f-4b4b-a9a4-88c5beb48242",
+          "quantity": 1,
+          "foil": false,
+          "position": 24,
+          "card": "Storm Herd [KHC 33]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "62534128-2a85-4a36-bc7b-e4f4c51fa1f6",
+          "quantity": 1,
+          "foil": false,
+          "position": 25,
+          "card": "Voice of the Blessed [INR 50]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "f977975d-0439-4731-b129-270cc4cdbb23",
+          "quantity": 1,
+          "foil": false,
+          "position": 26,
+          "card": "Ancient Cornucopia [BIG 16]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "6dda8d6b-fd31-4908-a953-20c180a33e56",
+          "quantity": 1,
+          "foil": false,
+          "position": 27,
+          "card": "Arasta of the Endless Web [BLC 205]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "332153ab-1b8e-40a8-b0b4-01f94866d368",
+          "quantity": 1,
+          "foil": false,
+          "position": 28,
+          "card": "Blossoming Bogbeast [C21 59]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "cc2d644f-6fb9-406b-ba57-a9b3d1c9646b",
+          "quantity": 1,
+          "foil": false,
+          "position": 29,
+          "card": "Bramble Sovereign [BBD 65]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "1f9fb33a-3b39-4aff-93b8-aedafe0ea694",
+          "quantity": 1,
+          "foil": false,
+          "position": 30,
+          "card": "Fanatic of Rhonas [MH3 152]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "f8760ab9-ac76-4e2e-b82f-0ee2a6dc5634",
+          "quantity": 1,
+          "foil": false,
+          "position": 31,
+          "card": "Gruff Triplets [WOE 172]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "33897125-a1df-4d7a-a45a-9c049cb662f6",
+          "quantity": 1,
+          "foil": false,
+          "position": 32,
+          "card": "Healing Technique [C21 63]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "4720b4f2-e6af-4223-9250-a0ed21ed5693",
+          "quantity": 1,
+          "foil": false,
+          "position": 33,
+          "card": "Pest Infestation [C21 65]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "b4e193e8-1127-475b-9af6-d0d0c44adf49",
+          "quantity": 1,
+          "foil": false,
+          "position": 34,
+          "card": "Shamanic Revelation [BLC 237]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "890a2fa9-1141-4a4c-85af-05723aba5e39",
+          "quantity": 1,
+          "foil": false,
+          "position": 35,
+          "card": "Camaraderie [GRN 157]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0dcccbd8-2135-45e6-8802-8dcaa382a398",
+          "quantity": 1,
+          "foil": false,
+          "position": 36,
+          "card": "Conclave Evangelist [CLU 27]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a9ec900f-1e31-4440-a75a-20b256734d5b",
+          "quantity": 1,
+          "foil": false,
+          "position": 37,
+          "card": "Ghalta and Mavren [MOM 225]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "3396f676-d990-42ea-b40a-7da6548cca0a",
+          "quantity": 1,
+          "foil": false,
+          "position": 38,
+          "card": "Growing Ranks [SLD 2444]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "29d3484f-abd1-43fe-99f8-e0fa0a7b6692",
+          "quantity": 1,
+          "foil": false,
+          "position": 39,
+          "card": "Lathiel, the Bounteous Dawn [CMR 285]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "329f8f3d-2fe6-44fa-802f-0c56e3f9998e",
+          "quantity": 1,
+          "foil": false,
+          "position": 40,
+          "card": "Mirari's Wake [MH2 291]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "b91dadcb-31e9-43b0-b425-c9311af3e9d7",
+          "quantity": 1,
+          "foil": false,
+          "position": 41,
+          "card": "Rhys the Redeemed [2XM 213]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "99d1e843-71c9-4a65-bc36-d23858ef5ead",
+          "quantity": 1,
+          "foil": false,
+          "position": 42,
+          "card": "Voice of Resurgence [2XM 227]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "96b6b2e1-c3e6-464c-8a13-b15deb34e862",
+          "quantity": 1,
+          "foil": false,
+          "position": 43,
+          "card": "Aetherflux Reservoir [KLD 192]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a2e35d8d-050f-4f7a-809a-c0aea30c0dbb",
+          "quantity": 1,
+          "foil": false,
+          "position": 44,
+          "card": "Phyrexian Processor [SLD 2445]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "2258c917-763a-43a6-9635-a5181e6bb54d",
+          "quantity": 1,
+          "foil": false,
+          "position": 45,
+          "card": "Canopy Vista [LCC 321]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "ce46c4e2-a515-41d7-8d70-d20cf4925996",
+          "quantity": 1,
+          "foil": false,
+          "position": 46,
+          "card": "Gavony Township [MOC 406]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0079326b-ef87-49b8-9772-9134fb5deb3e",
+          "quantity": 1,
+          "foil": false,
+          "position": 47,
+          "card": "Grove of the Guardian [GK1 124]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "656ddd43-c70c-4927-9a02-fef5732708da",
+          "quantity": 1,
+          "foil": false,
+          "position": 48,
+          "card": "Lazotep Quarry [M3C 131]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "84a76e0f-49fc-4087-8859-98f4a4deacdf",
+          "quantity": 1,
+          "foil": false,
+          "position": 49,
+          "card": "Overgrown Farmland [MID 265]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "f94ef116-6aff-4f53-a7f9-be5e21c7afa4",
+          "quantity": 1,
+          "foil": false,
+          "position": 50,
+          "card": "Restless Prairie [LCI 281]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "dc653d50-bce2-45f9-b3ee-6170d500d572",
+          "quantity": 1,
+          "foil": false,
+          "position": 51,
+          "card": "Sungrass Prairie [BLC 334]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "1eb0d965-a7a1-4dfc-9867-adbf153e72be",
+          "quantity": 1,
+          "foil": false,
+          "position": 52,
+          "card": "Sunpetal Grove [BLC 335]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "ae61f7c7-870a-4bf7-af05-8fb077a10104",
+          "quantity": 1,
+          "foil": false,
+          "position": 53,
+          "card": "Temple of Plenty [BLC 343]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "712c64bc-ba0c-4bab-9329-54805f4efa8a",
+          "quantity": 1,
+          "foil": false,
+          "position": 54,
+          "card": "Invincible Hymn [ALA 14]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "222c1a68-e34c-4103-b1be-17d4ceaef6ce",
+          "quantity": 1,
+          "foil": false,
+          "position": 55,
+          "card": "Ajani's Pridemate [FDN 135]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "47ce8b7e-d8e1-489a-a69e-99089eeb8739",
+          "quantity": 1,
+          "foil": false,
+          "position": 56,
+          "card": "Cleric Class [AFR 6]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "89396f5e-5bc3-4c8a-976b-2cb2946eb35d",
+          "quantity": 1,
+          "foil": false,
+          "position": 57,
+          "card": "Congregate [DMR 4]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a5b070f2-f2f2-4ccd-9a4b-d19ea01b2298",
+          "quantity": 1,
+          "foil": false,
+          "position": 58,
+          "card": "Path to Exile [BLC 147]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "2b24b560-7458-4480-aa03-80190f69df71",
+          "quantity": 1,
+          "foil": false,
+          "position": 59,
+          "card": "Rootborn Defenses [RVR 26]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "430b96aa-7bb0-4d2b-b265-9c4987db28a2",
+          "quantity": 1,
+          "foil": false,
+          "position": 60,
+          "card": "Suture Priest [MOC 210]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "b16321b6-3e28-424b-ac72-038cc4ed6458",
+          "quantity": 1,
+          "foil": false,
+          "position": 61,
+          "card": "Swords to Plowshares [DSC 106]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a390a7df-b8da-41aa-93e5-2c0db938a27e",
+          "quantity": 1,
+          "foil": false,
+          "position": 62,
+          "card": "Avacyn's Pilgrim [MIC 132]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "18e5fdee-1ec4-44a2-b84c-35897f1d2912",
+          "quantity": 1,
+          "foil": false,
+          "position": 63,
+          "card": "Explore [BLC 216]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0cfd3cb1-2209-453d-be45-ce1b56265496",
+          "quantity": 1,
+          "foil": false,
+          "position": 64,
+          "card": "Farseek [LCC 242]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "8bbcfb77-daa1-4ce5-b5f9-48d0a8edbba9",
+          "quantity": 1,
+          "foil": false,
+          "position": 65,
+          "card": "Llanowar Elves [GNT 46]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a78584e8-bb82-4977-a27d-68b1befe9b3b",
+          "quantity": 1,
+          "foil": false,
+          "position": 66,
+          "card": "Nature's Lore [CMM 904]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "eed76e15-6456-4ddc-addf-f0e6eff8bb6a",
+          "quantity": 1,
+          "foil": false,
+          "position": 67,
+          "card": "Prosperous Innkeeper [BLC 121]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a45b534b-8442-4074-a8d2-f38e83f24868",
+          "quantity": 1,
+          "foil": false,
+          "position": 68,
+          "card": "Song of Freyalise [DOM 179]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "96feebe2-0a6b-4df8-8e7d-ee0bb82ac0c1",
+          "quantity": 1,
+          "foil": false,
+          "position": 69,
+          "card": "Sundering Growth [C19 203]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "1c602e17-7eee-45f5-82d9-406cb4498b18",
+          "quantity": 1,
+          "foil": false,
+          "position": 70,
+          "card": "Idol of Oblivion [M3C 297]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "cab82668-975a-47f1-943a-7c4c27feacb4",
+          "quantity": 1,
+          "foil": false,
+          "position": 71,
+          "card": "Selesnya Signet [RVR 267]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "a36fd6d8-66a2-49d1-b9f3-b400ebc03674",
+          "quantity": 1,
+          "foil": false,
+          "position": 72,
+          "card": "Skullclamp [MOC 379]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "fff440c0-7e6a-46c2-9989-f1b5af20fd44",
+          "quantity": 1,
+          "foil": false,
+          "position": 73,
+          "card": "Sol Ring [BLC 129]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "fa8b09d0-fbd2-4441-9d87-02450412e0db",
+          "quantity": 1,
+          "foil": false,
+          "position": 74,
+          "card": "Springleaf Drum [LRW 261]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "d290ec6b-15a6-49e8-abd2-b8c4d0f556eb",
+          "quantity": 1,
+          "foil": false,
+          "position": 75,
+          "card": "Blossoming Sands [NEO 265]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "989b299b-daa9-4bda-94e2-9a2f0e8f2bce",
+          "quantity": 1,
+          "foil": false,
+          "position": 76,
+          "card": "Brokers Hideout [SNC 248]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "129d1bbd-83ad-4953-bf6d-b55989b2529c",
+          "quantity": 1,
+          "foil": false,
+          "position": 77,
+          "card": "Command Tower [DSC 96]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0849b6dd-0330-4b7e-b7da-98e767adb4a0",
+          "quantity": 1,
+          "foil": false,
+          "position": 78,
+          "card": "Graypelt Refuge [C19 249]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "dabcee54-dda3-4208-81a8-e1ae3f79acf5",
+          "quantity": 1,
+          "foil": false,
+          "position": 79,
+          "card": "Krosan Verge [MOC 412]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "0296c34b-120b-483e-8b49-6d432c04f9a4",
+          "quantity": 1,
+          "foil": false,
+          "position": 80,
+          "card": "Radiant Fountain [M21 248]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "58f4384e-9aca-4533-8714-3dcaf709dee3",
+          "quantity": 1,
+          "foil": false,
+          "position": 81,
+          "card": "Rogue's Passage [C19 270]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "81d3099d-4f22-425c-8955-903b6cfb88d3",
+          "quantity": 1,
+          "foil": false,
+          "position": 82,
+          "card": "Sapseep Forest [C21 313]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "8e5bb089-a231-4d8a-a02a-296152cf5b4d",
+          "quantity": 1,
+          "foil": false,
+          "position": 83,
+          "card": "Selesnya Sanctuary [CMM 1031]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "e1c1fa29-362f-40b4-b67f-513f6592fb3b",
+          "quantity": 1,
+          "foil": false,
+          "position": 84,
+          "card": "Seraph Sanctuary [DDQ 33]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "e2289fd7-19bb-4034-a6dd-267c4914975b",
+          "quantity": 7,
+          "foil": true,
+          "position": 85,
+          "card": "Plains [SLD 2441]"
+        },
+        {
+          "board": "main",
+          "scryfall_id": "8dd6cfef-6eac-4fa2-b9f3-808bd5502f27",
+          "quantity": 7,
+          "foil": true,
+          "position": 86,
+          "card": "Forest [SLD 2442]"
+        }
+      ]
+    }
+  ]
+}

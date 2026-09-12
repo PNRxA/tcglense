@@ -590,7 +590,23 @@ Rationale: `docs/tradeoffs.md` · full contracts: `docs/api-contracts.md`.
   The tables are **rebuilt wholesale** every sync, so a row id is not stable and never reaches
   the wire: **`slug` is the identity**, derived deterministically (sets walked in sorted order,
   numeric suffix on collision) — a change to how it's derived needs a `DERIVATION_VERSION` bump,
-  since the sync is otherwise ETag-gated. The browse tile's facets (`card_count`,
+  since the sync is otherwise ETag-gated. **A deck upstream has a product for but no card
+  list yet rides `mtgjson::precon_overlay`** — a committed file of decklists derived *as if*
+  MTGJSON had listed them, merged **after** the real walk so an upstream row always wins the
+  base slug. MTGJSON does ship such dangling references: `SLD`'s Secret Lair Commander Deck
+  Hatsune Miku declares `contents.deck = [{name: "Hatsune Miku"}]` and `cardCount: 100` with no
+  such deck in `decks[]`. An entry **retires itself** — it stands down as soon as a derived row
+  in that set carries its TCGplayer product id *or* its name (two tests, because upstream can
+  publish a list without the `sealedProductUuids` link, or under a name we didn't predict), so
+  the file shrinks by deletion at leisure and never shadows real data. Name the entry what
+  upstream will (the dangling reference's own name, not the product's retail one) or the slug
+  moves under a live URL when it lands. It's **data, not a second derivation** — an entry becomes
+  an ordinary `RawPrecon` and travels the one ingest path — so it needs no facet/pricing work,
+  but its content hash rides `DERIVATION_VERSION` (`derivation_version()`), or an ETag-gated sync
+  would never pick up an edit. Transcribing one is the careful part: `deck_cards` addresses a
+  **printing**, so where the publisher names a set but no collector number, take that set's plain
+  printing (black-bordered, non-promo, no frame effects) — the fancy treatments are the
+  collector-booster variants, not what a precon ships. The browse tile's facets (`card_count`,
   `color_identity`, `face_card_id`) are folded **at ingest** into columns, by the deck list's
   own colour rule (command zone if there is one, else the mainboard, never the sideboard) —
   a public CDN-cached list must not pay a per-row card scan, and the two must not disagree.

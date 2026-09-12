@@ -1720,7 +1720,11 @@ contents, so `NOT_A_DECK_TYPES` excludes the category at derivation and it appea
 listing, facet or count (it is already modelled as a sealed product with `sealed_contents`).
 Derived from MTGJSON's per-set `decks[]` during
 the sealed-contents sync (no extra fetch: it's the same `AllPrintings.json`, and the same
-parse — see `api/src/mtgjson/precons.rs`), so they are **catalog** data, not the user's: the
+parse — see `api/src/mtgjson/precons.rs`), plus `api/src/mtgjson/precon_overlay.json` for the
+decks upstream has a sealed *product* for but no card list yet — MTGJSON does ship dangling
+`contents.deck` references, and an overlay entry is derived as if it had been listed, then
+**stands itself down** the moment upstream publishes the deck (matched on the TCGplayer product
+id or the name, within the set). Either way they are **catalog** data, not the user's: the
 three reads are anonymous, live in the router's `public` group beside `/products`
 (`PUBLIC_CATALOG_CACHE`, ETag'd) and take no token. The two writes — copying a precon into
 your own decks, and adding every card it ships to your collection — are authenticated and
