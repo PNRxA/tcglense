@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, toRef, useId, watch } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router'
+import { Loader2 } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
+import UpdatingCue from '@/components/cards/UpdatingCue.vue'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError, MAX_OPENING_COPIES, MAX_OPENING_PACKS, type Product } from '@/lib/api'
 import { usePackOpeningQuery, useProductEvQuery } from '@/composables/useProducts'
 import { useCurrency } from '@/composables/useCurrency'
@@ -111,7 +114,23 @@ const failure = computed(() => {
     ? error.message
     : "That opening couldn't be dealt. Try again."
 })
-const dealing = computed(() => seed.value !== null && openQuery.isPending.value)
+// Two in-flight states, split the way `DeckGoldfish` splits its deal from its mulligan.
+// `dealing` is the first open: nothing on screen to keep, so the rows the run is about to
+// fill are drawn as skeletons rather than one line of text under an empty panel. `updating`
+// is "Open another": `keepPreviousData` deliberately holds the last run's cards up so the
+// panel doesn't collapse — which is exactly why it needs a cue of its own, since everything
+// visible is the *previous* roll. Both disable the buttons: a second click mid-deal mints a
+// second seed and cancels the run the URL already names.
+const fetching = computed(() => seed.value !== null && openQuery.isFetching.value)
+const dealing = computed(() => fetching.value && !opening.value)
+const updating = computed(() => fetching.value && !!opening.value)
+/** How many card rows the first deal draws as skeletons: the pack's own expected count,
+ * capped so a box doesn't sketch 500 placeholders for a list that scrolls anyway. */
+const SKELETON_ROW_CAP = 15
+const skeletonRows = computed(() => {
+  const perPack = ev.value?.packs?.[0]?.cards_per_pack ?? 0
+  return Math.min(SKELETON_ROW_CAP, Math.max(6, Math.ceil(perPack)))
+})
 
 /** A fresh u32. `crypto.getRandomValues` is the source; the fallback only matters in an
  * environment without it, where a repeated seed costs nothing but a repeated run. */
@@ -174,7 +193,10 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
     </p>
 
     <div class="flex flex-wrap items-center gap-3">
-      <Button type="button" @click="openAnother">{{ openLabel }}</Button>
+      <Button type="button" :disabled="fetching" @click="openAnother">
+        <Loader2 v-if="fetching" class="size-4 animate-spin" aria-hidden="true" />
+        {{ fetching ? 'Dealing…' : openLabel }}
+      </Button>
 
       <!-- Only where a copy IS a pack: opening six boxes is not a control anyone wants, and
         the API's own pack ceiling would refuse most of them anyway. -->
@@ -200,9 +222,11 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
 
     <!-- Everything the run produced. Polite, because it lands on a button press: the totals
       are what a screen-reader user is waiting to hear, and the card list below them is long. -->
-    <div aria-live="polite" class="mt-4">
+    <div aria-live="polite" class="mt-4" :aria-busy="fetching || undefined">
       <p v-if="failure" class="text-muted-foreground text-sm">{{ failure }}</p>
-      <p v-else-if="dealing" class="text-muted-foreground text-sm">Dealing…</p>
+      <p v-else-if="fetching" class="text-muted-foreground text-sm">
+        <UpdatingCue label="Dealing…" />
+      </p>
       <template v-else-if="opening && summary">
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span class="text-2xl font-semibold tabular-nums">{{
@@ -216,9 +240,36 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
       </template>
     </div>
 
+    <!-- The first deal: no run to hold on to, so the rows it is about to fill are drawn
+      instead. Without this the panel was one word of text for the whole round trip. -->
+    <div v-if="dealing" class="mt-4" aria-hidden="true">
+      <div class="flex items-baseline justify-between gap-3">
+        <Skeleton class="h-4 w-40" />
+        <Skeleton class="h-4 w-12" />
+      </div>
+      <ul class="mt-1.5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <li v-for="row in skeletonRows" :key="row">
+          <div class="flex items-center gap-2 rounded-lg border p-2">
+            <Skeleton class="aspect-[61/85] w-9 shrink-0 rounded" />
+            <div class="min-w-0 flex-1 space-y-1.5">
+              <Skeleton class="h-3.5 w-3/4" />
+              <Skeleton class="h-3 w-1/3" />
+            </div>
+            <Skeleton class="h-3 w-10 shrink-0" />
+          </div>
+        </li>
+      </ul>
+    </div>
+
     <template v-if="opening && !failure">
-      <!-- One block per pack, in the order the API dealt them. -->
-      <div class="mt-4 space-y-4">
+      <!-- One block per pack, in the order the API dealt them. While the next run is in the
+        air these are the PREVIOUS roll's cards — dimmed so they can't be read as the new one,
+        and inert for the same reason. -->
+      <div
+        class="mt-4 space-y-4 transition-opacity"
+        :class="{ 'pointer-events-none opacity-40': updating }"
+        :aria-busy="updating || undefined"
+      >
         <div v-for="(pack, index) in opening.packs" :key="index">
           <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h3 class="text-sm font-medium">
@@ -270,7 +321,10 @@ const { hrefFor, onActivate, warm } = useDetailModalLink()
       </div>
 
       <div class="mt-4 flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" @click="openAnother">Open another</Button>
+        <Button type="button" variant="outline" :disabled="fetching" @click="openAnother">
+          <Loader2 v-if="updating" class="size-4 animate-spin" aria-hidden="true" />
+          {{ updating ? 'Dealing…' : 'Open another' }}
+        </Button>
       </div>
 
       <!-- The server's own caveats, verbatim: what the simulation does and doesn't model. -->
