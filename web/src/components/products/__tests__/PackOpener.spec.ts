@@ -44,7 +44,8 @@ vi.mock('@/composables/useProducts', async () => {
       return {
         data: computed(() => (seed.value === null ? undefined : (state.opening ?? undefined))),
         error: computed(() => (seed.value === null ? null : state.error)),
-        isPending: computed(() => seed.value !== null && state.pending),
+        isPending: computed(() => seed.value !== null && state.pending && !state.opening),
+        isFetching: computed(() => seed.value !== null && state.pending),
       }
     },
   }
@@ -220,6 +221,48 @@ describe('PackOpener', () => {
     // asks for a *seed*, not a refetch of the same one.
     expect(typeof captured.seed.value).toBe('number')
     expect(first).not.toBeUndefined()
+  })
+
+  it('draws the first deal as skeleton rows, with the button busy', async () => {
+    // Nothing on screen to keep during the first open, so the rows the run is about to fill
+    // are sketched rather than one word of text under an empty panel — and the button says
+    // what it is doing, disabled so a second click can't mint a second seed mid-deal.
+    const { wrapper } = await mountOpener({ opening: null, pending: true })
+    const button = openButton(wrapper)!
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Dealing…')
+    expect(wrapper.find('[data-slot="skeleton"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true)
+    const busy = wrapper.findAll('button').find((b) => b.text().includes('Dealing…'))
+    expect(busy).toBeDefined()
+    expect(busy!.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('Sheoldred')
+  })
+
+  it('keeps the previous run up, dimmed and busy, while "Open another" deals', async () => {
+    // keepPreviousData holds the last run's cards so the panel doesn't collapse — which is
+    // exactly why the cue matters: everything visible is the previous roll. The totals give
+    // way to the cue, the list dims, and both buttons are disabled until the new run lands.
+    const { wrapper } = await mountOpener()
+    await openButton(wrapper)!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('pulled in this run')
+
+    state.pending = true
+    const again = wrapper.findAll('button').find((b) => b.text() === 'Open another')
+    await again!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Sheoldred, the Apocalypse')
+    expect(wrapper.text()).toContain('Dealing…')
+    expect(wrapper.text()).not.toContain('pulled in this run')
+    expect(wrapper.find('.opacity-40[aria-busy="true"]').exists()).toBe(true)
+    // No skeletons here: the previous cards are the placeholder.
+    expect(wrapper.find('[data-slot="skeleton"]').exists()).toBe(false)
+    const disabled = wrapper.findAll('button').filter((b) => b.attributes('disabled') !== undefined)
+    expect(disabled.length).toBe(2)
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Open another')).toBeUndefined()
   })
 
   it('auto-opens from a shared ?pack= link, without a click', async () => {
