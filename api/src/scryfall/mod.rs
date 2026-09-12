@@ -45,7 +45,9 @@ pub(crate) use foil_variants::refresh_foil_variant_folds;
 /// The fold as a *count*: how many rows it hides per set, and the one adjustment every surface
 /// publishing a set's `card_count` (catalog set list + set metadata, collection/wish-list tiles)
 /// applies, so none of them can overstate the grid it links to.
-pub(crate) use foil_variants::{FoldedSetCounts, folded_counts_by_set, folded_counts_in_set};
+pub(crate) use foil_variants::{
+    FoldedSetCounts, folded_counts_by_set, folded_counts_in_set, folded_counts_in_sets,
+};
 /// The catalog-listing fold as row predicates: hide a folded foil-★ variant, and recognise
 /// the base that lost one as foil- (and foil-treatment-) available. See [`foil_variants`].
 pub(crate) use foil_variants::{has_folded_foil_variant, not_folded_foil_variant};

@@ -656,8 +656,8 @@ pub fn build_router(state: AppState) -> Router {
         // its `/keywords` pages. A curated static table, so this is the cheapest read
         // in the group — and the most cacheable.
         .route("/api/games/{game}/keywords", get(list_keywords))
-        // The universal search: one `q` answered across cards, sealed products, precons
-        // and keywords at once (the homepage search box). The same for every visitor —
+        // The universal search: one `q` answered across cards, sets, sealed products,
+        // precons and keywords at once (the homepage search box). The same for every visitor —
         // the SPA adds the caller's own decks client-side — so it sits here with the
         // autocomplete: CDN + ETag cached, per-IP rate-limited. `search` is a static
         // sibling of `cards`/`sets`, so it collides with nothing.

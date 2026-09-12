@@ -8,11 +8,13 @@ import {
   Boxes,
   ChevronRight,
   Layers,
+  LayoutGrid,
   Loader2,
   Package,
   Search,
 } from '@lucide/vue'
 import CardImage from '@/components/cards/CardImage.vue'
+import SetIcon from '@/components/cards/SetIcon.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
 import { Input } from '@/components/ui/input'
 import {
@@ -27,9 +29,9 @@ import type { Game } from '@/lib/api'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 import { cardSearchLocation, type SearchGroupView, type SearchOption } from '@/lib/universalSearch'
 
-// The homepage's universal search: one box that answers across cards, sealed products,
-// preconstructed decks, the keyword glossary and — signed in — your own decks, as a grouped
-// dropdown of the top matches, each a link to the thing itself. Enter with nothing
+// The homepage's universal search: one box that answers across cards, sets, sealed
+// products, preconstructed decks, the keyword glossary and — signed in — your own decks, as
+// a grouped dropdown of the top matches, each a link to the thing itself. Enter with nothing
 // highlighted (or the closing row) hands off to the full card search, where the whole
 // Scryfall grammar applies.
 //
@@ -102,13 +104,14 @@ function onInputFocus() {
 const GROUP_ICONS = {
   card: Layers,
   deck: BookCopy,
+  set: LayoutGrid,
   product: Package,
   precon: Boxes,
   keyword: BookOpen,
 } as const
 
 const placeholder = computed(
-  () => `Search ${gameName.value} cards, sealed products, precons, keywords…`,
+  () => `Search ${gameName.value} cards, sets, sealed products, precons, keywords…`,
 )
 </script>
 
@@ -126,7 +129,7 @@ const placeholder = computed(
           type="search"
           class="bg-background dark:bg-background h-12 rounded-xl pr-10 pl-11 text-base shadow-sm md:text-base"
           :placeholder="placeholder"
-          aria-label="Search cards, sealed products, preconstructed decks, keywords, and your decks"
+          aria-label="Search cards, sets, sealed products, preconstructed decks, keywords, and your decks"
           role="combobox"
           aria-autocomplete="list"
           autocomplete="off"
@@ -225,6 +228,13 @@ const placeholder = computed(
               aria-hidden="true"
             />
           </template>
+          <template v-else-if="option.thumbnail?.kind === 'set'">
+            <SetIcon
+              :game="selectedGame"
+              :code="option.thumbnail.id"
+              :has-icon="option.thumbnail.hasImage"
+            />
+          </template>
           <span
             v-else
             class="bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-md"
@@ -253,7 +263,9 @@ const placeholder = computed(
         </template>
         <template v-else-if="status === 'error'">Search is unavailable right now.</template>
         <template v-else
-          >No cards, sealed products, decks, or keywords match “{{ searchedTerm }}”.</template
+          >No cards, sets, sealed products, precons, decks, or keywords match “{{
+            searchedTerm
+          }}”.</template
         >
       </div>
 

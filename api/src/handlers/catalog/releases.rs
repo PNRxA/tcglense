@@ -55,7 +55,7 @@ use crate::handlers::shared::{ProductResponse, product_response, require_game};
 use crate::scryfall::drops;
 use crate::state::AppState;
 
-use super::sets::SetResponse;
+use super::sets::{SetResponse, dress_set};
 
 /// The widest window a caller may ask for, in days (inclusive of both bounds). A year of
 /// releases is a few dozen sets, each with its products nested whole, so this bounds the
@@ -311,9 +311,7 @@ async fn set_releases(
             let released_at = model.released_at.clone()?;
             let secret_lair = releases::is_secret_lair_release(&model);
             let code = model.code.clone();
-            let mut set = SetResponse::from(model);
-            set.has_subtypes = with_subtypes.contains(&set.code);
-            set.card_count = folded.adjust(&set.code, set.card_count);
+            let set = dress_set(model, &with_subtypes, &folded);
             Some(SetReleaseResponse {
                 set,
                 released_at,

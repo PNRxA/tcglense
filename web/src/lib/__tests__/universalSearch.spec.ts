@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import type { Card, Deck, KeywordEntry, PreconDeck, Product, SearchResults } from '@/lib/api'
+import type {
+  Card,
+  CardSet,
+  Deck,
+  KeywordEntry,
+  PreconDeck,
+  Product,
+  SearchResults,
+} from '@/lib/api'
 import {
   SEARCH_GROUP_LIMIT,
   buildSearchGroups,
   cardSearchLocation,
+  cardSublabel,
   filterDecks,
   matchesEveryWord,
   preconSearchLocation,
   rankByPrefix,
   searchAllOption,
   sealedSearchLocation,
+  setSublabel,
 } from '../universalSearch'
 
 function card(overrides: Partial<Card> = {}): Card {
@@ -43,6 +53,22 @@ function card(overrides: Partial<Card> = {}): Card {
     legalities: null,
     ...overrides,
   } as Card
+}
+
+function set(overrides: Partial<CardSet> = {}): CardSet {
+  return {
+    code: 'cmr',
+    name: 'Commander Legends',
+    set_type: 'draft_innovation',
+    released_at: '2020-11-20',
+    card_count: 361,
+    icon_svg_uri: 'https://svgs.scryfall.io/sets/cmr.svg',
+    parent_set_code: null,
+    has_drops: false,
+    drop_noun: null,
+    has_subtypes: true,
+    ...overrides,
+  }
 }
 
 function product(overrides: Partial<Product> = {}): Product {
@@ -118,6 +144,7 @@ function last<T>(items: T[] | undefined): T | undefined {
 function results(overrides: Partial<SearchResults> = {}): SearchResults {
   return {
     cards: { data: [], has_more: false },
+    sets: { data: [], has_more: false },
     products: { data: [], has_more: false },
     precons: { data: [], has_more: false },
     keywords: { data: [], has_more: false },
@@ -210,9 +237,44 @@ describe('link builders', () => {
   })
 })
 
+describe('cardSublabel (names the set only when a word matched it, not the name)', () => {
+  it('reads the type line for a card matched by name alone', () => {
+    expect(cardSublabel(card(), 'lightning bolt')).toBe('Instant')
+    expect(cardSublabel(card(), 'BOLT')).toBe('Instant')
+    expect(cardSublabel(card({ type_line: null }), 'bolt')).toBe('Limited Edition Alpha')
+  })
+
+  it('names the printing when a word of the term is not in the name (a set or number word)', () => {
+    // "alpha" is not in "Lightning Bolt": the API matched it against the set, and folded to
+    // the Alpha printing — so the row says which printing it is, number included.
+    expect(cardSublabel(card(), 'lightning bolt alpha')).toBe(
+      'Instant · Limited Edition Alpha #161',
+    )
+    expect(cardSublabel(card(), 'lea bolt')).toBe('Instant · Limited Edition Alpha #161')
+    expect(cardSublabel(card(), 'lea 161')).toBe('Instant · Limited Edition Alpha #161')
+    expect(cardSublabel(card({ type_line: null }), 'bolt lea')).toBe('Limited Edition Alpha #161')
+  })
+})
+
+describe('setSublabel', () => {
+  it("is the tile's identity line: code, release month, card count", () => {
+    expect(setSublabel(set())).toBe('CMR · Nov 2020 · 361 cards')
+  })
+
+  it('leaves out what the set lacks', () => {
+    expect(setSublabel(set({ released_at: null, card_count: 0 }))).toBe('CMR')
+    expect(setSublabel(set({ released_at: 'soon' }))).toBe('CMR · soon · 361 cards')
+  })
+
+  it('reads the date as a local calendar day, so the 1st is not the month before', () => {
+    expect(setSublabel(set({ released_at: '2024-08-01' }))).toBe('CMR · Aug 2024 · 361 cards')
+  })
+})
+
 describe('buildSearchGroups', () => {
   const full = results({
     cards: { data: [card()], has_more: true },
+    sets: { data: [set()], has_more: true },
     products: { data: [product()], has_more: true },
     precons: { data: [precon()], has_more: true },
     keywords: { data: [keyword()], has_more: true },
@@ -220,9 +282,10 @@ describe('buildSearchGroups', () => {
 
   it('lays the groups out in display order with a row per hit', () => {
     const groups = buildSearchGroups({ game: 'mtg', term: 'bolt', results: full })
-    expect(groups.map((g) => g.id)).toEqual(['card', 'product', 'precon', 'keyword'])
+    expect(groups.map((g) => g.id)).toEqual(['card', 'set', 'product', 'precon', 'keyword'])
     expect(groups.map((g) => g.label)).toEqual([
       'Cards',
+      'Sets',
       'Sealed products',
       'Preconstructed decks',
       'Keywords',
@@ -230,9 +293,9 @@ describe('buildSearchGroups', () => {
   })
 
   it('links every hit to its own page, with the thumbnail its tile draws', () => {
-    const [cards, products, precons, keywords] = buildSearchGroups({
+    const [cards, sets, products, precons, keywords] = buildSearchGroups({
       game: 'mtg',
-      term: 'x',
+      term: 'bolt',
       results: full,
     })
 
@@ -244,6 +307,21 @@ describe('buildSearchGroups', () => {
       to: '/cards/mtg/cards/c1',
       thumbnail: { kind: 'card', id: 'c1', hasImage: true },
     })
+    expect(sets?.options[0]).toMatchObject({
+      key: 'set:cmr',
+      kind: 'set',
+      label: 'Commander Legends',
+      sublabel: 'CMR · Nov 2020 · 361 cards',
+      to: '/cards/mtg/sets/cmr',
+      thumbnail: { kind: 'set', id: 'cmr', name: 'Commander Legends', hasImage: true },
+    })
+    // A set with no icon says so, so the row draws the generic glyph instead of a broken image.
+    const [noIcon] = buildSearchGroups({
+      game: 'mtg',
+      term: 'x',
+      results: results({ sets: { data: [set({ icon_svg_uri: null })], has_more: false } }),
+    })
+    expect(noIcon?.options[0]?.thumbnail).toMatchObject({ kind: 'set', hasImage: false })
     expect(products?.options[0]).toMatchObject({
       key: 'product:100',
       label: 'Bloomburrow Play Booster Box',
@@ -270,6 +348,13 @@ describe('buildSearchGroups', () => {
     const byId = Object.fromEntries(groups.map((g) => [g.id, g]))
 
     expect(byId.card?.options.map((o) => o.kind)).toEqual(['card'])
+    // The set landing filters locally, so its "more" is the landing itself.
+    expect(last(byId.set?.options)).toMatchObject({
+      kind: 'more',
+      key: 'more:set',
+      label: 'Browse all sets',
+      to: '/cards/mtg',
+    })
     expect(last(byId.product?.options)).toMatchObject({
       kind: 'more',
       key: 'more:product',
@@ -308,7 +393,7 @@ describe('buildSearchGroups', () => {
       deck(2, 'Elves', { format: null, card_count: 1 }),
     ]
     const groups = buildSearchGroups({ game: 'mtg', term: 'bolt', results: full, decks })
-    expect(groups.map((g) => g.id)).toEqual(['card', 'deck', 'product', 'precon', 'keyword'])
+    expect(groups.map((g) => g.id)).toEqual(['card', 'deck', 'set', 'product', 'precon', 'keyword'])
     const mine = groups[1]
     expect(mine?.label).toBe('Your decks')
     expect(mine?.options).toHaveLength(1)
