@@ -9,7 +9,8 @@
 //! summed over every card on every sheet a pack draws from. It is not a valuation of the
 //! pack in your hand — the whole point of a booster is that no single one is worth the
 //! average — it is not a prediction, and it is not a *count of anything physical*. The
-//! rest of a sealed product's page is bound by that last rule too (see `AGENTS.md`), and
+//! rest of a sealed product's page is bound by that last rule too (see `docs/invariants.md`,
+//! "Sealed products and booster odds"), and
 //! these two reads are the only places a per-pack number is legitimate at all, precisely
 //! because every one of them is worded as an expectation or as one simulated roll:
 //!

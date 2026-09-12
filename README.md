@@ -73,6 +73,7 @@ Full usage, auth, and the command reference are in the
 | [`docs/api-contracts.md`](./docs/api-contracts.md) | Every HTTP endpoint, wire shapes, the search syntax, caching/ETags/sitemaps, import/sync |
 | [PNRxA/tcglense-cli](https://github.com/PNRxA/tcglense-cli) | The `tcglense` command-line client + TUI (separate repo): install, auth, commands, and keybindings |
 | [`docs/architecture.md`](./docs/architecture.md) | Annotated file map of `api/src` and `web/src`, plus test organization |
+| [`docs/invariants.md`](./docs/invariants.md) | The load-bearing rules — what each seam enforces and the couplings a change must keep in step |
 | [`docs/tradeoffs.md`](./docs/tradeoffs.md) | Design rationale and known trade-offs — read before "fixing" something that looks odd |
 | [`docs/production-signup-checklist.md`](./docs/production-signup-checklist.md) | Fail-closed production signup rollout, backup, readiness, email, CAPTCHA, and canary checks |
 | [`CLAUDE.md`](./CLAUDE.md) | Contributor guide: project conventions and step-by-step guides for adding features |
