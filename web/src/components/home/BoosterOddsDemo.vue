@@ -28,9 +28,9 @@ const pulls = [
 //
 // Every money figure keeps its qualifier on purpose: an expectation is "per pack, on average",
 // and a value read against the price is a *share of today's price*, never a gain, a profit, or
-// a promise — and no number here is worded as a copy's contents. See AGENTS.md, "Don't break
-// these" → "No number on a sealed product's page is a count of a copy's physical cards" and
-// "Booster odds", mirrored by the real wording helpers in `@/lib/productCounts`
+// a promise — and no number here is worded as a copy's contents. See `docs/invariants.md`,
+// "Sealed products and booster odds" ("No number on a sealed product's page is a count of a
+// copy's physical cards"), mirrored by the real wording helpers in `@/lib/productCounts`
 // (`expectedValueHeading`, `cardsPerPackLabel`, `oddsLabel`, `evVersusPrice`, `openingSummary`).
 </script>
 

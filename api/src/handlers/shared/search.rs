@@ -143,8 +143,8 @@ fn contains_pattern(word: &str) -> String {
 /// `name LIKE … OR set_code IN (…) OR (set_code IN (…) AND collector_number IN (…))` —
 /// bound lists the `(game, set_code[, collector_number])` indexes answer — and never a
 /// `LIKE` on `cards.set_name` (no index) or a correlated subquery, either of which turns the
-/// whole per-keystroke read into a scan of the `cards` heap (see `AGENTS.md`'s note on
-/// `m..068`). The number is compared **raw** (the word as typed, lower- and upper-cased,
+/// whole per-keystroke read into a scan of the `cards` heap (see `docs/invariants.md`'s
+/// "Search and indexes" note on `m..068`). The number is compared **raw** (the word as typed, lower- and upper-cased,
 /// never `LOWER(collector_number)`), because `m..024`'s composite index is on the raw text
 /// column and only a raw comparison lets its third key seek.
 ///

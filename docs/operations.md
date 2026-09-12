@@ -170,11 +170,17 @@ SEED_DUMMY_DATA=true SYNC_ON_STARTUP=false cargo run
 npm run test:e2e
 ```
 
-The specs probe `/api/health` first and **silently skip** if the API is unreachable
+The specs probe `/api/ready` first and **silently skip** if the API is unreachable
 rather than failing (the `apiReachable()` guard in `web/e2e/security.spec.ts`), so a
 bare `npm run test:e2e` with no API doesn't red-fail — it just skips the API-dependent
-tests. `SEED_DUMMY_DATA` also seeds a verified dev account, **`e2e@tcglense.test` /
-`password123`** (`api/src/tasks.rs`), used by the session/login flows.
+tests, and the suite can "pass" without testing anything. Probe **readiness, never
+`/api/health`**: liveness answers the moment the listener binds and stays up through the
+boot-migration window, while the startup gate still answers every other route with a
+maintenance `503` — gating on it makes the first specs fail on a 503 instead of skipping.
+`SEED_DUMMY_DATA` also seeds a verified dev account, **`e2e@tcglense.test` /
+`password123`** (`api/src/tasks.rs`), used by the session/login flows; the dummy seed
+(catalog, then that account) runs *after* the gate opens, so "fully booted" is a
+successful seeded login — that's what CI waits for.
 
 Two spec files under `web/e2e/`:
 - `security.spec.ts` — the security e2e suite: the httpOnly + SameSite refresh cookie,
