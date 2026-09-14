@@ -102,7 +102,7 @@ impl Client {
                     }));
                 }
                 Ok(_) => continue,
-                Err(_) => return None,
+                Err(e) => { eprintln!("DEBUG poll err: {e:?}"); return None },
             }
         }
     }
@@ -677,6 +677,10 @@ async fn a_flood_of_pings_is_metered_like_an_action_and_then_closed() {
         }
     }
 
+    {
+        let probe = tokio::time::timeout(std::time::Duration::from_secs(3), client.socket.next()).await;
+        eprintln!("DEBUG blocking probe: {probe:?}");
+    }
     // Whatever is still queued: the `closed` frame's own close code.
     for _ in 0..400 {
         if closed.is_some() {
@@ -684,6 +688,7 @@ async fn a_flood_of_pings_is_metered_like_an_action_and_then_closed() {
         }
         match client.poll_frame() {
             Some(frame) => {
+                eprintln!("DEBUG frame: {frame}");
                 if frame["type"] == "__close" {
                     closed = frame["code"].as_u64();
                 }

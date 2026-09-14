@@ -208,8 +208,45 @@ async fn connection(state: AppState, row: play_room::Model, socket: WebSocket) {
     // own. The wait is bounded so a peer that has gone away without closing can't pin the task.
     state.play.unregister(&room, conn_id);
     announce_presence(&state, &row, &room, seat, false).await;
-    if tokio::time::timeout(WRITER_DRAIN, writer).await.is_err() {
-        tracing::debug!(room = row.id, "play socket writer did not drain in time");
+    drain_until_written(&mut stream, writer, row.id).await;
+}
+
+/// Wait for the writer task to flush, **while still reading from the peer**.
+///
+/// The reading is the point. We stop this loop for our own reasons (a flood, an idle socket)
+/// while the client is often still writing, and a socket closed with unread bytes in its
+/// receive queue is reset rather than finished — which takes the queued close frame, and with
+/// it the code the SPA decides "final, do not reconnect" on, down with it. So whatever arrives
+/// now is read and dropped on the floor: it costs nothing (no state, no bucket, no answer) and
+/// it is what makes the goodbye actually arrive. Bounded by [`WRITER_DRAIN`] either way.
+async fn drain_until_written(
+    stream: &mut futures_util::stream::SplitStream<WebSocket>,
+    writer: tokio::task::JoinHandle<()>,
+    room_id: i32,
+) {
+    let written = tokio::time::timeout(WRITER_DRAIN, writer);
+    tokio::pin!(written);
+    let mut peer_done = false;
+    loop {
+        if peer_done {
+            if (&mut written).await.is_err() {
+                tracing::debug!(room = room_id, "play socket writer did not drain in time");
+            }
+            return;
+        }
+        tokio::select! {
+            result = &mut written => {
+                if result.is_err() {
+                    tracing::debug!(room = room_id, "play socket writer did not drain in time");
+                }
+                return;
+            }
+            frame = stream.next() => {
+                // `None` (or an error) is the peer gone; anything else is a frame we are no
+                // longer interested in, read only so the close can leave cleanly.
+                peer_done = !matches!(frame, Some(Ok(_)));
+            }
+        }
     }
 }
 

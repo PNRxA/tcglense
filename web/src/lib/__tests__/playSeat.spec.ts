@@ -73,7 +73,7 @@ describe('remember/recall/forget', () => {
 })
 
 describe('forgetAllSeatTokens', () => {
-  it('drops every room\'s token and nothing else in storage', () => {
+  it("drops every room's token and nothing else in storage", () => {
     rememberSeatToken('mtg', 'ABC234', 'token-a')
     rememberSeatToken('mtg', 'XYZ789', 'token-b')
     rememberSeatToken('lorcana', 'QQQ111', 'token-c')

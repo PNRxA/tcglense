@@ -257,9 +257,7 @@ describe('snapshot then patches', () => {
       store.handleMessage({ type: 'patch', patch: patch({ version }) })
     }
 
-    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(
-      1,
-    )
+    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(1)
     expect(store.version).toBe(5)
   })
 
@@ -273,9 +271,7 @@ describe('snapshot then patches', () => {
 
     store.handleMessage({ type: 'patch', patch: patch({ version: 12 }) })
 
-    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(
-      2,
-    )
+    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(2)
   })
 
   it('recovers from the gap when the fresh snapshot lands', () => {

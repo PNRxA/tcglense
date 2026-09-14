@@ -144,7 +144,7 @@ describe('useAuthCacheReset', () => {
     expect(qc.getQueryData(['collection', 'mtg'])).toBe('private-collection')
   })
 
-  it('forgets the play table\'s seat tokens on an identity change', async () => {
+  it("forgets the play table's seat tokens on an identity change", async () => {
     auth.user = USER_A
     await flushPromises()
     rememberSeatToken('mtg', 'ABC234', 'ada-seat-token')

@@ -18,9 +18,7 @@ defineProps<{ reason: string; backTo: string; overlay?: boolean }>()
 </script>
 
 <template>
-  <div
-    :class="overlay ? 'bg-background/90 fixed inset-0 z-[60] grid place-items-center p-4' : ''"
-  >
+  <div :class="overlay ? 'bg-background/90 fixed inset-0 z-[60] grid place-items-center p-4' : ''">
     <div
       class="bg-card w-full rounded-xl border p-8 text-center"
       :class="overlay ? 'max-w-md shadow-xl' : ''"

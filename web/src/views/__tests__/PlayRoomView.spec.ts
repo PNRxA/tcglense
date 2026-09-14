@@ -156,7 +156,7 @@ beforeEach(() => {
 })
 
 describe('PlayRoomView at the table', () => {
-  it('answers the table\'s Leave by going back to the hub, seat intact', async () => {
+  it("answers the table's Leave by going back to the hub, seat intact", async () => {
     const { wrapper, router, store } = await mountRoom({ atTable: true })
     expect(wrapper.find('[aria-label="Leave the table"]').exists()).toBe(true)
 

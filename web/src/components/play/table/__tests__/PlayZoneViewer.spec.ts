@@ -184,6 +184,23 @@ describe('PlayZoneViewer, looking at the top of the library', () => {
     expect(send).toHaveBeenLastCalledWith({ type: 'reorder_top', cards: [3, 2] })
   })
 
+  it('drops a card taken out of a library search from the list too', async () => {
+    const { store, send } = await mountViewer()
+    store.handleMessage({ type: 'peek', peek: { kind: 'search_library', cards: PEEK } })
+    await nextTick()
+    expect(buttons('Hand')).toHaveLength(3)
+
+    click(buttons('Hand')[0])
+    await nextTick()
+
+    // Same photograph, same staleness: a card already in hand sitting in the list invites a
+    // second click that the engine can only refuse.
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'move_library_card', zone: 'hand' }),
+    )
+    expect(buttons('Hand')).toHaveLength(2)
+  })
+
   it('says nothing at all when every card was pulled out', async () => {
     const { send } = await mountViewer()
 
