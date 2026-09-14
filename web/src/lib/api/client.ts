@@ -72,6 +72,12 @@ interface RequestOptions {
    */
   keepalive?: boolean
   /**
+   * Extra request headers, for the few endpoints keyed by something other than the
+   * session (the play table's per-seat token rides `X-Play-Seat`). Never `Authorization`
+   * or `Content-Type` — those stay owned by `token` / the body handling above.
+   */
+  headers?: Record<string, string>
+  /**
    * Optional whole-request deadline. GETs default to 60s; non-GETs remain
    * unbounded unless a caller opts in (large imports/uploads deliberately do
    * not share the short auth deadline).
@@ -166,6 +172,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`
+  }
+  if (options.headers) {
+    for (const [name, value] of Object.entries(options.headers)) {
+      if (name.toLowerCase() === 'authorization' || name.toLowerCase() === 'content-type') continue
+      headers[name] = value
+    }
   }
 
   // GET requests get a 60s ceiling; selected non-GET callers (notably auth) can opt into
