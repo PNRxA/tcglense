@@ -9,7 +9,8 @@
 //!   owner `revealed` (which then appears in `SeatSnapshot::hand` for them too).
 //! - **Battlefield / graveyard / exile / command**: public — except a `face_down`
 //!   battlefield card, which its controller sees whole and everyone else sees as an id with
-//!   `def: None`.
+//!   `def: None`, no `face_index` and no `power_toughness` (its `counters` stay: they are
+//!   public on a face-down permanent in paper too).
 //! - A spectator (`viewer == None`) sees what "everyone else" sees.
 
 use crate::play::engine::Changes;
@@ -42,6 +43,12 @@ pub fn full_card_view(card: &CardInstance) -> CardView {
 
 /// The card as `viewer` sees it; `None` when the viewer may not know it is there at all
 /// (in a library, or in someone else's hand and not revealed).
+///
+/// A face-down permanent someone else controls keeps only what a sleeve face-down on a real
+/// table shows: it loses its `def`, its `face_index` (0 — which face is up is part of what
+/// the card *is*, and a 1 would say "this is a double-faced card") and its
+/// `power_toughness` (a printed 3/3 on a morph is a tell). Its `counters` stay: counters
+/// sit on top of the card in paper and everyone can count them.
 pub fn card_view(card: &CardInstance, viewer: Option<SeatId>) -> Option<CardView> {
     match card.zone {
         // A library is a count to everyone, its owner included — the order is the secret.
@@ -56,6 +63,8 @@ pub fn card_view(card: &CardInstance, viewer: Option<SeatId>) -> Option<CardView
         Zone::Battlefield if card.face_down && viewer != Some(card.controller) => {
             let mut view = full_card_view(card);
             view.def = None;
+            view.face_index = 0;
+            view.power_toughness = None;
             Some(view)
         }
         _ => Some(full_card_view(card)),

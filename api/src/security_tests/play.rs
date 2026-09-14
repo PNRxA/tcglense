@@ -7,6 +7,12 @@
 //! the extractor choices (`SessionUser` for the host's routes, `MaybeUser` + `X-Play-Seat`
 //! for the guest's) and the `no-store` headers are exercised exactly as in production.
 
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
+
+use crate::entities::play_room;
+use crate::entities::prelude::PlayRoom;
+use crate::play::types::MAX_DECK_CARDS;
+
 use super::decks::create_key;
 use super::harness::*;
 
@@ -93,6 +99,30 @@ async fn join_as_guest(app: &TestApp, code: &str, name: &str) -> Value {
     .await;
     assert_eq!(status, StatusCode::OK, "guest join failed: {out:?}");
     out
+}
+
+/// The first `n` seeded card names, for building pasted lists.
+async fn sample_card_names(app: &TestApp, n: usize) -> Vec<String> {
+    let (status, _, body) = send(app, get(&format!("/api/games/mtg/cards?page_size={n}"))).await;
+    assert_eq!(status, StatusCode::OK, "listing seeded cards: {body:?}");
+    body["data"]
+        .as_array()
+        .expect("cards")
+        .iter()
+        .map(|card| card["name"].as_str().expect("a card name").to_string())
+        .collect()
+}
+
+/// Flip a room to `playing` behind the handlers. Starting a game for real needs a socket (and
+/// therefore a bound server — that is `super::play_ws`'s job); what the lobby gate actually
+/// reads is this column, so this is the state it has to be exercised against.
+async fn mark_playing(app: &TestApp, code: &str) {
+    PlayRoom::update_many()
+        .col_expr(play_room::Column::Status, Expr::value("playing"))
+        .filter(play_room::Column::Code.eq(code))
+        .exec(&app.state.db)
+        .await
+        .expect("mark the room playing");
 }
 
 /// The first seeded card's external id (for building a deck to load).
@@ -764,6 +794,224 @@ async fn a_pasted_list_with_an_unknown_card_names_it_rather_than_shrinking_the_d
         1,
         "the `Commander` section header seats a commander: {body:?}"
     );
+}
+
+// ---------- Optional auth, and the lobby gate ----------
+
+#[tokio::test]
+async fn a_guest_route_takes_no_credential_but_still_refuses_a_bad_one() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let code = code_of(&create_pod(&app, &access).await);
+    let uri = format!("/api/tools/mtg/play/rooms/{code}");
+
+    // No `Authorization` header at all is a guest — the join page has to render the table
+    // before the visitor has any credential.
+    let (status, headers, body) = send(&app, get(&uri)).await;
+    assert_eq!(status, StatusCode::OK, "a guest read: {body:?}");
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(
+        body["viewer_seat"],
+        Value::Null,
+        "a stranger holds no seat: {body:?}"
+    );
+
+    // A header that is *present but bad* is still the usual 401: an expired session must never
+    // silently demote a player to a stranger.
+    let (status, _, _) = send(&app, empty_with_bearer("GET", &uri, "not-a-real-token")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "a bad bearer");
+
+    // A valid API key is a real credential of the wrong kind — 403, the call `/api/alerts`
+    // makes — even on the route that is otherwise open to anyone.
+    let key = create_key(&app, &access, "read_write").await;
+    let (status, _, body) = send(&app, empty_with_bearer("GET", &uri, &key)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "an API key: {body:?}");
+
+    // And a real session on the same route is what fills in `viewer_seat`.
+    let (status, _, body) = send(&app, empty_with_bearer("GET", &uri, &access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["viewer_seat"].as_i64().is_some(),
+        "the host sees their own seat: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn every_lobby_write_is_refused_once_the_game_has_started() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let host = create_pod(&app, &access).await;
+    let code = code_of(&host);
+    let host_seat = seat_id_of(&host);
+    let host_token = token_of(&host);
+    let guest = join_as_guest(&app, &code, "Bob").await;
+    let guest_seat = seat_id_of(&guest);
+
+    mark_playing(&app, &code).await;
+
+    // A deck arriving after the cards were dealt would be a second, unshuffled library.
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{host_seat}/deck"),
+            &host_token,
+            json!({ "source": "precon", "slug": COMMANDER_SLUG }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "loading a deck: {body:?}");
+
+    // "Ready" is a promise about a lobby; there is no lobby left.
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{host_seat}/ready"),
+            &host_token,
+            json!({ "ready": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "readying: {body:?}");
+
+    // Removing a seat mid-game would take its cards off the table with it — the way out of a
+    // started game is conceding, on the socket.
+    let (status, _, body) = send(
+        &app,
+        empty_with_bearer(
+            "DELETE",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{guest_seat}"),
+            &access,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "the host removing a seat: {body:?}");
+
+    // And nobody new sits down at a game in progress.
+    let (status, _, body) = send(
+        &app,
+        json_post(
+            &format!("/api/tools/mtg/play/rooms/{code}/join"),
+            json!({ "name": "Latecomer" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "joining: {body:?}");
+
+    // The public read still works — a started table is readable, just not editable.
+    let (status, _, body) = send(&app, get(&format!("/api/tools/mtg/play/rooms/{code}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "playing");
+}
+
+// ---------- Pasted lists: the cap, and the sections nobody shuffles in ----------
+
+#[tokio::test]
+async fn a_pasted_list_over_the_card_cap_is_refused_by_its_quantities() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let room = create_pod(&app, &access).await;
+    let code = code_of(&room);
+    let seat = seat_id_of(&room);
+    let name = sample_card_names(&app, 1).await.remove(0);
+
+    // One line asking for more cards than a table may hold. The refusal has to come from the
+    // arithmetic — building the vector first is the whole bug.
+    let over = MAX_DECK_CARDS + 1;
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{seat}/deck"),
+            &token_of(&room),
+            json!({ "source": "text", "text": format!("{over} {name}\n") }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "over the cap: {body:?}");
+    let message = body["error"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&MAX_DECK_CARDS.to_string()) && message.contains(&over.to_string()),
+        "the refusal names the cap and what was asked for: {body:?}"
+    );
+
+    // Exactly the cap still loads, so the bound is inclusive.
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{seat}/deck"),
+            &token_of(&room),
+            json!({ "source": "text", "text": format!("{MAX_DECK_CARDS} {name}\n") }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "exactly the cap: {body:?}");
+    assert_eq!(body["deck_card_count"], MAX_DECK_CARDS as i64);
+}
+
+#[tokio::test]
+async fn a_pasted_maybeboard_is_neither_shuffled_in_nor_resolved() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let room = create_pod(&app, &access).await;
+    let code = code_of(&room);
+    let seat = seat_id_of(&room);
+    let names = sample_card_names(&app, 2).await;
+
+    // A maybeboard is a shortlist of cards you are *not* playing: its copies stay out of the
+    // deck, and a name in it the catalog has never heard of is not an error.
+    let list = format!(
+        "Mainboard\n1 {}\n\nMaybeboard\n3 {}\n2 Definitely Not A Real Card\n",
+        names[0], names[1]
+    );
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{seat}/deck"),
+            &token_of(&room),
+            json!({ "source": "text", "text": list }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a list with a maybeboard: {body:?}");
+    assert_eq!(
+        body["deck_card_count"], 1,
+        "only the mainboard is shuffled in: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_name_in_a_sideboard_does_not_fail_the_list() {
+    let app = test_app_with_catalog().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let room = create_pod(&app, &access).await;
+    let code = code_of(&room);
+    let seat = seat_id_of(&room);
+    let names = sample_card_names(&app, 1).await;
+
+    let list = format!(
+        "Mainboard\n2 {}\n\nSideboard\n1 Definitely Not A Real Card\n",
+        names[0]
+    );
+    let (status, _, body) = send(
+        &app,
+        json_with_seat(
+            "POST",
+            &format!("/api/tools/mtg/play/rooms/{code}/seats/{seat}/deck"),
+            &token_of(&room),
+            json!({ "source": "text", "text": list }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a sideboard nobody shuffles in can name anything: {body:?}"
+    );
+    assert_eq!(body["deck_card_count"], 2);
 }
 
 // ---------- Leaving and closing ----------

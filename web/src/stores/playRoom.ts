@@ -49,6 +49,15 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
   const mySeatId = ref<number | null>(null)
   /** Why the server closed us for good (bad token, room deleted …), or null. */
   const closedReason = ref<string | null>(null)
+  /**
+   * The close code that came with it (`4003` a token this room doesn't know, `4004` the room
+   * or seat is gone, `4008` flooding), or null while we're connected.
+   *
+   * The reason is prose for the player; the code is what the *session* acts on — a rotated
+   * token is recoverable by re-joining, a deleted room is not, and only the code tells them
+   * apart (`composables/usePlayRoomSession.ts`).
+   */
+  const closedCode = ref<number | null>(null)
 
   // ---- lobby ----
   const room = ref<PlayRoomSummary | null>(null)
@@ -69,6 +78,17 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
   const lastError = ref<PlayError | null>(null)
   /** A monotonically increasing id stamped on outgoing actions, echoed on `error`. */
   let nextActionId = 1
+  /**
+   * True between asking for a `resync` and the snapshot that answers it.
+   *
+   * A version gap is rarely one frame: a tab that was throttled in the background comes back
+   * to a *burst* of patches, every one of which is out of order. One `resync` per gap fixes
+   * all of them — asking again per patch would send dozens, which the server answers with
+   * `error { code: "too_fast" }` (one resync per 2s) and, past `MAX_CONSECUTIVE_REJECTS`,
+   * a `4008` close. So while one is in flight the rest of the burst is dropped in silence;
+   * the snapshot that lands is the whole truth anyway.
+   */
+  let resyncPending = false
 
   const status = computed<PlayRoomStatus | null>(
     () => tableStatus.value ?? room.value?.status ?? null,
@@ -151,6 +171,8 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
   }
 
   function applySnapshot(snapshot: PlaySnapshot): void {
+    // Whatever gap we were waiting on, this is the answer to it.
+    resyncPending = false
     version.value = snapshot.version
     tableStatus.value = snapshot.status
     format.value = snapshot.format
@@ -168,7 +190,8 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
 
   function applyPatch(patch: PlayPatch): void {
     if (patch.version !== version.value + 1) {
-      socket?.send({ type: 'resync' })
+      // One ask per gap (see `resyncPending`); the rest of the burst is dropped silently.
+      if (!resyncPending && socket?.send({ type: 'resync' })) resyncPending = true
       return
     }
     version.value = patch.version
@@ -200,6 +223,10 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
     game.value = nextGame
     code.value = nextCode
     closedReason.value = null
+    closedCode.value = null
+    // A new socket is a new patch stream: whatever gap the old one had is moot, and the
+    // `hello` this one sends answers with a snapshot regardless.
+    resyncPending = false
     socket?.disconnect()
     socket = new PlaySocket(
       {
@@ -207,7 +234,8 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
         onConnection: (state) => {
           connection.value = state
         },
-        onClosed: (_code, reason) => {
+        onClosed: (code, reason) => {
+          closedCode.value = code
           closedReason.value = reason || closedReason.value || 'connection closed'
         },
       },
@@ -229,6 +257,8 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
     code.value = ''
     mySeatId.value = null
     closedReason.value = null
+    closedCode.value = null
+    resyncPending = false
     room.value = null
     version.value = 0
     tableStatus.value = null
@@ -254,6 +284,16 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
     return socket?.send({ type: 'start' }) ?? false
   }
 
+  /**
+   * Forget a close that has been dealt with — the session re-joining after a rotated token
+   * (`4003`), which is a recovery rather than an ending and must not leave "this room is no
+   * longer available" on screen behind the join card.
+   */
+  function clearClosed(): void {
+    closedReason.value = null
+    closedCode.value = null
+  }
+
   function clearPeek(): void {
     peek.value = null
   }
@@ -269,6 +309,7 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
     connection,
     mySeatId,
     closedReason,
+    closedCode,
     // lobby
     room,
     // table
@@ -298,6 +339,7 @@ export const usePlayRoomStore = defineStore('playRoom', () => {
     reset,
     send,
     start,
+    clearClosed,
     clearPeek,
     clearError,
     // exposed for tests

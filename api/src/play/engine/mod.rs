@@ -20,13 +20,27 @@
 //!   `library[0]` / `graveyard[0]` are the tops. `hand` appends at the end.
 //! - Bounds: `Draw.n`/`LookTop.n` ≤ `MAX_DRAW` (clamped to what is there), `Mulligan.hand_size`
 //!   ≤ `MAX_HAND_SIZE`, `Roll.sides` in 2..=1000, `Chat.text` 1..=`MAX_CHAT` chars after
-//!   trim, `Counter.name` 1..=`MAX_COUNTER_NAME`, `CreateToken.count` 1..=20, `x`/`y`
-//!   clamped into 0.0..=1.0, `Life.delta` ±1000 with life clamped to -999..=9999.
+//!   trim, `Counter.name` 1..=`MAX_COUNTER_NAME`, `CreateToken.count` 1..=20 (its text
+//!   fields and colour letters bounded in `cards::create_token`), `x`/`y` clamped into
+//!   0.0..=1.0. **Every `delta`** — `Life`, `PlayerCounter`, `CommanderDamage`, `Counter` —
+//!   is non-zero and ±[`MAX_LIFE_DELTA`], checked by [`valid_delta`] *before* any
+//!   arithmetic; totals then saturate and clamp (life into `MIN_LIFE..=MAX_LIFE`, every
+//!   other total into `0..=MAX_TOTAL`), so an `i32::MIN` / `i32::MAX` input can neither
+//!   panic nor wrap.
 //!
 //! The log is third-person and leak-free: a card nobody was shown is "a card" (hand →
 //! library, library → hand, anything going face down), a draw says how many rather than
 //! what, and `look_top` / `search_library` say only that they happened — the cards
-//! themselves ride the private [`Outcome::peek`].
+//! themselves ride the private [`Outcome::peek`]. **One hidden-label helper**: a line that
+//! names a card is built by `log::hidden_label` (the card where it sits) or
+//! `log::move_label` (the card crossing zones) — never by formatting `def.name` in an arm,
+//! so the next action cannot open a hole the two helpers closed. `cards::reveal` is the
+//! single deliberate exception, and only in the direction that makes the card public.
+//!
+//! The library is the one zone a client can address without being able to read it, so
+//! `MoveLibraryCard` / `ReorderTop` are restricted to the ids a peek actually showed the
+//! actor (`SeatState::peeked`, kept by `table`'s `set_peeked` / `clear_peeked` /
+//! `forget_peeked`); anything else answers `NoSuchCard`, exactly as a made-up id does.
 //!
 //! Pure: no I/O, no clocks (`now` is passed in), randomness through [`PlayRng`].
 //!
@@ -63,9 +77,20 @@ pub const MAX_TOKEN_COUNT: u32 = 20;
 pub const MIN_LIFE: i32 = -999;
 pub const MAX_LIFE: i32 = 9999;
 pub const MAX_LIFE_DELTA: i32 = 1000;
+/// The ceiling every other running total shares (player counters, commander damage taken,
+/// counters on a card); they floor at zero instead of [`MIN_LIFE`].
+pub const MAX_TOTAL: i32 = MAX_LIFE;
 /// Bounds on a `roll`.
 pub const MIN_DIE_SIDES: u32 = 2;
 pub const MAX_DIE_SIDES: u32 = 1000;
+
+/// Is this a `delta` a client may send? Every step — life, player counters, commander
+/// damage, counters on a card — is checked with this **before any arithmetic**: `i32::MIN`
+/// panics on `.abs()`, and an unbounded step added to a stored total overflows. With the
+/// step bounded, the totals only have to saturate and clamp.
+pub(super) fn valid_delta(delta: i32) -> bool {
+    delta != 0 && (-MAX_LIFE_DELTA..=MAX_LIFE_DELTA).contains(&delta)
+}
 
 /// What one applied action touched — the socket layer turns this into per-viewer patches.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -185,6 +210,7 @@ pub fn new_seat_state(
         counters: BTreeMap::new(),
         commander_damage: BTreeMap::new(),
         out: false,
+        peeked: Vec::new(),
         connections: 0,
         library: Vec::new(),
         hand: Vec::new(),

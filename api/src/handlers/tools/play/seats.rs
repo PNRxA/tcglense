@@ -29,8 +29,8 @@ use crate::state::AppState;
 use super::registry::touch_room;
 use super::tokens::{authorize_seat, generate_seat_token, seat_by_token, seat_token_from};
 use super::{
-    JoinRequest, LoadDeckRequest, SetReadyRequest, load_room, load_room_on, require_lobby,
-    seat_view, seats_of, summary_from, validate_display_name,
+    JoinRequest, LoadDeckRequest, SetReadyRequest, load_room, load_room_on, push_lobby,
+    require_lobby, seat_view, seats_of, summary_from, validate_display_name,
 };
 
 /// Take (or re-take) a seat at a table.
@@ -282,15 +282,6 @@ pub async fn leave_seat(
 }
 
 // ---------- Helpers ----------
-
-/// Re-read the room's seats and push the fresh lobby state at everyone watching.
-async fn push_lobby(state: &AppState, room: &play_room::Model) -> Result<(), AppError> {
-    let seats = seats_of(&state.db, room.id).await?;
-    state
-        .play
-        .push_lobby(room.id, summary_from(state, room, &seats));
-    Ok(())
-}
 
 /// The `JoinResponse` every join path answers with: the room as everyone sees it, the
 /// caller's seat, and the token that seat is held by.

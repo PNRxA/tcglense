@@ -1,5 +1,6 @@
 import { watch } from 'vue'
 import { useQueryClient, type QueryClient } from '@tanstack/vue-query'
+import { forgetAllSeatTokens } from '@/lib/playSeat'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -56,6 +57,10 @@ export function clearAuthedQueries(qc: QueryClient) {
  * for the same user), so a routine token refresh never clobbers the cache. The watcher
  * is not `immediate`: on first load there's nothing cached to clear, and the restored
  * session is the same identity. Mounted once, from App.vue.
+ *
+ * The play table's seat tokens go with it: they live in `localStorage`, not in the query
+ * cache, but they are the same kind of datum — per-identity proof that outlives a logout
+ * unless something drops it (`lib/playSeat.ts`).
  */
 export function useAuthCacheReset() {
   const qc = useQueryClient()
@@ -70,7 +75,11 @@ export function useAuthCacheReset() {
       // populated caches (that double-fetched every per-user query). A signed-out user
       // can't populate per-user cache anyway (useAuthedQuery is disabled while signed
       // out), so null→id never needs a wipe.
-      if (prevId !== null) clearAuthedQueries(qc)
+      if (prevId === null) return
+      clearAuthedQueries(qc)
+      // Seats are held by token, not by session, so a token left behind would seat the next
+      // identity in the previous one's chair the moment they open that room's link.
+      forgetAllSeatTokens()
     },
   )
 }

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import PlayClosedNotice from '@/components/play/PlayClosedNotice.vue'
 import PlayJoinCard from '@/components/play/PlayJoinCard.vue'
 import PlayLobby from '@/components/play/PlayLobby.vue'
 import { useGameName } from '@/composables/useCatalog'
@@ -65,6 +66,16 @@ async function leave() {
   await router.push(playPath(game.value))
 }
 
+/**
+ * Leaving the *table* is walking away from the screen, not giving up the seat: the token
+ * stays in storage and the room stays in the hub's list, so the invite link (or that list)
+ * brings them straight back to the same chair. Only the lobby's Leave, above, gets up.
+ */
+async function leaveTable() {
+  store.reset()
+  await router.push(playPath(game.value))
+}
+
 async function closeRoom() {
   await deleteRoom.mutateAsync({ game: game.value, code: code.value })
   session.clearSeat()
@@ -95,22 +106,25 @@ usePageMeta({
 <template>
   <!-- The table owns the viewport; every scrap of page chrome is gone while it's up. -->
   <div v-if="atTable" class="bg-background fixed inset-0 z-50 flex flex-col">
-    <PlayTable />
+    <PlayTable @leave="leaveTable" />
+    <!-- ...except the one message that must survive it: the room closing under the players. -->
+    <PlayClosedNotice
+      v-if="session.closedReason.value"
+      overlay
+      :reason="session.closedReason.value"
+      :back-to="playPath(game)"
+    />
   </div>
 
   <div v-else class="mx-auto max-w-5xl px-4 py-8">
     <PageBreadcrumbs :items="crumbs" />
 
     <!-- A room the server closed under us: say so, and offer the only useful next step. -->
-    <div v-if="session.closedReason.value" class="bg-card rounded-xl border p-8 text-center">
-      <p class="font-medium">This room is no longer available</p>
-      <p class="text-muted-foreground mx-auto mt-2 max-w-sm text-sm">
-        {{ session.closedReason.value }}
-      </p>
-      <Button class="mt-4" variant="outline" @click="router.push(playPath(game))">
-        Back to Play online
-      </Button>
-    </div>
+    <PlayClosedNotice
+      v-if="session.closedReason.value"
+      :reason="session.closedReason.value"
+      :back-to="playPath(game)"
+    />
 
     <div v-else-if="session.notFound.value" class="bg-card rounded-xl border p-8 text-center">
       <p class="font-medium">No such room</p>
@@ -124,6 +138,22 @@ usePageMeta({
     </div>
 
     <LoadingRow v-else-if="session.isLoading.value" label="Loading the room…" />
+
+    <!-- We hold a seat we couldn't claim *this second*. The token is still ours, so the only
+      thing on offer is trying again — joining afresh would take a second seat. -->
+    <div
+      v-else-if="session.phase.value === 'retry'"
+      class="bg-card rounded-xl border p-8 text-center"
+    >
+      <p class="font-medium">Couldn't reach your seat</p>
+      <p class="text-muted-foreground mx-auto mt-2 max-w-sm text-sm">
+        {{ session.error.value || 'The table is not answering right now.' }} Your seat is still
+        yours — try again in a moment.
+      </p>
+      <Button class="mt-4" :disabled="session.isJoining.value" @click="session.retry()">
+        Try again
+      </Button>
+    </div>
 
     <!-- Still working out which seat is ours: not a lobby yet, and definitely not a spectator. -->
     <LoadingRow v-else-if="session.phase.value === 'resolving'" label="Finding your seat…" />

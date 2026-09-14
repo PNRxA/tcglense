@@ -242,6 +242,14 @@ pub struct SeatState {
     pub commander_damage: BTreeMap<SeatId, i32>,
     /// Conceded / eliminated — still at the table, greyed out.
     pub out: bool,
+    /// The library cards a `look_top` / `search_library` has shown this seat, and so the
+    /// only library ids it may address (`MoveLibraryCard`, `ReorderTop`) — without it a
+    /// client that guessed or remembered an id could tutor silently or probe the top.
+    /// Cleared the moment the order it was shown stops holding (shuffle, mulligan, draw,
+    /// anything put into the library); an id that leaves the library is dropped from it.
+    /// Never leaves the server: no view carries it.
+    #[serde(default)]
+    pub peeked: Vec<CardId>,
     /// Live socket count, maintained by the registry (not persisted meaningfully).
     pub connections: u32,
     pub library: Vec<CardId>,

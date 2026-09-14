@@ -30,6 +30,16 @@ const table = usePlayTableContext()
 const filter = ref('')
 /** The peek's cards in the order the player has arranged them (case 2). */
 const ordered = ref<PlayCardView[]>([])
+/**
+ * Cards pulled out of this peek while it was open.
+ *
+ * A peek is a photograph of the library taken when the server answered; pulling a card to
+ * hand moves it *now*, and the photograph is instantly wrong. That matters most for
+ * `reorder_top`, which the engine refuses outright when the list names a card no longer in
+ * the library — so a Brainstorm that put one card in hand and then pressed "put back in this
+ * order" used to be rejected wholesale, losing the ordering the player had just done.
+ */
+const pulled = ref(new Set<number>())
 
 const state = computed(() => table.viewer.value)
 const peek = computed(() => table.store.peek)
@@ -42,6 +52,7 @@ watch(
   peek,
   (next) => {
     ordered.value = next ? [...next.cards] : []
+    pulled.value = new Set()
     filter.value = ''
   },
   { immediate: true },
@@ -58,8 +69,9 @@ const searchCards = computed<PlayCardView[]>(() => {
   const cards = [...(peek.value?.cards ?? [])].sort((a, b) =>
     cardName(a).localeCompare(cardName(b)),
   )
-  if (!needle) return cards
-  return cards.filter((card) => cardName(card).toLowerCase().includes(needle))
+  const remaining = cards.filter((card) => !pulled.value.has(card.id))
+  if (!needle) return remaining
+  return remaining.filter((card) => cardName(card).toLowerCase().includes(needle))
 })
 
 const cards = computed<PlayCardView[]>(() => {
@@ -99,7 +111,10 @@ function move(index: number, delta: number) {
 }
 
 function putBack() {
-  table.send({ type: 'reorder_top', cards: ordered.value.map((card) => card.id) })
+  // Only the cards still on top: `ordered` has already dropped whatever was pulled out, and
+  // an empty list is nothing to say at all.
+  const ids = ordered.value.map((card) => card.id)
+  if (ids.length > 0) table.send({ type: 'reorder_top', cards: ids })
   table.closeViewer()
 }
 
@@ -109,6 +124,10 @@ function pull(card: PlayCardView, zone: PlayZone, placement: 'top' | 'bottom' | 
     x: zone === 'battlefield' ? 0.5 : null,
     y: zone === 'battlefield' ? 0.5 : null,
   })
+  // It has left the library (or the top of it): drop it from both this dialog's lists, so
+  // what is on screen is what a `reorder_top` may still name.
+  ordered.value = ordered.value.filter((entry) => entry.id !== card.id)
+  pulled.value = new Set(pulled.value).add(card.id)
 }
 
 function onOpenChange(value: boolean) {

@@ -283,6 +283,21 @@ pub(crate) fn viewer_seat_for(seats: &[play_seat::Model], user_id: Option<i32>) 
         .map(|seat| seat.id)
 }
 
+/// Re-read a room's seats and push the fresh lobby state at everyone watching its socket.
+///
+/// The one builder of a pushed `lobby` frame: every REST write that changes who is at the
+/// table ends here, and so does a socket connecting or disconnecting while the room is still a
+/// lobby (presence there *is* the connection set, so the dots only move when this is sent).
+/// It goes through [`summary_from`] like the REST reads, so a page that polled and a page that
+/// was pushed can never disagree.
+pub(crate) async fn push_lobby(state: &AppState, room: &play_room::Model) -> Result<(), AppError> {
+    let seats = seats_of(&state.db, room.id).await?;
+    state
+        .play
+        .push_lobby(room.id, summary_from(state, room, &seats));
+    Ok(())
+}
+
 /// [`summary_for`] over seats the caller has already read (a write path that just wrote them
 /// shouldn't pay for a second query).
 pub(crate) fn summary_from(

@@ -433,6 +433,22 @@ export const PLAY_PHASES = [
 /** Bounds the table's own prompts honour, so a prompt can't ask for something 422-able. */
 export const PLAY_LOOK_TOP_MAX = 10
 export const PLAY_TOKEN_COUNT_MAX = 20
+/**
+ * The engine's `MAX_COUNTER_NAME`. A longer name is not truncated server-side — the whole
+ * `counter` action is refused — so the prompt clamps rather than letting a wordy counter
+ * ("commander tax this turn") come back as an error the player can't connect to what they
+ * typed.
+ */
+export const PLAY_COUNTER_NAME_MAX = 24
+
+/**
+ * How long a touch/pen press has to sit still before it is a long press rather than a tap.
+ *
+ * Mirrors reka-ui's `ContextMenuRoot` `pressOpenDelay` default: past this the card's context
+ * menu has opened under the finger, and the press that opened it must not *also* be read as a
+ * tap when it lifts.
+ */
+export const PLAY_LONG_PRESS_MS = 700
 
 /** Clamp an integer prompt answer into range, or null when it wasn't a number at all. */
 export function parseCount(raw: string | null, min: number, max: number): number | null {

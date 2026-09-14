@@ -185,15 +185,40 @@ function cardLabels(wrapper: ReturnType<typeof mount>): string[] {
     .filter(Boolean)
 }
 
+/** A `ResizeObserver` jsdom doesn't have, whose callback a test can fire by hand. */
+class FakeResizeObserver {
+  static instances: FakeResizeObserver[] = []
+  observed: Element[] = []
+
+  constructor(readonly callback: () => void) {
+    FakeResizeObserver.instances.push(this)
+  }
+
+  observe(el: Element) {
+    this.observed.push(el)
+  }
+
+  unobserve(el: Element) {
+    this.observed = this.observed.filter((entry) => entry !== el)
+  }
+
+  disconnect() {
+    this.observed = []
+  }
+}
+
 describe('PlayTable', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    FakeResizeObserver.instances = []
   })
 
   afterEach(() => {
     // The table holds window-level listeners (the drag machine, the shortcuts) and portals;
     // leaving one mounted would let it react to the next test's store.
     while (mounted.length) mounted.pop()?.unmount()
+    vi.unstubAllGlobals()
+    document.body.innerHTML = ''
   })
 
   it('renders my own hand as cards', () => {
@@ -373,6 +398,40 @@ describe('PlayTable', () => {
     await input.setValue('gg')
     input.element.closest('form')?.dispatchEvent(new Event('submit', { bubbles: true }))
     expect(send).toHaveBeenCalledWith({ type: 'chat', text: 'gg' })
+  })
+
+  it('re-fans the hand when its own box resizes, not just the window', async () => {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const { wrapper } = mountTable()
+
+    const hand = wrapper.find('[data-play-drop="hand"]')
+    const observer = FakeResizeObserver.instances.at(-1)
+    // Almost nothing that changes this row's width resizes the window: opening the log
+    // panel, an opponent strip gaining a row, a phone keyboard appearing. Watching `resize`
+    // alone left the hand fanned for a width it no longer had.
+    expect(observer?.observed).toContain(hand.element)
+
+    const row = () => wrapper.find('[data-play-drop="hand"] > div:last-child')
+    const before = row().attributes('style')
+    Object.defineProperty(hand.element, 'clientWidth', { value: 640, configurable: true })
+    observer?.callback()
+    await wrapper.vm.$nextTick()
+
+    expect(row().attributes('style')).not.toBe(before)
+  })
+
+  it('renders the card preview outside the table, above a dialog', async () => {
+    const { wrapper } = mountTable()
+
+    await wrapper.find('[aria-label="Sol Ring"]').trigger('pointerenter')
+
+    const preview = document.body.querySelector('[data-play-preview]')
+    expect(preview).not.toBeNull()
+    // "View larger" is reachable from inside the zone viewer, and a dialog portals to the
+    // body at `z-50`. A preview rendered in place is trapped in the table's own `z-50`
+    // stacking context, which puts the picture *behind* the dialog it was opened from.
+    expect(wrapper.element.contains(preview)).toBe(false)
+    expect(preview?.className).toContain('z-[60]')
   })
 
   it('leaves navigation to the view it is mounted in', async () => {

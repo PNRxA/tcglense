@@ -150,6 +150,24 @@ describe('PlaySocket', () => {
     expect(closed).toEqual([{ code: 4004, reason: 'the host closed this room' }])
   })
 
+  it('comes back from a 1011 — a server error is a hiccup, not an eviction', () => {
+    const { socket, sockets, latest, closed, states } = harness()
+    socket.connect('ws://x/ws', 'seat-token')
+    latest().open()
+
+    // 1011 is the server falling over mid-frame. It is outside the 4xxx range on purpose:
+    // the seat is still ours and the room is still there, so treating it as final would
+    // strand a whole pod on "this room is no longer available" after one restart.
+    latest().serverClose(1011, 'internal error')
+
+    expect(closed).toEqual([])
+    expect(states[states.length - 1]).toBe('reconnecting')
+    vi.advanceTimersByTime(RECONNECT_MIN_MS)
+    expect(sockets).toHaveLength(2)
+    latest().open()
+    expect(JSON.parse(latest().sent[0]!)).toEqual({ type: 'hello', seat_token: 'seat-token' })
+  })
+
   it('reports the close event reason when the server sent no closed frame', () => {
     const { socket, latest, closed } = harness()
     socket.connect('ws://x/ws', 'stale')

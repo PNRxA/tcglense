@@ -21,8 +21,16 @@
 //! Outside Commander there is no command zone, so the split is simply not applied — a
 //! `constructed` room shuffles the commander section into the library like any other card.
 //!
+//! A section that isn't shuffled in is skipped **before** anything else is decided about it:
+//! its cards are not counted, not resolved, and a name in it that the catalog doesn't know is
+//! not an error — a maybeboard is a shortlist of cards you are *not* sitting down with, and a
+//! list that carries one must still load.
+//!
 //! Unresolved names are a **422 listing them**, never a silently shorter deck: sitting down
 //! with 97 of your 100 cards and finding out mid-game is worse than being told now.
+//!
+//! The cap is counted from the **quantities**, before a single [`CardDef`] is built: a pasted
+//! `9999x Island` must be refused by arithmetic, not by first allocating what it asked for.
 
 use std::collections::HashMap;
 
@@ -36,7 +44,7 @@ use crate::entities::{
     card, deck_card, deck_section, play_room, play_seat, precon_deck_card, user,
 };
 use crate::error::AppError;
-use crate::handlers::decks::{DeckZone, deck_zone, load_deck};
+use crate::handlers::decks::{DeckZone, deck_zone, is_maybeboard_section_name, load_deck};
 use crate::handlers::precons::load_precon;
 use crate::handlers::shared::dto::stored_faces;
 use crate::play::types::{CardDef, CardFace, FORMAT_COMMANDER, MAX_DECK_CARDS};
@@ -82,12 +90,8 @@ pub(crate) async fn resolve_deck(
         }
     };
 
-    if resolved.cards.len() > MAX_DECK_CARDS {
-        return Err(AppError::Validation(format!(
-            "a deck may hold at most {MAX_DECK_CARDS} cards; this one has {}",
-            resolved.cards.len()
-        )));
-    }
+    // The cap itself is enforced inside `materialise`, on the summed quantities, so nothing
+    // oversized is ever built; this is only the "there is nothing to play with" half.
     if resolved.cards.is_empty() {
         return Err(AppError::Validation(
             "that deck has no cards to play with".to_string(),
@@ -132,8 +136,8 @@ async fn resolve_own_deck(
         .all(&state.db)
         .await?;
 
-    let mut cards = Vec::new();
-    for (row, card) in rows {
+    let mut counted: Vec<CountedRow<'_>> = Vec::new();
+    for (row, card) in &rows {
         let Some(card) = card else { continue };
         let Some(section) = sections.get(&row.section_id) else {
             continue;
@@ -144,9 +148,14 @@ async fn resolve_own_deck(
         }
         let is_commander = uses_command_zone && deck_zone(&section.name) == DeckZone::Command;
         // Both finishes of a printing are the same card at a manual table.
-        let copies = row.quantity.saturating_add(row.foil_quantity).max(0);
-        push_copies(&mut cards, &card, is_commander, copies);
+        let copies = row.quantity.saturating_add(row.foil_quantity);
+        counted.push(CountedRow {
+            card,
+            is_commander,
+            copies: copies_of(copies),
+        });
     }
+    let cards = materialise(&counted)?;
 
     Ok(ResolvedDeck {
         source: "deck",
@@ -173,15 +182,20 @@ async fn resolve_precon(
         .all(&state.db)
         .await?;
 
-    let mut cards = Vec::new();
-    for (row, card) in rows {
+    let mut counted: Vec<CountedRow<'_>> = Vec::new();
+    for (row, card) in &rows {
         let Some(card) = card else { continue };
         if row.board == PreconBoard::Side.as_str() {
             continue;
         }
         let is_commander = uses_command_zone && row.board == PreconBoard::Commander.as_str();
-        push_copies(&mut cards, &card, is_commander, row.quantity.max(0));
+        counted.push(CountedRow {
+            card,
+            is_commander,
+            copies: copies_of(row.quantity),
+        });
     }
+    let cards = materialise(&counted)?;
 
     Ok(ResolvedDeck {
         source: "precon",
@@ -216,10 +230,13 @@ async fn resolve_text(
     }
 
     // A pasted list has no printing key, so every line resolves by name to the newest
-    // printing — the same fallback a name-only deck-import row takes.
+    // printing — the same fallback a name-only deck-import row takes. Only the sections that
+    // are actually shuffled in are looked up: a name nobody is going to play is neither a
+    // catalog query nor, below, an error.
     let names: Vec<String> = parsed
         .rows
         .iter()
+        .filter(|row| !is_skipped_section(&row.section))
         .map(|row| row.card_name.clone())
         .filter(|name| !name.is_empty())
         .collect();
@@ -237,8 +254,14 @@ async fn resolve_text(
         .collect();
 
     let mut unresolved: Vec<String> = Vec::new();
-    let mut cards = Vec::new();
+    let mut counted: Vec<CountedRow<'_>> = Vec::new();
     for row in &parsed.rows {
+        // The section decides first: a maybeboard / sideboard / companion line is not part of
+        // this deck, so it is neither counted nor held against the list when the catalog has
+        // never heard of it.
+        if is_skipped_section(&row.section) {
+            continue;
+        }
         let resolved = by_name
             .get(&row.card_name)
             .and_then(|(id, _)| cards_by_id.get(id));
@@ -249,10 +272,11 @@ async fn resolve_text(
             continue;
         };
         let is_commander = uses_command_zone && deck_zone(&row.section) == DeckZone::Command;
-        if deck_zone(&row.section) == DeckZone::Sideboard {
-            continue;
-        }
-        push_copies(&mut cards, card, is_commander, row.quantity.max(0));
+        counted.push(CountedRow {
+            card,
+            is_commander,
+            copies: copies_of(row.quantity),
+        });
     }
 
     if !unresolved.is_empty() {
@@ -273,6 +297,8 @@ async fn resolve_text(
         )));
     }
 
+    let cards = materialise(&counted)?;
+
     Ok(ResolvedDeck {
         source: "text",
         deck_ref: None,
@@ -283,19 +309,56 @@ async fn resolve_text(
 
 // ---------- CardDef ----------
 
-/// Append `copies` identical definitions. Each copy is its own card at the table (they get
-/// distinct instance ids when the game starts), so the list is flat rather than counted.
-fn push_copies(out: &mut Vec<CardDef>, card: &card::Model, is_commander: bool, copies: i32) {
-    if copies <= 0 {
-        return;
+/// A resolved line of a decklist, still counted rather than expanded.
+struct CountedRow<'a> {
+    card: &'a card::Model,
+    is_commander: bool,
+    copies: usize,
+}
+
+/// A row's copy count as a non-negative `usize` (a negative quantity is nothing at all).
+fn copies_of(quantity: i32) -> usize {
+    usize::try_from(quantity).unwrap_or(0)
+}
+
+/// Whether a section of a **pasted list** sits beside the deck rather than in it.
+///
+/// The text grammar normalises its headers (`known_section_header`), so `Sideboard` and
+/// `Companion` arrive as the spellings [`deck_zone`] already calls a sideboard and
+/// `Maybeboard` / `Considering` arrive as `Maybeboard` — which `deck_zone` would otherwise
+/// read as an ordinary main-deck section, because a stored deck keeps that fact in its
+/// `is_maybeboard` **column** rather than in the section's name. Both halves are read through
+/// the seams that own them, so "not shuffled in" means one thing across all three sources.
+fn is_skipped_section(section: &str) -> bool {
+    deck_zone(section) == DeckZone::Sideboard || is_maybeboard_section_name(section)
+}
+
+/// Expand counted rows into the flat `Vec<CardDef>` a seat stores — **after** checking the
+/// total against [`MAX_DECK_CARDS`].
+///
+/// The order matters: a pasted `9999x Island` is refused by summing the quantities, so the
+/// vector that would have held them is never allocated. Each copy is its own card at the table
+/// (they get distinct instance ids when the game starts), which is why the list is flat.
+fn materialise(rows: &[CountedRow<'_>]) -> Result<Vec<CardDef>, AppError> {
+    let total = rows
+        .iter()
+        .fold(0usize, |sum, row| sum.saturating_add(row.copies));
+    if total > MAX_DECK_CARDS {
+        return Err(AppError::Validation(format!(
+            "a deck may hold at most {MAX_DECK_CARDS} cards; this one has {total}"
+        )));
     }
-    // Bounded here as well as at the caller so one absurd `99999x Island` line can't build a
-    // huge vector before the total check sees it.
-    let copies = copies.min(MAX_DECK_CARDS as i32) as usize;
-    let def = card_def(card, is_commander);
-    for _ in 0..copies {
-        out.push(def.clone());
+    let mut out = Vec::with_capacity(total);
+    for row in rows {
+        if row.copies == 0 {
+            continue;
+        }
+        let def = card_def(row.card, row.is_commander);
+        for _ in 0..row.copies {
+            out.push(def.clone());
+        }
     }
+    Ok(out)
 }
 
 /// A catalog row as the table sees it. Lean on purpose — the image is fetched through the

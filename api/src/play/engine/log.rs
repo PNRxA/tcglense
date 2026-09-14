@@ -4,17 +4,31 @@
 //! The log is public — every seat and every spectator reads the same lines — so the two
 //! naming helpers here are the seam that keeps hidden information hidden. A card the table
 //! was never shown is "a card"; a face-down permanent is "a face-down card".
+//!
+//! **One hidden-label helper.** Every log line that names a card goes through
+//! [`hidden_label`] (the card as it stands) or [`move_label`] (the card as it crosses
+//! zones, which decides on the source and destination instead). No arm may format
+//! `card.def.name` into a log line itself: the one exception is `cards::reveal`, where
+//! naming the card *is* the action, and it names it only in the `revealed: true`
+//! branch. A new action that can name a card is a new caller of these two, never a new
+//! rule — the view (`view::card_view`) hides exactly what they hide, and the two must stay
+//! in step.
 
 use chrono::{DateTime, Utc};
 
 use crate::play::types::{CardInstance, LogEntry, LogKind, MAX_LOG, RoomState, SeatId, Zone};
 
-/// A battlefield card the table can't see is never named in the log.
-pub(super) fn battlefield_label(card: &CardInstance) -> String {
-    if card.zone == Zone::Battlefield && card.face_down {
-        "a face-down card".to_string()
-    } else {
-        card.def.name.clone()
+/// How the log names a card *where it sits*: anything the table has not been shown is
+/// unnamed. A face-down permanent is "a face-down card" (everyone can see something is
+/// there); a card in a hand that its seat has not `revealed`, and any library card, are
+/// "a card". Everything else — the battlefield face up, a graveyard, exile, the command
+/// zone — is public, and named.
+pub(super) fn hidden_label(card: &CardInstance) -> String {
+    match card.zone {
+        Zone::Battlefield if card.face_down => "a face-down card".to_string(),
+        Zone::Hand if !card.revealed => "a card".to_string(),
+        Zone::Library => "a card".to_string(),
+        _ => card.def.name.clone(),
     }
 }
 
@@ -63,7 +77,10 @@ pub(super) fn settle_log(state: &mut RoomState, len_before: usize) -> usize {
     state.log.len().saturating_sub(added)
 }
 
-/// How the log names a card that moved, without leaking what nobody was shown.
+/// How the log names a card that moved, without leaking what nobody was shown — the
+/// crossing-zones half of [`hidden_label`]: a card whose source *and* destination are both
+/// hidden (or that is going face down) was never shown to the table and stays "a card",
+/// while one landing somewhere public is named, because everyone is about to see it.
 pub(super) fn move_label(
     name: &str,
     from: Zone,

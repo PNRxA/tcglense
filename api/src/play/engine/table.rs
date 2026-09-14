@@ -66,6 +66,40 @@ pub(super) fn controlled(
     Ok(card)
 }
 
+// ---------- What a seat has been shown of its own library ----------
+//
+// A library id is not addressable just because the actor owns it: `MoveLibraryCard` and
+// `ReorderTop` reach into a zone nobody may read, so the engine tracks what a peek actually
+// showed this seat (`SeatState::peeked`) and refuses anything else as `NoSuchCard` — the
+// same answer a made-up id gets, so guessing tells a client nothing.
+
+/// Record exactly what a peek showed (`look_top` = the top n, `search_library` = all of it).
+pub(super) fn set_peeked(state: &mut RoomState, seat: SeatId, ids: Vec<CardId>) {
+    if let Some(pos) = seat_pos(state, seat) {
+        state.seats[pos].peeked = ids;
+    }
+}
+
+/// Forget the whole peek: the order the seat was shown no longer holds (a shuffle, a
+/// mulligan, a draw off the top, anything put back into the library).
+pub(super) fn clear_peeked(state: &mut RoomState, seat: SeatId) {
+    if let Some(pos) = seat_pos(state, seat) {
+        state.seats[pos].peeked.clear();
+    }
+}
+
+/// Drop one id — it has left the library, so it is addressable the ordinary way now.
+pub(super) fn forget_peeked(state: &mut RoomState, seat: SeatId, id: CardId) {
+    if let Some(pos) = seat_pos(state, seat) {
+        state.seats[pos].peeked.retain(|c| *c != id);
+    }
+}
+
+/// Was this library card shown to `seat`?
+pub(super) fn was_peeked(state: &RoomState, seat: SeatId, id: CardId) -> bool {
+    seat_pos(state, seat).is_some_and(|pos| state.seats[pos].peeked.contains(&id))
+}
+
 pub(super) fn zone_vec_mut(seat: &mut SeatState, zone: Zone) -> &mut Vec<CardId> {
     match zone {
         Zone::Library => &mut seat.library,

@@ -13,7 +13,9 @@ import {
 import { usePlayRoomStore } from '@/stores/playRoom'
 import { useWakeLock, type WakeLock } from '@/composables/useWakeLock'
 import {
+  PLAY_COUNTER_NAME_MAX,
   PLAY_DEFAULT_DROP,
+  PLAY_LONG_PRESS_MS,
   PLAY_LOOK_TOP_MAX,
   exceedsDragThreshold,
   menuActionsFor,
@@ -33,14 +35,15 @@ import type { PlayAction, PlayCardView, PlayPlacement, PlayZone } from '@/lib/ap
  * through provide/inject rather than threaded as props through eight components. There is
  * exactly one instance per table.
  *
- * Three things here are worth reading before changing them:
+ * Five things here are worth reading before changing them:
  *
  * 1. **A press is not yet a gesture.** Every card is both a button (click = tap) and a draggable
  *    object, and the two can only be told apart by what the pointer does next. So a pointerdown
  *    records an origin and captures the pointer, a pointermove past
  *    {@link PLAY_DRAG_THRESHOLD} promotes it to a drag, and a pointerup decides: no promotion
  *    means the press was a click. Without the threshold every tap on a touchscreen would also
- *    write a position.
+ *    write a position. A press that opened the card's context menu (a long press on touch) is
+ *    spent: it is that gesture, and not also a tap.
  * 2. **Drop targets are discovered, not registered.** A drop is resolved by asking the document
  *    what is under the pointer (`elementFromPoint` → the nearest `[data-play-drop]`), which
  *    means a new drop target is one attribute on a div and nothing here changes. The drag ghost
@@ -49,7 +52,11 @@ import type { PlayAction, PlayCardView, PlayPlacement, PlayZone } from '@/lib/ap
  *    most every {@link POSITION_THROTTLE_MS} so the table stays live for everyone else without
  *    flooding the socket, and always sends a final one on drop — the throttled stream is a
  *    nicety, the commit is the truth.
- * 4. **A finished game is a record, not a table.** Every verb that would change the game is
+ * 4. **Shortcuts belong to the table, not to whatever is on top of it.** A single letter acts
+ *    on the card under the pointer, so the keyboard stands down entirely while a dialog, sheet
+ *    or menu is open (see {@link overlayOpen}) and ignores auto-repeat — the two ways a
+ *    shortcut turns into something nobody asked for.
+ * 5. **A finished game is a record, not a table.** Every verb that would change the game is
  *    gated on `canAct` here as well as disabled in the UI, so a keyboard shortcut, a stale
  *    click and a drag already in flight all stop at the same line. Chat, the log and looking
  *    through a pile keep working — that is what people do immediately after a game ends.
@@ -76,6 +83,10 @@ export interface PlayDragState {
   /** The dragged card's on-screen size, so the ghost matches it. */
   width: number
   height: number
+  /** `mouse` / `touch` / `pen` — only the latter two can become a long press. */
+  pointerType: string
+  /** When the press began (`Date.now()`), so its duration can be measured on the way up. */
+  startedAt: number
 }
 
 /** What the zone viewer is currently showing. */
@@ -173,6 +184,30 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
 
+/**
+ * True while something modal owns the screen: a dialog (the zone viewer, the token and attach
+ * dialogs, the concede confirm), the log sheet, or an open card/table menu.
+ *
+ * Single-letter shortcuts act on whatever the pointer last touched, which is exactly the wrong
+ * thing to do while a player is reading their library or picking a token: moving the pointer
+ * across an open dialog leaves `hoveredId` on a card behind it, so `S` would shuffle the very
+ * library they are in the middle of searching. Keys that belong to an overlay (Escape, arrows,
+ * Enter on a menu item) are the overlay's own, and reka handles them.
+ *
+ * The preview is the one exception, and carries `data-play-preview` to say so: it is a picture
+ * that follows the pointer around the table rather than something that takes the screen, and
+ * gating shortcuts on a hover would turn every shortcut off whenever a card is under the
+ * pointer — which is to say, always.
+ */
+function overlayOpen(): boolean {
+  if (typeof document === 'undefined') return false
+  return (
+    document.querySelector(
+      '[role="dialog"]:not([data-play-preview]),[role="alertdialog"],[role="menu"]',
+    ) !== null
+  )
+}
+
 /** Create the table engine and provide it to the subtree. Called once, by `PlayTable`. */
 export function usePlayTable(): PlayTableApi {
   const store = usePlayRoomStore()
@@ -251,6 +286,8 @@ export function usePlayTable(): PlayTableApi {
   // ---- pointer gestures --------------------------------------------------------------
 
   let lastPositionAt = 0
+  /** The card a context menu opened on while its press was still in flight. */
+  let menuCardId: number | null = null
 
   /** What is under this point that accepts a drop, if anything. */
   function dropTargetAt(x: number, y: number): { zone: PlayZone; seatId: number | null } | null {
@@ -296,6 +333,21 @@ export function usePlayTable(): PlayTableApi {
     send({ type: 'set_position', card: state.cardId, x: point.x, y: point.y })
   }
 
+  /**
+   * Whether this press has already been spent opening the card's context menu.
+   *
+   * A long press on touch is *one* gesture that produces two events: the menu opens under the
+   * finger (a `contextmenu` on Android, reka's own `pressOpenDelay` timer everywhere else) and
+   * then the finger lifts, which the drag machine would otherwise read as a press that never
+   * travelled — i.e. a tap. Tapping a permanent taps it, so a long press used to open the menu
+   * *and* tap the card behind it, with the menu's own "Tap" entry then untapping it.
+   */
+  function pressWasLongPress(state: PlayDragState): boolean {
+    if (menuCardId === state.cardId) return true
+    const touchish = state.pointerType === 'touch' || state.pointerType === 'pen'
+    return touchish && Date.now() - state.startedAt >= PLAY_LONG_PRESS_MS
+  }
+
   function finishDrag(event: PointerEvent) {
     const state = drag.value
     drag.value = null
@@ -304,8 +356,11 @@ export function usePlayTable(): PlayTableApi {
     const card = store.card(state.cardId)
     if (!card) return
     if (!state.moved) {
-      // A press that never travelled: a click. On the battlefield that's tap/untap; anywhere
-      // else it is just a selection (the menu and double-click carry the verbs there).
+      // A press that never travelled: a click, unless it was long enough to be the gesture
+      // that opened the menu — that one is already spent.
+      if (pressWasLongPress(state)) return
+      // On the battlefield a click is tap/untap; anywhere else it is just a selection (the
+      // menu and double-click carry the verbs there).
       selectedId.value = card.id
       if (state.zone === 'battlefield' && isMine(card)) tapCard(card)
       return
@@ -342,16 +397,26 @@ export function usePlayTable(): PlayTableApi {
     detachPointer()
   }
 
+  function onContextMenu() {
+    const state = drag.value
+    if (state) menuCardId = state.cardId
+  }
+
   function attachPointer() {
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', finishDrag)
     window.addEventListener('pointercancel', onPointerCancel)
+    // Capture: the trigger calls `preventDefault()` on its own handler, and a listener that
+    // waited for the bubble phase would still see it — but capture keeps this independent of
+    // whether anything downstream stops propagation.
+    window.addEventListener('contextmenu', onContextMenu, true)
   }
 
   function detachPointer() {
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', finishDrag)
     window.removeEventListener('pointercancel', onPointerCancel)
+    window.removeEventListener('contextmenu', onContextMenu, true)
   }
 
   function startCardDrag(event: PointerEvent, card: PlayCardView, zone: PlayZone) {
@@ -370,10 +435,13 @@ export function usePlayTable(): PlayTableApi {
       }
     }
     hoveredId.value = card.id
+    menuCardId = null
     drag.value = {
       cardId: card.id,
       zone,
       moved: false,
+      pointerType: event.pointerType || 'mouse',
+      startedAt: Date.now(),
       originX: event.clientX,
       originY: event.clientY,
       x: event.clientX,
@@ -541,9 +609,14 @@ export function usePlayTable(): PlayTableApi {
         addCounter(card, 'loyalty', -1)
         return
       case 'counter_custom': {
-        const name = window.prompt('Counter name', 'charge')?.trim()
+        const answer = window.prompt('Counter name', 'charge')?.trim()
+        if (!answer) return
+        // Past `PLAY_COUNTER_NAME_MAX` the engine refuses the action rather than truncating
+        // it, so clamp here; `trimEnd` because a cut mid-phrase leaves a trailing space, and
+        // "poison " is a second counter as far as the map on the card is concerned.
+        const name = answer.slice(0, PLAY_COUNTER_NAME_MAX).trimEnd()
         if (!name) return
-        addCounter(card, name.slice(0, 32), 1)
+        addCounter(card, name, 1)
         return
       }
       case 'reveal':
@@ -602,9 +675,23 @@ export function usePlayTable(): PlayTableApi {
 
   function onKeyDown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+    // A held key repeats ~30×/s. Every verb here is a socket frame, so an `S` leant on for a
+    // second is thirty shuffles, `too_fast`, and a 4008 close — and none of them is a verb
+    // anyone means more than once.
+    if (event.repeat) return
     // Chat is a text field on the same screen as every single-letter shortcut, so typing
     // must never be interpreted as a table command.
     if (isTypingTarget(event.target)) return
+    // Escape dismisses the preview whatever else is up, and whether or not the game is still
+    // on — a pinned card is readable long after the last action, and must stay closable.
+    if (event.key === 'Escape') {
+      if (preview.value) {
+        event.preventDefault()
+        closePreview()
+      }
+      return
+    }
+    if (overlayOpen()) return
     if (store.status !== 'playing') return
     const card = focusCard.value
     switch (event.key.toLowerCase()) {
@@ -637,12 +724,6 @@ export function usePlayTable(): PlayTableApi {
         if (!store.isMyTurn || isActivatableTarget(event.target)) return
         event.preventDefault()
         passTurn()
-        return
-      case 'escape':
-        if (preview.value) {
-          event.preventDefault()
-          closePreview()
-        }
         return
     }
   }

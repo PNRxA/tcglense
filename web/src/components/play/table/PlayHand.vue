@@ -16,6 +16,13 @@ import type { PlayCardView } from '@/lib/api/play'
 //
 // Double-click plays a card to the middle of the board; dragging plays it where you dropped
 // it. Both exist because both are habits people bring from other tables.
+//
+// The fan is measured off the hand's **own box**, with a `ResizeObserver` rather than a window
+// `resize` listener: most of what changes this row's width never resizes the window. Opening
+// the log panel, the opponent strip gaining a row, a phone's keyboard appearing — each one
+// takes hundreds of pixels off the hand while `window.innerWidth` sits still, and a fan
+// computed for the old width either overflows its box or leaves half of it empty until
+// something else happens to trigger a re-measure.
 const table = usePlayTableContext()
 const el = ref<HTMLElement | null>(null)
 const width = ref(0)
@@ -27,11 +34,25 @@ function measure() {
   width.value = el.value?.clientWidth ?? 0
 }
 
+let observer: ResizeObserver | null = null
+
 onMounted(() => {
   measure()
+  if (typeof ResizeObserver !== 'undefined' && el.value) {
+    observer = new ResizeObserver(measure)
+    observer.observe(el.value)
+    return
+  }
+  // No ResizeObserver (an old browser, or a test environment): the window is the only signal
+  // left, and a hand that re-fans on rotation is better than one that never re-fans at all.
   window.addEventListener('resize', measure)
 })
-onBeforeUnmount(() => window.removeEventListener('resize', measure))
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = null
+  window.removeEventListener('resize', measure)
+})
 
 const cards = computed<PlayCardView[]>(() => {
   const seatId = table.store.mySeatId

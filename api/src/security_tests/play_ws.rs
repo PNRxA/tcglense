@@ -13,8 +13,12 @@
 use std::net::SocketAddr;
 
 use futures_util::{SinkExt, StreamExt};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
+
+use crate::entities::play_room;
+use crate::entities::prelude::PlayRoom;
 
 use super::harness::*;
 
@@ -70,6 +74,27 @@ impl Client {
             .send(Message::text(message.to_string()))
             .await
             .expect("send frame");
+    }
+
+    /// A send that tolerates the server having already closed the socket — what a flood test
+    /// needs, because the close lands somewhere in the middle of the frames it is writing.
+    async fn try_send(&mut self, message: Value) -> bool {
+        self.socket
+            .send(Message::text(message.to_string()))
+            .await
+            .is_ok()
+    }
+
+    /// Read until a frame of `kind` satisfies `want`, so a test can wait for the state it
+    /// cares about without depending on how many presence frames arrived first.
+    async fn next_matching(&mut self, kind: &str, want: impl Fn(&Value) -> bool) -> Value {
+        for _ in 0..20 {
+            let frame = self.next().await;
+            if frame["type"] == kind && want(&frame) {
+                return frame;
+            }
+        }
+        panic!("no matching `{kind}` frame arrived");
     }
 
     /// Say hello and return the first frame back.
@@ -192,12 +217,17 @@ async fn table_ready() -> (Served, String, (String, i64), (String, i64)) {
 
 /// The seat entry of a snapshot / patch by id.
 fn seat_in<'a>(frame: &'a Value, key: &str, seat: i64) -> &'a Value {
-    frame[key]["seats"]
+    seat_of(&frame[key], seat)
+}
+
+/// The seat entry of a bare snapshot / patch body (one that isn't wrapped in a frame).
+fn seat_of(body: &Value, seat: i64) -> &Value {
+    body["seats"]
         .as_array()
         .expect("seats")
         .iter()
         .find(|s| s["id"].as_i64() == Some(seat))
-        .unwrap_or_else(|| panic!("seat {seat} missing from the {key}"))
+        .unwrap_or_else(|| panic!("seat {seat} missing"))
 }
 
 // ---------- The handshake ----------
@@ -579,4 +609,161 @@ async fn closing_the_room_closes_every_socket_on_it() {
     let frame = host.next().await;
     assert_eq!(frame["type"], "__close");
     assert_eq!(frame["code"], 4004);
+}
+
+// ---------- The flood ceiling, the throttle, and presence ----------
+
+#[tokio::test]
+async fn a_flood_of_pings_is_metered_like_an_action_and_then_closed() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let (code, token, _) = open_table(&app, &access).await;
+    let served = serve(app).await;
+
+    let mut client = Client::connect(&served, &code).await;
+    assert_eq!(client.hello(Some(&token)).await["type"], "lobby");
+
+    // `ping` is the cheapest frame there is, which is exactly why it must cost a token: a
+    // bucket that only meters `action` is not a ceiling on anything.
+    let flood = crate::handlers::tools::play::ws::MAX_CONSECUTIVE_REJECTS as usize + 200;
+    for _ in 0..flood {
+        if !client.try_send(json!({ "type": "ping" })).await {
+            break;
+        }
+    }
+
+    // Somewhere in there the bucket empties, the answers turn into `too_fast`, and the
+    // connection that kept going is closed 4008 rather than answered forever.
+    let mut saw_too_fast = false;
+    let mut closed = None;
+    for _ in 0..2_000 {
+        let Some(frame) = client.try_next().await else {
+            break;
+        };
+        match frame["type"].as_str() {
+            Some("error") if frame["code"] == "too_fast" => saw_too_fast = true,
+            Some("__close") => {
+                closed = frame["code"].as_u64();
+                break;
+            }
+            _ => continue,
+        }
+    }
+    assert!(saw_too_fast, "the flood was answered, not silently dropped");
+    assert_eq!(closed, Some(4008), "and then closed for flooding");
+}
+
+#[tokio::test]
+async fn a_resync_is_throttled_so_it_cannot_be_used_as_an_amplifier() {
+    let (served, code, (host_token, _), _) = table_ready().await;
+
+    let mut host = Client::connect(&served, &code).await;
+    host.hello(Some(&host_token)).await;
+    host.send(json!({ "type": "start" })).await;
+    host.next_of("snapshot").await;
+
+    // One snapshot per gap is the contract; a second in the same breath costs the server a
+    // whole table and buys the client nothing, so it is refused rather than served.
+    host.send(json!({ "type": "resync" })).await;
+    assert_eq!(host.next_of("snapshot").await["snapshot"]["status"], "playing");
+    host.send(json!({ "type": "resync" })).await;
+    let error = host.next_of("error").await;
+    assert_eq!(error["code"], "too_fast", "a second resync: {error:?}");
+}
+
+#[tokio::test]
+async fn opening_and_closing_a_socket_moves_the_lobby_dots() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let (code, host_token, _) = open_table(&app, &access).await;
+    let (guest_token, guest_seat) = seat_guest(&app, &code, "Bob").await;
+    let served = serve(app).await;
+
+    let mut host = Client::connect(&served, &code).await;
+    assert_eq!(host.hello(Some(&host_token)).await["type"], "lobby");
+
+    // A lobby has no table to record presence on, so the only way the dots move is a fresh
+    // `lobby` frame — built the same way every REST write builds one.
+    let mut guest = Client::connect(&served, &code).await;
+    guest.hello(Some(&guest_token)).await;
+    host.next_matching("lobby", |frame| {
+        seat_in(frame, "room", guest_seat)["connected"] == json!(true)
+    })
+    .await;
+
+    // …and it goes out again when they close the tab.
+    drop(guest);
+    host.next_matching("lobby", |frame| {
+        seat_in(frame, "room", guest_seat)["connected"] == json!(false)
+    })
+    .await;
+}
+
+// ---------- Durability ----------
+
+#[tokio::test]
+async fn a_swept_table_comes_back_out_of_the_row_with_nobody_connected() {
+    let (served, code, (host_token, host_seat), (guest_token, guest_seat)) = table_ready().await;
+
+    let mut host = Client::connect(&served, &code).await;
+    host.hello(Some(&host_token)).await;
+    let mut guest = Client::connect(&served, &code).await;
+    guest.hello(Some(&guest_token)).await;
+    host.send(json!({ "type": "start" })).await;
+    host.next_of("snapshot").await;
+    guest.next_of("snapshot").await;
+
+    // One applied action, so what is written back is a *played* table rather than the deal.
+    host.send(json!({
+        "type": "action",
+        "action": { "type": "draw", "n": 1 }
+    }))
+    .await;
+    let version = host.next_of("patch").await["patch"]["version"]
+        .as_u64()
+        .expect("version");
+
+    // The sweeper is the whole durability story: run one tick by hand.
+    let db = served.app.state.db.clone();
+    served.app.state.play.sweep(&db).await;
+
+    let row = PlayRoom::find()
+        .filter(play_room::Column::Code.eq(code.as_str()))
+        .one(&db)
+        .await
+        .expect("read the room row")
+        .expect("the room row");
+    assert_eq!(row.status, "playing", "a started game is `playing` in the row");
+    assert!(
+        row.state.as_deref().is_some_and(|json| !json.is_empty()),
+        "the table was written back"
+    );
+
+    // Now drop the live room (what eviction does) and hydrate it again from that column.
+    served.app.state.play.forget(row.id);
+    let room = served.app.state.play.room_for(&row);
+    let snapshot = room
+        .snapshot_for(Some(host_seat as i32))
+        .await
+        .expect("a hydrated table, not a lobby");
+    let snapshot = serde_json::to_value(&snapshot).expect("snapshot as json");
+
+    assert_eq!(
+        snapshot["version"], version,
+        "the reloaded table is the one that was played: {snapshot:?}"
+    );
+    assert_eq!(
+        seat_of(&snapshot, host_seat)["hand_count"],
+        8,
+        "including the card that was drawn: {snapshot:?}"
+    );
+    // Presence is a property of *this* process, never of the row: a hydrated table starts
+    // with nobody connected, whatever the column happened to hold.
+    for seat in [host_seat, guest_seat] {
+        assert_eq!(
+            seat_of(&snapshot, seat)["connected"],
+            json!(false),
+            "seat {seat} came back connected"
+        );
+    }
 }

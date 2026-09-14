@@ -362,6 +362,8 @@ fn mulligan_returns_the_hand_and_redraws() {
 fn reorder_top_rewrites_the_prefix() {
     let (mut state, mut rng) = started(2);
     let top: Vec<CardId> = seat_of(&state, ALICE).library[0..3].to_vec();
+    // Only cards a peek showed may be rearranged.
+    act(&mut state, &mut rng, ALICE, Action::LookTop { n: 3 });
     let flipped = vec![top[2], top[0], top[1]];
     act(
         &mut state,
@@ -382,6 +384,7 @@ fn reorder_top_rewrites_the_prefix() {
 fn reorder_top_refuses_anything_but_the_exact_top() {
     let (mut state, mut rng) = started(2);
     let library = seat_of(&state, ALICE).library.clone();
+    act(&mut state, &mut rng, ALICE, Action::LookTop { n: 6 });
     let deeper = vec![library[0], library[5]];
     assert!(matches!(
         fails(
@@ -412,6 +415,33 @@ fn reorder_top_refuses_anything_but_the_exact_top() {
         ActionError::Invalid(_)
     ));
     assert_eq!(seat_of(&state, ALICE).library, library);
+}
+
+#[test]
+fn reorder_top_refuses_cards_the_seat_was_never_shown() {
+    let (mut state, mut rng) = started(2);
+    let top: Vec<CardId> = seat_of(&state, ALICE).library[0..2].to_vec();
+    let swap = |cards: &[CardId]| Action::ReorderTop {
+        cards: cards.to_vec(),
+    };
+    // Guessing the ids is not the same as having looked: it reads as a bad id.
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, swap(&[top[1], top[0]])),
+        ActionError::NoSuchCard
+    );
+    assert_eq!(seat_of(&state, ALICE).library[0..2], top[..]);
+
+    act(&mut state, &mut rng, ALICE, Action::LookTop { n: 2 });
+    act(&mut state, &mut rng, ALICE, swap(&[top[1], top[0]]));
+    assert_eq!(seat_of(&state, ALICE).library[0..2], [top[1], top[0]][..]);
+
+    // A shuffle takes the permission away again.
+    act(&mut state, &mut rng, ALICE, Action::Shuffle);
+    let fresh: Vec<CardId> = seat_of(&state, ALICE).library[0..2].to_vec();
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, swap(&[fresh[1], fresh[0]])),
+        ActionError::NoSuchCard
+    );
 }
 
 // ---------- Moving ----------
@@ -616,6 +646,8 @@ fn move_card_treats_a_library_card_as_unknown() {
 fn move_library_card_lifts_a_card_out_of_the_middle() {
     let (mut state, mut rng) = started(2);
     let deep = seat_of(&state, ALICE).library[5];
+    // A tutor is a search first: only what a peek showed is addressable.
+    act(&mut state, &mut rng, ALICE, Action::SearchLibrary);
     act(
         &mut state,
         &mut rng,
@@ -633,12 +665,14 @@ fn move_library_card_lifts_a_card_out_of_the_middle() {
     assert_eq!(alice.library.len(), 12);
     assert!(!alice.library.contains(&deep));
     assert_eq!(*alice.hand.last().unwrap(), deep);
+    assert!(!alice.peeked.contains(&deep), "it left the library");
     assert_eq!(last_log(&state), "Alice moved a card to the hand");
 }
 
 #[test]
 fn move_library_card_refuses_cards_outside_the_actors_library() {
     let (mut state, mut rng) = started(2);
+    act(&mut state, &mut rng, ALICE, Action::SearchLibrary);
     let in_hand = seat_of(&state, ALICE).hand[0];
     let bobs = seat_of(&state, BOB).library[0];
     let call = |card| Action::MoveLibraryCard {
@@ -657,6 +691,79 @@ fn move_library_card_refuses_cards_outside_the_actors_library() {
         fails(&mut state, &mut rng, ALICE, call(bobs)),
         ActionError::NotYourCard
     );
+}
+
+#[test]
+fn move_library_card_refuses_a_card_no_peek_showed() {
+    let (mut state, mut rng) = started(2);
+    let deep = seat_of(&state, ALICE).library[5];
+    let call = |card: CardId| Action::MoveLibraryCard {
+        card,
+        zone: Zone::Hand,
+        placement: None,
+        x: None,
+        y: None,
+        face_down: None,
+    };
+    // A remembered or guessed id answers exactly as a made-up one does.
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, call(deep)),
+        ActionError::NoSuchCard
+    );
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, call(4_000_000_001)),
+        ActionError::NoSuchCard
+    );
+    assert_eq!(seat_of(&state, ALICE).library.len(), 13);
+
+    // Looking at the top three does not make the sixth card addressable.
+    act(&mut state, &mut rng, ALICE, Action::LookTop { n: 3 });
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, call(deep)),
+        ActionError::NoSuchCard
+    );
+    let shown = seat_of(&state, ALICE).library[0];
+    act(&mut state, &mut rng, ALICE, call(shown));
+    assert_eq!(card_of(&state, shown).zone, Zone::Hand);
+    assert!(!seat_of(&state, ALICE).peeked.contains(&shown));
+}
+
+#[test]
+fn a_peek_is_forgotten_once_the_library_moves_on() {
+    let call = |card: CardId| Action::MoveLibraryCard {
+        card,
+        zone: Zone::Hand,
+        placement: None,
+        x: None,
+        y: None,
+        face_down: None,
+    };
+    // Everything that makes the order a search showed stop holding.
+    type Disturbance = (&'static str, fn(&RoomState) -> Action);
+    let disturbances: [Disturbance; 4] = [
+        ("a shuffle", |_| Action::Shuffle),
+        ("a draw", |_| Action::Draw { n: 1 }),
+        ("a mulligan", |_| Action::Mulligan { hand_size: 7 }),
+        ("a card put back", |state| {
+            mv(seat_of(state, ALICE).hand[0], Zone::Library)
+        }),
+    ];
+    for (what, disturb) in disturbances {
+        let (mut state, mut rng) = started(2);
+        act(&mut state, &mut rng, ALICE, Action::SearchLibrary);
+        assert_eq!(seat_of(&state, ALICE).peeked.len(), 13);
+        let action = disturb(&state);
+        act(&mut state, &mut rng, ALICE, action);
+        assert!(
+            seat_of(&state, ALICE).peeked.is_empty(),
+            "{what} left a stale peek"
+        );
+        let deep = seat_of(&state, ALICE).library[3];
+        assert_eq!(
+            fails(&mut state, &mut rng, ALICE, call(deep)),
+            ActionError::NoSuchCard
+        );
+    }
 }
 
 #[test]
@@ -805,6 +912,66 @@ fn toggle_face_only_flips_a_card_with_two_faces() {
 }
 
 #[test]
+fn toggle_face_never_names_a_card_the_view_hides() {
+    let (mut state, mut rng) = started(2);
+    // Reading the back of an MDFC in hand is allowed — naming it in the public log is not.
+    let dfc = seat_of(&state, ALICE).hand[0];
+    state.cards.get_mut(&dfc).unwrap().def = double_faced("Delver");
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::ToggleFace { card: dfc },
+    );
+    assert_eq!(card_of(&state, dfc).face_index, 1);
+    assert_eq!(last_log(&state), "Alice transformed a card");
+
+    // Revealed, it is public, so it is named.
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::Reveal {
+            card: dfc,
+            revealed: true,
+        },
+    );
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::ToggleFace { card: dfc },
+    );
+    assert_eq!(last_log(&state), "Alice transformed Delver");
+
+    // Face down on the battlefield, it is a face-down card to everyone (hand[0] is still
+    // the revealed Delver, so take the next card along).
+    let hidden = seat_of(&state, ALICE).hand[1];
+    let name = card_of(&state, hidden).def.name.clone();
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::MoveCard {
+            card: hidden,
+            zone: Zone::Battlefield,
+            placement: None,
+            x: Some(0.3),
+            y: Some(0.3),
+            face_down: Some(true),
+        },
+    );
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::ToggleFace { card: hidden },
+    );
+    assert_eq!(last_log(&state), "Alice turned a face-down card over");
+    assert!(!last_log(&state).contains(&name));
+}
+
+#[test]
 fn set_face_down_is_battlefield_only() {
     let (mut state, mut rng) = started(2);
     let in_hand = seat_of(&state, ALICE).hand[0];
@@ -874,6 +1041,38 @@ fn counters_add_and_are_removed_at_zero() {
         ),
         ActionError::Invalid(_)
     ));
+}
+
+#[test]
+fn counters_are_battlefield_only() {
+    let (mut state, mut rng) = started(2);
+    let in_hand = seat_of(&state, ALICE).hand[0];
+    let counter = |card: CardId| Action::Counter {
+        card,
+        name: "+1/+1".to_string(),
+        delta: 1,
+    };
+    // Like `tap`: a card in a hidden zone is not counted on, so the log never has to
+    // name one.
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, counter(in_hand)),
+        ActionError::WrongZone
+    );
+    assert!(card_of(&state, in_hand).counters.is_empty());
+
+    act(&mut state, &mut rng, ALICE, mv(in_hand, Zone::Graveyard));
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, counter(in_hand)),
+        ActionError::WrongZone
+    );
+    let commander = commander_of(&state, ALICE);
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, counter(commander)),
+        ActionError::WrongZone
+    );
+    let played = play_from_hand(&mut state, &mut rng, ALICE, 0);
+    act(&mut state, &mut rng, ALICE, counter(played));
+    assert_eq!(card_of(&state, played).counters.get("+1/+1"), Some(&1));
 }
 
 #[test]
@@ -1105,6 +1304,93 @@ fn clone_card_makes_a_token_copy_beside_the_original() {
     );
 }
 
+#[test]
+fn create_token_bounds_every_field_it_is_given() {
+    let (mut state, mut rng) = started(2);
+    let token = |name: &str,
+                 card_id: Option<String>,
+                 power_toughness: Option<String>,
+                 colors: Vec<String>| Action::CreateToken {
+        name: name.to_string(),
+        card_id,
+        type_line: None,
+        power_toughness,
+        colors,
+        x: 0.5,
+        y: 0.5,
+        count: 1,
+    };
+    for action in [
+        token("   ", None, None, vec![]),
+        token(&"x".repeat(500), None, None, vec![]),
+        token("Soldier", Some("e".repeat(200)), None, vec![]),
+        token("Soldier", None, Some("9".repeat(40)), vec![]),
+        token("Soldier", None, None, vec!["purple".to_string()]),
+        token("Soldier", None, None, vec!["W".to_string(), "".to_string()]),
+    ] {
+        assert!(matches!(
+            fails(&mut state, &mut rng, ALICE, action),
+            ActionError::Invalid(_)
+        ));
+    }
+    assert!(seat_of(&state, ALICE).battlefield.is_empty());
+
+    // Colour letters are normalised and deduplicated.
+    let out = act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        token(
+            " Soldier ",
+            None,
+            Some("1/1".to_string()),
+            vec!["w".to_string(), "W".to_string(), "G".to_string()],
+        ),
+    );
+    let id = *out.changes.cards.iter().next().expect("a token");
+    assert_eq!(
+        card_of(&state, id).def.colors,
+        vec!["W".to_string(), "G".to_string()]
+    );
+}
+
+#[test]
+fn cloning_a_face_down_card_copies_it_face_down_and_unnamed() {
+    let (mut state, mut rng) = started(2);
+    let id = seat_of(&state, ALICE).hand[0];
+    let name = card_of(&state, id).def.name.clone();
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::MoveCard {
+            card: id,
+            zone: Zone::Battlefield,
+            placement: None,
+            x: Some(0.3),
+            y: Some(0.3),
+            face_down: Some(true),
+        },
+    );
+    let out = act(&mut state, &mut rng, ALICE, Action::CloneCard { card: id });
+    let copy_id = *out
+        .changes
+        .cards
+        .iter()
+        .find(|c| **c != id)
+        .expect("a copy");
+    let copy = card_of(&state, copy_id);
+    assert!(copy.face_down, "the copy is face down too");
+    assert_eq!(copy.face_index, 0);
+    assert!(copy.def.is_token);
+    assert_eq!(last_log(&state), "Alice copied a face-down card");
+    assert!(!last_log(&state).contains(&name));
+    for viewer in [Some(BOB), None] {
+        let theirs = view::card_view(card_of(&state, copy_id), viewer).expect("visible as an id");
+        assert!(theirs.def.is_none(), "the copy hides what the original hid");
+    }
+}
+
 // ---------- Seat state ----------
 
 #[test]
@@ -1129,6 +1415,91 @@ fn life_moves_and_clamps() {
         fails(&mut state, &mut rng, ALICE, Action::Life { delta: 5000 }),
         ActionError::Invalid(_)
     ));
+}
+
+#[test]
+fn an_extreme_delta_is_refused_before_any_arithmetic() {
+    let (mut state, mut rng) = started(2);
+    let id = play_from_hand(&mut state, &mut rng, ALICE, 0);
+    for delta in [i32::MIN, i32::MAX, -1001, 1001, 0] {
+        for action in [
+            Action::Life { delta },
+            Action::PlayerCounter {
+                name: "poison".to_string(),
+                delta,
+            },
+            Action::CommanderDamage {
+                from_seat: BOB,
+                delta,
+            },
+            Action::Counter {
+                card: id,
+                name: "+1/+1".to_string(),
+                delta,
+            },
+        ] {
+            assert!(
+                matches!(
+                    fails(&mut state, &mut rng, ALICE, action),
+                    ActionError::Invalid(_)
+                ),
+                "delta {delta}"
+            );
+        }
+    }
+    assert_eq!(seat_of(&state, ALICE).life, 40);
+    assert!(seat_of(&state, ALICE).counters.is_empty());
+    assert!(seat_of(&state, ALICE).commander_damage.is_empty());
+    assert!(card_of(&state, id).counters.is_empty());
+}
+
+#[test]
+fn running_totals_clamp_instead_of_overflowing() {
+    let (mut state, mut rng) = started(2);
+    let id = play_from_hand(&mut state, &mut rng, ALICE, 0);
+    let steps = |delta: i32| {
+        [
+            Action::PlayerCounter {
+                name: "energy".to_string(),
+                delta,
+            },
+            Action::CommanderDamage {
+                from_seat: BOB,
+                delta,
+            },
+            Action::Counter {
+                card: id,
+                name: "charge".to_string(),
+                delta,
+            },
+        ]
+    };
+    for _ in 0..12 {
+        for action in steps(1000) {
+            act(&mut state, &mut rng, ALICE, action);
+        }
+    }
+    assert_eq!(
+        seat_of(&state, ALICE).counters.get("energy"),
+        Some(&engine::MAX_TOTAL)
+    );
+    assert_eq!(
+        seat_of(&state, ALICE).commander_damage.get(&BOB),
+        Some(&engine::MAX_TOTAL)
+    );
+    assert_eq!(
+        card_of(&state, id).counters.get("charge"),
+        Some(&engine::MAX_TOTAL)
+    );
+
+    for _ in 0..12 {
+        for action in steps(-1000) {
+            act(&mut state, &mut rng, ALICE, action);
+        }
+    }
+    assert!(seat_of(&state, ALICE).counters.is_empty());
+    assert!(seat_of(&state, ALICE).commander_damage.is_empty());
+    assert!(card_of(&state, id).counters.is_empty());
 }
 
 #[test]
@@ -1521,6 +1892,49 @@ fn a_face_down_permanent_hides_its_definition_from_everyone_else() {
         assert!(theirs.def.is_none());
         assert!(theirs.face_down);
         assert_eq!(theirs.id, id);
+    }
+}
+
+#[test]
+fn a_face_down_permanent_blanks_its_face_and_stats_but_keeps_its_counters() {
+    let (mut state, mut rng) = started(2);
+    let id = play_from_hand(&mut state, &mut rng, ALICE, 0);
+    act(
+        &mut state,
+        &mut rng,
+        ALICE,
+        Action::Counter {
+            card: id,
+            name: "+1/+1".to_string(),
+            delta: 2,
+        },
+    );
+    {
+        let card = state.cards.get_mut(&id).expect("the card");
+        card.def = double_faced("Delver");
+        card.face_down = true;
+        card.face_index = 1;
+        card.power_toughness = Some("3/3".to_string());
+    }
+
+    let mine = view::card_view(card_of(&state, id), Some(ALICE)).expect("visible to me");
+    assert_eq!(mine.face_index, 1);
+    assert_eq!(mine.power_toughness.as_deref(), Some("3/3"));
+
+    for viewer in [Some(BOB), None] {
+        let theirs = view::card_view(card_of(&state, id), viewer).expect("visible as an id");
+        assert!(theirs.def.is_none());
+        assert!(theirs.face_down);
+        assert_eq!(
+            theirs.face_index, 0,
+            "which face is up is part of what it is"
+        );
+        assert_eq!(theirs.power_toughness, None, "a printed 3/3 is a tell");
+        assert_eq!(
+            theirs.counters.get("+1/+1"),
+            Some(&2),
+            "counters sit on top of the card in paper"
+        );
     }
 }
 

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forgetSeatToken, playSeatKey, recallSeatToken, rememberSeatToken } from '@/lib/playSeat'
+import {
+  forgetAllSeatTokens,
+  forgetSeatToken,
+  playSeatKey,
+  recallSeatToken,
+  rememberSeatToken,
+} from '@/lib/playSeat'
 
 // A seat token is the only proof a guest holds a seat, so the two things worth pinning are the
 // two ways this module could lose one: a key that doesn't round-trip (a code cased differently
@@ -63,5 +69,44 @@ describe('remember/recall/forget', () => {
       throw new Error('blocked')
     })
     expect(() => forgetSeatToken('mtg', 'ABC234')).not.toThrow()
+  })
+})
+
+describe('forgetAllSeatTokens', () => {
+  it('drops every room\'s token and nothing else in storage', () => {
+    rememberSeatToken('mtg', 'ABC234', 'token-a')
+    rememberSeatToken('mtg', 'XYZ789', 'token-b')
+    rememberSeatToken('lorcana', 'QQQ111', 'token-c')
+    localStorage.setItem('tcglense_theme', 'dark')
+
+    forgetAllSeatTokens()
+
+    // A seat token is an identity, and the identity behind this browser just changed: every
+    // one of these would sit the next user in someone else's chair.
+    expect(recallSeatToken('mtg', 'ABC234')).toBeNull()
+    expect(recallSeatToken('mtg', 'XYZ789')).toBeNull()
+    expect(recallSeatToken('lorcana', 'QQQ111')).toBeNull()
+    // Everything else this app keeps in storage is not per-identity and must survive.
+    expect(localStorage.getItem('tcglense_theme')).toBe('dark')
+  })
+
+  it('removes every match rather than every other one', () => {
+    // Removing while walking `key(i)` re-indexes the store under the loop; with five keys that
+    // classically leaves two behind — and a seat token left behind is the whole bug.
+    for (const code of ['AAA111', 'BBB222', 'CCC333', 'DDD444', 'EEE555']) {
+      rememberSeatToken('mtg', code, `token-${code}`)
+    }
+
+    forgetAllSeatTokens()
+
+    expect(localStorage.length).toBe(0)
+  })
+
+  it('swallows a storage failure', () => {
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    rememberSeatToken('mtg', 'ABC234', 'token-a')
+    expect(() => forgetAllSeatTokens()).not.toThrow()
   })
 })

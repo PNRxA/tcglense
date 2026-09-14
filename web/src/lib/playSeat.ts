@@ -55,3 +55,28 @@ export function forgetSeatToken(game: string, code: string): void {
     // Nothing to do: an unreadable store is also an unwritable one.
   }
 }
+
+/**
+ * Drop **every** remembered seat token, for every room.
+ *
+ * A seat token is an identity: the server issues it to whoever joined, and a signed-in
+ * player's seat is re-derived from their account. So when the identity behind this browser
+ * changes — a logout, or a switch to another account — the tokens left in storage belong to
+ * someone else's seats, and replaying one would sit the new user down in the previous one's
+ * chair (the play half of issue #177). `useAuthCacheReset` calls this beside the query wipe.
+ *
+ * Keys are collected before removing any of them: removing during the `key(i)` walk
+ * re-indexes the store and would skip every other match.
+ */
+export function forgetAllSeatTokens(): void {
+  try {
+    const doomed: string[] = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith(`${PREFIX}:`)) doomed.push(key)
+    }
+    for (const key of doomed) localStorage.removeItem(key)
+  } catch {
+    // Storage unavailable: there is nothing persisted to forget.
+  }
+}

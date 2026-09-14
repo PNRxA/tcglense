@@ -5,7 +5,10 @@
 //! list holds it, applies the battlefield resets, deletes a token that left the battlefield,
 //! detaches whatever was strapped to it, and puts it down at the placement asked for. The
 //! two public doors differ only in where the card is allowed to start — `move_card` refuses
-//! a library card as unknown, `move_library_card` requires one.
+//! a library card as unknown, `move_library_card` requires one *that a peek has shown the
+//! actor* (`SeatState::peeked`, kept by `table`'s helpers): the library is the one zone a
+//! client may address without being able to see it, so anything it was not shown reads back
+//! as `NoSuchCard`.
 
 use std::collections::BTreeSet;
 
@@ -13,8 +16,8 @@ use chrono::{DateTime, Utc};
 
 use crate::play::engine::log::{cards_phrase, move_label, push_log, zone_label};
 use crate::play::engine::table::{
-    clamp01, controlled, holder_of, remove_from_zone, require_seat, seat_name, seat_pos,
-    zone_vec_mut,
+    clamp01, clear_peeked, controlled, forget_peeked, holder_of, remove_from_zone, require_seat,
+    seat_name, seat_pos, set_peeked, was_peeked, zone_vec_mut,
 };
 use crate::play::engine::{ActionError, Changes};
 use crate::play::rng::PlayRng;
@@ -46,6 +49,8 @@ pub(super) fn draw(
         changes.cards.insert(*id);
     }
     state.seats[pos].hand.extend_from_slice(&drawn);
+    // A draw comes off the top: whatever a peek showed is no longer where it was.
+    state.seats[pos].peeked.clear();
     changes.seats.insert(actor);
     let text = if take == 0 {
         format!("{who} tried to draw from an empty library")
@@ -70,6 +75,7 @@ pub(super) fn shuffle(
     let mut library = std::mem::take(&mut state.seats[pos].library);
     rng.shuffle(&mut library);
     state.seats[pos].library = library;
+    state.seats[pos].peeked.clear();
     changes.seats.insert(actor);
     push_log(
         state,
@@ -117,6 +123,7 @@ pub(super) fn mulligan(
     }
     state.seats[pos].library = library;
     state.seats[pos].hand = hand;
+    state.seats[pos].peeked.clear();
     changes.seats.insert(actor);
     push_log(
         state,
@@ -153,7 +160,9 @@ pub(super) fn move_card(
     Ok(())
 }
 
-/// Move a card a peek showed the actor, out of their own library.
+/// Move a card a peek showed the actor, out of their own library. A card the actor was
+/// *not* shown is `NoSuchCard` — indistinguishable from an id that never existed, so a
+/// client cannot tutor from, or probe, a library it has not read.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn move_library_card(
     state: &mut RoomState,
@@ -174,6 +183,9 @@ pub(super) fn move_library_card(
     if instance.owner != actor {
         return Err(ActionError::NotYourCard);
     }
+    if !was_peeked(state, actor, card) {
+        return Err(ActionError::NoSuchCard);
+    }
     move_card_core(
         state, actor, card, zone, placement, x, y, face_down, now, changes,
     );
@@ -181,7 +193,9 @@ pub(super) fn move_library_card(
     Ok(())
 }
 
-/// Put the cards a peek showed back on top in the given order (the tail of a scry).
+/// Put the cards a peek showed back on top in the given order (the tail of a scry). Every
+/// id must be one this seat was shown, or it reads as `NoSuchCard` — the order of a library
+/// nobody looked at is not something a client may rearrange, or learn by trying.
 pub(super) fn reorder_top(
     state: &mut RoomState,
     actor: SeatId,
@@ -197,6 +211,9 @@ pub(super) fn reorder_top(
     let unique: BTreeSet<CardId> = cards.iter().copied().collect();
     if unique.len() != cards.len() {
         return Err(ActionError::Invalid("those cards repeat"));
+    }
+    if cards.iter().any(|id| !was_peeked(state, actor, *id)) {
+        return Err(ActionError::NoSuchCard);
     }
     let library = &state.seats[pos].library;
     if cards.len() > library.len() {
@@ -246,6 +263,7 @@ pub(super) fn look_top(
         .filter_map(|id| state.cards.get(id))
         .map(full_card_view)
         .collect();
+    set_peeked(state, actor, ids);
     push_log(
         state,
         now,
@@ -276,6 +294,9 @@ pub(super) fn search_library(
         .filter_map(|id| state.cards.get(id))
         .map(full_card_view)
         .collect();
+    // A search shows the whole library, so every card in it is addressable until the
+    // order changes.
+    set_peeked(state, actor, ids);
     push_log(
         state,
         now,
@@ -384,6 +405,14 @@ fn move_card_core(
                 Placement::Bottom => list.push(id),
             },
         }
+    }
+    // The peek is only good while the order it showed holds: a card that left the library
+    // is addressable the ordinary way now, and a card put *into* one invalidates the rest.
+    if from == Zone::Library {
+        forget_peeked(state, owner, id);
+    }
+    if to == Zone::Library {
+        clear_peeked(state, destination);
     }
     changes.cards.insert(id);
     push_log(state, now, LogKind::Action, Some(actor), text);

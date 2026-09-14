@@ -246,6 +246,38 @@ describe('snapshot then patches', () => {
     expect(store.card(10)).toBeDefined()
   })
 
+  it('asks once per gap, however many out-of-order patches arrive', () => {
+    const store = connectedStore()
+    store.handleMessage({ type: 'snapshot', snapshot: snapshot() })
+
+    // A tab that was throttled in the background wakes to the whole burst it missed, and
+    // every frame in it is out of order. One resync answers all of them; one *per patch* is
+    // a flood the server answers with `too_fast` and then a 4008 close.
+    for (const version of [8, 9, 10, 11]) {
+      store.handleMessage({ type: 'patch', patch: patch({ version }) })
+    }
+
+    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(
+      1,
+    )
+    expect(store.version).toBe(5)
+  })
+
+  it('asks again for the next gap once the snapshot has landed', () => {
+    const store = connectedStore()
+    store.handleMessage({ type: 'snapshot', snapshot: snapshot() })
+    store.handleMessage({ type: 'patch', patch: patch({ version: 8 }) })
+    // The snapshot is the answer, so the next gap is a new question — the latch must not
+    // leave the table stuck one dropped frame behind forever.
+    store.handleMessage({ type: 'snapshot', snapshot: snapshot({ version: 8 }) })
+
+    store.handleMessage({ type: 'patch', patch: patch({ version: 12 }) })
+
+    expect(socket.frames().filter((f) => JSON.stringify(f) === '{"type":"resync"}')).toHaveLength(
+      2,
+    )
+  })
+
   it('recovers from the gap when the fresh snapshot lands', () => {
     const store = connectedStore()
     store.handleMessage({ type: 'snapshot', snapshot: snapshot() })
@@ -320,6 +352,19 @@ describe('errors, peeks and teardown', () => {
     const store = connectedStore()
     store.handleMessage({ type: 'closed', reason: 'the host closed this room' })
     expect(store.closedReason).toBe('the host closed this room')
+  })
+
+  it('keeps the close code beside the reason, and lets a recovery clear both', () => {
+    const store = connectedStore()
+    // The reason is prose for the player; only the code says whether this is recoverable.
+    socket.onclose?.({ code: 4003, reason: 'that seat token is not for this room' })
+
+    expect(store.closedCode).toBe(4003)
+    expect(store.closedReason).toBe('that seat token is not for this room')
+
+    store.clearClosed()
+    expect(store.closedCode).toBeNull()
+    expect(store.closedReason).toBeNull()
   })
 
   it('reset drops the table so the next room starts clean', () => {

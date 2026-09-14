@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::play::engine::log::push_log;
 use crate::play::engine::table::{require_host, require_seat, seat_name, seat_pos, turn_order};
-use crate::play::engine::{ActionError, Changes, MAX_LIFE, MAX_LIFE_DELTA, MIN_LIFE};
+use crate::play::engine::{ActionError, Changes, MAX_LIFE, MAX_TOTAL, MIN_LIFE, valid_delta};
 use crate::play::engine::{MAX_DIE_SIDES, MIN_DIE_SIDES};
 use crate::play::rng::PlayRng;
 use crate::play::types::{
@@ -24,7 +24,8 @@ pub(super) fn life(
     changes: &mut Changes,
 ) -> Result<(), ActionError> {
     let who = seat_name(state, actor);
-    if delta == 0 || delta.abs() > MAX_LIFE_DELTA {
+    // Bounded before anything touches it: `i32::MIN.abs()` panics.
+    if !valid_delta(delta) {
         return Err(ActionError::Invalid("that life change is out of bounds"));
     }
     let pos = require_seat(state, actor)?;
@@ -40,13 +41,14 @@ pub(super) fn life(
         now,
         LogKind::Action,
         Some(actor),
-        format!("{who} {verb} {} life ({life})", delta.abs()),
+        format!("{who} {verb} {} life ({life})", delta.unsigned_abs()),
     );
 
     Ok(())
 }
 
-/// One of [`PLAYER_COUNTERS`]; the result floors at zero, and zero removes the key.
+/// One of [`PLAYER_COUNTERS`]; the result floors at zero (which removes the key) and
+/// clamps at [`MAX_TOTAL`].
 pub(super) fn player_counter(
     state: &mut RoomState,
     actor: SeatId,
@@ -60,12 +62,18 @@ pub(super) fn player_counter(
     if !PLAYER_COUNTERS.contains(&name.as_str()) {
         return Err(ActionError::Invalid("no such player counter"));
     }
-    if delta == 0 || delta.abs() > MAX_LIFE_DELTA {
+    if !valid_delta(delta) {
         return Err(ActionError::Invalid("that counter change is out of bounds"));
     }
     let pos = require_seat(state, actor)?;
     let seat = &mut state.seats[pos];
-    let total = (seat.counters.get(&name).copied().unwrap_or(0) + delta).max(0);
+    let total = seat
+        .counters
+        .get(&name)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(delta)
+        .clamp(0, MAX_TOTAL);
     if total == 0 {
         seat.counters.remove(&name);
     } else {
@@ -83,7 +91,8 @@ pub(super) fn player_counter(
     Ok(())
 }
 
-/// Commander damage the actor **took** from `from_seat`'s commander.
+/// Commander damage the actor **took** from `from_seat`'s commander; the total floors at
+/// zero (which removes the entry) and clamps at [`MAX_TOTAL`].
 pub(super) fn commander_damage(
     state: &mut RoomState,
     actor: SeatId,
@@ -93,14 +102,20 @@ pub(super) fn commander_damage(
     changes: &mut Changes,
 ) -> Result<(), ActionError> {
     let who = seat_name(state, actor);
-    if delta == 0 || delta.abs() > MAX_LIFE_DELTA {
+    if !valid_delta(delta) {
         return Err(ActionError::Invalid("that damage change is out of bounds"));
     }
     let source = seat_pos(state, from_seat).ok_or(ActionError::NoSuchSeat)?;
     let source_name = state.seats[source].name.clone();
     let pos = require_seat(state, actor)?;
     let seat = &mut state.seats[pos];
-    let total = (seat.commander_damage.get(&from_seat).copied().unwrap_or(0) + delta).max(0);
+    let total = seat
+        .commander_damage
+        .get(&from_seat)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(delta)
+        .clamp(0, MAX_TOTAL);
     if total == 0 {
         seat.commander_damage.remove(&from_seat);
     } else {

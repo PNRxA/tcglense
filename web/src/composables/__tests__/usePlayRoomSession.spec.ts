@@ -7,6 +7,7 @@ import { ApiError } from '@/lib/api'
 import type { PlayJoinResponse, PlayRoomSummary, PlaySeatView } from '@/lib/api/play'
 import { usePlayRoomSession, type PlayRoomSession } from '@/composables/usePlayRoomSession'
 import { rememberSeatToken, recallSeatToken } from '@/lib/playSeat'
+import type { SocketLike } from '@/lib/playSocket'
 import { usePlayRoomStore } from '@/stores/playRoom'
 
 // Getting into a room is the feature's whole funnel, and each branch of it is a way to lose a
@@ -66,6 +67,8 @@ function joinResponse(token: string, seat: PlaySeatView = SEAT): PlayJoinRespons
 }
 
 const mounted: Array<ReturnType<typeof mount>> = []
+/** Every fake socket the store opened, newest last — how a test plays the server's goodbye. */
+let sockets: SocketLike[] = []
 
 /** Mount the composable with a fake socket, and hand the caller its state. */
 function mountSession(code = 'ABC234'): PlayRoomSession & { codeRef: Ref<string> } {
@@ -75,15 +78,19 @@ function mountSession(code = 'ABC234'): PlayRoomSession & { codeRef: Ref<string>
     setup() {
       const store = usePlayRoomStore()
       // No real WebSocket in jsdom; the store only needs something that looks like one.
-      store.useSocketFactory(() => ({
-        readyState: 1,
-        send: () => {},
-        close: () => {},
-        onopen: null,
-        onmessage: null,
-        onclose: null,
-        onerror: null,
-      }))
+      store.useSocketFactory(() => {
+        const socket: SocketLike = {
+          readyState: 1,
+          send: () => {},
+          close: () => {},
+          onopen: null,
+          onmessage: null,
+          onclose: null,
+          onerror: null,
+        }
+        sockets.push(socket)
+        return socket
+      })
       session = usePlayRoomSession(ref('mtg'), codeRef)
       return () => null
     },
@@ -96,6 +103,11 @@ function mountSession(code = 'ABC234'): PlayRoomSession & { codeRef: Ref<string>
   return { ...session, codeRef }
 }
 
+/** The server hanging up on the current connection, the way `PlaySocket` hears it. */
+function serverClose(code: number, reason = ''): void {
+  sockets[sockets.length - 1]?.onclose?.({ code, reason })
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
@@ -103,6 +115,7 @@ beforeEach(() => {
   auth.sessionResolved = true
   getPlayRoom.mockReset().mockResolvedValue(ROOM)
   joinPlayRoom.mockReset()
+  sockets = []
 })
 
 afterEach(() => {
@@ -138,6 +151,53 @@ describe('usePlayRoomSession', () => {
     expect(joinPlayRoom.mock.calls[1]?.[2]).toEqual({})
     expect(session.phase.value).toBe('seated')
     expect(recallSeatToken('mtg', 'ABC234')).toBe('fresh-token')
+  })
+
+  it('keeps a token the server could not answer for, and offers to try again', async () => {
+    rememberSeatToken('mtg', 'ABC234', 'my-token')
+    joinPlayRoom.mockRejectedValue(new ApiError('service unavailable', 503))
+
+    const session = mountSession()
+    await flushPromises()
+
+    // A 5xx (or a dead connection) says nothing about the seat. Falling through to a fresh
+    // join would take a SECOND seat and leave the first one occupied by a ghost — the one
+    // failure a player cannot undo themselves — so the token stays and `retry()` is the verb.
+    expect(joinPlayRoom).toHaveBeenCalledTimes(1)
+    expect(recallSeatToken('mtg', 'ABC234')).toBe('my-token')
+    expect(session.phase.value).toBe('retry')
+    expect(session.error.value).toBe('service unavailable')
+
+    joinPlayRoom.mockResolvedValue(joinResponse('my-token'))
+    session.retry()
+    await flushPromises()
+
+    expect(joinPlayRoom).toHaveBeenLastCalledWith('mtg', 'ABC234', { seat_token: 'my-token' })
+    expect(session.phase.value).toBe('seated')
+  })
+
+  it('keeps the token when the join fails with no status at all (offline)', async () => {
+    rememberSeatToken('mtg', 'ABC234', 'my-token')
+    joinPlayRoom.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const session = mountSession()
+    await flushPromises()
+
+    expect(recallSeatToken('mtg', 'ABC234')).toBe('my-token')
+    expect(session.phase.value).toBe('retry')
+  })
+
+  it('forgets a token the server disowns with a 404 (the room was recreated)', async () => {
+    rememberSeatToken('mtg', 'ABC234', 'stale-token')
+    joinPlayRoom.mockRejectedValue(new ApiError('no such room', 404))
+
+    const session = mountSession()
+    await flushPromises()
+
+    // Definitive: that token will never be taken again, and keeping it would fail the
+    // socket's hello on every retry.
+    expect(recallSeatToken('mtg', 'ABC234')).toBeNull()
+    expect(session.phase.value).toBe('needs-name')
   })
 
   it('joins a signed-in visitor with no name — the server knows who they are', async () => {
@@ -233,6 +293,87 @@ describe('usePlayRoomSession', () => {
     expect(recallSeatToken('mtg', 'ABC234')).toBeNull()
     expect(session.seat.value).toBeNull()
     expect(usePlayRoomStore().connection).toBe('idle')
+  })
+
+  it('re-joins a signed-in player whose seat token was rotated (4003)', async () => {
+    auth.isAuthenticated = true
+    rememberSeatToken('mtg', 'ABC234', 'laptop-token')
+    joinPlayRoom
+      .mockResolvedValueOnce(joinResponse('laptop-token'))
+      .mockResolvedValueOnce(joinResponse('phone-token'))
+
+    const session = mountSession()
+    await flushPromises()
+    expect(session.phase.value).toBe('seated')
+
+    // Opening the same room on a phone re-issues the seat's token, and this connection's copy
+    // stops naming a seat. The server hands the seat back by account, so the answer is to
+    // join again — not to tell a player mid-game that their room is gone.
+    serverClose(4003, 'that seat token is not for this room')
+    await flushPromises()
+
+    expect(joinPlayRoom).toHaveBeenCalledTimes(2)
+    expect(joinPlayRoom.mock.calls[1]?.[2]).toEqual({})
+    expect(session.phase.value).toBe('seated')
+    expect(session.seatToken.value).toBe('phone-token')
+    expect(recallSeatToken('mtg', 'ABC234')).toBe('phone-token')
+    // And nothing anywhere says the room ended, because it didn't.
+    expect(session.closedReason.value).toBeNull()
+  })
+
+  it('sends a guest whose token stopped working back to the join card', async () => {
+    rememberSeatToken('mtg', 'ABC234', 'guest-token')
+    joinPlayRoom.mockResolvedValue(joinResponse('guest-token'))
+
+    const session = mountSession()
+    await flushPromises()
+    expect(session.phase.value).toBe('seated')
+
+    serverClose(4003, 'that seat token is not for this room')
+    await flushPromises()
+
+    // A guest has no account to re-derive a seat from, so the honest answer is the form —
+    // and a token the server won't take must not be replayed on the way there.
+    expect(recallSeatToken('mtg', 'ABC234')).toBeNull()
+    expect(session.phase.value).toBe('needs-name')
+    expect(session.closedReason.value).toBeNull()
+  })
+
+  it('gives up rather than looping if the re-joined token is refused too', async () => {
+    auth.isAuthenticated = true
+    rememberSeatToken('mtg', 'ABC234', 'first-token')
+    joinPlayRoom
+      .mockResolvedValueOnce(joinResponse('first-token'))
+      .mockResolvedValueOnce(joinResponse('second-token'))
+
+    const session = mountSession()
+    await flushPromises()
+    serverClose(4003, 'that seat token is not for this room')
+    await flushPromises()
+
+    // Second refusal: something is wrong that another join won't fix, and a join loop is the
+    // worst possible answer to a server saying no.
+    serverClose(4003, 'that seat token is not for this room')
+    await flushPromises()
+
+    expect(joinPlayRoom).toHaveBeenCalledTimes(2)
+    expect(session.closedReason.value).toBe('that seat token is not for this room')
+  })
+
+  it('leaves a 4004 close as the ending it is', async () => {
+    auth.isAuthenticated = true
+    rememberSeatToken('mtg', 'ABC234', 'my-token')
+    joinPlayRoom.mockResolvedValue(joinResponse('my-token'))
+
+    const session = mountSession()
+    await flushPromises()
+
+    serverClose(4004, 'the host closed this room')
+    await flushPromises()
+
+    // The room is gone: no re-join, and the reason stands so the page can say so.
+    expect(joinPlayRoom).toHaveBeenCalledTimes(1)
+    expect(session.closedReason.value).toBe('the host closed this room')
   })
 
   it('prefers the lobby the socket pushed over the polled summary', async () => {
