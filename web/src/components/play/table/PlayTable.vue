@@ -126,9 +126,13 @@ const ghostStyle = computed(() => {
       :open="table.logSheetOpen.value"
       @update:open="(value: boolean) => (table.logSheetOpen.value = value)"
     >
-      <SheetContent side="right" class="w-[min(90vw,22rem)] p-0">
+      <SheetContent
+        :side="table.compact.value ? 'bottom' : 'right'"
+        :class="table.compact.value ? 'h-[70dvh] p-0' : 'w-[min(90vw,22rem)] p-0'"
+        data-play-log-sheet
+      >
         <SheetTitle class="sr-only">Game log</SheetTitle>
-        <PlayLog />
+        <PlayLog :in-sheet="true" />
       </SheetContent>
     </Sheet>
     <Button

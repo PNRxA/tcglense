@@ -58,6 +58,13 @@ onBeforeUnmount(() => {
   if (errorTimer !== undefined) clearTimeout(errorTimer)
 })
 
+/**
+ * Inside a sheet the panel is the sheet's whole body: full width, full height, always open,
+ * and without its own collapse toggle (the sheet has a close of its own).
+ */
+const props = defineProps<{ inSheet?: boolean }>()
+const expanded = computed(() => props.inSheet === true || table.logOpen.value)
+
 function submit() {
   table.chat(draft.value)
   draft.value = ''
@@ -66,12 +73,15 @@ function submit() {
 
 <template>
   <aside
-    class="bg-card flex shrink-0 flex-col border-l"
-    :class="table.logOpen.value ? 'w-72' : 'w-10'"
+    class="bg-card flex shrink-0 flex-col"
+    :class="
+      props.inSheet ? 'h-full w-full' : table.logOpen.value ? 'w-72 border-l' : 'w-10 border-l'
+    "
     aria-label="Game log"
   >
     <div class="flex items-center gap-1 border-b p-1.5">
       <Button
+        v-if="!props.inSheet"
         variant="ghost"
         size="icon-sm"
         :aria-label="table.logOpen.value ? 'Hide the log' : 'Show the log'"
@@ -81,10 +91,10 @@ function submit() {
         <PanelRightClose v-if="table.logOpen.value" class="size-4" />
         <PanelRightOpen v-else class="size-4" />
       </Button>
-      <h2 v-if="table.logOpen.value" class="text-sm font-medium">Log</h2>
+      <h2 v-if="expanded" class="text-sm font-medium">Log</h2>
     </div>
 
-    <template v-if="table.logOpen.value">
+    <template v-if="expanded">
       <div
         v-if="table.store.lastError"
         class="bg-destructive/10 text-destructive flex items-start gap-2 p-2 text-xs"

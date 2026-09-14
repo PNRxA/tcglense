@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import PlayTable from '../PlayTable.vue'
@@ -501,6 +502,22 @@ describe('PlayTable on a phone', () => {
     expect(chip.findAll('[data-play-card]').length).toBeLessThanOrEqual(1)
     // Their full board is not on screen until the chip is tapped.
     expect(wrapper.find('[aria-label="Bo, 37 life"]').exists()).toBe(false)
+  })
+
+  it('opens the log as a bottom sheet that the log panel fills', async () => {
+    // A side drawer on a phone is a narrow column the thumb reaches across the whole board;
+    // a bottom sheet is where a phone keeps a conversation. Inside it the panel is the whole
+    // body — no collapse toggle of its own, the sheet's close is the way out.
+    const { wrapper } = mountTable()
+    await wrapper.get('button[aria-label="Open the log"]').trigger('click')
+    await nextTick()
+    await nextTick()
+    const sheet = document.querySelector('[data-play-log-sheet]')
+    expect(sheet).not.toBeNull()
+    expect(sheet?.className).toContain('bottom-0')
+    expect(sheet?.className).not.toContain('right-0')
+    expect(sheet?.querySelector('button[aria-label="Hide the log"]')).toBeNull()
+    expect(sheet?.querySelector('input[aria-label="Chat message"]')).not.toBeNull()
   })
 
   it('keeps the desktop opponent boards off the phone entirely', () => {
