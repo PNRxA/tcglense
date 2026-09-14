@@ -23,7 +23,8 @@ impl PlayRng {
         }
     }
 
-    /// Deterministic, for tests only.
+    /// Deterministic — for tests, and for anyone who wants a reproducible table.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn seeded(seed: u64) -> Self {
         Self {
             inner: rand::rngs::StdRng::seed_from_u64(seed),

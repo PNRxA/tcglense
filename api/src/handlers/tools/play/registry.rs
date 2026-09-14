@@ -228,7 +228,10 @@ impl PlayRegistry {
         let entries = room.connections.lock().unwrap_or_else(|e| e.into_inner());
         for conn in &entries.entries {
             let _ = conn.tx.send(Outbound::Frame(ServerMessage::Lobby {
-                room: summary.clone(),
+                room: RoomSummary {
+                    viewer_seat: conn.seat,
+                    ..summary.clone()
+                },
                 viewer_seat: conn.seat,
             }));
         }

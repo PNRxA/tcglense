@@ -31,6 +31,11 @@ faces: Array<PlayCardFace>,
  */
 back_image: boolean, 
 /**
+ * Whether the catalog has any image for this printing (mirrors `Card.has_image`); a
+ * card without one renders as a text card instead of requesting a 404.
+ */
+has_image: boolean, 
+/**
  * Colour letters (`W U B R G`) of the card, for the type-sorted battlefield grouping.
  */
 colors: Array<string>, cmc: number | null, 

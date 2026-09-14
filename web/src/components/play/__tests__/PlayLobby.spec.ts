@@ -60,6 +60,7 @@ function room(seats: PlaySeatView[], over: Partial<PlayRoomSummary> = {}): PlayR
     format: 'commander',
     starting_life: 40,
     max_players: 4,
+    viewer_seat: null,
     status: 'lobby',
     seats,
     created_at: '2026-09-01T00:00:00Z',

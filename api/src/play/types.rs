@@ -46,15 +46,6 @@ pub enum Zone {
 }
 
 impl Zone {
-    pub const ALL: [Zone; 6] = [
-        Zone::Library,
-        Zone::Hand,
-        Zone::Battlefield,
-        Zone::Graveyard,
-        Zone::Exile,
-        Zone::Command,
-    ];
-
     pub fn as_str(self) -> &'static str {
         match self {
             Zone::Library => "library",
@@ -83,16 +74,6 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub const ALL: [Phase; 7] = [
-        Phase::Untap,
-        Phase::Upkeep,
-        Phase::Draw,
-        Phase::Main1,
-        Phase::Combat,
-        Phase::Main2,
-        Phase::End,
-    ];
-
     pub fn as_str(self) -> &'static str {
         match self {
             Phase::Untap => "untap",
@@ -103,12 +84,6 @@ impl Phase {
             Phase::Main2 => "main2",
             Phase::End => "end",
         }
-    }
-
-    /// The phase after this one, wrapping (the wrap is where a turn passes).
-    pub fn next(self) -> Phase {
-        let i = Phase::ALL.iter().position(|p| *p == self).unwrap_or(0);
-        Phase::ALL[(i + 1) % Phase::ALL.len()]
     }
 }
 
@@ -210,6 +185,9 @@ pub struct CardDef {
     /// Whether face index 1 has its own image (true for transform/MDFC layouts) — the SPA
     /// then requests `?face=1` when `face_index == 1`; otherwise the front image is reused.
     pub back_image: bool,
+    /// Whether the catalog has any image for this printing (mirrors `Card.has_image`); a
+    /// card without one renders as a text card instead of requesting a 404.
+    pub has_image: bool,
     /// Colour letters (`W U B R G`) of the card, for the type-sorted battlefield grouping.
     pub colors: Vec<String>,
     pub cmc: Option<f64>,
@@ -640,6 +618,9 @@ pub struct RoomSummary {
     pub max_players: i32,
     pub status: RoomStatus,
     pub seats: Vec<SeatView>,
+    /// The seat held by whoever this summary was built for (`None` when built for nobody in
+    /// particular — a public read by a stranger, or a spectator's lobby frame).
+    pub viewer_seat: Option<SeatId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

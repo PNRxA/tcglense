@@ -38,6 +38,7 @@ function def(name: string, overrides: Partial<PlayCardDef> = {}): PlayCardDef {
       },
     ],
     back_image: false,
+    has_image: true,
     colors: [],
     cmc: 1,
     is_commander: false,

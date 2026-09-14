@@ -206,8 +206,10 @@ async fn lobby_frame(
     seat: Option<SeatId>,
 ) -> Result<ServerMessage, AppError> {
     let seats = seats_of(&state.db, row.id).await?;
+    let mut room = summary_from(state, row, &seats);
+    room.viewer_seat = seat;
     Ok(ServerMessage::Lobby {
-        room: summary_from(state, row, &seats),
+        room,
         viewer_seat: seat,
     })
 }

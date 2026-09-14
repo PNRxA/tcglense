@@ -6,4 +6,9 @@ import type { PlaySeatView } from "./PlaySeatView";
  * A room as the REST reads and the socket's `lobby` frame describe it — one shape for both
  * so the lobby page renders the same thing whether it polled or was pushed.
  */
-export type PlayRoomSummary = { id: number, code: string, game: string, label: string, format: string, starting_life: number, max_players: number, status: PlayRoomStatus, seats: Array<PlaySeatView>, created_at: string, updated_at: string, };
+export type PlayRoomSummary = { id: number, code: string, game: string, label: string, format: string, starting_life: number, max_players: number, status: PlayRoomStatus, seats: Array<PlaySeatView>, 
+/**
+ * The seat held by whoever this summary was built for (`None` when built for nobody in
+ * particular — a public read by a stranger, or a spectator's lobby frame).
+ */
+viewer_seat: number | null, created_at: string, updated_at: string, };

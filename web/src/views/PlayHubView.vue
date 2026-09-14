@@ -13,7 +13,7 @@ import PlayRoomRow from '@/components/play/PlayRoomRow.vue'
 import PlaySignInPrompt from '@/components/play/PlaySignInPrompt.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useCreatePlayRoom, useDeletePlayRoom, usePlayRoomsQuery } from '@/composables/usePlayRooms'
-import type { CreatePlayRoomBody } from '@/lib/api/play'
+import type { CreatePlayRoomBody, PlayRoomSummary } from '@/lib/api/play'
 import { PLAY_CODE_LENGTH } from '@/lib/api/play'
 import { rememberSeatToken } from '@/lib/playSeat'
 import { playRoomPath, playPath, toolsPath } from '@/lib/tools'
@@ -55,16 +55,9 @@ function deleteRoom(code: string) {
   return remove.mutateAsync({ game: game.value, code })
 }
 
-/**
- * Whether to offer the host's close action on a row. `PlayRoomSummary` says which seat is the
- * host's but not which seat is *yours*, so this matches on the display name the server seats a
- * host under (their username). A false negative only hides a button — the room's own page reads
- * `is_host` off the seat the socket hands back, so a host can always close from inside.
- */
-function hosts(seats: { is_host: boolean; is_user: boolean; display_name: string }[]): boolean {
-  const username = auth.user?.username
-  if (!username) return false
-  return seats.some((seat) => seat.is_host && seat.is_user && seat.display_name === username)
+/** Whether to offer the host's close action on a row: the caller's own seat is the host's. */
+function hosts(room: PlayRoomSummary): boolean {
+  return room.seats.some((seat) => seat.is_host && seat.id === room.viewer_seat)
 }
 
 // ---- Join by code ----
@@ -156,7 +149,7 @@ usePageMeta({
                 :key="room.id"
                 :room="room"
                 :game="game"
-                :can-delete="hosts(room.seats)"
+                :can-delete="hosts(room)"
                 :deleting="remove.isPending.value"
                 @delete="deleteRoom"
               />

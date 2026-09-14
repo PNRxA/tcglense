@@ -60,6 +60,7 @@ function room(over: Partial<PlayRoomSummary> = {}): PlayRoomSummary {
     starting_life: 40,
     max_players: 4,
     status: 'lobby',
+    viewer_seat: null,
     seats: [],
     created_at: '2026-09-01T00:00:00Z',
     updated_at: '2026-09-01T00:00:00Z',
@@ -165,6 +166,34 @@ describe('PlayHubView signed in', () => {
       .findAllComponents({ name: 'PlayRoomRow' })
       .map((row) => (row.props('room') as PlayRoomSummary).label)
     expect(labels).toEqual(['Running', 'Waiting', 'Done'])
+  })
+
+  it("offers the close action only on rooms whose host seat is the caller's own", async () => {
+    const host = {
+      id: 5,
+      seat_index: 0,
+      display_name: 'ada',
+      is_host: true,
+      is_user: true,
+      ready: false,
+      connected: false,
+      deck_source: null,
+      deck_name: null,
+      deck_card_count: null,
+      commanders: [],
+    }
+    state.rooms = [
+      room({ id: 1, code: 'MINE11', label: 'Mine', seats: [host], viewer_seat: 5 }),
+      room({ id: 2, code: 'THEIR2', label: 'Theirs', seats: [host], viewer_seat: 9 }),
+      room({ id: 3, code: 'NONE33', label: 'Stranger', seats: [host], viewer_seat: null }),
+    ]
+    const { wrapper } = await mountHub()
+
+    const closable = wrapper
+      .findAllComponents({ name: 'PlayRoomRow' })
+      .filter((row) => row.find('button[aria-label^="Close room"]').exists())
+      .map((row) => (row.props('room') as PlayRoomSummary).label)
+    expect(closable).toEqual(['Mine'])
   })
 
   it('remembers the host seat token and navigates to the new room', async () => {

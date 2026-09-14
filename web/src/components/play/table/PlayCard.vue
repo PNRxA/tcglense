@@ -44,7 +44,10 @@ const props = withDefaults(
 const def = computed(() => props.card.def)
 /** A back: face down, or an identity this viewer was never given. */
 const back = computed(() => props.card.face_down || !def.value)
-const textCard = computed(() => !back.value && def.value !== null && def.value.card_id === null)
+/** Rendered as text: an ad-hoc token, or a printing the catalog has no image for. */
+const textCard = computed(
+  () => !back.value && def.value !== null && (def.value.card_id === null || !def.value.has_image),
+)
 
 const face = computed(() => {
   const faces = def.value?.faces ?? []
@@ -53,7 +56,7 @@ const face = computed(() => {
 
 const imageUrl = computed(() => {
   const d = def.value
-  if (!d?.card_id) return null
+  if (!d?.card_id || !d.has_image) return null
   // `back_image` is the wire's answer to "does face 1 have art of its own"; without it the
   // front image is the right picture for both faces.
   const faceParam = props.card.face_index === 1 && d.back_image ? 1 : undefined

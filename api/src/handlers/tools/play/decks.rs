@@ -308,6 +308,13 @@ fn card_def(card: &card::Model, is_commander: bool) -> CardDef {
         .get(1)
         .is_some_and(|face| face.image_normal.is_some() || face.image_small.is_some());
 
+    let has_image = card.image_normal.is_some()
+        || card.image_small.is_some()
+        || card.image_large.is_some()
+        || stored
+            .iter()
+            .any(|face| face.image_normal.is_some() || face.image_small.is_some());
+
     let faces: Vec<CardFace> = if stored.is_empty() {
         vec![CardFace {
             name: card.name.clone(),
@@ -339,6 +346,7 @@ fn card_def(card: &card::Model, is_commander: bool) -> CardDef {
         name: card.name.clone(),
         faces,
         back_image,
+        has_image,
         colors: card
             .colors
             .as_deref()

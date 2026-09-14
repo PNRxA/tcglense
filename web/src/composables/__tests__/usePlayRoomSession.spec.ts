@@ -55,6 +55,7 @@ const ROOM: PlayRoomSummary = {
   starting_life: 40,
   max_players: 4,
   status: 'lobby',
+  viewer_seat: null,
   seats: [SEAT],
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-01T00:00:00Z',

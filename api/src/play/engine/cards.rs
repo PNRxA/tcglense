@@ -372,6 +372,7 @@ pub(super) fn create_token(
         return Err(ActionError::Invalid("that type line is too long"));
     }
     let pos = require_seat(state, actor)?;
+    let has_image = card_id.is_some();
     let def = CardDef {
         card_id,
         game: table_game(state),
@@ -386,6 +387,7 @@ pub(super) fn create_token(
             loyalty: None,
         }],
         back_image: false,
+        has_image,
         colors,
         cmc: None,
         is_commander: false,

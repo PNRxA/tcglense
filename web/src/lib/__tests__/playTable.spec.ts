@@ -41,6 +41,7 @@ function card(overrides: Partial<PlayCardView> = {}): PlayCardView {
         },
       ],
       back_image: false,
+      has_image: true,
       colors: [],
       cmc: 1,
       is_commander: false,

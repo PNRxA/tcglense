@@ -200,12 +200,6 @@ pub fn new_seat_state(
 /// (commanders → command zone, everything else → library), shuffles each library, draws 7
 /// (or the whole library if smaller), picks a random starting seat, sets turn 1 / `Untap`,
 /// logs "game started", and bumps the version. `SeatState::deck` is left in place (it is
-
-/// Lobby → playing: every seat needs a non-empty `deck` (else `NoDeck(name)`), at least two
-/// seats (`TooFewSeats`), status must be `Lobby` (`NotLobby`). Builds every card instance
-/// (commanders → command zone, everything else → library), shuffles each library, draws 7
-/// (or the whole library if smaller), picks a random starting seat, sets turn 1 / `Untap`,
-/// logs "game started", and bumps the version. `SeatState::deck` is left in place (it is
 /// the record of what was loaded).
 pub fn start_game(
     state: &mut RoomState,
@@ -333,7 +327,7 @@ pub fn apply(
 }
 
 /// A socket came or went for `seat`: adjusts `connections` (saturating at 0), logs a
-
+/// system line only on the 0↔1 transitions, bumps the version. `Err(NoSuchSeat)` for an
 /// unknown seat. Works in every status (the lobby shows presence too).
 pub fn set_connected(
     state: &mut RoomState,

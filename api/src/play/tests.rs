@@ -41,6 +41,7 @@ fn card_def(name: &str) -> CardDef {
         name: name.to_string(),
         faces: vec![face(name)],
         back_image: false,
+        has_image: true,
         colors: vec!["W".to_string()],
         cmc: Some(1.0),
         is_commander: false,

@@ -24,7 +24,7 @@ use sea_orm::{
 };
 use serde::Serialize;
 
-use crate::auth::extractor::SessionUser;
+use crate::auth::extractor::{MaybeUser, SessionUser};
 use crate::entities::prelude::{PlayRoom, PlaySeat};
 use crate::entities::{play_room, play_seat};
 use crate::error::AppError;
@@ -38,7 +38,7 @@ use crate::state::AppState;
 use super::tokens::{CODE_ATTEMPTS, generate_code, generate_seat_token};
 use super::{
     CreateRoomRequest, DEFAULT_ROOM_LIMIT, ListRoomsParams, MAX_LABEL, MAX_OPEN_ROOMS_PER_HOST,
-    MAX_ROOM_LIMIT, MAX_STARTING_LIFE, MIN_STARTING_LIFE, load_room, seat_view, summary_for,
+    MAX_ROOM_LIMIT, MAX_STARTING_LIFE, MIN_STARTING_LIFE, load_room, seat_view, summary_for_viewer,
     summary_from, validate_display_name,
 };
 
@@ -222,7 +222,7 @@ pub async fn list_rooms(
 
     let mut data = Vec::with_capacity(rooms.len());
     for room in &rooms {
-        data.push(summary_for(&state, room).await?);
+        data.push(summary_for_viewer(&state, room, Some(user.id)).await?);
     }
     Ok(Json(RoomListResponse { data }))
 }
@@ -234,11 +234,14 @@ pub async fn list_rooms(
 /// the summary — a seat's token hash, its decklist and its hand are all elsewhere.
 pub async fn get_room(
     State(state): State<AppState>,
+    MaybeUser(user): MaybeUser,
     Path((game, code)): Path<(String, String)>,
 ) -> Result<Json<RoomSummary>, AppError> {
     require_game(&game)?;
     let room = load_room(&state, &game, &code).await?;
-    Ok(Json(summary_for(&state, &room).await?))
+    Ok(Json(
+        summary_for_viewer(&state, &room, user.as_ref().map(|u| u.id)).await?,
+    ))
 }
 
 /// Close a table.

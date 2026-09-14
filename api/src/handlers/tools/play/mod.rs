@@ -259,15 +259,28 @@ pub(crate) fn seat_view(
     }
 }
 
-/// The one place a [`RoomSummary`] is built — used by every REST read **and** by the lobby
-/// frames the registry pushes over the socket, so a client that polled and one that was
-/// pushed see byte-identical state.
-pub(crate) async fn summary_for(
+/// The one place a [`RoomSummary`] is read for a REST answer — with `viewer_seat` filled in
+/// for the account reading it (`None` for a stranger), which is what lets the hub's room list
+/// tell the caller's own seat apart. The lobby frames the registry pushes go through
+/// [`summary_from`] so a client that polled and one that was pushed see the same seats.
+pub(crate) async fn summary_for_viewer(
     state: &AppState,
     room: &play_room::Model,
+    user_id: Option<i32>,
 ) -> Result<RoomSummary, AppError> {
     let seats = seats_of(&state.db, room.id).await?;
-    Ok(summary_from(state, room, &seats))
+    let mut summary = summary_from(state, room, &seats);
+    summary.viewer_seat = viewer_seat_for(&seats, user_id);
+    Ok(summary)
+}
+
+/// The seat an account holds among `seats`, if any.
+pub(crate) fn viewer_seat_for(seats: &[play_seat::Model], user_id: Option<i32>) -> Option<i32> {
+    let user_id = user_id?;
+    seats
+        .iter()
+        .find(|seat| seat.user_id == Some(user_id))
+        .map(|seat| seat.id)
 }
 
 /// [`summary_for`] over seats the caller has already read (a write path that just wrote them
@@ -291,6 +304,7 @@ pub(crate) fn summary_from(
             .iter()
             .map(|seat| seat_view(room, seat, connected.contains(&seat.id)))
             .collect(),
+        viewer_seat: None,
         created_at: room.created_at,
         updated_at: room.updated_at,
     }
