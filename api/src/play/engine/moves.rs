@@ -161,8 +161,9 @@ pub(super) fn move_card(
 }
 
 /// Move a card a peek showed the actor, out of their own library. A card the actor was
-/// *not* shown is `NoSuchCard` — indistinguishable from an id that never existed, so a
-/// client cannot tutor from, or probe, a library it has not read.
+/// *not* shown — including every card in another seat's library — is `NoSuchCard`,
+/// indistinguishable from an id that never existed, so a client cannot tutor from, or
+/// probe, a library it has not read.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn move_library_card(
     state: &mut RoomState,
@@ -180,10 +181,10 @@ pub(super) fn move_library_card(
     if instance.zone != Zone::Library {
         return Err(ActionError::WrongZone);
     }
-    if instance.owner != actor {
-        return Err(ActionError::NotYourCard);
-    }
-    if !was_peeked(state, actor, card) {
+    // Someone else's library is as unreadable as an id that never existed — answering
+    // `NotYourCard` here would make a guessed id an existence oracle over a hidden zone —
+    // and so is a card of the actor's own that no peek has shown them.
+    if instance.owner != actor || !was_peeked(state, actor, card) {
         return Err(ActionError::NoSuchCard);
     }
     move_card_core(

@@ -687,9 +687,27 @@ fn move_library_card_refuses_cards_outside_the_actors_library() {
         fails(&mut state, &mut rng, ALICE, call(in_hand)),
         ActionError::WrongZone
     );
+    // Another seat's library is as unknown as an id that was never minted: answering
+    // `NotYourCard` would confirm the id exists.
     assert_eq!(
         fails(&mut state, &mut rng, ALICE, call(bobs)),
-        ActionError::NotYourCard
+        ActionError::NoSuchCard
+    );
+    assert_eq!(
+        fails(&mut state, &mut rng, ALICE, call(4_000_000_002)),
+        ActionError::NoSuchCard
+    );
+    let bobs_top = seat_of(&state, BOB).library[0];
+    assert_eq!(
+        fails(
+            &mut state,
+            &mut rng,
+            ALICE,
+            Action::ReorderTop {
+                cards: vec![bobs_top]
+            }
+        ),
+        ActionError::NoSuchCard
     );
 }
 

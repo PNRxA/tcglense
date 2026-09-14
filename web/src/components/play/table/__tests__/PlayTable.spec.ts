@@ -405,7 +405,7 @@ describe('PlayTable', () => {
     const { wrapper } = mountTable()
 
     const hand = wrapper.find('[data-play-drop="hand"]')
-    const observer = FakeResizeObserver.instances.at(-1)
+    const observer = FakeResizeObserver.instances[FakeResizeObserver.instances.length - 1]
     // Almost nothing that changes this row's width resizes the window: opening the log
     // panel, an opponent strip gaining a row, a phone keyboard appearing. Watching `resize`
     // alone left the hand fanned for a width it no longer had.

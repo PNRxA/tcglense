@@ -12,7 +12,7 @@
 
 use std::net::SocketAddr;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -83,6 +83,28 @@ impl Client {
             .send(Message::text(message.to_string()))
             .await
             .is_ok()
+    }
+
+    /// A frame that has **already arrived**, without waiting for one — so a test can keep
+    /// draining while it writes. `None` means "nothing right now" *or* "this socket is over";
+    /// a flood test can't tell those apart and doesn't need to.
+    fn poll_frame(&mut self) -> Option<Value> {
+        loop {
+            let frame = self.socket.next().now_or_never()??;
+            match frame {
+                Ok(Message::Text(text)) => {
+                    return Some(serde_json::from_str(&text).expect("a JSON frame"));
+                }
+                Ok(Message::Close(frame)) => {
+                    return Some(json!({
+                        "type": "__close",
+                        "code": frame.as_ref().map(|f| u16::from(f.code)),
+                    }));
+                }
+                Ok(_) => continue,
+                Err(_) => return None,
+            }
+        }
     }
 
     /// Read until a frame of `kind` satisfies `want`, so a test can wait for the state it
@@ -625,30 +647,54 @@ async fn a_flood_of_pings_is_metered_like_an_action_and_then_closed() {
 
     // `ping` is the cheapest frame there is, which is exactly why it must cost a token: a
     // bucket that only meters `action` is not a ceiling on anything.
-    let flood = crate::handlers::tools::play::ws::MAX_CONSECUTIVE_REJECTS as usize + 200;
-    for _ in 0..flood {
-        if !client.try_send(json!({ "type": "ping" })).await {
+    //
+    // The flood is drained as it is written. That is not politeness — a client that keeps
+    // writing into a server which has stopped reading gets its connection reset, and an RST
+    // takes the buffered close frame with it, so the close code would be untestable.
+    let bound = crate::handlers::tools::play::ws::MAX_CONSECUTIVE_REJECTS as usize
+        + crate::handlers::tools::play::ws::FRAME_BURST as usize;
+    let mut saw_too_fast = false;
+    let mut closed = None;
+    let mut goodbye = false;
+    for i in 0..bound * 2 {
+        if goodbye || closed.is_some() || !client.try_send(json!({ "type": "ping" })).await {
             break;
+        }
+        // A breath every few frames so the server stays level with the flood; the bucket
+        // refills at 20/s, so ~30ms of breathing across the whole run is nothing it can
+        // spend, and it is what keeps the close a clean FIN rather than a reset.
+        if i % 8 == 7 {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        while let Some(frame) = client.poll_frame() {
+            match frame["type"].as_str() {
+                Some("error") if frame["code"] == "too_fast" => saw_too_fast = true,
+                // The server said goodbye: stop writing at once so its close is a clean FIN.
+                Some("closed") => goodbye = true,
+                Some("__close") => closed = frame["code"].as_u64(),
+                _ => continue,
+            }
         }
     }
 
-    // Somewhere in there the bucket empties, the answers turn into `too_fast`, and the
-    // connection that kept going is closed 4008 rather than answered forever.
-    let mut saw_too_fast = false;
-    let mut closed = None;
-    for _ in 0..2_000 {
-        let Some(frame) = client.try_next().await else {
+    // Whatever is still queued: the `closed` frame's own close code.
+    for _ in 0..400 {
+        if closed.is_some() {
             break;
-        };
-        match frame["type"].as_str() {
-            Some("error") if frame["code"] == "too_fast" => saw_too_fast = true,
-            Some("__close") => {
-                closed = frame["code"].as_u64();
-                break;
+        }
+        match client.poll_frame() {
+            Some(frame) => {
+                if frame["type"] == "__close" {
+                    closed = frame["code"].as_u64();
+                }
+                if frame["type"] == "error" && frame["code"] == "too_fast" {
+                    saw_too_fast = true;
+                }
             }
-            _ => continue,
+            None => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
         }
     }
+
     assert!(saw_too_fast, "the flood was answered, not silently dropped");
     assert_eq!(closed, Some(4008), "and then closed for flooding");
 }

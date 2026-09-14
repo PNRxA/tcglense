@@ -14,9 +14,11 @@ import type { PlaySeatSnapshot, PlaySnapshot } from '@/lib/api/play'
 // "this room is no longer available" rendered underneath a full-screen table.
 
 const session = vi.hoisted(() => ({}) as Record<string, unknown>)
-const retry = vi.hoisted(() => vi.fn())
-const clearSeat = vi.hoisted(() => vi.fn())
+const retry = vi.hoisted(() => vi.fn<() => void>())
+const clearSeat = vi.hoisted(() => vi.fn<() => void>())
 const leaveSeat = vi.hoisted(() => vi.fn<(vars: unknown) => Promise<unknown>>())
+/** Every mutation the page reaches for but no test here exercises. */
+const noop = vi.hoisted(() => vi.fn<(vars?: unknown) => Promise<unknown>>())
 const deleteRoom = vi.hoisted(() => vi.fn<(vars: unknown) => Promise<unknown>>())
 
 vi.mock('@/stores/auth', () => ({
@@ -32,8 +34,8 @@ vi.mock('@/composables/usePlayRooms', async () => {
     useLeavePlaySeat: () => ({ mutateAsync: leaveSeat, isPending: ref(false), error: ref(null) }),
     useDeletePlayRoom: () => ({ mutateAsync: deleteRoom, isPending: ref(false), error: ref(null) }),
     // The lobby half of the page reaches for these; nothing here exercises them.
-    useSetPlaySeatReady: () => ({ mutateAsync: vi.fn(), isPending: ref(false), error: ref(null) }),
-    useLoadPlaySeatDeck: () => ({ mutateAsync: vi.fn(), isPending: ref(false), error: ref(null) }),
+    useSetPlaySeatReady: () => ({ mutateAsync: noop, isPending: ref(false), error: ref(null) }),
+    useLoadPlaySeatDeck: () => ({ mutateAsync: noop, isPending: ref(false), error: ref(null) }),
   }
 })
 vi.mock('@/composables/usePlayRoomSession', async () => {
@@ -51,8 +53,8 @@ vi.mock('@/composables/usePlayRoomSession', async () => {
         error: ref(null),
         closedReason: ref(null),
         isJoining: ref(false),
-        join: vi.fn(),
-        watch: vi.fn(),
+        join: noop,
+        watch: noop,
         clearSeat,
         retry,
       })

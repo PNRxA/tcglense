@@ -267,8 +267,8 @@ describe('custom counters', () => {
       name: 'commander tax paid this',
       delta: 1,
     })
-    const name = (send.mock.calls[0]?.[0] as { name: string }).name
-    expect(name.length).toBeLessThanOrEqual(PLAY_COUNTER_NAME_MAX)
+    const sent = send.mock.calls[0]?.[0] as { name?: string } | undefined
+    expect(sent?.name?.length ?? 0).toBeLessThanOrEqual(PLAY_COUNTER_NAME_MAX)
   })
 
   it('sends nothing when the prompt is dismissed', () => {
