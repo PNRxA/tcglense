@@ -288,8 +288,8 @@ describe('logLine', () => {
     return { id: 1, at: '2026-01-01T00:00:00Z', kind: 'action', seat: 1, text: '…', ...overrides }
   }
 
-  it('narrates an action and punctuates chat as speech', () => {
-    expect(logLine(entry({ text: 'drew a card' }), seats)).toBe('Ana drew a card')
+  it('shows an action as the server narrated it and punctuates chat as speech', () => {
+    expect(logLine(entry({ text: 'Ana drew a card' }), seats)).toBe('Ana drew a card')
     expect(logLine(entry({ kind: 'chat', seat: 2, text: 'nice draw' }), seats)).toBe(
       'Bo: nice draw',
     )

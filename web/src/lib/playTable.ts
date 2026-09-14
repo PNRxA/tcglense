@@ -402,17 +402,18 @@ export function cardAriaLabel(card: PlayCardView): string {
 /**
  * One line of the log, as it reads.
  *
- * The server writes the *predicate* ("drew a card", "passed the turn") and names the seat by
- * id; the client owns the subject, because it is the client that knows what that seat is
- * called right now. A chat line is punctuated as speech ("Ana: nice draw") and an action as
- * narration ("Ana drew a card") — the two must be tellable apart at a glance in a scrolling
- * column, which is also why they are coloured and weighted differently in `PlayLog`.
+ * The server writes the whole narration for an action ("Ana drew a card" — it knows the seat
+ * name at the moment it happened, and it is the one place hidden information is phrased
+ * safely), so an action line is shown as-is. A chat line arrives as bare speech and is
+ * punctuated with the speaker here ("Ana: nice draw") — the two must be tellable apart at a
+ * glance in a scrolling column, which is also why they are coloured and weighted
+ * differently in `PlayLog`.
  */
 export function logLine(entry: PlayLogEntry, seats: PlaySeatSnapshot[]): string {
   if (entry.seat === null || entry.kind === 'system') return entry.text
   const seat = seats.find((s) => s.id === entry.seat)
   if (!seat) return entry.text
-  return entry.kind === 'chat' ? `${seat.name}: ${entry.text}` : `${seat.name} ${entry.text}`
+  return entry.kind === 'chat' ? `${seat.name}: ${entry.text}` : entry.text
 }
 
 /** The dice a table can roll, plus the coin (which is its own action). */
