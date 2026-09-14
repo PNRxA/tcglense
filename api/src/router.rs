@@ -91,6 +91,10 @@ use crate::{
             set_collection_visibility, set_wishlist_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
+        tools::play::{
+            create_room, delete_room, get_room, join_room, leave_seat, list_rooms,
+            load_seat_deck, room_socket, set_seat_ready,
+        },
         tools::life::{
             add_player, adjust_life, create_session, deck_records, delete_session, finish_session,
             get_session, list_sessions, remove_player, reorder_players, undo_life_event,
@@ -580,6 +584,20 @@ pub fn build_router(state: AppState) -> Router {
             "/api/tools/{game}/life/sessions/{session_id}/events/{event_id}",
             delete(undo_life_event),
         )
+        // The **play table** (`/api/tools/{game}/play/...`): an online manual game of Magic.
+        // Its routes are split across two groups, which is unusual and deliberate — the tool
+        // is half account feature and half guest feature.
+        //
+        // These three are the host's: opening a table, listing the ones you're at, closing
+        // one. Session-only (`SessionUser`, like `/api/alerts`) because a live table is an
+        // interactive SPA feature an API key has no business driving, so they sit here for the
+        // per-user limiter + `no-store`. Everything a *seat* does — join, load a deck, ready
+        // up, leave, and the socket itself — is in `public_holdings_owned` below, per-IP
+        // limited instead, because a guest has no account to key a per-user limit on.
+        .route(
+            "/api/tools/{game}/play/rooms",
+            get(list_rooms).post(create_room),
+        )
         // Per-user price alerts (issue #525): notify a signed-in user when a card / sealed
         // product crosses a below/above price threshold, over their configured channels
         // (Discord / Telegram / optional email). Session-only (SessionUser) — the channel
@@ -942,6 +960,37 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/wishlist/{game}/owned",
             post(public_wishlist_owned_counts),
         )
+        // The guest-facing half of the play table (see the host half in `private` above).
+        // Reading a room, taking a seat, loading a deck into it, readying up, leaving, and the
+        // room socket are all reachable without an account — a friend who was sent an invite
+        // link is a first-class player here — so they're authorized by the per-seat token
+        // (`X-Play-Seat`) rather than a session, and per-IP limited like every other
+        // unauthenticated DB-touching route. `no-store` throughout: a room's seats change by
+        // the second, and the whole point of the lobby is that it is live.
+        //
+        // The static `join` / `seats` / `ws` segments win over nothing here (the dynamic
+        // `{code}` is their parent, not their sibling), so the shapes can't collide.
+        .route(
+            "/api/tools/{game}/play/rooms/{code}",
+            get(get_room).delete(delete_room),
+        )
+        .route("/api/tools/{game}/play/rooms/{code}/join", post(join_room))
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}",
+            delete(leave_seat),
+        )
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/deck",
+            post(load_seat_deck),
+        )
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/ready",
+            post(set_seat_ready),
+        )
+        // The live table. A WebSocket upgrade, not JSON: the credential rides the first frame
+        // (there is no way to set a header on a browser WebSocket), so the upgrade itself is
+        // unauthenticated and `ws.rs` does the handshake.
+        .route("/api/tools/{game}/play/rooms/{code}/ws", get(room_socket))
         // Per-IP rate limiting (issue #413): as a body-keyed, unauthenticated POST
         // this was the one wholly-unthrottled, uncacheable DB endpoint in the app.
         .layer(from_fn_with_state(

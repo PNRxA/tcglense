@@ -37,7 +37,10 @@ pub struct Principal {
 /// segments — can never start with it, so the two can't collide). This is the one
 /// seam the [`AuthUser`], [`WritableUser`], and [`SessionUser`] extractors share, so
 /// every authenticated route resolves credentials identically.
-async fn resolve_principal(parts: &Parts, state: &AppState) -> Result<Principal, AppError> {
+pub(crate) async fn resolve_principal(
+    parts: &Parts,
+    state: &AppState,
+) -> Result<Principal, AppError> {
     let header = parts
         .headers
         .get(AUTHORIZATION)
@@ -162,5 +165,39 @@ impl FromRequestParts<AppState> for SessionUser {
             ));
         }
         Ok(SessionUser(principal.user))
+    }
+}
+
+/// Authenticates a request that **may** be anonymous: a guest-facing route that still wants
+/// to know who the caller is when they happen to be signed in.
+///
+/// The play table is the surface that needs it — a room's join / deck-load / socket routes
+/// are usable by a guest with nothing but a display name, yet a signed-in joiner must be
+/// recognised so their seat is tied to their account (and so "load one of *my* decks" can
+/// mean anything at all). No `Authorization` header at all is `None`; a header that is
+/// present but bad is still the usual `401`, never silently a guest — otherwise an expired
+/// token would quietly downgrade a player to an anonymous stranger mid-session.
+///
+/// Session-only in the same sense as [`SessionUser`]: a valid API key is a `403`, because
+/// play is an interactive SPA feature and a key has no business taking a seat.
+pub struct MaybeUser(pub Option<user::Model>);
+
+impl FromRequestParts<AppState> for MaybeUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if parts.headers.get(AUTHORIZATION).is_none() {
+            return Ok(MaybeUser(None));
+        }
+        let principal = resolve_principal(parts, state).await?;
+        if principal.method != AuthMethod::Session {
+            return Err(AppError::Forbidden(
+                "api keys cannot join a play table; sign in to take a seat".to_string(),
+            ));
+        }
+        Ok(MaybeUser(Some(principal.user)))
     }
 }

@@ -24,6 +24,8 @@ pub mod ingest_state;
 pub mod life_event;
 pub mod life_session;
 pub mod life_session_player;
+pub mod play_room;
+pub mod play_seat;
 pub mod precon_deck;
 pub mod precon_deck_card;
 pub mod prelude;

@@ -14,3 +14,6 @@ pub mod engine;
 pub mod rng;
 pub mod types;
 pub mod view;
+
+#[cfg(test)]
+mod tests;
