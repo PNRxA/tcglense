@@ -434,6 +434,24 @@ const router = createRouter({
       component: () => import('@/views/LifeSessionView.vue'),
       props: true,
     },
+    // The play table (issue: online manual games). Same two-level shape as the life counter —
+    // a hub, then one room — but neither page requires an account: a room is reached by its
+    // invite code and a guest holds their seat with a per-seat token (`lib/playSeat.ts`), so
+    // the hub prompts for sign-in *in place* for the parts that need one (creating a room,
+    // listing yours) while join-by-code keeps working signed out. The static hub is declared
+    // before its `:code` sibling for the same reason `life/decks` leads `life/:sessionId`.
+    {
+      path: '/tools/:game/play',
+      name: 'play-hub',
+      component: () => import('@/views/PlayHubView.vue'),
+      props: true,
+    },
+    {
+      path: '/tools/:game/play/:code',
+      name: 'play-room',
+      component: () => import('@/views/PlayRoomView.vue'),
+      props: true,
+    },
     // Legal pages, linked from the site footer. Public and indexable.
     { path: '/terms', name: 'terms', component: () => import('@/views/TermsView.vue') },
     { path: '/privacy', name: 'privacy', component: () => import('@/views/PrivacyPolicyView.vue') },

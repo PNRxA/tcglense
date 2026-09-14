@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { HeartPulse } from '@lucide/vue'
+import { HeartPulse, Swords } from '@lucide/vue'
 
 /**
  * The tools registry — the play aids that sit beside the catalog rather than inside it.
@@ -31,6 +31,14 @@ export const TOOLS: Readonly<Record<string, ToolEntry[]>> = {
         'win record for your decks.',
       icon: HeartPulse,
     },
+    {
+      slug: 'play',
+      name: 'Play online',
+      blurb:
+        'Open a table, share the link, and play a manual game with friends — your decks, ' +
+        'any precon, or a pasted list. Guests need no account.',
+      icon: Swords,
+    },
   ],
 }
 
@@ -52,3 +60,12 @@ export const lifePath = (game: string): string => toolPath(game, 'life')
 export const lifeSessionPath = (game: string, sessionId: number): string =>
   `${lifePath(game)}/${sessionId}`
 export const lifeDeckStatsPath = (game: string): string => `${lifePath(game)}/decks`
+
+/**
+ * The play table's paths. The room code is the invite: it is the one thing a player is given
+ * (pasted into the hub's join box, or followed as a link), so it is the route's own param
+ * rather than a query string.
+ */
+export const playPath = (game: string): string => toolPath(game, 'play')
+export const playRoomPath = (game: string, code: string): string =>
+  `${playPath(game)}/${encodeURIComponent(code.toUpperCase())}`

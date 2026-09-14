@@ -71,6 +71,19 @@ describe('clearAuthedQueries', () => {
     // A public key that isn't per-user must survive.
     expect(qc.getQueryData(['card', 'mtg', 'card-x'])).toBe('public-card')
   })
+
+  it('drops the play family, whose room list is scoped to the signed-in player', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(['play-rooms', 'mtg'], { data: [] })
+    qc.setQueryData(['play-room', 'mtg', 'ABC234'], { code: 'ABC234' })
+
+    clearAuthedQueries(qc)
+
+    // Rooms you host or hold a seat in are per-identity; leaving them cached would show the
+    // previous account's tables to the next signed-in user (issue #177's shape).
+    expect(qc.getQueryData(['play-rooms', 'mtg'])).toBeUndefined()
+    expect(qc.getQueryData(['play-room', 'mtg', 'ABC234'])).toBeUndefined()
+  })
 })
 
 describe('useAuthCacheReset', () => {
