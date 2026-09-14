@@ -139,7 +139,12 @@ function snapshot(overrides: Partial<PlaySnapshot> = {}): PlaySnapshot {
       view(212, 'battlefield', THEIRS, null, { face_down: true, x: 0.7, y: 0.6 }),
     ],
     turn: { number: 3, active_seat: THEIRS, phase: 'main1' },
-    log: [{ id: 1, at: '2026-01-01T00:00:00Z', kind: 'action', seat: THEIRS, text: 'drew a card' }],
+    // The server narrates the whole sentence for an action (`logLine` only punctuates chat),
+    // so the fixture carries the subject the way the wire does.
+    log: [
+      { id: 1, at: '2026-01-01T00:00:00Z', kind: 'action', seat: THEIRS, text: 'Bo drew a card' },
+      { id: 2, at: '2026-01-01T00:00:01Z', kind: 'chat', seat: MINE, text: 'nice' },
+    ],
     winner: null,
     ...overrides,
   }
@@ -262,9 +267,25 @@ describe('PlayTable', () => {
     expect(byCard.get(211)).toEqual(['take_control', 'view'])
   })
 
-  it('reads the log with the seat that did it', () => {
+  it('reads the log with the seat that did it, and chat as speech', () => {
     const { wrapper } = mountTable()
     expect(wrapper.text()).toContain('Bo drew a card')
+    // Chat is the half the client punctuates, so it proves `logLine` is actually in the path.
+    expect(wrapper.text()).toContain('Ana: nice')
+  })
+
+  it('keeps all four of my zones on the rail, in reach and in order', () => {
+    // A regression with teeth: the rail used to stack four full-size card boxes, which pushed
+    // the exile's label and the entire command zone below the fold of its own scroller at
+    // 1440×900 — with nothing on screen to say they existed. Command leads because in
+    // Commander it is the pile you touch most.
+    const { wrapper } = mountTable()
+    const rail = wrapper.find('aside[aria-label="Your zones"]')
+    expect(rail.exists()).toBe(true)
+    const drops = [...rail.element.querySelectorAll('[data-play-drop]')].map(
+      (el) => (el as HTMLElement).dataset.playDrop,
+    )
+    expect(drops).toEqual(['command', 'library', 'graveyard', 'exile'])
   })
 
   it('announces the game being over', () => {

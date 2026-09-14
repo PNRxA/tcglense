@@ -1,31 +1,41 @@
 <script setup lang="ts">
+import { ChevronDown } from '@lucide/vue'
 import PlayCard from '@/components/play/table/PlayCard.vue'
 import { zoneLabel } from '@/lib/playTable'
 import type { PlayCardView, PlayZone } from '@/lib/api/play'
 
 // One pile on the rail: a library, a graveyard, an exile.
 //
-// A pile shows its **top card** where it has one — a graveyard whose top card is visible is
-// how everybody at a paper table knows what just died — and its count always, because the
-// count is the thing you read across the table. A library has no top card to show by
-// definition, so it is a back with a number on it.
+// **A short tile, not a card.** The first version gave every pile a full 61:85 box, which read
+// beautifully and then pushed the exile's label — and the whole command zone, commander and
+// all — below the fold of a 1440×900 rail with nothing to say they were there. A pile's job
+// on the rail is to answer "how many, and can I drop this on it"; the *contents* are one click
+// away in the viewer. So the tile is a line: a thumb, the zone's name, its count.
 //
-// It is also a drop target (`data-play-drop`), which is the reason it is a `<button>` with a
-// real label rather than a decorative div: dragging a card onto the graveyard is the fast
-// path, clicking it is the keyboard-and-screen-reader path, and both have to exist.
+// The thumb earns its place only where the picture is the information:
+//
+// - a **graveyard** shows its top card, because "what just died" is read across the table;
+// - a **library** has nothing to show by definition, so it shows a card back — a face-down
+//   stack is what it is;
+// - an **empty** pile shows a dashed outline, which is the difference between "nothing in
+//   here" and "something in here I'm not showing you".
+//
+// It stays a `<button>` with a real label: dragging a card onto the graveyard is the fast path
+// and clicking it is the keyboard-and-screen-reader path, and `data-play-drop` is what the
+// drag machine hit-tests for.
 withDefaults(
   defineProps<{
     zone: PlayZone
     count: number
-    /** The card to show on top, if this pile shows one. */
+    /** The card to show on top, where seeing it is the point (the graveyard). */
     top?: PlayCardView | null
     game: string
     /** False for a pile you can only read (an opponent's). */
     droppable?: boolean
-    /** A short line under the count — "top card", a seat's name, a reminder. */
-    hint?: string | null
+    /** Marks the tile as opening a menu rather than a viewer. */
+    menu?: boolean
   }>(),
-  { top: null, droppable: true, hint: null },
+  { top: null, droppable: true, menu: false },
 )
 </script>
 
@@ -33,26 +43,29 @@ withDefaults(
   <button
     type="button"
     :data-play-drop="droppable ? zone : undefined"
-    class="hover:border-ring/60 hover:bg-accent/40 flex w-full flex-col items-center gap-1 rounded-lg border p-1.5 transition-colors"
+    class="hover:border-ring/60 hover:bg-accent/40 flex w-full items-center gap-1.5 rounded-lg border px-1.5 py-1 text-left transition-colors"
     :aria-label="`${zoneLabel(zone)}, ${count} ${count === 1 ? 'card' : 'cards'}`"
   >
-    <div class="relative w-full">
+    <!-- Fixed-width thumb column, so three tiles line their text up whatever they show. -->
+    <span class="w-7 shrink-0">
       <PlayCard v-if="top" :card="top" :game="game" size="small" :interactive="false" />
-      <!-- An empty pile keeps the card-shaped hole rather than collapsing: the rail must not
-        reflow every time a graveyard empties. -->
-      <div
+      <span
+        v-else-if="count > 0"
+        class="bg-muted border-border/60 block aspect-[61/85] w-full rounded-sm border"
+        aria-hidden="true"
+      />
+      <span
         v-else
-        class="bg-muted/60 text-muted-foreground/60 grid aspect-[61/85] w-full place-items-center rounded-[4.76%_/_3.42%] border border-dashed text-[0.6rem]"
-      >
-        {{ count > 0 ? count : 'empty' }}
-      </div>
-    </div>
-    <span class="text-muted-foreground w-full truncate text-center text-[0.65rem] leading-tight">
-      {{ zoneLabel(zone) }}
-      <span class="text-foreground font-semibold tabular-nums">{{ count }}</span>
+        class="bg-muted/40 block aspect-[61/85] w-full rounded-sm border border-dashed"
+        aria-hidden="true"
+      />
     </span>
-    <span v-if="hint" class="text-muted-foreground/80 w-full truncate text-center text-[0.6rem]">
-      {{ hint }}
+    <span class="min-w-0 flex-1">
+      <span class="text-muted-foreground block truncate text-[0.65rem] leading-tight">
+        {{ zoneLabel(zone) }}
+      </span>
+      <span class="block text-sm leading-tight font-semibold tabular-nums">{{ count }}</span>
     </span>
+    <ChevronDown v-if="menu" class="text-muted-foreground/70 size-3 shrink-0" aria-hidden="true" />
   </button>
 </template>
