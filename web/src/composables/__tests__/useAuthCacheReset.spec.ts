@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia, setActivePinia } from 'pinia'
 import { clearAuthedQueries, useAuthCacheReset } from '@/composables/useAuthCacheReset'
+import { recallSeatToken, rememberSeatToken } from '@/lib/playSeat'
 import { useAuthedQuery } from '@/lib/queries'
 import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/lib/api'
@@ -71,6 +72,19 @@ describe('clearAuthedQueries', () => {
     // A public key that isn't per-user must survive.
     expect(qc.getQueryData(['card', 'mtg', 'card-x'])).toBe('public-card')
   })
+
+  it('drops the play family, whose room list is scoped to the signed-in player', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(['play-rooms', 'mtg'], { data: [] })
+    qc.setQueryData(['play-room', 'mtg', 'ABC234'], { code: 'ABC234' })
+
+    clearAuthedQueries(qc)
+
+    // Rooms you host or hold a seat in are per-identity; leaving them cached would show the
+    // previous account's tables to the next signed-in user (issue #177's shape).
+    expect(qc.getQueryData(['play-rooms', 'mtg'])).toBeUndefined()
+    expect(qc.getQueryData(['play-room', 'mtg', 'ABC234'])).toBeUndefined()
+  })
 })
 
 describe('useAuthCacheReset', () => {
@@ -79,6 +93,7 @@ describe('useAuthCacheReset', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    localStorage.clear()
     auth = useAuthStore()
     qc = new QueryClient()
     const host = defineComponent({ setup: () => useAuthCacheReset(), render: () => null })
@@ -127,6 +142,31 @@ describe('useAuthCacheReset', () => {
     await flushPromises()
 
     expect(qc.getQueryData(['collection', 'mtg'])).toBe('private-collection')
+  })
+
+  it("forgets the play table's seat tokens on an identity change", async () => {
+    auth.user = USER_A
+    await flushPromises()
+    rememberSeatToken('mtg', 'ABC234', 'ada-seat-token')
+
+    auth.user = USER_B
+    await flushPromises()
+
+    // A seat token is proof of a seat, not of a session: it lives in localStorage and would
+    // outlive the account that earned it, seating the next user in Ada's chair the moment
+    // they opened that room's link.
+    expect(recallSeatToken('mtg', 'ABC234')).toBeNull()
+  })
+
+  it('keeps a seat token across the boot transition (null → id)', async () => {
+    // The same null→id flip that must not wipe the query cache must not evict a seat either:
+    // a guest who took a seat and *then* signed in is the same person at the same table.
+    rememberSeatToken('mtg', 'ABC234', 'guest-seat-token')
+
+    auth.user = USER_A
+    await flushPromises()
+
+    expect(recallSeatToken('mtg', 'ABC234')).toBe('guest-seat-token')
   })
 
   it('keeps per-user queries fired before the user id lands (null → id boot)', async () => {

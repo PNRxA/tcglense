@@ -12,7 +12,7 @@ argon2 = "0.5.3"
 # parse is blocking anyway). Already in the tree via reqwest, so naming it costs no
 # extra build.
 async-compression = { version = "0.4.43", default-features = false, features = ["tokio", "gzip"] }
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 bytes = "1.12.0"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -82,6 +82,11 @@ url = "2.5.8"
 # drive the real router in-process (no TCP bind). Feature-unified with the
 # runtime `tower` dep above; only compiled for tests.
 tower = { version = "0.5.3", features = ["util"] }
+# Drives the play tool's WebSocket in the security tests. `tower::oneshot` can't perform an
+# HTTP upgrade, so those tests bind the real router on 127.0.0.1:0 with `axum::serve` and talk
+# to it over a real socket. Pinned to the version axum 0.8 already links (feature-unified, so
+# it costs no extra build); no TLS features — the tests are plain `ws://` on loopback.
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "handshake"] }
 # Generates the SPA's wire types (web/src/lib/api/generated) from the wire DTOs'
 # `#[cfg_attr(test, derive(ts_rs::TS))]` derives: `cargo test` writes the files (export
 # dir + number bindings configured in .cargo/config.toml). `chrono-impl` maps the

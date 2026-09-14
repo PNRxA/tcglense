@@ -17,6 +17,10 @@ const apiProxy = {
   '/api': {
     target: 'http://localhost:8080',
     changeOrigin: true,
+    // The play table is one WebSocket per tab (/api/tools/{game}/play/rooms/{code}/ws), and
+    // http-proxy only forwards an Upgrade handshake when it's told to — without this the
+    // socket 404s in dev and in the preview server the e2e run uses.
+    ws: true,
   },
   '/sitemap.xml': {
     target: 'http://localhost:8080',

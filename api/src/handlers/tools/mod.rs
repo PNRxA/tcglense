@@ -6,8 +6,11 @@
 //! mirrors that with a `/api/tools/{game}/...` namespace so a second tool adds a module
 //! here instead of a new top-level route family.
 //!
-//! Today there is one: [`life`], the life counter — a tracked game of MTG with its seats,
-//! their life totals, the full gain/loss history, and (through the optional per-seat deck
-//! link) a win/loss record per deck.
+//! There are two. [`life`] is the life counter — a tracked game of MTG with its seats, their
+//! life totals, the full gain/loss history, and (through the optional per-seat deck link) a
+//! win/loss record per deck. [`play`] is the online manual table: a room of seats playing a
+//! real game over a WebSocket, which is the first surface in the app that is neither a public
+//! catalog read nor a per-user one — a guest with no account can hold a seat.
 
 pub mod life;
+pub mod play;

@@ -694,6 +694,13 @@ pub async fn start(state: &AppState, http: &Client) {
         state.user_rate_limiters.clone(),
     );
 
+    // The play tool's persistence + eviction sweeper: the live tables are in memory (see
+    // `handlers::tools::play::registry`), and this is what writes the dirty ones back and
+    // drops the ones nobody is connected to. Started here rather than from the router so it
+    // is not part of the request path — and so the drained maintenance router, which serves
+    // no application traffic, never runs it.
+    crate::handlers::tools::play::registry::spawn_sweeper(state.play.clone(), state.db.clone());
+
     // Price-alert evaluation (issue #525): independent of the catalog sync — it only reads
     // the current price columns and the alert tables, so it runs in every mode (including
     // dummy/offline, where it simply no-ops until a user configures a channel). Off entirely

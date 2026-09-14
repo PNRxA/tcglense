@@ -84,7 +84,11 @@ dev, same-origin in prod). Set `VITE_API_URL` only when the API lives on a
 different origin. The API's CORS layer deliberately allows the `:5173` origin **with
 credentials**, so the httpOnly refresh cookie also flows on *direct* cross-origin
 calls (e.g. `VITE_API_URL` pointed straight at `:8080`) — the Vite proxy merely makes
-dev same-origin; don't "tighten" that allowance away.
+dev same-origin; don't "tighten" that allowance away. That proxy also carries the play
+tool's WebSocket (`/api/tools/{game}/play/rooms/{code}/ws`), which needs `ws: true` on
+the `/api` proxy entry in `web/vite.config.ts` — without it http-proxy silently drops
+the Upgrade handshake and every table fails to connect in dev. Any reverse proxy in
+front of the API in production must forward the upgrade for the same reason.
 
 ## Commands
 
@@ -423,7 +427,9 @@ be edge-cached), alongside `/api/collection/*` and `/api/wishlist/*`.
   (`false`; trust `X-Forwarded-For`/`Forwarded` for the rate-limiter client IP —
   set `true` **only** behind a trusted proxy, else clients can spoof their IP),
   `RATE_LIMIT_ENABLED` (`true`; per-IP auth rate limiting — set `false` to defer to
-  an upstream WAF),
+  an upstream WAF; note the play tool's room socket is outside both HTTP limiters
+  once it has upgraded and carries its own per-connection throttle, so this switch
+  doesn't bound table traffic),
   `SIGNUPS_ENABLED` (`false`; set `true` to accept new-account registration — when
   false, `POST /api/auth/register` + `/complete-registration` return
   `403` while existing users keep signing in), `SIGNUPS_DISABLED_MESSAGE` (unset;
