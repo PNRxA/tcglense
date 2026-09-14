@@ -886,7 +886,11 @@ async fn every_lobby_write_is_refused_once_the_game_has_started() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "the host removing a seat: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "the host removing a seat: {body:?}"
+    );
 
     // And nobody new sits down at a game in progress.
     let (status, _, body) = send(
@@ -929,7 +933,11 @@ async fn a_pasted_list_over_the_card_cap_is_refused_by_its_quantities() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "over the cap: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "over the cap: {body:?}"
+    );
     let message = body["error"].as_str().unwrap_or_default();
     assert!(
         message.contains(&MAX_DECK_CARDS.to_string()) && message.contains(&over.to_string()),

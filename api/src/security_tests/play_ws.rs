@@ -12,7 +12,7 @@
 
 use std::net::SocketAddr;
 
-use futures_util::{FutureExt, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -76,35 +76,43 @@ impl Client {
             .expect("send frame");
     }
 
-    /// A send that tolerates the server having already closed the socket — what a flood test
-    /// needs, because the close lands somewhere in the middle of the frames it is writing.
-    async fn try_send(&mut self, message: Value) -> bool {
-        self.socket
-            .send(Message::text(message.to_string()))
-            .await
-            .is_ok()
-    }
-
-    /// A frame that has **already arrived**, without waiting for one — so a test can keep
-    /// draining while it writes. `None` means "nothing right now" *or* "this socket is over";
-    /// a flood test can't tell those apart and doesn't need to.
-    fn poll_frame(&mut self) -> Option<Value> {
-        loop {
-            let frame = self.socket.next().now_or_never()??;
-            match frame {
-                Ok(Message::Text(text)) => {
-                    return Some(serde_json::from_str(&text).expect("a JSON frame"));
+    /// Split this socket into "keep writing" and "keep reading" halves: the reader task
+    /// collects every frame into the returned channel until the socket ends, which is what
+    /// lets a flood test write at full speed without ever leaving the server's answers
+    /// unread — a socket nobody is reading is a socket that gets reset, and a reset takes the
+    /// close frame with it.
+    fn split_reading(
+        self,
+    ) -> (
+        futures_util::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            Message,
+        >,
+        tokio::sync::mpsc::UnboundedReceiver<Value>,
+    ) {
+        let (sink, mut stream) = self.socket.split();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(Ok(message)) = stream.next().await {
+                let frame = match message {
+                    Message::Text(text) => serde_json::from_str(&text).expect("a JSON frame"),
+                    Message::Close(frame) => {
+                        let _ = tx.send(json!({
+                            "type": "__close",
+                            "code": frame.as_ref().map(|f| u16::from(f.code)),
+                        }));
+                        return;
+                    }
+                    _ => continue,
+                };
+                if tx.send(frame).is_err() {
+                    return;
                 }
-                Ok(Message::Close(frame)) => {
-                    return Some(json!({
-                        "type": "__close",
-                        "code": frame.as_ref().map(|f| u16::from(f.code)),
-                    }));
-                }
-                Ok(_) => continue,
-                Err(e) => { eprintln!("DEBUG poll err: {e:?}"); return None },
             }
-        }
+        });
+        (sink, rx)
     }
 
     /// Read until a frame of `kind` satisfies `want`, so a test can wait for the state it
@@ -648,55 +656,34 @@ async fn a_flood_of_pings_is_metered_like_an_action_and_then_closed() {
     // `ping` is the cheapest frame there is, which is exactly why it must cost a token: a
     // bucket that only meters `action` is not a ceiling on anything.
     //
-    // The flood is drained as it is written. That is not politeness — a client that keeps
-    // writing into a server which has stopped reading gets its connection reset, and an RST
-    // takes the buffered close frame with it, so the close code would be untestable.
+    // The answers are drained by a task while the flood is written, so the server is never
+    // writing into a socket nobody reads — otherwise the close (and its code) is lost to a
+    // reset rather than delivered.
     let bound = crate::handlers::tools::play::ws::MAX_CONSECUTIVE_REJECTS as usize
         + crate::handlers::tools::play::ws::FRAME_BURST as usize;
-    let mut saw_too_fast = false;
-    let mut closed = None;
-    let mut goodbye = false;
-    for i in 0..bound * 2 {
-        if goodbye || closed.is_some() || !client.try_send(json!({ "type": "ping" })).await {
+    let (mut writes, mut frames) = client.split_reading();
+    for _ in 0..bound * 2 {
+        if writes
+            .send(Message::text(json!({ "type": "ping" }).to_string()))
+            .await
+            .is_err()
+        {
             break;
-        }
-        // A breath every few frames so the server stays level with the flood; the bucket
-        // refills at 20/s, so ~30ms of breathing across the whole run is nothing it can
-        // spend, and it is what keeps the close a clean FIN rather than a reset.
-        if i % 8 == 7 {
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-        while let Some(frame) = client.poll_frame() {
-            match frame["type"].as_str() {
-                Some("error") if frame["code"] == "too_fast" => saw_too_fast = true,
-                // The server said goodbye: stop writing at once so its close is a clean FIN.
-                Some("closed") => goodbye = true,
-                Some("__close") => closed = frame["code"].as_u64(),
-                _ => continue,
-            }
         }
     }
 
+    let mut saw_too_fast = false;
+    let mut closed = None;
+    while let Ok(Some(frame)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv()).await
     {
-        let probe = tokio::time::timeout(std::time::Duration::from_secs(3), client.socket.next()).await;
-        eprintln!("DEBUG blocking probe: {probe:?}");
-    }
-    // Whatever is still queued: the `closed` frame's own close code.
-    for _ in 0..400 {
-        if closed.is_some() {
-            break;
-        }
-        match client.poll_frame() {
-            Some(frame) => {
-                eprintln!("DEBUG frame: {frame}");
-                if frame["type"] == "__close" {
-                    closed = frame["code"].as_u64();
-                }
-                if frame["type"] == "error" && frame["code"] == "too_fast" {
-                    saw_too_fast = true;
-                }
+        match frame["type"].as_str() {
+            Some("error") if frame["code"] == "too_fast" => saw_too_fast = true,
+            Some("__close") => {
+                closed = frame["code"].as_u64();
+                break;
             }
-            None => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+            _ => continue,
         }
     }
 
@@ -716,7 +703,10 @@ async fn a_resync_is_throttled_so_it_cannot_be_used_as_an_amplifier() {
     // One snapshot per gap is the contract; a second in the same breath costs the server a
     // whole table and buys the client nothing, so it is refused rather than served.
     host.send(json!({ "type": "resync" })).await;
-    assert_eq!(host.next_of("snapshot").await["snapshot"]["status"], "playing");
+    assert_eq!(
+        host.next_of("snapshot").await["snapshot"]["status"],
+        "playing"
+    );
     host.send(json!({ "type": "resync" })).await;
     let error = host.next_of("error").await;
     assert_eq!(error["code"], "too_fast", "a second resync: {error:?}");
@@ -761,8 +751,18 @@ async fn a_swept_table_comes_back_out_of_the_row_with_nobody_connected() {
     let mut guest = Client::connect(&served, &code).await;
     guest.hello(Some(&guest_token)).await;
     host.send(json!({ "type": "start" })).await;
-    host.next_of("snapshot").await;
+    let dealt = host.next_of("snapshot").await;
     guest.next_of("snapshot").await;
+
+    // The table is built from the lobby, and everyone in that lobby had a socket: a game that
+    // opened with every seat greyed out would be describing a room nobody is in.
+    for seat in [host_seat, guest_seat] {
+        assert_eq!(
+            seat_in(&dealt, "snapshot", seat)["connected"],
+            json!(true),
+            "seat {seat} lost its presence when the game started: {dealt:?}"
+        );
+    }
 
     // One applied action, so what is written back is a *played* table rather than the deal.
     host.send(json!({
@@ -784,7 +784,10 @@ async fn a_swept_table_comes_back_out_of_the_row_with_nobody_connected() {
         .await
         .expect("read the room row")
         .expect("the room row");
-    assert_eq!(row.status, "playing", "a started game is `playing` in the row");
+    assert_eq!(
+        row.status, "playing",
+        "a started game is `playing` in the row"
+    );
     assert!(
         row.state.as_deref().is_some_and(|json| !json.is_empty()),
         "the table was written back"
@@ -817,4 +820,41 @@ async fn a_swept_table_comes_back_out_of_the_row_with_nobody_connected() {
             "seat {seat} came back connected"
         );
     }
+}
+
+#[tokio::test]
+async fn a_socket_that_races_an_eviction_registers_on_the_live_room() {
+    let app = test_app().await;
+    let (access, _) = register(&app, "host@example.com", PW).await;
+    let (code, _, host_seat) = open_table(&app, &access).await;
+    let row = PlayRoom::find()
+        .filter(play_room::Column::Code.eq(code.as_str()))
+        .one(&app.state.db)
+        .await
+        .expect("read the room row")
+        .expect("the room row");
+
+    // `room_for` and `register` are two lock acquisitions, and the sweeper can evict the room
+    // in between — after which this handle points at a table nothing else can reach.
+    let room = app.state.play.room_for(&row);
+    app.state.play.forget(row.id);
+    let (live, _conn_id, _rx) = app.state.play.register(&room, Some(host_seat as i32));
+
+    assert!(
+        std::sync::Arc::ptr_eq(&live, &room),
+        "the evicted handle was put back rather than orphaned"
+    );
+    assert!(
+        app.state
+            .play
+            .connected_seats(row.id)
+            .contains(&(host_seat as i32)),
+        "and the registry can see the connection that just registered"
+    );
+    // …so the next thing to touch the room joins that table instead of hydrating a second one.
+    let again = app.state.play.room_for(&row);
+    assert!(
+        std::sync::Arc::ptr_eq(&again, &live),
+        "a second hydration would be a second, invisible table"
+    );
 }

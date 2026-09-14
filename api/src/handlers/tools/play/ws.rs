@@ -4,8 +4,10 @@
 //! The upgrade itself is unauthenticated — there is no place to put a header on a browser
 //! WebSocket, so the credential rides the **first frame** instead. A connection must send
 //! `hello` within [`HELLO_TIMEOUT`] (else it is closed `4001`); a `seat_token` that doesn't
-//! match a seat of this room closes `4003`; no token at all is a **spectator**, which is a
-//! first-class thing here (a friend watching the game) and gets exactly the public view.
+//! match a seat of this room closes `4003` — while a lookup that fails on *our* side closes
+//! `1011`, outside the `4xxx` "don't come back" range, because the token may be perfectly
+//! good; no token at all is a **spectator**, which is a first-class thing here (a friend
+//! watching the game) and gets exactly the public view.
 //!
 //! Three properties this loop is responsible for, none of which the engine can enforce:
 //!

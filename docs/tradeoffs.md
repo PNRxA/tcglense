@@ -2051,7 +2051,11 @@ worth knowing before changing anything:
   of its cost: the blob is rebuilt wholesale on every start, a schema change under a
   persisted table is unreadable rather than half-readable (`room_for` discards it and the
   host starts a new game), and a crash loses at most one sweep — a couple of seconds of a
-  manual game, which is less than a dropped connection already costs.
+  manual game, which is less than a dropped connection already costs. The one thing that
+  price does **not** cover is a write-back that fails: an idle room is evicted only after it
+  has actually been persisted, because dropping a live table in favour of a row minutes stale
+  turns "lose two seconds" into "lose the game" — and the same reasoning makes `start`
+  install its table only after the `playing` status has reached the row.
 - **Requiring an account to sit down — rejected; a seat is held by a token.** The feature is
   "send your friend a link", and every field between that link and the table is a friend who
   doesn't arrive. So a seat needs only a display name, and the credential is a per-seat token
@@ -2062,7 +2066,12 @@ worth knowing before changing anything:
   per `(game, code)`, because a guest who refreshes has nothing else to re-derive their seat
   from. Signing in buys exactly two things — the room appears in your list, and you can play
   one of *your* decks — and re-joining as a signed-in player rotates the token rather than
-  minting a second seat, which is also the "kick my other tab" mechanism.
+  minting a second seat. Rotation is **not** a kick, and it was tempting to describe it as
+  one: a socket authenticates once, at `hello`, so the tab that holds the old token plays on
+  until it next reconnects (and then fails `4003`, at which point the SPA re-joins). Making
+  rotation close live sockets would mean a reconnect race between two tabs of the same
+  player, each re-joining and rotating the other out; the seat is a chair, and the honest
+  behaviour is that the device already sitting in it keeps playing until it gets up.
 - **A separate lobby DTO — rejected; `RoomSummary` is one shape for REST and the socket.**
   The same room is read three ways (the hub's list, the join page before you have any
   credential, and the `lobby` frames pushed at everyone watching), and they all go through
@@ -2100,14 +2109,20 @@ worth knowing before changing anything:
   record (it is the only thing that remembers the die came up 17), the client refuses to
   *offer* actions the server would reject (`menuActionsFor`), and the server validates
   ownership and shape and nothing else.
-- **A per-connection token bucket, not the shared limiter.** The per-IP and per-user
-  middlewares are request middlewares; after the upgrade the socket is outside both of them,
-  and one tab could otherwise drive the room's mutex at wire speed. `governor` keyed by IP
-  would be wrong here anyway — four players behind one household NAT are one key, and the
-  thing being limited is a *connection*, which dies with its bucket. So `ws.rs` carries its
-  own: 20 actions/second sustained, burst 40 (a flurry of taps in a combat step is
-  legitimate), an explicit `too_fast` error rather than a silent drop, and a close at 200
-  consecutive refusals, because a client that ignores the answer 200 times is not a client.
+- **A per-connection token bucket, not the shared limiter — and it meters frames, not
+  actions.** The per-IP and per-user middlewares are request middlewares; after the upgrade
+  the socket is outside both of them, and one tab could otherwise drive the room's mutex at
+  wire speed. `governor` keyed by IP would be wrong here anyway — four players behind one
+  household NAT are one key, and the thing being limited is a *connection*, which dies with
+  its bucket. So `ws.rs` carries its own: 20 frames/second sustained, burst 40 (a flurry of
+  taps in a combat step is legitimate), an explicit `too_fast` error rather than a silent
+  drop, and a close at 200 consecutive refusals, because a client that ignores the answer 200
+  times is not a client. Metering only `action` — the obvious reading of "limit what changes
+  the table" — is the wrong one: the *cheapest* frame to send is `resync`, whose answer is the
+  entire table, so an unmetered `resync` is an amplifier pointed at the server by anyone who
+  can open a socket. Hence every frame costs a token, a snapshot request costs an additional
+  two-second cooldown, and the upgrade caps a message at 64 KiB rather than letting
+  tungstenite's 64 MiB default stand behind a connection no HTTP limiter can see.
 - **`has_image` on the card definition, rather than letting the image 404.** A table renders
   a hundred thumbnails through the catalog image proxy, and a printing the catalog has no art
   for would be a hundred failed requests and a hundred broken frames. So the flag is resolved

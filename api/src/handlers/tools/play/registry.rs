@@ -41,9 +41,9 @@ use crate::entities::{play_room, play_seat};
 use crate::error::AppError;
 use crate::play::engine::{self, ActionError};
 use crate::play::rng::PlayRng;
-use crate::play::types::{Action, RoomState, RoomStatus, RoomSummary, SeatId, ServerMessage};
 #[cfg(test)]
 use crate::play::types::Snapshot;
+use crate::play::types::{Action, RoomState, RoomStatus, RoomSummary, SeatId, ServerMessage};
 use crate::play::view;
 
 /// How often dirty rooms are written back (and idle ones evicted).

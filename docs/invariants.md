@@ -688,10 +688,14 @@ and add the one-line summary to `AGENTS.md`.
   card that changed *into* a zone this viewer may not see into `removed` alongside cards that
   actually left the table — indistinguishable on the wire on purpose. The log is the same
   rule in prose (`engine::log`): `move_label` says "a card" whenever the source and
-  destination are both hidden or the card is going face down, `battlefield_label` says "a
-  face-down card", a draw says how many and never what, and `look_top` / `search_library` log
-  only that they happened. A new action that can name a card must go through those two
-  helpers.
+  destination are both hidden or the card is going face down, `hidden_label` says "a
+  face-down card" / "a card" for anything the view hides (a face-down permanent, an
+  unrevealed hand card, any library card), a draw says how many and never what, and
+  `look_top` / `search_library` log only that they happened. A new action that can name a card
+  must go through those two helpers. The library is addressable only through a **peek**:
+  `move_library_card` / `reorder_top` accept only ids the seat was shown (`SeatState::peeked`,
+  cleared by a shuffle, mulligan or draw) and answer `NoSuchCard` for anything else — the same
+  answer a made-up id gets, so a guessed id is never an oracle.
 - **Ownership and shape are the only rules the engine enforces.** A seat acts on cards it
   **controls** — the battlefield by `controller`, every other zone by `owner` — and a move to
   a non-battlefield zone lands in the **owner's** list (`move_card_core`'s `destination`), so
@@ -712,7 +716,9 @@ and add the one-line summary to `AGENTS.md`.
   proved by its **seat token**: 32 CSPRNG bytes through `auth::secret`, stored only as a
   SHA-256 digest (`play_seats.token_hash`), shown exactly once by the `JoinResponse`, and
   presented in `X-Play-Seat` (`tokens::SEAT_HEADER`, mirrored by `PLAY_SEAT_HEADER` in
-  `web/src/lib/api/play.ts`). A missing token, a wrong token and a seat id belonging to
+  `web/src/lib/api/play.ts`, and in `router::cors_layer`'s `allow_headers` — a credential that
+  rides a custom header is invisible to the direct cross-origin dev mode described in
+  `docs/operations.md` unless the preflight allows it). A missing token, a wrong token and a seat id belonging to
   another room all answer the **same** `401 invalid_seat_token` — one rejection, so nothing
   reveals which seats exist. Optional auth is the `MaybeUser` extractor (`auth/extractor.rs`):
   no `Authorization` header at all is a guest, a header that is present but bad is still the
@@ -720,12 +726,20 @@ and add the one-line summary to `AGENTS.md`.
   valid **API key is a 403** — play is an interactive SPA feature, the call `/api/alerts`
   makes. Opening, listing and closing a room take `SessionUser`; a non-host `DELETE`, and any
   unknown code, is a **404, never a 403**, because the code is shareable and must not become
-  an existence oracle. Join resolution is a fixed order and the order is the point
-  (`seats::join_room`): (1) a `seat_token` naming a seat of this room re-takes **that** seat
-  with the token unchanged (a reload must not cost you your chair); (2) otherwise a signed-in
-  caller who already holds a seat re-takes it with a **rotated** token (a new device, which is
-  also how the old tab is kicked); (3) otherwise a new seat, which needs a lobby, a free chair
-  (`MAX_PLAYERS`, lowest free `seat_index`, re-read inside the transaction) and a name.
+  an existence oracle. The `DELETE` is nonetheless wired in the router's **public** group, not
+  the `private` one: axum has one method router per path and it shares the public by-code
+  read's path, so it is per-IP limited rather than per-user. That costs nothing — it is a
+  host-session route either way — but it is why the two halves of this tool are not simply
+  "the three session routes and the rest". Join resolution is a fixed order and the order is
+  the point (`seats::join_room`): (1) a `seat_token` naming a seat of this room re-takes
+  **that** seat with the token unchanged (a reload must not cost you your chair); (2) otherwise
+  a signed-in caller who already holds a seat re-takes it with a **rotated** token — the old
+  token stops *authenticating*, but an already-open socket on the other device is **not**
+  closed: sockets authenticate once, at `hello`, so the other tab plays on until it next
+  reconnects and then fails `4003`, at which point the SPA re-joins. "Kick my other tab" is not
+  something this buys, and a change that made rotation close live sockets would need the
+  reconnect story thought through first; (3) otherwise a new seat, which needs a lobby, a free
+  chair (`MAX_PLAYERS`, lowest free `seat_index`, re-read inside the transaction) and a name.
   Loading a deck, readying and leaving are lobby-only (**409** afterwards, `require_lobby`),
   the host may not remove their own seat, and `source: "deck"` additionally needs the session
   to be the seat's own account (a foreign deck is `load_deck`'s 404).
@@ -735,17 +749,28 @@ and add the one-line summary to `AGENTS.md`.
   `SELECT` + `UPDATE` of a multi-hundred-kilobyte JSON blob. Durability is the sweeper
   (`spawn_sweeper`, from `tasks::start`, **not** the router): dirty rooms are written back to
   `play_rooms.state` every `SWEEP_INTERVAL` (2s) and a room with no connections for
-  `EVICT_AFTER` (10 min) is persisted and dropped. A crash therefore costs at most a couple of
-  seconds of a manual game — stated, bounded, and the price of the hot path. Hydration is lazy
-  and one-way (`room_for` reads the column on first touch; a `state` that no longer parses
-  yields a room with **no table** rather than a failed request, so the host can start again),
-  and **connections are never persisted** — presence is a property of the process, so a
-  hydrated room starts with nobody connected and the seats reconnect. Starting a game is the
+  `EVICT_AFTER` (10 min) is persisted and dropped. **A room is only ever evicted after a write
+  that actually succeeded**: a failed write-back leaves it dirty *and* in the map so the next
+  tick tries again, because dropping it would trade the live table for a row that is minutes
+  stale — the one way this debounce could lose a whole game rather than a couple of seconds of
+  one. A crash therefore costs at most a couple of seconds of a manual game — stated, bounded,
+  and the price of the hot path. Hydration is lazy and one-way (`room_for` reads the column on
+  first touch; a `state` that no longer parses yields a room with **no table** rather than a
+  failed request, so the host can start again), and **presence is never read back out of the
+  row** — the live sockets are the only source, so hydration zeroes every
+  `SeatState.connections` and `registry::start` seeds them from the registry's live counts
+  (as a 0/1 flag, since only the 0↔1 transitions are ever told to the engine). Outside those
+  two points `engine::set_connected` is the only writer of that field. Starting a game is the
   one synchronous write (`registry::start` persists `status = playing` before the snapshots go
-  out) because every later REST read and every reconnect resolves against it. One lock order,
-  always: the table mutex before the `connections` mutex, never the reverse; outbound frames go
-  to an unbounded per-connection channel drained by that connection's writer task, so a slow
-  client back-pressures itself and never the room.
+  out) because every later REST read and every reconnect resolves against it — so the table is
+  installed **only after** that write succeeds, and a `start` that finds a table already
+  installed is `not_lobby`, decided under the same lock that installs it (two host tabs must
+  not each deal an opening hand). One lock order, always: the table mutex before the
+  `connections` mutex, never the reverse; outbound frames go to an unbounded per-connection
+  channel drained by that connection's writer task, so a slow client back-pressures itself and
+  never the room. A socket is attached to the room the **map** holds, re-checked under the map
+  lock as it registers (`register` re-inserts or adopts), so a reconnect that raced an eviction
+  can never end up on an orphaned table nobody else can reach.
 - **The lobby and the table are one shape.** A room in `lobby` has **no `RoomState` at all** —
   it *is* its seat rows — so the socket sends `lobby` frames until the game starts and
   `snapshot`/`patch` afterwards. Both the REST reads and the pushed frames build their
@@ -753,7 +778,11 @@ and add the one-line summary to `AGENTS.md`.
   polled and a page that was pushed can never disagree; `viewer_seat` is stamped per reader
   (`summary_for_viewer` for a REST caller, `conn.seat` in `push_lobby`) and is the only part of
   the summary that varies. Every REST write that changes who is at the table ends in a
-  `push_lobby`, which is why the lobby never polls: the SPA's by-code query (`usePlayRoomQuery`)
+  `push_lobby` — and so does a seated socket connecting or disconnecting **while the room is
+  still a lobby**, because a lobby has no table to record presence on: its connection set *is*
+  the presence, so the dots only move when a fresh summary is pushed (one seam,
+  `play::push_lobby`, for both). Once the game starts, presence is a seat field and rides a
+  patch instead. That is why the lobby never polls: the SPA's by-code query (`usePlayRoomQuery`)
   turns its `PLAY_ROOM_POLL_MS` poll **off** while the socket is open, so there is exactly one
   live source at a time.
 - **The socket's own contracts: the first frame, the close codes, and the version gap.** The
@@ -764,16 +793,37 @@ and add the one-line summary to `AGENTS.md`.
   server-initiated goodbye (room deleted, seat removed) sends a `closed` frame and closes
   **4004** (`CLOSE_ROOM_GONE`); a client that ignores `too_fast` `MAX_CONSECUTIVE_REJECTS`
   (200) times in a row closes **4008**. Everything in the `4xxx` range means "final, do not
-  reconnect" to `lib/playSocket.ts` — a new code must stay inside it and mean the same thing.
+  reconnect" to `lib/playSocket.ts` — a new code must stay inside it and mean the same thing,
+  which is exactly why the two failures that are **ours** stay outside it: a database error
+  during the `hello` lookup closes **1011** with a `closed { reason: "internal" }` (reporting
+  it as `4003` would tell the SPA to throw away a seat token that is perfectly good), and a
+  connection that has sent nothing for `IDLE_TIMEOUT` (90s — the SPA pings every 25s) closes
+  **1001**, so a peer that vanished without a close frame stops holding its seat "connected".
+  A socket being closed keeps **reading** the peer until its writer has flushed
+  (`drain_until_written`): a socket closed with unread bytes in its receive queue is reset, and
+  a reset takes the close frame — the code all of this is written in — with it. The opening and
+  `resync` snapshots are built **and enqueued under the state lock**
+  (`registry::send_snapshot`), never built, released and then sent, or a patch applied in
+  between would land on that connection's queue ahead of the older snapshot it is a delta from.
   Patches are ordered, not addressed: a client that receives a `patch` whose `version` isn't
   its own `+ 1` must send `resync` and take the fresh `snapshot`, never guess — that is the
   whole reason `apply` bumps by exactly one, and `stores/playRoom.ts` is the only implementation
   of it.
 - **The socket bypasses both HTTP limiters, so it has its own.** The per-IP and per-user
   middlewares run on requests; after the upgrade there are none, so `ws.rs` carries a
-  per-connection token bucket (`ACTION_RATE` 20/s, `ACTION_BURST` 40) that answers an over-rate
-  action with `error { code: "too_fast" }` rather than dropping it silently — not the shared
-  `governor` limiter, which is keyed by IP or user and outlives the request. The guest-facing
+  per-connection token bucket (`FRAME_RATE` 20/s, `FRAME_BURST` 40) that answers an over-rate
+  frame with `error { code: "too_fast" }` rather than dropping it silently — not the shared
+  `governor` limiter, which is keyed by IP or user and outlives the request. It meters **every
+  inbound frame**, not just `action`: `hello`, `resync`, `ping`, a binary frame and text this
+  protocol can't parse all cost a token, because the cheapest frame to send (`resync`) is the
+  most expensive to serve — a whole snapshot each. A snapshot request is additionally
+  throttled to one per `RESYNC_INTERVAL` (2s) per connection, over which it is answered
+  `too_fast` instead of with a snapshot (a repeated `hello` is the same frame and shares the
+  throttle). The upgrade itself sets `max_message_size` / `max_frame_size` to
+  `MAX_FRAME_BYTES` (64 KiB): tungstenite's default is 64 **MiB**, which is not a bound a
+  connection outside both HTTP limiters may keep. The keepalive is a protocol-level WebSocket
+  **ping** every `PING_INTERVAL` (30s), answered by the peer's stack; the JSON `pong` frame is
+  only ever the answer to a client's own `ping`. The guest-facing
   REST half rides the per-IP arms instead (`IpRoute::PlayPublic` ~60/min for the room read,
   deck load, ready, leave and the upgrade itself; `IpRoute::PlayJoin` ~20/min for `join`, split
   out because it is the one route that writes a row per call), matched **structurally** in
@@ -789,17 +839,33 @@ and add the one-line summary to `AGENTS.md`.
   that shows a commander on its page seats one here) with maybeboard and sideboard sections
   **skipped**; a precon by `precon_deck_cards.board` (`commander` → command zone, `side`
   skipped); a pasted list by the section headers the shared `deck_import` text grammar already
-  parses, resolving each name to the newest printing. Outside `FORMAT_COMMANDER` the split is
-  simply not applied — a `constructed` room shuffles those cards into the library. Both
-  finishes of a printing are the same card at a table, so `quantity + foil_quantity` copies are
-  pushed flat (each copy gets its own instance id at `start_game`). `MAX_DECK_CARDS` (400) and
-  an empty list are **422**, and an unresolved name is a **422 naming it** — never a silently
-  shorter deck, because finding out mid-game that you sat down with 97 of your 100 cards is
-  worse than being told now.
+  parses, resolving each name to the newest printing — and there, where the section is a
+  *header* rather than a column, "not shuffled in" is `is_skipped_section`: `deck_zone`'s
+  sideboard spellings (which include `Companion`) **plus** `handlers::decks::is_maybeboard_section_name`,
+  because the text grammar normalises `Maybeboard`/`Considering` to a header `deck_zone` would
+  otherwise read as an ordinary main-deck section. A skipped section is skipped **first**: its
+  cards are not counted, not looked up, and a name in it the catalog has never heard of does
+  **not** fail the load — a maybeboard is a shortlist of cards you are not sitting down with.
+  Outside `FORMAT_COMMANDER` the split is simply not applied — a `constructed` room shuffles
+  those cards into the library. Both finishes of a printing are the same card at a table, so
+  `quantity + foil_quantity` copies are pushed flat (each copy gets its own instance id at
+  `start_game`). `MAX_DECK_CARDS` (400) and an empty list are **422** — and the cap is checked
+  against the **summed quantities, before a single `CardDef` is built** (`materialise`), so a
+  pasted `9999x Island` is refused by arithmetic rather than by first allocating what it asked
+  for. An unresolved name in a section that *is* played is a **422 naming it** — never a
+  silently shorter deck, because finding out mid-game that you sat down with 97 of your 100
+  cards is worse than being told now.
 - **On the SPA, the table is Pinia, not vue-query.** A socket is not a query: `stores/playRoom.ts`
-  owns the live table (fold `snapshot`, fold `patch`, request `resync` on a gap) and
-  `lib/playSocket.ts` owns the wire (hello, backoff 1s→10s, a `4xxx` close is final), so each
-  can be tested with a fake of the other. `composables/usePlayRooms.ts` is the REST half and is
+  owns the live table (fold `snapshot`, fold `patch`, request **one** `resync` per gap — the
+  latch clears when the snapshot lands, and out-of-order patches in between are dropped, so a
+  gap can never fan out into a snapshot storm) and `lib/playSocket.ts` owns the wire (hello,
+  backoff 1s→10s, a `4xxx` close is final), so each can be tested with a fake of the other.
+  `usePlayRoomSession.ts` owns recovery: a seat token is forgotten only on a definitive
+  `401`/`404` from the join-with-token (a 5xx or a dead network keeps it and offers a retry,
+  so a guest is never seated twice), a `4003` close means the token was rotated — a signed-in
+  player re-joins by account and reconnects, a guest is shown the join card — and
+  `forgetAllSeatTokens` runs on every identity change so a seat never outlives the account
+  that took it. `composables/usePlayRooms.ts` is the REST half and is
   split down the middle on purpose — the host's room list and create/delete are
   `useAuthedQuery`/`useAuthedMutation`, while the by-code read, `join` and every seat-scoped
   write are plain `useQuery`/`useMutation` with the session token passed only when there is one,
