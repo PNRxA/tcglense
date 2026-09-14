@@ -286,6 +286,18 @@ describe('PlayTable', () => {
       (el) => (el as HTMLElement).dataset.playDrop,
     )
     expect(drops).toEqual(['command', 'library', 'graveyard', 'exile'])
+
+    // A pile spends height on a picture only where the picture is the information: the
+    // graveyard's top card is "what just died", and a library has nothing to show by
+    // definition — giving it a card box is what cost the rail its fourth zone.
+    const pile = (zone: string) => rail.element.querySelector(`[data-play-drop="${zone}"]`)!
+    expect(pile('graveyard').querySelector('[data-play-card]')?.getAttribute('aria-label')).toBe(
+      'Lightning Bolt',
+    )
+    expect(pile('library').querySelector('[data-play-card]')).toBeNull()
+    expect(pile('command').querySelector('[data-play-card]')?.getAttribute('aria-label')).toBe(
+      'Atraxa',
+    )
   })
 
   it('announces the game being over', () => {

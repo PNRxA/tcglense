@@ -17,13 +17,24 @@ import type { PlayCardView } from '@/lib/api/play'
 //
 // **All four are visible at once, or the rail has failed.** A zone you have to scroll a
 // 96px-wide column to find is a zone you forget you have — the first cut of this rail stacked
-// four full-size card boxes and pushed the command zone (the commander!) off the bottom at
-// 1440×900. So the three ordinary piles are short tiles (`PlayZonePile`) and only the command
-// zone spends real height on pictures. Budget, at the rail's own width: three tiles at ~48px,
-// the command section at ~110px, gaps — roughly 270px, against ~360px of rail at 1280×720.
-// `overflow-y-auto` survives as a last resort for the case that genuinely overflows it: a pair
-// of partner commanders on a short viewport (which is also why two commanders go side by side
-// rather than stacked).
+// four full-size card boxes and pushed the exile's label and the whole command zone (the
+// commander!) below the fold at 1440×900, with nothing on screen to say they were there.
+//
+// Two things fix it, and the second is the one that matters:
+//
+// 1. The three ordinary piles are **short tiles** (`PlayZonePile`) — a thumb, a name, a count.
+//    A pile's job here is "how many, and can I drop on it"; its contents are one click away.
+// 2. The command zone **takes the height that is left and scales its card to fit**, rather than
+//    claiming a fixed 61:85 box and pushing whatever follows off the bottom. The card's width
+//    is capped in container-query height units (`cqh`) against the section's own box, so on a
+//    tall window the commander is large and on a 720p one it is small — and in neither case
+//    does anything below it move. The `max-h` is the other half of that: past the point where
+//    the card is already as wide as the rail, more height would only add void, so the section
+//    stops growing and the slack falls below the exile instead. Measured in the running app,
+//    nothing is clipped and nothing scrolls at either 1440×900 or 1280×720.
+//
+// `overflow-y-auto` stays as the genuine last resort (an absurdly short window), but in the
+// normal run the content now fits by construction and it never engages.
 //
 // **Command comes first** because in Commander it is the pile you touch most — it opens the
 // game and it is where the commander goes back to, every time.
@@ -33,6 +44,15 @@ import type { PlayCardView } from '@/lib/api/play'
 // every one of those is a decision you make deliberately. The other two open the viewer, which
 // is what "look through my graveyard" means.
 const table = usePlayTableContext()
+
+/**
+ * A card is 61 wide for every 85 tall, so the widest it may be drawn inside a box `H` tall is
+ * `0.7176 × H` — expressed here in container-query height units against the command zone's own
+ * box. Whichever of that and the rail's width is smaller wins, so the card fits both ways.
+ */
+const COMMANDER_SOLO_WIDTH = 'w-[min(100%,71.7cqh)]'
+/** Partners sit side by side, so a pair costs the rail no more height than one commander. */
+const COMMANDER_PAIR_WIDTH = 'w-[min(48%,71.7cqh)]'
 
 const seat = computed(() => table.store.mySeat)
 const seatId = computed(() => table.store.mySeatId)
@@ -74,33 +94,42 @@ function hover(event: PointerEvent | FocusEvent, card: PlayCardView | null) {
     <section
       v-if="showsCommandZone"
       data-play-drop="command"
-      class="shrink-0 rounded-lg border px-1.5 py-1"
+      class="flex flex-col rounded-lg border px-1.5 py-1"
+      :class="commanders.length > 0 ? 'max-h-44 min-h-0 flex-1' : 'shrink-0'"
       aria-label="Command zone"
     >
-      <h3 class="text-muted-foreground mb-1 text-[0.65rem] leading-tight">
+      <h3 class="text-muted-foreground shrink-0 text-[0.65rem] leading-tight">
         Command
         <span class="text-foreground font-semibold tabular-nums">{{ commanders.length }}</span>
       </h3>
       <p v-if="commanders.length === 0" class="text-muted-foreground/70 py-1 text-[0.6rem]">
         Nothing here.
       </p>
+      <!-- A size container, so the card below can be capped against the height that is
+           actually left rather than against a number someone guessed. -->
       <div
         v-else
-        class="grid gap-1"
-        :class="commanders.length > 1 ? 'grid-cols-2' : 'grid-cols-1 px-2'"
+        class="mt-1 flex min-h-0 flex-1 justify-center gap-1"
+        :style="{ containerType: 'size' }"
       >
-        <PlayCardMenu v-for="card in commanders" :key="card.id" :card="card" zone="command">
-          <PlayCard
-            :card="card"
-            :game="table.store.game"
-            size="small"
-            @click="table.playCard(card)"
-            @pointerenter="(event: PointerEvent) => hover(event, card)"
-            @pointerleave="(event: PointerEvent) => hover(event, null)"
-            @focus="(event: FocusEvent) => hover(event, card)"
-            @blur="(event: FocusEvent) => hover(event, null)"
-          />
-        </PlayCardMenu>
+        <div
+          v-for="card in commanders"
+          :key="card.id"
+          :class="commanders.length > 1 ? COMMANDER_PAIR_WIDTH : COMMANDER_SOLO_WIDTH"
+        >
+          <PlayCardMenu :card="card" zone="command">
+            <PlayCard
+              :card="card"
+              :game="table.store.game"
+              size="small"
+              @click="table.playCard(card)"
+              @pointerenter="(event: PointerEvent) => hover(event, card)"
+              @pointerleave="(event: PointerEvent) => hover(event, null)"
+              @focus="(event: FocusEvent) => hover(event, card)"
+              @blur="(event: FocusEvent) => hover(event, null)"
+            />
+          </PlayCardMenu>
+        </div>
       </div>
     </section>
 
