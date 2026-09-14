@@ -19,7 +19,14 @@ import type { PlayCardView, PlaySeatSnapshot, PlayZone } from '@/lib/api/play'
 // same tapped rotation, hover preview intact. Read-only for gestures, but cards keep their
 // context menu, because the one legal reach across the table — taking control of a permanent —
 // belongs on the card it is about.
-const props = defineProps<{ seat: PlaySeatSnapshot }>()
+const props = withDefaults(
+  defineProps<{
+    seat: PlaySeatSnapshot
+    /** Fill the container instead of taking a fixed slot in the desktop strip (the phone sheet). */
+    full?: boolean
+  }>(),
+  { full: false },
+)
 
 const table = usePlayTableContext()
 
@@ -45,8 +52,12 @@ function sourceName(seatId: number): string {
 
 <template>
   <article
-    class="bg-muted/30 flex w-[22rem] shrink-0 flex-col gap-1.5 rounded-lg border p-2 sm:w-[26rem]"
-    :class="[isActive ? 'border-primary/60' : '', seat.out ? 'opacity-60' : '']"
+    class="bg-muted/30 flex flex-col gap-1.5 rounded-lg border p-2"
+    :class="[
+      full ? 'w-full' : 'w-[22rem] shrink-0 sm:w-[26rem]',
+      isActive ? 'border-primary/60' : '',
+      seat.out ? 'opacity-60' : '',
+    ]"
     :aria-label="`${seat.name}, ${seat.life} life`"
   >
     <div class="flex items-center gap-1.5">

@@ -39,6 +39,11 @@ import type { PlayCardView } from '@/lib/api/play'
 // **Command comes first** because in Commander it is the pile you touch most — it opens the
 // game and it is where the commander goes back to, every time.
 //
+// On a **phone** the same four zones turn ninety degrees: a row of four tiles directly above
+// the hand, which is where your thumb already is, and which costs the battlefield no width at
+// all. Same tiles, same `data-play-drop` targets, same library menu — only the axis changes,
+// so a card dragged onto "Graveyard" lands in the graveyard either way.
+//
 // The library is the only pile with a menu rather than an action, because it is the only one
 // with more than one obvious thing to do to it — draw, look, search, shuffle, mulligan — and
 // every one of those is a decision you make deliberately. The other two open the viewer, which
@@ -72,20 +77,80 @@ const showsCommandZone = computed(
   () => table.store.format === 'commander' || commanders.value.length > 0,
 )
 
-function openZone(zone: 'graveyard' | 'exile') {
+function openZone(zone: 'graveyard' | 'exile' | 'command') {
   if (seatId.value === null) return
   table.openViewer({ kind: 'zone', seatId: seatId.value, zone })
 }
 
 function hover(event: PointerEvent | FocusEvent, card: PlayCardView | null) {
   const target = event.currentTarget
-  table.hoverCard(card, target instanceof HTMLElement ? target : null)
+  const pointerType = 'pointerType' in event ? event.pointerType : undefined
+  table.hoverCard(card, target instanceof HTMLElement ? target : null, pointerType)
 }
 </script>
 
 <template>
+  <!-- The phone's rail: four tiles across, above the hand. -->
+  <div
+    v-if="seat && table.compact.value"
+    class="grid shrink-0 grid-cols-4 gap-1"
+    aria-label="Your zones"
+  >
+    <!-- Dense on both orientations: at 390px a quarter of the width is ~92px, and the tile has
+      to fit "Graveyard" beside a thumb without truncating the one word that identifies it. -->
+    <PlayZonePile
+      v-if="showsCommandZone"
+      zone="command"
+      label="Command"
+      :count="commanders.length"
+      :top="commanders[0] ?? null"
+      :game="table.store.game"
+      dense
+      @click="openZone('command')"
+    />
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <PlayZonePile
+          zone="library"
+          label="Library"
+          :count="seat.library_count"
+          :game="table.store.game"
+          dense
+          menu
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top">
+        <DropdownMenuItem @select="table.draw(1)">Draw a card</DropdownMenuItem>
+        <DropdownMenuItem @select="table.draw(7)">Draw seven</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem @select="table.lookTop()">Look at the top…</DropdownMenuItem>
+        <DropdownMenuItem @select="table.searchLibrary()">Search library…</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem @select="table.shuffle()">Shuffle</DropdownMenuItem>
+        <DropdownMenuItem @select="table.mulligan()">Mulligan…</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <PlayZonePile
+      zone="graveyard"
+      label="Graveyard"
+      :count="seat.graveyard.length"
+      :top="graveyard"
+      :game="table.store.game"
+      dense
+      @click="openZone('graveyard')"
+    />
+    <PlayZonePile
+      zone="exile"
+      label="Exile"
+      :count="seat.exile.length"
+      :game="table.store.game"
+      dense
+      @click="openZone('exile')"
+    />
+  </div>
+
   <aside
-    v-if="seat"
+    v-else-if="seat"
     class="flex w-24 shrink-0 flex-col gap-1.5 overflow-y-auto sm:w-28"
     aria-label="Your zones"
   >

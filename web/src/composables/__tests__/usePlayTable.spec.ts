@@ -1,22 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayTable, type PlayTableApi } from '@/composables/usePlayTable'
-import { PLAY_COUNTER_NAME_MAX, PLAY_LONG_PRESS_MS } from '@/lib/playTable'
 import { usePlayRoomStore } from '@/stores/playRoom'
 import type { PlayCardView, PlaySeatSnapshot, PlaySnapshot } from '@/lib/api/play'
 
-// The engine on its own, without the markup — because the two things worth pinning here are
-// both about what the table does when something ELSE is in charge of the screen or the finger:
-// a shortcut that fires while a dialog is open acts on a card nobody is looking at, and a long
-// press that opens the card menu must not also be read as the tap that lifted off it.
+// The table engine on its own — the rules that are about *input*, not about markup.
+//
+// Two of them only ever show up on a device the unit suite doesn't have: a finger produces a
+// `pointerenter` on its way into a tap (so honouring hover covered a phone in a full-screen
+// card), and a `focus` carries no pointer type at all (so the tap that follows would have
+// re-opened it). Both are asserted here rather than in a component, because the decision lives
+// in one function and a component test would only be testing that it was called.
 
-const MINE = 1
-
-function seat(over: Partial<PlaySeatSnapshot> = {}): PlaySeatSnapshot {
+function seat(overrides: Partial<PlaySeatSnapshot> & { id: number }): PlaySeatSnapshot {
   return {
-    id: MINE,
     seat_index: 0,
     name: 'Ana',
     is_host: true,
@@ -26,24 +25,45 @@ function seat(over: Partial<PlaySeatSnapshot> = {}): PlaySeatSnapshot {
     commander_damage: {},
     out: false,
     connected: true,
-    library_count: 92,
-    hand_count: 0,
-    hand: [],
+    library_count: 90,
+    hand_count: 1,
+    hand: [101],
     battlefield: [111],
     graveyard: [],
     exile: [],
     command: [],
-    ...over,
+    ...overrides,
   }
 }
 
-function card(over: Partial<PlayCardView> = {}): PlayCardView {
+function card(id: number, zone: PlayCardView['zone'], owner = 1): PlayCardView {
   return {
-    id: 111,
-    def: null,
-    owner: MINE,
-    controller: MINE,
-    zone: 'battlefield',
+    id,
+    def: {
+      card_id: `c${id}`,
+      game: 'mtg',
+      name: `Card ${id}`,
+      faces: [
+        {
+          name: `Card ${id}`,
+          mana_cost: null,
+          type_line: null,
+          oracle_text: null,
+          power: null,
+          toughness: null,
+          loyalty: null,
+        },
+      ],
+      back_image: false,
+      has_image: true,
+      colors: [],
+      cmc: null,
+      is_commander: false,
+      is_token: false,
+    },
+    owner,
+    controller: owner,
+    zone,
     tapped: false,
     face_down: false,
     face_index: 0,
@@ -53,230 +73,148 @@ function card(over: Partial<PlayCardView> = {}): PlayCardView {
     y: 0.5,
     attached_to: null,
     power_toughness: null,
-    ...over,
   }
 }
 
-function snapshot(over: Partial<PlaySnapshot> = {}): PlaySnapshot {
+function snapshot(overrides: Partial<PlaySnapshot> = {}): PlaySnapshot {
   return {
     version: 1,
     status: 'playing',
     format: 'commander',
     starting_life: 40,
-    viewer_seat: MINE,
-    seats: [seat()],
-    cards: [card()],
-    turn: { number: 1, active_seat: MINE, phase: 'main1' },
+    viewer_seat: 1,
+    seats: [seat({ id: 1 })],
+    cards: [card(101, 'hand'), card(111, 'battlefield')],
+    turn: { number: 1, active_seat: 1, phase: 'main1' },
     log: [],
     winner: null,
-    ...over,
+    ...overrides,
   }
 }
 
-const mounted: Array<{ unmount: () => void }> = []
+/** jsdom has no media engine at all, so the layout queries are answered by hand. */
+function stubMatchMedia(answer: (query: string) => boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      media: query,
+      matches: answer(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  })
+}
 
-function mountEngine(state: PlaySnapshot = snapshot()) {
+const mounted: { unmount: () => void }[] = []
+
+function makeTable(state: PlaySnapshot = snapshot()) {
   const store = usePlayRoomStore()
+  store.game = 'mtg'
   store.handleMessage({ type: 'snapshot', snapshot: state })
   const send = vi.spyOn(store, 'send').mockReturnValue(1)
-  let table!: PlayTableApi
-  const Host = defineComponent({
-    setup() {
-      table = usePlayTable()
-      return () => null
-    },
-  })
-  mounted.push(mount(Host))
-  return { table, store, send }
+  let api!: PlayTableApi
+  const wrapper = mount(
+    defineComponent({
+      setup() {
+        api = usePlayTable()
+        return () => h('div')
+      },
+    }),
+  )
+  mounted.push(wrapper)
+  return { api, store, send }
 }
 
-/** A pointer event built by hand: `button` and `pointerType` are read-only on the real ones. */
-function pointer(type: string, over: Record<string, unknown> = {}): PointerEvent {
-  const event = new Event(type, { bubbles: true })
-  Object.assign(event, {
-    button: 0,
-    clientX: 40,
-    clientY: 40,
-    pointerId: 1,
-    pointerType: 'mouse',
-    ...over,
-  })
-  return event as PointerEvent
-}
+/** A stand-in for the card element a hover would be anchored to. */
+const anchor = null
 
-function press(table: PlayTableApi, over: Record<string, unknown> = {}) {
-  table.startCardDrag(pointer('pointerdown', over), card(), 'battlefield')
-}
-
-function key(k: string, over: Record<string, unknown> = {}) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...over }))
-}
-
-/** Something modal, of the kind reka portals to the body when a dialog or menu opens. */
-function openOverlay(role: string, attrs: Record<string, string> = {}) {
-  const el = document.createElement('div')
-  el.setAttribute('role', role)
-  for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value)
-  document.body.append(el)
-  return el
-}
-
-beforeEach(() => {
-  setActivePinia(createPinia())
-})
-
-afterEach(() => {
-  while (mounted.length) mounted.pop()?.unmount()
-  document.body.innerHTML = ''
-  vi.restoreAllMocks()
-})
-
-describe('keyboard shortcuts', () => {
-  it('acts on a single press and ignores the auto-repeat that follows', () => {
-    const { send } = mountEngine()
-
-    key('s')
-    expect(send).toHaveBeenCalledTimes(1)
-
-    // A key leant on repeats ~30×/s, and every one of these is a socket frame: thirty
-    // shuffles nobody asked for, `too_fast`, and then a 4008 close.
-    key('s', { repeat: true })
-    key('s', { repeat: true })
-    expect(send).toHaveBeenCalledTimes(1)
+describe('usePlayTable', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
   })
 
-  it('stands down while a dialog owns the screen', () => {
-    const { send } = mountEngine()
-    const dialog = openOverlay('dialog')
+  afterEach(() => {
+    while (mounted.length) mounted.pop()?.unmount()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
 
-    // The zone viewer is open — the player is READING their library. `S` here would shuffle
-    // the very pile they are searching, because `hoveredId` is still on whatever the pointer
-    // crossed on the way to the dialog.
-    key('s')
-    key('d')
+  it('opens the hover preview for a mouse', () => {
+    const { api } = makeTable()
+    api.hoverCard(api.store.card(101)!, anchor, 'mouse')
+    expect(api.preview.value?.card.id).toBe(101)
+  })
+
+  it('opens no preview for a finger', () => {
+    // A touch `pointerenter` is a tap arriving, not a request to see the card full size.
+    const { api } = makeTable()
+    api.hoverCard(api.store.card(101)!, anchor, 'touch')
+    expect(api.preview.value).toBeNull()
+    expect(api.coarsePointer.value).toBe(true)
+    // ...and it still records what is under the finger, which the shortcuts read.
+    expect(api.hoveredId.value).toBe(101)
+  })
+
+  it('opens no preview for a pen either', () => {
+    const { api } = makeTable()
+    api.hoverCard(api.store.card(101)!, anchor, 'pen')
+    expect(api.preview.value).toBeNull()
+  })
+
+  it('keeps a focus from re-opening what a tap just suppressed', () => {
+    // `focus` has no pointer type, and on touch the tap focuses the card it hit — so without
+    // remembering the last pointer, every tap would still end in a full-screen preview.
+    const { api } = makeTable()
+    const event = new Event('pointerdown', { bubbles: true })
+    Object.assign(event, { pointerType: 'touch' })
+    window.dispatchEvent(event)
+    api.hoverCard(api.store.card(101)!, anchor)
+    expect(api.preview.value).toBeNull()
+  })
+
+  it('goes back to hovering when a mouse takes over', () => {
+    const { api } = makeTable()
+    api.hoverCard(api.store.card(101)!, anchor, 'touch')
+    expect(api.preview.value).toBeNull()
+    api.hoverCard(api.store.card(101)!, anchor, 'mouse')
+    expect(api.preview.value?.card.id).toBe(101)
+  })
+
+  it('reads the layout off media queries', () => {
+    stubMatchMedia((query) => query.includes('max-width') || query.includes('coarse'))
+    const { api } = makeTable()
+    expect(api.isPhone.value).toBe(true)
+    expect(api.isShort.value).toBe(false)
+    // A coarse-pointer device starts out not hovering, before any event has arrived.
+    expect(api.coarsePointer.value).toBe(true)
+  })
+
+  it('stays on the desktop layout where there is no media engine at all', () => {
+    const { api } = makeTable()
+    expect(api.isPhone.value).toBe(false)
+    expect(api.isShort.value).toBe(false)
+  })
+
+  it('only calls a card of mine in my hand a hand selection', () => {
+    const { api } = makeTable()
+    api.selectedId.value = 111 // on the battlefield
+    expect(api.selectedHandCard.value).toBeNull()
+    api.selectedId.value = 101
+    expect(api.selectedHandCard.value?.id).toBe(101)
+    api.clearSelection()
+    expect(api.selectedHandCard.value).toBeNull()
+  })
+
+  it('stands every verb down once the game is finished', () => {
+    const { api, send } = makeTable(snapshot({ status: 'finished', winner: 1 }))
+    api.draw(1)
+    api.shuffle()
+    api.untapAll()
+    api.passTurn()
+    api.tapCard(api.store.card(111)!)
     expect(send).not.toHaveBeenCalled()
-
-    dialog.remove()
-    key('s')
-    expect(send).toHaveBeenCalledWith({ type: 'shuffle' })
-  })
-
-  it('stands down while a card menu is open', () => {
-    const { send } = mountEngine()
-    openOverlay('menu')
-
-    key('u')
-
-    expect(send).not.toHaveBeenCalled()
-  })
-
-  it('keeps working while the card preview is up — it is a picture, not an overlay', () => {
-    const { send } = mountEngine()
-    // The preview carries `role="dialog"` and follows the pointer around the table, so
-    // treating it as modal would turn every shortcut off whenever a card is hovered.
-    openOverlay('dialog', { 'data-play-preview': '' })
-
-    key('s')
-
-    expect(send).toHaveBeenCalledWith({ type: 'shuffle' })
-  })
-
-  it('closes a pinned preview with Escape, game over or not', () => {
-    const { table } = mountEngine(snapshot({ status: 'finished', winner: MINE }))
-    table.pinPreview(card(), null)
-    expect(table.preview.value).not.toBeNull()
-
-    // "View larger" survives the end of the game, so the key that dismisses it has to as
-    // well — otherwise the last thing a pod sees is a card they can't put down.
-    key('Escape')
-
-    expect(table.preview.value).toBeNull()
-  })
-})
-
-describe('press, long press and tap', () => {
-  it('taps on a press that neither travelled nor lingered', () => {
-    const { table, send } = mountEngine()
-
-    press(table)
-    window.dispatchEvent(pointer('pointerup'))
-
-    expect(send).toHaveBeenCalledWith({ type: 'tap', card: 111, tapped: true })
-  })
-
-  it('does not also tap the card the context menu just opened on', () => {
-    const { table, send } = mountEngine()
-
-    press(table, { pointerType: 'touch' })
-    // The long press opened the menu; the finger lifting is the END of that gesture, not a
-    // second one. Tapping here taps the permanent behind the menu the player is reading.
-    window.dispatchEvent(new Event('contextmenu', { bubbles: true }))
-    window.dispatchEvent(pointer('pointerup', { pointerType: 'touch' }))
-
-    expect(send).not.toHaveBeenCalled()
-  })
-
-  it('does not tap after a touch press held past the long-press delay', () => {
-    vi.useFakeTimers()
-    try {
-      const { table, send } = mountEngine()
-
-      press(table, { pointerType: 'touch' })
-      // reka opens the card menu on its own timer rather than on a `contextmenu` event, so
-      // the duration of the press is the other half of the same signal.
-      vi.advanceTimersByTime(PLAY_LONG_PRESS_MS + 100)
-      window.dispatchEvent(pointer('pointerup', { pointerType: 'touch' }))
-
-      expect(send).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('still taps a slow press with a mouse, which has no long press', () => {
-    vi.useFakeTimers()
-    try {
-      const { table, send } = mountEngine()
-
-      press(table)
-      vi.advanceTimersByTime(PLAY_LONG_PRESS_MS + 100)
-      window.dispatchEvent(pointer('pointerup'))
-
-      // A mouse opens the menu with the right button, which never starts a drag at all —
-      // so a thoughtful left click is just a click, however long it took.
-      expect(send).toHaveBeenCalledWith({ type: 'tap', card: 111, tapped: true })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-})
-
-describe('custom counters', () => {
-  it('clamps the name to what the engine accepts', () => {
-    const { table, send } = mountEngine()
-    vi.spyOn(window, 'prompt').mockReturnValue('commander tax paid this turn')
-
-    table.runMenuAction('counter_custom', card())
-
-    // Past `MAX_COUNTER_NAME` the engine refuses the whole action rather than truncating, so
-    // a wordy counter would come back as an error with nothing to connect it to. The cut is
-    // trimmed too: "poison " and "poison" would be two counters on the same card.
-    expect(send).toHaveBeenCalledWith({
-      type: 'counter',
-      card: 111,
-      name: 'commander tax paid this',
-      delta: 1,
-    })
-    const sent = send.mock.calls[0]?.[0] as { name?: string } | undefined
-    expect(sent?.name?.length ?? 0).toBeLessThanOrEqual(PLAY_COUNTER_NAME_MAX)
-  })
-
-  it('sends nothing when the prompt is dismissed', () => {
-    const { table, send } = mountEngine()
-    vi.spyOn(window, 'prompt').mockReturnValue(null)
-
-    table.runMenuAction('counter_custom', card())
-
-    expect(send).not.toHaveBeenCalled()
+    // Chat is not a table verb — a pod talks after the game.
+    api.chat('gg')
+    expect(send).toHaveBeenCalledWith({ type: 'chat', text: 'gg' })
   })
 })

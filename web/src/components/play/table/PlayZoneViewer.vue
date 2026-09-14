@@ -118,6 +118,19 @@ function putBack() {
   table.closeViewer()
 }
 
+/**
+ * Move a card out of one of my own public zones (graveyard / exile / command).
+ *
+ * Touch's route to "cast my commander": the rail's command tile opens this viewer, and these
+ * are the two things you do from here. On a mouse the context menu already offered them; a
+ * finger has no hover and no right-click without a deliberate long press, so they get buttons.
+ */
+function take(card: PlayCardView, zone: PlayZone) {
+  if (zone === 'battlefield') table.playCard(card)
+  else table.moveCard(card, zone)
+  table.closeViewer()
+}
+
 function pull(card: PlayCardView, zone: PlayZone, placement: 'top' | 'bottom' | null = null) {
   table.moveLibraryCard(card.id, zone, {
     placement,
@@ -174,6 +187,28 @@ function onOpenChange(value: boolean) {
               <PlayCard :card="card" :game="table.store.game" size="small" />
             </PlayCardMenu>
             <PlayCard v-else :card="card" :game="table.store.game" size="small" />
+
+            <!-- My own pile: the two moves worth a button, so touch never needs the menu. -->
+            <div v-if="ownZone && !isPeek" class="flex justify-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="px-1.5"
+                :disabled="!table.canAct.value"
+                @click="take(card, 'battlefield')"
+              >
+                {{ viewerZone === 'command' ? 'Cast' : 'Play' }}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="px-1.5"
+                :disabled="!table.canAct.value"
+                @click="take(card, 'hand')"
+              >
+                Hand
+              </Button>
+            </div>
 
             <template v-if="isPeek">
               <div v-if="isLookTop" class="flex justify-center gap-1">

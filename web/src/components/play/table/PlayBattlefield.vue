@@ -64,7 +64,11 @@ function onPointerDown(event: PointerEvent, card: PlayCardView) {
 
 function onEnter(event: PointerEvent, card: PlayCardView) {
   const target = event.currentTarget
-  table.hoverCard(card, target instanceof HTMLElement ? target : null)
+  table.hoverCard(card, target instanceof HTMLElement ? target : null, event.pointerType)
+}
+
+function onLeave(event: PointerEvent) {
+  table.hoverCard(null, null, event.pointerType)
 }
 
 function onFocus(event: FocusEvent, card: PlayCardView) {
@@ -78,7 +82,7 @@ function onFocus(event: FocusEvent, card: PlayCardView) {
     ref="el"
     :data-play-drop="interactive ? 'battlefield' : undefined"
     :data-play-seat="seatId"
-    class="border-border/60 relative h-full w-full overflow-hidden rounded-lg border"
+    class="border-border/60 relative h-full w-full touch-none overflow-hidden rounded-lg border"
     :class="
       interactive
         ? 'bg-card [background-image:linear-gradient(to_right,var(--color-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--color-border)_1px,transparent_1px)] [background-size:6.25%_12.5%] [background-blend-mode:soft-light]'
@@ -114,7 +118,7 @@ function onFocus(event: FocusEvent, card: PlayCardView) {
           :dragging="table.drag.value?.cardId === item.card.id && table.drag.value.moved"
           @pointerdown="(event: PointerEvent) => onPointerDown(event, item.card)"
           @pointerenter="(event: PointerEvent) => onEnter(event, item.card)"
-          @pointerleave="table.hoverCard(null, null)"
+          @pointerleave="(event: PointerEvent) => onLeave(event)"
           @focus="(event: FocusEvent) => onFocus(event, item.card)"
           @blur="table.hoverCard(null, null)"
         />
@@ -126,7 +130,7 @@ function onFocus(event: FocusEvent, card: PlayCardView) {
         size="small"
         :interactive="false"
         @pointerenter="(event: PointerEvent) => onEnter(event, item.card)"
-        @pointerleave="table.hoverCard(null, null)"
+        @pointerleave="(event: PointerEvent) => onLeave(event)"
       />
     </div>
   </div>

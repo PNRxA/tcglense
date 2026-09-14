@@ -2,15 +2,17 @@
 import { computed } from 'vue'
 import { MessageSquare } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import PlayAttachDialog from '@/components/play/table/PlayAttachDialog.vue'
 import PlayBattlefield from '@/components/play/table/PlayBattlefield.vue'
 import PlayCard from '@/components/play/table/PlayCard.vue'
 import PlayCardPreview from '@/components/play/table/PlayCardPreview.vue'
 import PlayHand from '@/components/play/table/PlayHand.vue'
 import PlayLifePanel from '@/components/play/table/PlayLifePanel.vue'
+import PlayLifeSheet from '@/components/play/table/PlayLifeSheet.vue'
 import PlayLog from '@/components/play/table/PlayLog.vue'
 import PlayOpponentBoard from '@/components/play/table/PlayOpponentBoard.vue'
+import PlayOpponentStrip from '@/components/play/table/PlayOpponentStrip.vue'
 import PlayTokenDialog from '@/components/play/table/PlayTokenDialog.vue'
 import PlayTurnBar from '@/components/play/table/PlayTurnBar.vue'
 import PlayZoneRail from '@/components/play/table/PlayZoneRail.vue'
@@ -28,6 +30,19 @@ import { usePlayTable } from '@/composables/usePlayTable'
 // opponents across from you, then your own half — rail, board, totals — and your hand along
 // the near edge where your hand actually is. The log sits down the right on a laptop and
 // becomes a sheet on a phone, because at 400px a permanent 18rem column is most of the table.
+//
+// **A phone is a different seating plan, not a smaller one.** Measured at 390×844, the desktop
+// arrangement left the battlefield a 110px sliver: the zone rail and the life panel kept their
+// widths, the opponent boards took a third of the height and the turn bar wrapped to three
+// rows. So below `sm` the table re-forms around the one thing that has to be big — your board:
+// the opponents become a one-line chip strip (`PlayOpponentStrip`), the rail turns ninety
+// degrees into a row of four tiles above the hand, the life panel moves into a sheet behind a
+// chip on the bar, and the battlefield takes everything that is left.
+//
+// The switch is `compact`, which is **narrow or short** rather than narrow alone: a phone held
+// sideways is 844px wide — nobody's idea of narrow — and got the desktop layout, which left it
+// a 2px-tall battlefield. A short viewport drops the opponent strip too, because at 390px of
+// height there is none to spend on it.
 //
 // Everything interactive is created once here (`usePlayTable`) and provided to the subtree, so
 // a drag that starts in the hand and ends on the battlefield is one state machine rather than
@@ -59,11 +74,13 @@ const ghostStyle = computed(() => {
     <PlayTurnBar @leave="emit('leave')" />
 
     <div class="flex min-h-0 flex-1">
-      <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-1.5">
-        <!-- Across the table. Scrolls sideways rather than shrinking: four opponents on a
-          tablet are four boards you scroll to, not four boards too small to read. -->
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-1 p-1 sm:gap-1.5 sm:p-1.5">
+        <!-- Across the table. On a laptop, boards that scroll sideways rather than shrinking:
+          four opponents are four boards you scroll to, not four too small to read. On a phone,
+          a chip each — and on a phone held sideways, not even that. -->
+        <PlayOpponentStrip v-if="table.compact.value && !table.isShort.value" />
         <div
-          v-if="store.opponents.length > 0"
+          v-if="!table.compact.value && store.opponents.length > 0"
           class="flex shrink-0 gap-1.5 overflow-x-auto pb-1"
           aria-label="Opponents"
         >
@@ -74,9 +91,10 @@ const ghostStyle = computed(() => {
           />
         </div>
 
-        <!-- My half. -->
+        <!-- My half. The rail and the totals flank the board on a laptop; on a phone the board
+          gets the whole width and they move below it and into a sheet. -->
         <div class="flex min-h-0 flex-1 gap-1.5">
-          <PlayZoneRail />
+          <PlayZoneRail v-if="!table.compact.value" />
           <div class="min-h-0 min-w-0 flex-1">
             <PlayBattlefield v-if="store.mySeatId !== null" :seat-id="store.mySeatId" />
             <div
@@ -86,9 +104,10 @@ const ghostStyle = computed(() => {
               You're watching this table.
             </div>
           </div>
-          <PlayLifePanel />
+          <PlayLifePanel v-if="!table.compact.value" />
         </div>
 
+        <PlayZoneRail v-if="table.compact.value" />
         <PlayHand v-if="store.mySeatId !== null" />
       </div>
 
@@ -100,23 +119,28 @@ const ghostStyle = computed(() => {
       </div>
     </div>
 
-    <!-- On a phone the log is a sheet: the same panel, out of the way until it's wanted. -->
-    <Sheet>
-      <SheetTrigger as-child>
-        <Button
-          variant="outline"
-          size="icon"
-          class="fixed right-3 bottom-3 z-30 rounded-full shadow-lg lg:hidden"
-          aria-label="Open the log"
-        >
-          <MessageSquare class="size-4" />
-        </Button>
-      </SheetTrigger>
+    <!-- Below the log column's breakpoint the log is a sheet: the same panel, out of the way
+      until it's wanted. On a tablet it opens from a floating button; on a phone that button
+      would sit on top of the hand, so the turn bar carries it instead. -->
+    <Sheet
+      :open="table.logSheetOpen.value"
+      @update:open="(value: boolean) => (table.logSheetOpen.value = value)"
+    >
       <SheetContent side="right" class="w-[min(90vw,22rem)] p-0">
         <SheetTitle class="sr-only">Game log</SheetTitle>
         <PlayLog />
       </SheetContent>
     </Sheet>
+    <Button
+      v-if="!table.compact.value"
+      variant="outline"
+      size="icon"
+      class="fixed right-3 bottom-3 z-30 rounded-full shadow-lg lg:hidden"
+      aria-label="Open the log"
+      @click="table.logSheetOpen.value = true"
+    >
+      <MessageSquare class="size-4" />
+    </Button>
 
     <!-- The card under the finger. `pointer-events-none` is load-bearing: the drop target is
       whatever the document reports under the pointer, and a ghost that answered would be it. -->
@@ -130,6 +154,7 @@ const ghostStyle = computed(() => {
     </div>
 
     <PlayCardPreview />
+    <PlayLifeSheet />
     <PlayZoneViewer />
     <PlayTokenDialog />
     <PlayAttachDialog />

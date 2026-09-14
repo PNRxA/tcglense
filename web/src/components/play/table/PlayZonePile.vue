@@ -34,8 +34,12 @@ withDefaults(
     droppable?: boolean
     /** Marks the tile as opening a menu rather than a viewer. */
     menu?: boolean
+    /** Override the tile's wording — the phone's four-across row needs shorter names. */
+    label?: string | null
+    /** Trim the tile for a short viewport, where every row competes with the battlefield. */
+    dense?: boolean
   }>(),
-  { top: null, droppable: true, menu: false },
+  { top: null, droppable: true, menu: false, label: null, dense: false },
 )
 </script>
 
@@ -43,11 +47,12 @@ withDefaults(
   <button
     type="button"
     :data-play-drop="droppable ? zone : undefined"
-    class="hover:border-ring/60 hover:bg-accent/40 flex w-full items-center gap-1.5 rounded-lg border px-1.5 py-1 text-left transition-colors"
+    class="hover:border-ring/60 hover:bg-accent/40 flex w-full items-center gap-1.5 rounded-lg border px-1.5 text-left transition-colors"
+    :class="dense ? 'py-0.5' : 'py-1'"
     :aria-label="`${zoneLabel(zone)}, ${count} ${count === 1 ? 'card' : 'cards'}`"
   >
     <!-- Fixed-width thumb column, so three tiles line their text up whatever they show. -->
-    <span class="w-7 shrink-0">
+    <span class="shrink-0" :class="dense ? 'w-5' : 'w-7'">
       <PlayCard v-if="top" :card="top" :game="game" size="small" :interactive="false" />
       <span
         v-else-if="count > 0"
@@ -62,7 +67,7 @@ withDefaults(
     </span>
     <span class="min-w-0 flex-1">
       <span class="text-muted-foreground block truncate text-[0.65rem] leading-tight">
-        {{ zoneLabel(zone) }}
+        {{ label ?? zoneLabel(zone) }}
       </span>
       <span class="block text-sm leading-tight font-semibold tabular-nums">{{ count }}</span>
     </span>

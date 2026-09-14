@@ -115,6 +115,24 @@ export interface PlayTableApi {
   tokenOpen: Ref<boolean>
   /** Whether the game is still on. False once it is finished: every verb below stands down. */
   canAct: ComputedRef<boolean>
+  /** Viewport narrower than Tailwind's `sm` — the phone layout. */
+  isPhone: Ref<boolean>
+  /** Viewport shorter than ~500px — a phone held sideways, where height is the scarce axis. */
+  isShort: Ref<boolean>
+  /**
+   * Use the phone arrangement. True for a narrow viewport **or** a short one: a phone held
+   * sideways is 844px wide, which is nobody's idea of narrow, and yet the desktop layout left
+   * it a 2px-tall battlefield. Height is the axis the table is really short of.
+   */
+  compact: ComputedRef<boolean>
+  /** The last pointer to touch the table was a finger or a pen, so hover means nothing. */
+  coarsePointer: Ref<boolean>
+  /** The phone's life sheet. */
+  lifeOpen: Ref<boolean>
+  /** The log's sheet, for every width that has no room for the log column. */
+  logSheetOpen: Ref<boolean>
+  /** Which opponent's board the phone has expanded, if any. */
+  openOpponent: Ref<number | null>
   /** The battlefield card an "attach to…" is being picked for. */
   attachFor: Ref<number | null>
   logOpen: Ref<boolean>
@@ -122,7 +140,10 @@ export interface PlayTableApi {
   /** Register my battlefield element — the coordinate space every drop resolves against. */
   setBattlefield: (el: HTMLElement | null) => void
   startCardDrag: (event: PointerEvent, card: PlayCardView, zone: PlayZone) => void
-  hoverCard: (card: PlayCardView | null, el: HTMLElement | null) => void
+  hoverCard: (card: PlayCardView | null, el: HTMLElement | null, pointerType?: string) => void
+  /** The hand card a tap has selected, if the action bar should be showing. */
+  selectedHandCard: ComputedRef<PlayCardView | null>
+  clearSelection: () => void
   pinPreview: (card: PlayCardView, el: HTMLElement | null) => void
   closePreview: () => void
   openViewer: (state: PlayViewerState) => void
@@ -162,6 +183,29 @@ export function usePlayTableContext(): PlayTableApi {
   const api = inject(PLAY_TABLE_KEY, null)
   if (!api) throw new Error('usePlayTableContext() outside of <PlayTable>')
   return api
+}
+
+/**
+ * Keep `target` in step with a media query.
+ *
+ * `matchMedia` rather than a resize listener: the browser already knows the answer and tells us
+ * when it changes, which is one subscription instead of a handler that runs on every pixel of a
+ * drag-resize. Guarded on both sides because jsdom has no real media engine.
+ */
+function watchMedia(query: string, target: Ref<boolean>): void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+  let list: MediaQueryList
+  try {
+    list = window.matchMedia(query)
+  } catch {
+    return
+  }
+  target.value = list.matches
+  const onChange = (event: MediaQueryListEvent) => {
+    target.value = event.matches
+  }
+  list.addEventListener?.('change', onChange)
+  onScopeDispose(() => list.removeEventListener?.('change', onChange))
 }
 
 /**
@@ -220,6 +264,33 @@ export function usePlayTable(): PlayTableApi {
   const tokenOpen = ref(false)
   const attachFor = ref<number | null>(null)
   const logOpen = ref(true)
+  const lifeOpen = ref(false)
+  const logSheetOpen = ref(false)
+  const openOpponent = ref<number | null>(null)
+
+  // The two shapes the table comes in. `sm` is Tailwind's own 640px boundary, so the classes in
+  // the templates and the branches here agree about what "phone" means; `isShort` is the
+  // landscape phone, where the scarce axis is height and the opponent strip has to go.
+  const isPhone = ref(false)
+  const isShort = ref(false)
+  watchMedia('(max-width: 639.98px)', isPhone)
+  watchMedia('(max-height: 500px)', isShort)
+  const compact = computed(() => isPhone.value || isShort.value)
+
+  /**
+   * Whether the last pointer to touch the table was coarse (a finger, a pen).
+   *
+   * Seeded from `(pointer: coarse)` so the very first tap on a phone is already treated as
+   * touch, then corrected by whatever actually arrives — a tablet with a mouse plugged in
+   * should hover like a desktop, and a laptop with a touchscreen should not hover the moment
+   * somebody prods it.
+   */
+  const coarsePointer = ref(false)
+  watchMedia('(pointer: coarse)', coarsePointer)
+
+  function notePointerType(type: string | undefined): void {
+    if (type) coarsePointer.value = type !== 'mouse'
+  }
 
   // A screen that dims mid-game is a real problem at a table where a turn can take minutes
   // without a touch; the lock is dropped the moment the game is over.
@@ -422,6 +493,7 @@ export function usePlayTable(): PlayTableApi {
   function startCardDrag(event: PointerEvent, card: PlayCardView, zone: PlayZone) {
     // Left button / touch / pen only: the right button belongs to the context menu.
     if (event.button !== 0 || !canAct.value) return
+    notePointerType(event.pointerType)
     const el = event.currentTarget
     const rect = el instanceof HTMLElement ? el.getBoundingClientRect() : null
     if (el instanceof HTMLElement && el.setPointerCapture) {
@@ -466,10 +538,23 @@ export function usePlayTable(): PlayTableApi {
     }
   }
 
-  function hoverCard(card: PlayCardView | null, el: HTMLElement | null) {
+  /**
+   * Point at a card.
+   *
+   * On a mouse this opens the hover preview, which is how you read a 90px card. On **touch it
+   * deliberately does nothing but record what is under the finger**: `pointerenter` fires on the
+   * way into a tap, so honouring it threw a full-screen card over the table every time someone
+   * reached for their hand. A finger gets "View larger" from the long-press menu instead.
+   *
+   * `pointerType` comes straight off the event where there is one; a `focus` has none, and is
+   * judged by whatever pointer was last seen (so a keyboard user still gets previews and a
+   * phone user's tap-then-focus does not).
+   */
+  function hoverCard(card: PlayCardView | null, el: HTMLElement | null, pointerType?: string) {
+    notePointerType(pointerType)
     hoveredId.value = card?.id ?? null
     if (preview.value?.pinned) return
-    if (!card || drag.value) {
+    if (!card || drag.value || coarsePointer.value) {
       preview.value = null
       return
     }
@@ -665,6 +750,25 @@ export function usePlayTable(): PlayTableApi {
     }
   }
 
+  /**
+   * The hand card a tap has selected — what the phone's action bar acts on.
+   *
+   * Scoped to the hand because that is the row with no room for a context menu affordance and
+   * no double-tap on a first visit: a tap selects, and the bar names the three things you
+   * actually do with a card in hand. A selection that has since left the hand (it was played,
+   * or drawn away) simply stops being one.
+   */
+  const selectedHandCard = computed(() => {
+    const id = selectedId.value
+    if (id === null) return null
+    const card = store.card(id)
+    return card && card.zone === 'hand' && isMine(card) ? card : null
+  })
+
+  function clearSelection() {
+    selectedId.value = null
+  }
+
   // ---- keyboard ----------------------------------------------------------------------
 
   /** The card a bare shortcut acts on: what the pointer is over, else what was last clicked. */
@@ -728,9 +832,42 @@ export function usePlayTable(): PlayTableApi {
     }
   }
 
+  function onWindowPointerDown(event: PointerEvent) {
+    notePointerType(event.pointerType)
+  }
+
+  /**
+   * Hold the page still underneath the table.
+   *
+   * The room view mounts the table `fixed inset-0`, but the app shell it is drawn over is still
+   * in the flow — and on a phone the site footer stacks to ~1200px, so the "page" behind the
+   * table is scrollable and a stray vertical swipe drags the footer up over the game. Locking
+   * the document while the table is mounted is what any fullscreen surface does (the dialog
+   * primitives here do the same); it is restored exactly as it was on the way out, so a table
+   * that unmounts never leaves the rest of the app unable to scroll.
+   */
+  if (typeof document !== 'undefined') {
+    const root = document.documentElement
+    const body = document.body
+    const previous = { root: root.style.overflow, body: body?.style.overflow ?? '' }
+    root.style.overflow = 'hidden'
+    if (body) body.style.overflow = 'hidden'
+    onScopeDispose(() => {
+      root.style.overflow = previous.root
+      if (body) body.style.overflow = previous.body
+    })
+  }
+
   if (typeof window !== 'undefined') {
     window.addEventListener('keydown', onKeyDown)
-    onScopeDispose(() => window.removeEventListener('keydown', onKeyDown))
+    // A `focus` carries no pointer type, and on touch a tap focuses the card it hit — so the
+    // preview has to know what kind of pointer the page is being driven by even when the
+    // event that asks for it doesn't say.
+    window.addEventListener('pointerdown', onWindowPointerDown, true)
+    onScopeDispose(() => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('pointerdown', onWindowPointerDown, true)
+    })
   }
   onScopeDispose(detachPointer)
 
@@ -743,12 +880,21 @@ export function usePlayTable(): PlayTableApi {
     viewer,
     tokenOpen,
     canAct,
+    isPhone,
+    isShort,
+    compact,
+    coarsePointer,
+    lifeOpen,
+    logSheetOpen,
+    openOpponent,
     attachFor,
     logOpen,
     wakeLock,
     setBattlefield,
     startCardDrag,
     hoverCard,
+    selectedHandCard,
+    clearSelection,
     pinPreview,
     closePreview,
     openViewer,

@@ -5,6 +5,8 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import PlayTable from '../PlayTable.vue'
 import PlayCardMenu from '../PlayCardMenu.vue'
 import PlayTableMenu from '../PlayTableMenu.vue'
+import PlayHandActionBar from '../PlayHandActionBar.vue'
+import PlayOpponentStrip from '../PlayOpponentStrip.vue'
 import { usePlayRoomStore } from '@/stores/playRoom'
 import type {
   PlayCardDef,
@@ -149,6 +151,26 @@ function snapshot(overrides: Partial<PlaySnapshot> = {}): PlaySnapshot {
     ...overrides,
   }
 }
+
+/**
+ * jsdom has no media engine, so the table's layout queries answer `false` and every test here
+ * gets the desktop arrangement — except the ones that stub this to put it on a phone.
+ */
+function stubMatchMedia(answer: (query: string) => boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      media: query,
+      matches: answer(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  })
+}
+
+/** Put the next mount on a 390px phone with a finger driving it. */
+const PHONE = (query: string) => query.includes('max-width') || query.includes('coarse')
 
 /** Every table mounted in a test, so each one is torn down before the next pinia. */
 const mounted: { unmount: () => void }[] = []
@@ -438,5 +460,108 @@ describe('PlayTable', () => {
     const { wrapper } = mountTable()
     await wrapper.find('[aria-label="Leave the table"]').trigger('click')
     expect(wrapper.emitted('leave')).toHaveLength(1)
+  })
+})
+
+describe('PlayTable on a phone', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    stubMatchMedia(PHONE)
+  })
+
+  afterEach(() => {
+    while (mounted.length) mounted.pop()?.unmount()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  it('lays the zone rail out as a row of four tiles, still droppable', () => {
+    // Same four zones, same drop targets, turned ninety degrees so the battlefield keeps the
+    // width: at 390px the vertical rail was costing the board a quarter of the screen.
+    const { wrapper } = mountTable()
+    const rail = wrapper.find('[aria-label="Your zones"]')
+    expect(rail.exists()).toBe(true)
+    const drops = [...rail.element.querySelectorAll('[data-play-drop]')].map(
+      (el) => (el as HTMLElement).dataset.playDrop,
+    )
+    expect(drops).toEqual(['command', 'library', 'graveyard', 'exile'])
+    // It is the row, not the desktop column.
+    expect(rail.element.tagName).toBe('DIV')
+    expect(rail.classes()).toContain('grid-cols-4')
+  })
+
+  it('shows opponents as a one-line strip of chips, not as boards', () => {
+    const { wrapper } = mountTable()
+    expect(wrapper.findComponent(PlayOpponentStrip).exists()).toBe(true)
+    const chip = wrapper.find('[aria-label="Bo, 37 life — open their board"]')
+    expect(chip.exists()).toBe(true)
+    // Counts, never cards: their hand and library have no ids in the snapshot to render.
+    expect(chip.text()).toContain('5')
+    expect(chip.text()).toContain('88')
+    // The chip carries a commander thumb and a face-down count, and nothing else of theirs.
+    expect(chip.findAll('[data-play-card]').length).toBeLessThanOrEqual(1)
+    // Their full board is not on screen until the chip is tapped.
+    expect(wrapper.find('[aria-label="Bo, 37 life"]').exists()).toBe(false)
+  })
+
+  it('keeps the desktop opponent boards off the phone entirely', () => {
+    const { wrapper } = mountTable()
+    expect(wrapper.findAll('[aria-label="Opponents"]')).toHaveLength(1)
+  })
+})
+
+describe('PlayTable hand selection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    while (mounted.length) mounted.pop()?.unmount()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  it('shows no action bar until a hand card is tapped', () => {
+    const { wrapper } = mountTable()
+    expect(wrapper.findComponent(PlayHandActionBar).find('[role="group"]').exists()).toBe(false)
+  })
+
+  it('opens an action bar on a tap and plays from it', async () => {
+    // The phone has no hover to reveal an affordance and no right-click; a tap has to lead
+    // somewhere on its own, and double-tap is not a thing a first-time player guesses at.
+    const { wrapper, send } = mountTable()
+    const card = wrapper.find('[aria-label="Sol Ring"]')
+    pointer(card.element, 'pointerdown', 10, 10)
+    pointer(window, 'pointerup', 10, 10)
+    await wrapper.vm.$nextTick()
+
+    const bar = wrapper.find('[aria-label="Actions for Sol Ring"]')
+    expect(bar.exists()).toBe(true)
+    // A tap must not have played it — only selected it.
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'move_card' }))
+
+    const play = bar.findAll('button').find((b) => b.text() === 'Play')
+    await play?.trigger('click')
+    expect(send).toHaveBeenCalledWith({
+      type: 'move_card',
+      card: 101,
+      zone: 'battlefield',
+      placement: null,
+      x: 0.5,
+      y: 0.5,
+      face_down: null,
+    })
+    // ...and the bar stands down once it has been used.
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[aria-label="Actions for Sol Ring"]').exists()).toBe(false)
+  })
+
+  it('never previews a card the finger merely passed over', async () => {
+    const { wrapper } = mountTable()
+    const card = wrapper.find('[aria-label="Sol Ring"]')
+    const enter = new Event('pointerenter', { bubbles: false })
+    Object.assign(enter, { pointerType: 'touch', clientX: 10, clientY: 10 })
+    card.element.dispatchEvent(enter)
+    await wrapper.vm.$nextTick()
+    // The preview is a fixed overlay; on touch it must never appear at all.
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 })

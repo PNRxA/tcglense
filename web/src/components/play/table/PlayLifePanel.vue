@@ -17,6 +17,14 @@ import { seatColor } from '@/lib/playTable'
 // Commander damage is read from the receiving side, one row per opponent: at a table you ask
 // "how much has *their* commander hit me for", never "what's my total" — 7 from each of three
 // opponents is lethal from none of them.
+const props = withDefaults(
+  defineProps<{
+    /** Fill the container instead of taking the desktop's fixed column (the phone life sheet). */
+    full?: boolean
+  }>(),
+  { full: false },
+)
+
 const table = usePlayTableContext()
 
 const seat = computed(() => table.store.mySeat)
@@ -74,7 +82,8 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
 <template>
   <section
     v-if="seat"
-    class="bg-card flex w-40 shrink-0 flex-col gap-3 overflow-y-auto rounded-lg border p-2 sm:w-44"
+    class="bg-card flex flex-col gap-3 overflow-y-auto rounded-lg border p-2"
+    :class="props.full ? 'w-full' : 'w-40 shrink-0 sm:w-44'"
     aria-label="Your totals"
   >
     <div class="flex items-center gap-1.5">
