@@ -98,7 +98,7 @@ defineExpose({ items, select })
         <DropdownMenuSeparator v-if="hostFrom > 0 && index === hostFrom" />
         <DropdownMenuItem
           :variant="item.destructive ? 'destructive' : 'default'"
-          :disabled="item.id === 'concede' && !table.canAct.value"
+          :disabled="!table.canAct.value"
           @select="select(item.id)"
         >
           {{ item.label }}

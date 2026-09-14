@@ -64,15 +64,17 @@ pub fn card_view(card: &CardInstance, viewer: Option<SeatId>) -> Option<CardView
 
 /// One seat as `viewer` sees it (see the module docs for `hand`).
 ///
-/// A `SeatState` alone cannot say which of another seat's hand cards were revealed (that
-/// lives on the card instances), so for a non-owner viewer this leaves `hand` as an empty
-/// list; [`snapshot_for`] and [`patch_for`], which do have the card map, fill the revealed
-/// ids in. Call those rather than this directly when you have a whole `RoomState`.
-pub fn seat_snapshot(seat: &SeatState, viewer: Option<SeatId>) -> SeatSnapshot {
+/// The room is a parameter because `revealed` lives on the card instances, not on the
+/// seat: for a non-owner viewer the hand lists exactly the cards this seat has revealed.
+pub fn seat_snapshot(state: &RoomState, seat: &SeatState, viewer: Option<SeatId>) -> SeatSnapshot {
     let hand = if viewer == Some(seat.id) {
         seat.hand.clone()
     } else {
-        Vec::new()
+        seat.hand
+            .iter()
+            .copied()
+            .filter(|id| state.cards.get(id).is_some_and(|c| c.revealed))
+            .collect()
     };
     SeatSnapshot {
         id: seat.id,
@@ -95,21 +97,6 @@ pub fn seat_snapshot(seat: &SeatState, viewer: Option<SeatId>) -> SeatSnapshot {
     }
 }
 
-/// [`seat_snapshot`] with the revealed-hand fill-in that needs the room's card map.
-fn seat_snapshot_in(state: &RoomState, seat: &SeatState, viewer: Option<SeatId>) -> SeatSnapshot {
-    let mut snap = seat_snapshot(seat, viewer);
-    if viewer != Some(seat.id) {
-        let revealed: Vec<CardId> = seat
-            .hand
-            .iter()
-            .copied()
-            .filter(|id| state.cards.get(id).is_some_and(|c| c.revealed))
-            .collect();
-        snap.hand = Some(revealed);
-    }
-    snap
-}
-
 /// Seats in table order (`seat_index`, then id as the tie-break).
 fn ordered_seats(state: &RoomState) -> Vec<&SeatState> {
     let mut seats: Vec<&SeatState> = state.seats.iter().collect();
@@ -122,7 +109,7 @@ fn ordered_seats(state: &RoomState) -> Vec<&SeatState> {
 pub fn snapshot_for(state: &RoomState, viewer: Option<SeatId>) -> Snapshot {
     let seats = ordered_seats(state)
         .into_iter()
-        .map(|seat| seat_snapshot_in(state, seat, viewer))
+        .map(|seat| seat_snapshot(state, seat, viewer))
         .collect();
     let cards = state
         .cards
@@ -151,7 +138,7 @@ pub fn patch_for(state: &RoomState, changes: &Changes, viewer: Option<SeatId>) -
     let seats = ordered_seats(state)
         .into_iter()
         .filter(|seat| changes.seats.contains(&seat.id))
-        .map(|seat| seat_snapshot_in(state, seat, viewer))
+        .map(|seat| seat_snapshot(state, seat, viewer))
         .collect();
 
     let mut cards = Vec::new();
