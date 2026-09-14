@@ -55,10 +55,16 @@ pub async fn join_room(
     let room = load_room(&state, &game, &code).await?;
 
     // (1) A token we issued: hand the same seat back untouched.
-    if let Some(token) = payload.seat_token.as_deref().map(str::trim).filter(|t| !t.is_empty())
+    if let Some(token) = payload
+        .seat_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
         && let Some(seat) = seat_by_token(&state.db, room.id, token).await?
     {
-        return Ok(Json(join_response(&state, &room, seat, token.to_string()).await?));
+        return Ok(Json(
+            join_response(&state, &room, seat, token.to_string()).await?,
+        ));
     }
 
     // (2) A signed-in caller who already sits here: same chair, fresh token.
@@ -154,8 +160,8 @@ pub async fn load_seat_deck(
     )
     .await?;
 
-    let resolved = super::decks::resolve_deck(&state, &game, &room, &seat, user.as_ref(), payload)
-        .await?;
+    let resolved =
+        super::decks::resolve_deck(&state, &game, &room, &seat, user.as_ref(), payload).await?;
     let deck_json = serde_json::to_string(&resolved.cards)
         .map_err(|err| AppError::Internal(format!("failed to encode a play decklist: {err}")))?;
 
@@ -173,7 +179,11 @@ pub async fn load_seat_deck(
     .await?;
 
     touch_room(&state.db, room.id).await?;
-    let view = seat_view(&room, &seat, state.play.connected_seats(room.id).contains(&seat.id));
+    let view = seat_view(
+        &room,
+        &seat,
+        state.play.connected_seats(room.id).contains(&seat.id),
+    );
     push_lobby(&state, &room).await?;
     Ok(Json(view))
 }
@@ -214,7 +224,11 @@ pub async fn set_seat_ready(
     .await?;
 
     touch_room(&state.db, room.id).await?;
-    let view = seat_view(&room, &seat, state.play.connected_seats(room.id).contains(&seat.id));
+    let view = seat_view(
+        &room,
+        &seat,
+        state.play.connected_seats(room.id).contains(&seat.id),
+    );
     push_lobby(&state, &room).await?;
     Ok(Json(view))
 }

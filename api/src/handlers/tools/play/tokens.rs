@@ -14,8 +14,8 @@ use axum::http::HeaderMap;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::auth::secret::{generate_secret, sha256_hex};
-use crate::entities::prelude::PlaySeat;
 use crate::entities::play_seat;
+use crate::entities::prelude::PlaySeat;
 use crate::error::AppError;
 
 /// The room-code alphabet: upper-case letters and digits with the four ambiguous glyphs

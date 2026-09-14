@@ -51,15 +51,14 @@ async fn serve(app: TestApp) -> Served {
 /// One client socket, with the two operations every test needs: send a `ClientMessage`, and
 /// read the next `ServerMessage` (as JSON, so an added field never breaks a test).
 struct Client {
-    socket: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    socket: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
 }
 
 impl Client {
     async fn connect(served: &Served, code: &str) -> Client {
-        let url = format!(
-            "ws://{}/api/tools/mtg/play/rooms/{code}/ws",
-            served.addr
-        );
+        let url = format!("ws://{}/api/tools/mtg/play/rooms/{code}/ws", served.addr);
         let (socket, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("websocket upgrade");
@@ -459,7 +458,10 @@ async fn a_spectator_sees_the_table_but_no_hand_and_cannot_act() {
         .await;
     let error = watcher.next_of("error").await;
     assert_eq!(error["code"], "spectator");
-    assert_eq!(error["id"], 9, "the rejection echoes the client's action id");
+    assert_eq!(
+        error["id"], 9,
+        "the rejection echoes the client's action id"
+    );
     let _ = host_seat;
 }
 
@@ -477,7 +479,10 @@ async fn only_the_host_can_start_the_game() {
     let mut host = Client::connect(&served, &code).await;
     host.hello(Some(&host_token)).await;
     host.send(json!({ "type": "start" })).await;
-    assert_eq!(host.next_of("snapshot").await["snapshot"]["status"], "playing");
+    assert_eq!(
+        host.next_of("snapshot").await["snapshot"]["status"],
+        "playing"
+    );
     host.send(json!({ "type": "start" })).await;
     assert_eq!(host.next_of("error").await["code"], "not_lobby");
 }
@@ -508,10 +513,9 @@ async fn chat_reaches_the_whole_table_and_ping_is_answered() {
         let patch = client.next_of("patch").await;
         let log = patch["patch"]["log"].as_array().expect("log");
         assert!(
-            log.iter()
-                .any(|entry| entry["kind"] == "chat"
-                    && entry["text"].as_str().unwrap_or_default().contains("glhf")
-                    && entry["seat"].as_i64() == Some(host_seat)),
+            log.iter().any(|entry| entry["kind"] == "chat"
+                && entry["text"].as_str().unwrap_or_default().contains("glhf")
+                && entry["seat"].as_i64() == Some(host_seat)),
             "chat reaches everyone at the table: {log:?}"
         );
     }
@@ -566,7 +570,10 @@ async fn closing_the_room_closes_every_socket_on_it() {
     // The socket is told why before it is closed, and closed with the "don't come back" code.
     let closed = host.next_of("closed").await;
     assert!(
-        closed["reason"].as_str().unwrap_or_default().contains("host"),
+        closed["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("host"),
         "the close says who closed it: {closed:?}"
     );
     let frame = host.next().await;

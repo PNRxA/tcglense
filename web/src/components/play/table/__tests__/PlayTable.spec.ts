@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import PlayTable from '../PlayTable.vue'
 import PlayCardMenu from '../PlayCardMenu.vue'
+import PlayTableMenu from '../PlayTableMenu.vue'
 import { usePlayRoomStore } from '@/stores/playRoom'
 import type {
   PlayCardDef,
@@ -268,6 +269,76 @@ describe('PlayTable', () => {
   it('announces the game being over', () => {
     const { wrapper } = mountTable(snapshot({ status: 'finished', winner: THEIRS }))
     expect(wrapper.text()).toContain('Game over — Bo won')
+  })
+
+  it('confirms before conceding, and only then sends it', async () => {
+    const { wrapper, send } = mountTable()
+    const menu = wrapper.findComponent(PlayTableMenu)
+    expect((menu.vm as unknown as { items: { id: string }[] }).items.map((i) => i.id)).toContain(
+      'concede',
+    )
+
+    // Choosing the entry opens the confirm and sends nothing — scooping has no undo.
+    ;(menu.vm as unknown as { select: (id: string) => void }).select('concede')
+    await wrapper.vm.$nextTick()
+    expect(send).not.toHaveBeenCalledWith({ type: 'concede' })
+
+    // The dialog portals to the body, so it is found there rather than in the wrapper.
+    const confirm = document.body.querySelector('[data-play-confirm="concede"]')
+    expect(confirm).not.toBeNull()
+    confirm?.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(send).toHaveBeenCalledWith({ type: 'concede' })
+  })
+
+  it("keeps the host's game-ending verbs out of everyone else's menu", () => {
+    // Seat 1 hosts in the default fixture, so the host sees all three...
+    const host = mountTable()
+    const hostItems = (
+      host.wrapper.findComponent(PlayTableMenu).vm as unknown as { items: { id: string }[] }
+    ).items.map((item) => item.id)
+    expect(hostItems).toEqual(['concede', 'end_game', 'set_active'])
+  })
+
+  it('offers a non-host only the verb that is theirs to use', () => {
+    // ...and a guest sees only their own scoop: the engine answers `HostOnly` to the rest.
+    const guest = mountTable(
+      snapshot({
+        viewer_seat: THEIRS,
+        seats: [
+          seat({ id: MINE, seat_index: 0, name: 'Ana', is_host: true }),
+          seat({ id: THEIRS, seat_index: 1, name: 'Bo' }),
+        ],
+        cards: [],
+      }),
+    )
+    const items = (
+      guest.wrapper.findComponent(PlayTableMenu).vm as unknown as { items: { id: string }[] }
+    ).items.map((item) => item.id)
+    expect(items).toEqual(['concede'])
+    expect(items).not.toContain('end_game')
+    expect(items).not.toContain('set_active')
+  })
+
+  it('stands the table verbs down once the game is finished, but not the chat', async () => {
+    const { wrapper, send } = mountTable(snapshot({ status: 'finished', winner: THEIRS }))
+    const button = (text: string) => wrapper.findAll('button').find((b) => b.text().includes(text))
+    expect(button('Draw')?.attributes('disabled')).toBeDefined()
+    expect(button('Pass turn')?.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[aria-label="Gain a life"]').attributes('disabled')).toBeDefined()
+
+    // And a press that slips past the disabled chrome is refused by the engine as well —
+    // the gate is in one place, not only on the buttons.
+    const card = wrapper.find('[aria-label="Llanowar Elves"]')
+    pointer(card.element, 'pointerdown', 40, 40)
+    pointer(window, 'pointerup', 40, 40)
+    expect(send).not.toHaveBeenCalledWith({ type: 'tap', card: 111, tapped: true })
+
+    // Chat, though, is exactly what a pod does in the minute after a game ends.
+    const input = wrapper.find('input[aria-label="Chat message"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('gg')
+    input.element.closest('form')?.dispatchEvent(new Event('submit', { bubbles: true }))
+    expect(send).toHaveBeenCalledWith({ type: 'chat', text: 'gg' })
   })
 
   it('leaves navigation to the view it is mounted in', async () => {

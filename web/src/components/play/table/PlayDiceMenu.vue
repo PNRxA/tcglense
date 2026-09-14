@@ -19,7 +19,7 @@ const table = usePlayTableContext()
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="outline" size="sm" aria-label="Roll a die">
+      <Button variant="outline" size="sm" :disabled="!table.canAct.value" aria-label="Roll a die">
         <Dices class="size-4" />
         <span class="hidden sm:inline">Roll</span>
       </Button>

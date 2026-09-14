@@ -27,8 +27,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 
@@ -108,7 +108,11 @@ async fn connection(state: AppState, row: play_room::Model, socket: WebSocket) {
 
     // A token that names no seat of this room is a hard stop, not a downgrade to spectator:
     // a stale token must be visible to the player, not silently turn them into an audience.
-    let seat: Option<SeatId> = match seat_token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+    let seat: Option<SeatId> = match seat_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
         Some(token) => match seat_by_token(&state.db, row.id, token).await {
             Ok(Some(seat)) => Some(seat.id),
             Ok(None) => {

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { LogOut, PlusSquare, RotateCcw, Shuffle, SkipForward, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import PlayDiceMenu from '@/components/play/table/PlayDiceMenu.vue'
+import PlayTableMenu from '@/components/play/table/PlayTableMenu.vue'
 import { usePlayTableContext } from '@/composables/usePlayTable'
 import { PLAY_PHASES, seatColor } from '@/lib/playTable'
 import type { PlayPhase } from '@/lib/api/play'
@@ -17,6 +18,10 @@ import type { PlayPhase } from '@/lib/api/play'
 // "Pass turn" is the one primary button on the whole table, and only while it is actually my
 // turn; the rest are outline, because pressing them at the wrong moment is a nuisance, not a
 // mistake.
+//
+// Once the game is **finished** every verb here goes flat (`table.canAct`) and the banner
+// takes over. The log and chat beside it stay live on purpose: the minute after a game ends is
+// when a pod actually talks about it.
 const emit = defineEmits<{ leave: [] }>()
 
 const table = usePlayTableContext()
@@ -45,7 +50,7 @@ const connection = computed(() => {
 })
 
 function setPhase(phase: PlayPhase) {
-  if (!table.store.isMyTurn) return
+  if (!table.store.isMyTurn || !table.canAct.value) return
   table.send({ type: 'set_phase', phase })
 }
 </script>
@@ -88,7 +93,7 @@ function setPhase(phase: PlayPhase) {
               : 'text-muted-foreground hover:bg-accent'
           "
           :aria-pressed="turn?.phase === item.phase"
-          :disabled="!table.store.isMyTurn"
+          :disabled="!table.store.isMyTurn || !table.canAct.value"
           @click="setPhase(item.phase)"
         >
           {{ item.label }}
@@ -96,23 +101,38 @@ function setPhase(phase: PlayPhase) {
       </div>
 
       <div class="ml-auto flex flex-wrap items-center gap-1.5">
-        <Button variant="outline" size="sm" @click="table.draw(1)">
+        <Button variant="outline" size="sm" :disabled="!table.canAct.value" @click="table.draw(1)">
           <Sparkles class="size-4" /><span class="hidden sm:inline">Draw</span>
         </Button>
-        <Button variant="outline" size="sm" @click="table.untapAll()">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!table.canAct.value"
+          @click="table.untapAll()"
+        >
           <RotateCcw class="size-4" /><span class="hidden sm:inline">Untap all</span>
         </Button>
-        <Button variant="outline" size="sm" @click="table.shuffle()">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!table.canAct.value"
+          @click="table.shuffle()"
+        >
           <Shuffle class="size-4" /><span class="hidden sm:inline">Shuffle</span>
         </Button>
-        <Button variant="outline" size="sm" @click="table.tokenOpen.value = true">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!table.canAct.value"
+          @click="table.tokenOpen.value = true"
+        >
           <PlusSquare class="size-4" /><span class="hidden sm:inline">Token</span>
         </Button>
         <PlayDiceMenu />
         <Button
           :variant="table.store.isMyTurn ? 'default' : 'outline'"
           size="sm"
-          :disabled="!table.store.isMyTurn"
+          :disabled="!table.store.isMyTurn || !table.canAct.value"
           @click="table.passTurn()"
         >
           <SkipForward class="size-4" />Pass turn
@@ -123,6 +143,7 @@ function setPhase(phase: PlayPhase) {
           role="status"
           >{{ connection.label }}</span
         >
+        <PlayTableMenu />
         <Button variant="ghost" size="icon-sm" aria-label="Leave the table" @click="emit('leave')">
           <LogOut class="size-4" />
         </Button>

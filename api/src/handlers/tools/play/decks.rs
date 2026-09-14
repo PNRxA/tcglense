@@ -32,7 +32,9 @@ use crate::collection_import::{Provider, reconcile::resolve_newest_printing_by_n
 use crate::deck_import::{DeckImportFileFormat, parse_file};
 use crate::entities::precon_deck_card::PreconBoard;
 use crate::entities::prelude::{Card, DeckCard, DeckSection, PreconDeckCard};
-use crate::entities::{card, deck_card, deck_section, play_room, play_seat, precon_deck_card, user};
+use crate::entities::{
+    card, deck_card, deck_section, play_room, play_seat, precon_deck_card, user,
+};
 use crate::error::AppError;
 use crate::handlers::decks::{DeckZone, deck_zone, load_deck};
 use crate::handlers::precons::load_precon;
@@ -75,7 +77,9 @@ pub(crate) async fn resolve_deck(
         LoadDeckRequest::Precon { slug } => {
             resolve_precon(state, game, &slug, uses_command_zone).await?
         }
-        LoadDeckRequest::Text { text } => resolve_text(state, game, &text, uses_command_zone).await?,
+        LoadDeckRequest::Text { text } => {
+            resolve_text(state, game, &text, uses_command_zone).await?
+        }
     };
 
     if resolved.cards.len() > MAX_DECK_CARDS {
@@ -103,9 +107,8 @@ async fn resolve_own_deck(
     deck_id: i32,
     uses_command_zone: bool,
 ) -> Result<ResolvedDeck, AppError> {
-    let user = user.ok_or_else(|| {
-        AppError::Validation("sign in to play one of your own decks".to_string())
-    })?;
+    let user = user
+        .ok_or_else(|| AppError::Validation("sign in to play one of your own decks".to_string()))?;
     if seat.user_id != Some(user.id) {
         // Same call `load_deck` makes for a foreign deck: a 404, never a 403.
         return Err(AppError::NotFound("deck not found".to_string()));

@@ -6,6 +6,7 @@ import {
   ref,
   shallowRef,
   watch,
+  type ComputedRef,
   type InjectionKey,
   type Ref,
 } from 'vue'
@@ -48,6 +49,10 @@ import type { PlayAction, PlayCardView, PlayPlacement, PlayZone } from '@/lib/ap
  *    most every {@link POSITION_THROTTLE_MS} so the table stays live for everyone else without
  *    flooding the socket, and always sends a final one on drop — the throttled stream is a
  *    nicety, the commit is the truth.
+ * 4. **A finished game is a record, not a table.** Every verb that would change the game is
+ *    gated on `canAct` here as well as disabled in the UI, so a keyboard shortcut, a stale
+ *    click and a drag already in flight all stop at the same line. Chat, the log and looking
+ *    through a pile keep working — that is what people do immediately after a game ends.
  */
 
 /** How often a position update goes out while a card is still under the finger. */
@@ -97,6 +102,8 @@ export interface PlayTableApi {
   preview: Ref<PlayPreviewState | null>
   viewer: Ref<PlayViewerState | null>
   tokenOpen: Ref<boolean>
+  /** Whether the game is still on. False once it is finished: every verb below stands down. */
+  canAct: ComputedRef<boolean>
   /** The battlefield card an "attach to…" is being picked for. */
   attachFor: Ref<number | null>
   logOpen: Ref<boolean>
@@ -183,6 +190,13 @@ export function usePlayTable(): PlayTableApi {
   // without a touch; the lock is dropped the moment the game is over.
   const wakeLock = useWakeLock(() => store.status === 'playing')
 
+  /**
+   * The one gate on every verb. A room is only playable while it says `playing` — a lobby has
+   * no table yet and a finished one is a result, which people keep looking at and talking
+   * about long after the last action.
+   */
+  const canAct = computed(() => store.status === 'playing')
+
   let battlefield: HTMLElement | null = null
   function setBattlefield(el: HTMLElement | null) {
     battlefield = el
@@ -199,6 +213,7 @@ export function usePlayTable(): PlayTableApi {
   // ---- moves -------------------------------------------------------------------------
 
   function moveCard(card: PlayCardView, zone: PlayZone, opts: MoveOptions = {}) {
+    if (!canAct.value) return
     send({
       type: 'move_card',
       card: card.id,
@@ -212,6 +227,7 @@ export function usePlayTable(): PlayTableApi {
 
   /** The same move for a card the viewer only knows about through a peek. */
   function moveLibraryCard(cardId: number, zone: PlayZone, opts: MoveOptions = {}) {
+    if (!canAct.value) return
     send({
       type: 'move_library_card',
       card: cardId,
@@ -228,7 +244,7 @@ export function usePlayTable(): PlayTableApi {
   }
 
   function tapCard(card: PlayCardView) {
-    if (!isMine(card)) return
+    if (!canAct.value || !isMine(card)) return
     send({ type: 'tap', card: card.id, tapped: !card.tapped })
   }
 
@@ -340,7 +356,7 @@ export function usePlayTable(): PlayTableApi {
 
   function startCardDrag(event: PointerEvent, card: PlayCardView, zone: PlayZone) {
     // Left button / touch / pen only: the right button belongs to the context menu.
-    if (event.button !== 0) return
+    if (event.button !== 0 || !canAct.value) return
     const el = event.currentTarget
     const rect = el instanceof HTMLElement ? el.getBoundingClientRect() : null
     if (el instanceof HTMLElement && el.setPointerCapture) {
@@ -424,43 +440,51 @@ export function usePlayTable(): PlayTableApi {
   // ---- table verbs -------------------------------------------------------------------
 
   function draw(n: number) {
+    if (!canAct.value) return
     send({ type: 'draw', n })
   }
 
   function untapAll() {
+    if (!canAct.value) return
     send({ type: 'untap_all' })
   }
 
   function shuffle() {
+    if (!canAct.value) return
     send({ type: 'shuffle' })
   }
 
   function mulligan() {
+    if (!canAct.value) return
     const size = parseCount(window.prompt('Mulligan to how many cards?', '7'), 0, 20)
     if (size === null) return
     send({ type: 'mulligan', hand_size: size })
   }
 
   function lookTop() {
+    if (!canAct.value) return
     const n = parseCount(window.prompt('Look at how many cards?', '1'), 1, PLAY_LOOK_TOP_MAX)
     if (n === null) return
     send({ type: 'look_top', n })
   }
 
   function searchLibrary() {
+    if (!canAct.value) return
     send({ type: 'search_library' })
   }
 
   function passTurn() {
-    if (!store.isMyTurn) return
+    if (!canAct.value || !store.isMyTurn) return
     send({ type: 'pass_turn' })
   }
 
   function roll(sides: number) {
+    if (!canAct.value) return
     send({ type: 'roll', sides })
   }
 
   function flipCoin() {
+    if (!canAct.value) return
     send({ type: 'flip_coin' })
   }
 
@@ -473,7 +497,9 @@ export function usePlayTable(): PlayTableApi {
   // ---- the menu ----------------------------------------------------------------------
 
   function menuFor(card: PlayCardView, zone: PlayZone) {
-    return menuActionsFor(card, zone, isMine(card), store.format)
+    const actions = menuActionsFor(card, zone, isMine(card), store.format)
+    // Once the game is over the only thing left to do with a card is look at it.
+    return canAct.value ? actions : actions.filter((action) => action.id === 'view')
   }
 
   function addCounter(card: PlayCardView, name: string, delta: number) {
@@ -488,6 +514,8 @@ export function usePlayTable(): PlayTableApi {
    * refactor later into a move from a zone the card already left.
    */
   function runMenuAction(id: PlayMenuActionId, card: PlayCardView) {
+    // "View larger" is not a game action, so it survives the end of the game.
+    if (!canAct.value && id !== 'view') return
     switch (id) {
       case 'tap':
       case 'untap':
@@ -633,6 +661,7 @@ export function usePlayTable(): PlayTableApi {
     preview,
     viewer,
     tokenOpen,
+    canAct,
     attachFor,
     logOpen,
     wakeLock,

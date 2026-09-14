@@ -91,14 +91,14 @@ use crate::{
             set_collection_visibility, set_wishlist_visibility,
         },
         sitemap::{sitemap_child, sitemap_index},
-        tools::play::{
-            create_room, delete_room, get_room, join_room, leave_seat, list_rooms,
-            load_seat_deck, room_socket, set_seat_ready,
-        },
         tools::life::{
             add_player, adjust_life, create_session, deck_records, delete_session, finish_session,
             get_session, list_sessions, remove_player, reorder_players, undo_life_event,
             update_player, update_session,
+        },
+        tools::play::{
+            create_room, delete_room, get_room, join_room, leave_seat, list_rooms, load_seat_deck,
+            room_socket, set_seat_ready,
         },
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,

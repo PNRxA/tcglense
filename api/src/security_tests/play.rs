@@ -67,7 +67,10 @@ async fn create_pod(app: &TestApp, token: &str) -> Value {
 }
 
 fn code_of(join: &Value) -> String {
-    join["room"]["code"].as_str().expect("room code").to_string()
+    join["room"]["code"]
+        .as_str()
+        .expect("room code")
+        .to_string()
 }
 
 fn seat_id_of(join: &Value) -> i64 {
@@ -111,7 +114,10 @@ async fn opening_and_listing_tables_needs_a_real_session() {
     // No credential at all.
     for req in [
         get("/api/tools/mtg/play/rooms"),
-        json_post("/api/tools/mtg/play/rooms", json!({ "format": "commander" })),
+        json_post(
+            "/api/tools/mtg/play/rooms",
+            json!({ "format": "commander" }),
+        ),
     ] {
         let (status, headers, _) = send(&app, req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -155,9 +161,14 @@ async fn creating_a_table_seats_the_host_and_hands_back_a_token() {
 
     // The code is the shareable identity: six characters from the unambiguous alphabet.
     let code = code_of(&join);
-    assert_eq!(code.chars().count(), 6, "room code is six characters: {code}");
+    assert_eq!(
+        code.chars().count(),
+        6,
+        "room code is six characters: {code}"
+    );
     assert!(
-        code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+        code.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
         "room code is upper-case alphanumeric: {code}"
     );
     assert!(!code.contains(['0', 'O', '1', 'I']), "unambiguous: {code}");
@@ -173,11 +184,8 @@ async fn creating_a_table_seats_the_host_and_hands_back_a_token() {
     assert_eq!(join["room"]["seats"].as_array().expect("seats").len(), 1);
 
     // Nothing in the public room read carries a seat's credential.
-    let (status, headers, room) = send(
-        &app,
-        get(&format!("/api/tools/mtg/play/rooms/{code}")),
-    )
-    .await;
+    let (status, headers, room) =
+        send(&app, get(&format!("/api/tools/mtg/play/rooms/{code}"))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
     let body = room.to_string();
@@ -449,11 +457,7 @@ async fn a_seat_scoped_call_needs_that_seats_own_token() {
 
     // No token at all, a wrong token, and *another seat's* token are all the same 401 —
     // the rejection must not tell you which of the three you got wrong.
-    let (status, _, _) = send(
-        &app,
-        json_post(&ready_uri, json!({ "ready": false })),
-    )
-    .await;
+    let (status, _, _) = send(&app, json_post(&ready_uri, json!({ "ready": false }))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "no seat token");
 
     for token in [token_of(&host), "not-a-token".to_string()] {
@@ -606,7 +610,12 @@ async fn loading_one_of_your_own_decks_is_scoped_to_you() {
     // Alice builds a deck with one card in it.
     let (status, _, deck) = send(
         &app,
-        json_with_bearer("POST", "/api/decks/mtg", &alice, json!({ "name": "Goblins" })),
+        json_with_bearer(
+            "POST",
+            "/api/decks/mtg",
+            &alice,
+            json!({ "name": "Goblins" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "create deck: {deck:?}");
@@ -680,10 +689,7 @@ async fn loading_one_of_your_own_decks_is_scoped_to_you() {
     };
     let mut req = json_with_seat(
         "POST",
-        &format!(
-            "/api/tools/mtg/play/rooms/{code}/seats/{}/deck",
-            bob_seat.0
-        ),
+        &format!("/api/tools/mtg/play/rooms/{code}/seats/{}/deck", bob_seat.0),
         &bob_seat.1,
         json!({ "source": "deck", "deck_id": deck_id }),
     );
@@ -739,10 +745,7 @@ async fn a_pasted_list_with_an_unknown_card_names_it_rather_than_shrinking_the_d
         .iter()
         .map(|c| c["name"].as_str().expect("name"))
         .collect();
-    let list = format!(
-        "Commander\n1 {}\n\nMainboard\n2 {}\n",
-        names[0], names[1]
-    );
+    let list = format!("Commander\n1 {}\n\nMainboard\n2 {}\n", names[0], names[1]);
     let (status, _, body) = send(
         &app,
         json_with_seat(

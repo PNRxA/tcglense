@@ -202,7 +202,12 @@ pub async fn list_rooms(
                 .add(play_room::Column::HostUserId.eq(user.id))
                 .add(play_room::Column::Id.is_in(seated)),
         );
-    if let Some(status) = params.status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(status) = params
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let status = RoomStatus::parse(status)
             .ok_or_else(|| AppError::Validation("unknown room status".to_string()))?;
         query = query.filter(play_room::Column::Status.eq(status.as_str()));

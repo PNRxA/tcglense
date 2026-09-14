@@ -284,7 +284,9 @@ impl PlayRegistry {
         let entries = room.connections.lock().unwrap_or_else(|e| e.into_inner());
         for conn in &entries.entries {
             let patch = view::patch_for(state, &outcome.changes, conn.seat);
-            let _ = conn.tx.send(Outbound::Frame(ServerMessage::Patch { patch }));
+            let _ = conn
+                .tx
+                .send(Outbound::Frame(ServerMessage::Patch { patch }));
         }
         if let Some(peek) = outcome.peek
             && let Some(conn) = entries.entries.iter().find(|c| c.id == conn_id)
@@ -365,7 +367,9 @@ impl PlayRegistry {
                 let entries = room.connections.lock().unwrap_or_else(|e| e.into_inner());
                 for conn in &entries.entries {
                     let patch = view::patch_for(state, &changes, conn.seat);
-                    let _ = conn.tx.send(Outbound::Frame(ServerMessage::Patch { patch }));
+                    let _ = conn
+                        .tx
+                        .send(Outbound::Frame(ServerMessage::Patch { patch }));
                 }
             }
             Err(err) => {

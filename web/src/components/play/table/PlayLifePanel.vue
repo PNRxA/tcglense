@@ -35,11 +35,15 @@ watch(
   { immediate: true },
 )
 
+// Every stepper here goes through one gate: a finished game's totals are a record of how it
+// ended, and a stray tap on a phone left on the table shouldn't rewrite it.
 function bump(delta: number) {
+  if (!table.canAct.value) return
   table.send({ type: 'life', delta })
 }
 
 function applyDraft() {
+  if (!table.canAct.value) return
   const current = seat.value?.life
   const next = Number.parseInt(draft.value, 10)
   if (current === undefined || !Number.isFinite(next) || next === current) return
@@ -51,6 +55,7 @@ function counterValue(name: string): number {
 }
 
 function bumpCounter(name: string, delta: number) {
+  if (!table.canAct.value) return
   table.send({ type: 'player_counter', name, delta })
 }
 
@@ -59,6 +64,7 @@ function commanderDamage(fromSeat: number): number {
 }
 
 function bumpCommanderDamage(fromSeat: number, delta: number) {
+  if (!table.canAct.value) return
   table.send({ type: 'commander_damage', from_seat: fromSeat, delta })
 }
 
@@ -81,7 +87,13 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
     </div>
 
     <div class="flex items-stretch gap-1">
-      <Button variant="outline" size="icon" aria-label="Lose a life" @click="bump(-1)">
+      <Button
+        variant="outline"
+        size="icon"
+        :disabled="!table.canAct.value"
+        aria-label="Lose a life"
+        @click="bump(-1)"
+      >
         <Minus class="size-4" />
       </Button>
       <span
@@ -89,7 +101,13 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         :class="seat.life <= 0 ? 'text-destructive' : seat.life <= 5 ? 'text-warning' : ''"
         >{{ seat.life }}</span
       >
-      <Button variant="outline" size="icon" aria-label="Gain a life" @click="bump(1)">
+      <Button
+        variant="outline"
+        size="icon"
+        :disabled="!table.canAct.value"
+        aria-label="Gain a life"
+        @click="bump(1)"
+      >
         <Plus class="size-4" />
       </Button>
     </div>
@@ -102,7 +120,7 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         inputmode="numeric"
         aria-label="Set life total"
       />
-      <Button type="submit" variant="outline" size="sm">Set</Button>
+      <Button type="submit" variant="outline" size="sm" :disabled="!table.canAct.value">Set</Button>
     </form>
 
     <div class="space-y-1">
@@ -111,6 +129,7 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         <Button
           variant="ghost"
           size="icon-sm"
+          :disabled="!table.canAct.value"
           :aria-label="`Less ${counter.label.toLowerCase()}`"
           @click="bumpCounter(counter.name, -1)"
         >
@@ -120,6 +139,7 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         <Button
           variant="ghost"
           size="icon-sm"
+          :disabled="!table.canAct.value"
           :aria-label="`More ${counter.label.toLowerCase()}`"
           @click="bumpCounter(counter.name, 1)"
         >
@@ -139,6 +159,7 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         <Button
           variant="ghost"
           size="icon-sm"
+          :disabled="!table.canAct.value"
           :aria-label="`Less commander damage from ${opponent.name}`"
           @click="bumpCommanderDamage(opponent.id, -1)"
         >
@@ -152,6 +173,7 @@ const showsCommanderDamage = computed(() => table.store.format === 'commander')
         <Button
           variant="ghost"
           size="icon-sm"
+          :disabled="!table.canAct.value"
           :aria-label="`More commander damage from ${opponent.name}`"
           @click="bumpCommanderDamage(opponent.id, 1)"
         >

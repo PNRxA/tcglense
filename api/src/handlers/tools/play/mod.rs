@@ -231,7 +231,11 @@ pub(crate) fn seat_deck(seat: &play_seat::Model) -> Vec<CardDef> {
 /// One seat as the lobby shows it. `connected` is the registry's live socket count for the
 /// seat, which is why this takes it rather than reading it off the row — presence is in
 /// memory, not in the database.
-pub(crate) fn seat_view(room: &play_room::Model, seat: &play_seat::Model, connected: bool) -> SeatView {
+pub(crate) fn seat_view(
+    room: &play_room::Model,
+    seat: &play_seat::Model,
+    connected: bool,
+) -> SeatView {
     let deck = seat_deck(seat);
     SeatView {
         id: seat.id,
