@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { ChevronRight, Wrench } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import LoadingRow from '@/components/cards/LoadingRow.vue'
-import ToolStageChip from '@/components/tools/ToolStageChip.vue'
 import { useGamesQuery } from '@/composables/useCatalog'
 import { toolsFor, toolsPath } from '@/lib/tools'
 import { usePageMeta } from '@/lib/seo'
@@ -54,16 +53,8 @@ const games = computed(() =>
         <div class="min-w-0 flex-1">
           <p class="font-medium">{{ game.name }}</p>
           <p class="text-muted-foreground truncate text-sm">{{ game.publisher }}</p>
-          <!-- The tool names as a comma list, each keeping its maturity chip: a bare joined
-               string would drop the one place this hub can say a tool is still alpha. -->
           <p class="text-muted-foreground mt-1 text-xs">
-            <!-- Elements only, no bare text: the compiler drops newline-only whitespace between
-                 elements, which keeps the comma flush against the name before it. -->
-            <template v-for="(tool, index) in game.tools" :key="tool.slug">
-              <span v-if="index > 0">, </span>
-              <span>{{ tool.name }}</span>
-              <ToolStageChip v-if="tool.stage" :stage="tool.stage" class="ml-1 align-middle" />
-            </template>
+            {{ game.tools.map((tool) => tool.name).join(', ') }}
           </p>
         </div>
         <ChevronRight
