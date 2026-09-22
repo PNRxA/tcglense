@@ -3,6 +3,7 @@ import { computed, toRef } from 'vue'
 import { ChevronRight } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
+import ToolStageChip from '@/components/tools/ToolStageChip.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { toolPath, toolsFor, toolsPath } from '@/lib/tools'
 import { usePageMeta } from '@/lib/seo'
@@ -50,7 +51,10 @@ usePageMeta({
           <component :is="tool.icon" class="size-6" />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="font-medium">{{ tool.name }}</p>
+          <p class="flex items-center gap-2 font-medium">
+            {{ tool.name }}
+            <ToolStageChip v-if="tool.stage" :stage="tool.stage" />
+          </p>
           <p class="text-muted-foreground mt-1 text-sm">{{ tool.blurb }}</p>
         </div>
         <ChevronRight

@@ -11,12 +11,13 @@ import PageBreadcrumbs from '@/components/PageBreadcrumbs.vue'
 import PlayCreateRoomForm from '@/components/play/PlayCreateRoomForm.vue'
 import PlayRoomRow from '@/components/play/PlayRoomRow.vue'
 import PlaySignInPrompt from '@/components/play/PlaySignInPrompt.vue'
+import ToolStageChip from '@/components/tools/ToolStageChip.vue'
 import { useGameName } from '@/composables/useCatalog'
 import { useCreatePlayRoom, useDeletePlayRoom, usePlayRoomsQuery } from '@/composables/usePlayRooms'
 import type { CreatePlayRoomBody, PlayRoomSummary } from '@/lib/api/play'
 import { PLAY_CODE_LENGTH } from '@/lib/api/play'
 import { rememberSeatToken } from '@/lib/playSeat'
-import { playRoomPath, playPath, toolsPath } from '@/lib/tools'
+import { playRoomPath, playPath, toolsFor, toolsPath } from '@/lib/tools'
 import { usePageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth'
 
@@ -70,6 +71,9 @@ function openCode() {
   return router.push(playRoomPath(game.value, normalisedCode.value))
 }
 
+/** The registry's maturity tag for this tool, so the page and the nav can't disagree. */
+const stage = computed(() => toolsFor(game.value).find((tool) => tool.slug === 'play')?.stage)
+
 const crumbs = computed(() => [
   { label: 'Home', to: '/' },
   { label: 'Tools', to: '/tools' },
@@ -96,10 +100,15 @@ usePageMeta({
       <h1 class="flex items-center gap-2 text-3xl font-semibold tracking-tight">
         <Swords class="size-7" aria-hidden="true" />
         Play online
+        <ToolStageChip v-if="stage" :stage="stage" class="ml-1 self-center text-xs" />
       </h1>
       <p class="text-muted-foreground mt-2 max-w-2xl">
         Open a table, send your friends the link, and play a manual game of {{ gameName }} in the
         browser. Nothing is enforced — it's paper, with the shuffling done for you.
+      </p>
+      <p v-if="stage" class="text-muted-foreground mt-2 max-w-2xl text-sm">
+        The table is in alpha: it works, but it's still settling, so expect rough edges and changes
+        between visits.
       </p>
       <ul class="text-muted-foreground mt-4 grid gap-3 text-sm sm:grid-cols-3">
         <li class="flex items-start gap-2">

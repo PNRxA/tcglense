@@ -19,6 +19,18 @@ export interface ToolEntry {
   /** One line: what it does for you, on the tile and in the nav. */
   blurb: string
   icon: Component
+  /**
+   * Maturity tag, shown as a chip beside the name everywhere the tool is offered. Omitted =
+   * finished; `'alpha'` = usable but still settling, expect rough edges and changes.
+   */
+  stage?: ToolStage
+}
+
+/** The one vocabulary of maturity tags; `TOOL_STAGE_LABELS` spells each for the chip. */
+export type ToolStage = 'alpha'
+
+export const TOOL_STAGE_LABELS: Readonly<Record<ToolStage, string>> = {
+  alpha: 'Alpha',
 }
 
 export const TOOLS: Readonly<Record<string, ToolEntry[]>> = {
@@ -38,6 +50,7 @@ export const TOOLS: Readonly<Record<string, ToolEntry[]>> = {
         'Open a table, share the link, and play a manual game with friends — your decks, ' +
         'any precon, or a pasted list. Guests need no account.',
       icon: Swords,
+      stage: 'alpha',
     },
   ],
 }

@@ -9,6 +9,7 @@ import {
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu'
+import ToolStageChip from '@/components/tools/ToolStageChip.vue'
 import { useNav } from '@/composables/useNav'
 import { groupWarmTargets, type ResolvedItem } from '@/lib/nav'
 import { prefetchRouteChunks } from '@/lib/prefetch'
@@ -139,11 +140,16 @@ function warmRoot(value: string) {
                     <NavigationMenuLink as-child>
                       <RouterLink
                         :to="link.to"
-                        :class="['pl-8', link.kind === 'index' ? 'text-muted-foreground' : '']"
+                        :class="[
+                          'flex-row items-center gap-2 pl-8',
+                          link.kind === 'index' ? 'text-muted-foreground' : '',
+                        ]"
                         @pointerenter="warm(link.to)"
                         @focusin="warm(link.to)"
-                        >{{ link.label }}</RouterLink
                       >
+                        {{ link.label }}
+                        <ToolStageChip v-if="link.stage" :stage="link.stage" />
+                      </RouterLink>
                     </NavigationMenuLink>
                   </li>
                 </template>

@@ -11,6 +11,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import ToolStageChip from '@/components/tools/ToolStageChip.vue'
 import { useNav } from '@/composables/useNav'
 import { groupWarmTargets } from '@/lib/nav'
 import { prefetchRouteChunks } from '@/lib/prefetch'
@@ -109,7 +110,7 @@ const sectionLinkClass =
   'flex h-12 items-center gap-3 px-4 text-base font-medium hover:bg-accent/50 ' +
   `active:bg-accent transition-colors ${focusRing}`
 const gameLinkClass =
-  'flex min-h-11 items-center py-2 pl-12 pr-4 text-[15px] leading-snug ' +
+  'flex min-h-11 items-center gap-2 py-2 pl-12 pr-4 text-[15px] leading-snug ' +
   `hover:bg-accent/50 active:bg-accent transition-colors ${focusRing}`
 // px-3 matches the Scan button's has-[>svg]:px-3 content inset so the two rows share a
 // left edge; mx-0.5 on the icon centers the 16px glyph in the button icon's 20px column.
@@ -179,8 +180,10 @@ const docsLinkClass =
                       :to="link.to"
                       :class="gameLinkClass"
                       exact-active-class="bg-accent text-accent-foreground font-medium"
-                      >{{ link.label }}</RouterLink
                     >
+                      {{ link.label }}
+                      <ToolStageChip v-if="link.stage" :stage="link.stage" />
+                    </RouterLink>
                   </li>
                 </template>
               </ul>

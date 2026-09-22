@@ -120,6 +120,15 @@ describe('resolveItem', () => {
     ])
   })
 
+  it("carries a tool's maturity stage on its link so every nav shows the same chip", () => {
+    const resolved = resolveItem(itemById('tools'), GAMES)
+    expect(resolved.perGame[0]?.links.map((link) => [link.label, link.stage])).toEqual([
+      ['Life counter', undefined],
+      ['Play online', 'alpha'],
+      ['All Magic: The Gathering tools', undefined],
+    ])
+  })
+
   it('leaves an item with no expansion as its landing alone', () => {
     expect(warmTargets('scan')).toEqual(['/scan'])
     expect(warmTargets('docs')).toEqual(['/docs'])

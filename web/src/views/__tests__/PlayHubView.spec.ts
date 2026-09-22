@@ -214,6 +214,13 @@ describe('PlayHubView signed in', () => {
     expect(router.currentRoute.value.fullPath).toBe('/tools/mtg/play/NEW123')
   })
 
+  it('tags the table as alpha in the heading', async () => {
+    const { wrapper } = await mountHub()
+    const heading = wrapper.find('h1')
+    expect(heading.text()).toContain('Alpha')
+    expect(wrapper.text()).toContain('The table is in alpha')
+  })
+
   it('says the list is empty rather than showing a bare heading', async () => {
     const { wrapper } = await mountHub()
     expect(wrapper.text()).toContain('No rooms yet')

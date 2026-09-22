@@ -16,7 +16,7 @@ import {
 import type { Game } from '@/lib/api'
 import { preconsPath } from '@/lib/precons'
 import { releasesPath } from '@/lib/releases'
-import { toolPath, toolsFor, toolsPath } from '@/lib/tools'
+import { toolPath, toolsFor, toolsPath, type ToolStage } from '@/lib/tools'
 
 /**
  * The navigation registry — the one place the app's information architecture is written down.
@@ -50,6 +50,9 @@ export interface NavLink {
   label: string
   to: string
   kind?: 'leaf' | 'index'
+  /** The destination's maturity tag (a tool still in alpha), carried so every surface that
+   * links it can show the same chip. Semantic — what the link leads to — not styling. */
+  stage?: ToolStage
 }
 
 /** One destination in the IA — a landing, plus the per-game rows it expands into. */
@@ -207,7 +210,11 @@ export const NAV: readonly NavRoot[] = [
               const tools = toolsFor(game.id)
               if (tools.length === 0) return []
               return [
-                ...tools.map((tool) => ({ label: tool.name, to: toolPath(game.id, tool.slug) })),
+                ...tools.map((tool) => ({
+                  label: tool.name,
+                  to: toolPath(game.id, tool.slug),
+                  stage: tool.stage,
+                })),
                 { label: `All ${game.name} tools`, to: toolsPath(game.id), kind: 'index' },
               ]
             },
