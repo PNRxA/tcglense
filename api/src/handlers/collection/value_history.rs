@@ -45,12 +45,10 @@ use crate::handlers::shared::{
 use crate::scryfall::format_date;
 use crate::state::AppState;
 
+use super::analytics_inputs::{
+    HoldingRow, PRICE_ID_CHUNK, load_card_holdings, load_product_holdings,
+};
 use super::price_movements::{SnapshotSeek, decode_snapshot};
-
-/// How many card ids to bind per `IN (...)` chunk. Kept well under SQLite's 32766
-/// bound-parameter cap (each chunk also binds `game` + the optional cutoff), so an
-/// arbitrarily large collection still fetches in a handful of queries.
-const PRICE_ID_CHUNK: usize = 10_000;
 
 /// One held item's last captured snapshot before an explicit range cutoff. It seeds the
 /// carry-forward cursor without exposing an out-of-range day in the response. `snapshot` is
@@ -159,42 +157,15 @@ async fn value_history_payload(
     game: String,
     range: Option<PriceRange>,
 ) -> Result<DataBody<Vec<CollectionValuePoint>>, AppError> {
-    // The user's current card + sealed holdings. Only the three columns the fold reads are
-    // pulled (never the wide catalog rows); acquisition dates deliberately do not affect a
+    // The user's current card + sealed holdings, reduced to the three columns the fold reads
+    // (the shared analytics preamble); acquisition dates deliberately do not affect a
     // historic revaluation of the current basket.
-    let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
-        .select_only()
-        .column(collection_item::Column::CardId)
-        .column(collection_item::Column::Quantity)
-        .column(collection_item::Column::FoilQuantity)
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-
-    let product_holdings: Vec<(i32, i32, i32)> = CollectionProductItem::find()
-        .select_only()
-        .column(collection_product_item::Column::ProductId)
-        .column(collection_product_item::Column::Quantity)
-        .column(collection_product_item::Column::FoilQuantity)
-        .filter(collection_product_item::Column::UserId.eq(user.id))
-        .filter(collection_product_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
+    let card_holdings = load_card_holdings(&state.db, user.id, &game).await?;
+    let product_holdings = load_product_holdings(&state.db, user.id, &game).await?;
 
     if card_holdings.is_empty() && product_holdings.is_empty() {
         return Ok(DataBody { data: Vec::new() });
     }
-
-    let to_holding = |(item_id, quantity, foil_quantity): (i32, i32, i32)| HoldingRow {
-        item_id,
-        quantity,
-        foil_quantity,
-    };
-    let card_holdings: Vec<HoldingRow> = card_holdings.into_iter().map(to_holding).collect();
-    let product_holdings: Vec<HoldingRow> = product_holdings.into_iter().map(to_holding).collect();
 
     let card_ids: Vec<i32> = card_holdings.iter().map(|h| h.item_id).collect();
     let product_ids: Vec<i32> = product_holdings.iter().map(|h| h.item_id).collect();
@@ -563,13 +534,6 @@ async fn fetch_bucketed_snapshots(
         out.push((row.item_id, date, usd, foil));
     }
     Ok(out)
-}
-
-/// A holding reduced to what the fold needs: the item and its current counts.
-struct HoldingRow {
-    item_id: i32,
-    quantity: i32,
-    foil_quantity: i32,
 }
 
 /// One item's snapshot for a day: the date and its regular/foil price already in integer

@@ -25,15 +25,18 @@ import {
   useCollectionProductSummaryQuery,
   useCollectionSetsQuery,
   useCollectionSummaryQuery,
+  useCollectionValueChangeQuery,
 } from '@/composables/useCollection'
 import { useCollectionVisibilityQuery } from '@/composables/useCollectionVisibility'
 import { useCurrency } from '@/composables/useCurrency'
 import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
 import { sumUsd } from '@/lib/money'
+import { persistedRef } from '@/lib/persistedRef'
 import { usePageMeta } from '@/lib/seo'
+import { DEFAULT_CHANGE_WINDOW, describeValueChange, isChangeWindow } from '@/lib/valueChange'
 import { useAuthStore } from '@/stores/auth'
-import type { PriceRange } from '@/lib/api'
+import type { MoverWindow, PriceRange } from '@/lib/api'
 
 // The per-game collection landing: pick a set to see just your cards from it, or "All
 // cards" for the whole collection. By default it lists just the sets you own cards in;
@@ -43,8 +46,8 @@ import type { PriceRange } from '@/lib/api'
 // have any. The shared landing pipeline (scope toggle, filter + grouping, sectioning,
 // ownership map, header stats) lives in `useHoldingsLanding`; this view layers on the
 // collection-only extras (import/export controls, camera scan, value-history chart, bulk-value
-// stat). The actual card grids live on CollectionBrowseView (`/collection/:game/cards` +
-// `.../sets/:code`).
+// stat, the daily value change under each total). The actual card grids live on
+// CollectionBrowseView (`/collection/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const money = useCurrency()
 
@@ -86,10 +89,42 @@ const productSummaryQuery = useCollectionProductSummaryQuery(game)
 const productSummary = computed(() => productSummaryQuery.data.value)
 const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
 
+// The movement under each total (the combined overview's, the cards section's and the sealed
+// section's): how much the current basket moved over the picked window, per holding kind and
+// rolled up. One shared window drives all three lines (they are one request) — each line's
+// window tag opens the picker, and a pick on any of them moves them all — fetched per window
+// and cached so switching back is instant; the choice persists per device (a display
+// preference, like the theme and card size) and opens on a week. Gated on something being held so an
+// empty collection never pays for it; each line self-hides until a capture reaches back to
+// the window's baseline. The change rides the snapshot-day figures while the totals beside it
+// are the live summary, so on a day the capture lags the live prices the two can differ by
+// that lag — the line says which capture it is measured to. The combined total is the sum of
+// *both* summaries, so its rolled-up delta shows only once both have answered: with one
+// summary missing (an error or a retry in flight) the figure above it would be one kind's
+// value under both kinds' movement.
+const hasAnyHoldings = computed(() => hasStats.value || hasProductStats.value)
+const changeWindow = persistedRef<MoverWindow>(
+  'tcglense_collection_change_window',
+  DEFAULT_CHANGE_WINDOW,
+  isChangeWindow,
+)
+const valueChangeQuery = useCollectionValueChangeQuery(game, changeWindow, {
+  enabled: hasAnyHoldings,
+})
+const valueChange = computed(() => valueChangeQuery.data.value)
+const totalChange = computed(() =>
+  summary.value && productSummary.value
+    ? describeValueChange(valueChange.value?.total, money.formatUsd, changeWindow.value)
+    : null,
+)
+const cardsChange = computed(() =>
+  describeValueChange(valueChange.value?.cards, money.formatUsd, changeWindow.value),
+)
+
 // Top-of-page combined overview (cards + sealed rolled together), the headline above the
 // per-section breakdowns; empty (so it self-hides) until at least one holding exists.
 const combinedStats = computed(() => {
-  if (!hasStats.value && !hasProductStats.value) return []
+  if (!hasAnyHoldings.value) return []
   const cards = summary.value
   const products = productSummary.value
   return [
@@ -104,6 +139,7 @@ const combinedStats = computed(() => {
     {
       label: 'Total value',
       value: money.formatUsd(sumUsd(cards?.total_value_usd, products?.total_value_usd)),
+      change: totalChange.value,
     },
   ]
 })
@@ -114,7 +150,7 @@ const cardStats = computed(() =>
     ? [
         { label: 'Unique cards', value: summary.value?.unique_cards.toLocaleString() ?? null },
         { label: 'Total copies', value: summary.value?.total_cards.toLocaleString() ?? null },
-        { label: 'Total value', value: totalValue.value },
+        { label: 'Total value', value: totalValue.value, change: cardsChange.value },
         // The bulk (< $1/card) slice of the total, so it's clear how much of the
         // collection's value is chaff vs. real money.
         { label: 'Bulk value', value: bulkValue.value },
@@ -178,8 +214,14 @@ function fetchValueHistory(range: PriceRange) {
         </div>
 
         <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
-             the sealed and cards headings further down. -->
-        <HoldingStatList :items="combinedStats" size="lg" class="mt-4" />
+             the sealed and cards headings further down. The total's change line carries the
+             window picker (its tag), bound to the one window every line on the page shares. -->
+        <HoldingStatList
+          v-model:change-window="changeWindow"
+          :items="combinedStats"
+          size="lg"
+          class="mt-4"
+        />
 
         <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
@@ -239,12 +281,18 @@ function fetchValueHistory(range: PriceRange) {
       />
 
       <!-- Keep the sealed holdings grid directly below the collection analytics. -->
-      <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
+      <ProductHoldingSection
+        :game="game"
+        list="collection"
+        v-model:change-window="changeWindow"
+        :value-change="valueChange?.sealed"
+        class="mt-8 mb-8"
+      />
 
       <!-- Cards section heading + its own unique / total / value (+ bulk) stats, matching
            the sealed section's heading + stats above. -->
       <h2 class="mb-4 text-lg font-semibold">Cards</h2>
-      <HoldingStatList :items="cardStats" class="mb-6" />
+      <HoldingStatList v-model:change-window="changeWindow" :items="cardStats" class="mb-6" />
 
       <!-- Where the cards' value sits (issue #680): by rarity / colour / type / finish, and
            the top holdings by held value. Beside the stats it slices; gated like them, and

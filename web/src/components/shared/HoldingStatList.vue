@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import StatChangeLine from '@/components/shared/StatChangeLine.vue'
+import type { StatChange } from '@/lib/valueChange'
+import type { MoverWindow } from '@/lib/api'
 
 // A flex-wrapping row of summary stats (a `<dl>` of label → value pairs) shared by the
 // collection and wish-list landings: the top-of-page combined overview and the per-section
@@ -8,10 +11,16 @@ import { computed } from 'vue'
 // unpriced money value straight through and have just that stat self-hide (matching the old
 // per-`<dl>` `v-if` gates); pass an empty `items` array and the whole list renders nothing.
 // `size="lg"` bumps the value type scale for the combined overview so it reads as the
-// headline above the smaller per-section rows.
+// headline above the smaller per-section rows. A money stat may carry a `change` — its
+// movement over a window — rendered as a one-line delta beneath the value (the collection's
+// totals do; the wish list, a shopping list, never does). Bind `v-model:change-window` to
+// make every change line's window tag a picker for that shared window; unbound, the tags are
+// plain text.
 export interface StatItem {
   label: string
   value: string | null | undefined
+  /** The stat's movement (see `describeValueChange`); absent/null shows the value alone. */
+  change?: StatChange | null
 }
 
 const props = withDefaults(
@@ -21,6 +30,9 @@ const props = withDefaults(
   }>(),
   { size: 'md' },
 )
+// The shared window the change lines' tags pick; `undefined` when the caller has no window
+// state to offer (the tags then render as text).
+const changeWindow = defineModel<MoverWindow>('changeWindow')
 
 const shown = computed(() => props.items.filter((item) => item.value != null))
 </script>
@@ -29,8 +41,16 @@ const shown = computed(() => props.items.filter((item) => item.value != null))
   <dl v-if="shown.length" class="flex flex-wrap gap-x-8 gap-y-3">
     <div v-for="item in shown" :key="item.label">
       <dt class="text-muted-foreground text-xs tracking-wide uppercase">{{ item.label }}</dt>
+      <!-- The movement lives inside the <dd>: it is part of the value's definition (and a
+           <dl> wrapper <div> may hold nothing but <dt>/<dd> children). -->
       <dd class="font-semibold tabular-nums" :class="size === 'lg' ? 'text-2xl' : 'text-xl'">
-        {{ item.value }}
+        <span>{{ item.value }}</span>
+        <StatChangeLine
+          v-if="item.change"
+          :change="item.change"
+          :pickable="changeWindow !== undefined"
+          @pick="changeWindow = $event"
+        />
       </dd>
     </div>
   </dl>

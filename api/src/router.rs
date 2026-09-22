@@ -46,12 +46,12 @@ use crate::{
         collection::{
             MAX_CSV_UPLOAD_BYTES, collection_breakdown, collection_movers,
             collection_product_counts, collection_product_summary, collection_set_drops,
-            collection_set_subtypes, collection_sets, collection_summary, collection_value_history,
-            export_collection, export_collection_cards, get_collection_entry,
-            get_collection_product_entry, get_import_job, import_collection, import_collection_csv,
-            import_collection_text, list_collection, list_collection_product_sets,
-            list_collection_products, owned_counts, set_collection_entry,
-            set_collection_product_entry,
+            collection_set_subtypes, collection_sets, collection_summary, collection_value_change,
+            collection_value_history, export_collection, export_collection_cards,
+            get_collection_entry, get_collection_product_entry, get_import_job, import_collection,
+            import_collection_csv, import_collection_text, list_collection,
+            list_collection_product_sets, list_collection_products, owned_counts,
+            set_collection_entry, set_collection_product_entry,
         },
         config::public_config,
         currency::currency_rates,
@@ -229,6 +229,12 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/collection/{game}/value-history",
             get(collection_value_history),
+        )
+        // The basket's movement since the previous daily capture — the headline delta beside
+        // the landing's total value (cards, sealed and both), two point-seeks per held item.
+        .route(
+            "/api/collection/{game}/value-change",
+            get(collection_value_change),
         )
         // The biggest 1d / 7d / 30d / 1y / 2y / 3y / all-time gain & loss movements across
         // the user's owned cards (per-unit price change × copies held).

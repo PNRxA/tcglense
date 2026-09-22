@@ -23,7 +23,8 @@ import {
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
-import type { CardSet } from '@/lib/api'
+import type { CardSet, MoverWindow, ValueChange } from '@/lib/api'
+import { DEFAULT_CHANGE_WINDOW, describeValueChange } from '@/lib/valueChange'
 
 // The sealed-products slice of the collection / wish-list / public landing: like the CARDS
 // side, it shows the set tiles you click into (a set-scoped products list) rather than
@@ -31,8 +32,18 @@ import type { CardSet } from '@/lib/api'
 // first. Authed surfaces pass `list` (their token'd queries); a public surface passes `handle`
 // (the token-less handle-keyed queries) — the read-only mirror. `handle` + `list='wishlist'`
 // selects the public *wish list*, `handle` alone the public collection; the tiles and "View
-// all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`.
-const props = defineProps<{ game: string; list?: CardListTarget; handle?: string }>()
+// all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`. The
+// collection landing also hands in the sealed holdings' `valueChange` — their movement over
+// the landing's shared window, bound as `v-model:change-window` so this line's window tag is
+// a picker for it too — for a delta line under the value stat; the wish list (a shopping
+// list) and the public mirrors pass nothing and show the value alone.
+const props = defineProps<{
+  game: string
+  list?: CardListTarget
+  handle?: string
+  valueChange?: ValueChange | null
+}>()
+const changeWindow = defineModel<MoverWindow>('changeWindow')
 const game = toRef(props, 'game')
 const money = useCurrency()
 
@@ -90,7 +101,15 @@ const sealedStats = computed(() => {
   return [
     { label: 'Unique products', value: s.unique_products.toLocaleString() },
     { label: 'Total products', value: s.total_products.toLocaleString() },
-    { label: 'Products value', value: money.formatUsd(s.total_value_usd) },
+    {
+      label: 'Products value',
+      value: money.formatUsd(s.total_value_usd),
+      change: describeValueChange(
+        props.valueChange,
+        money.formatUsd,
+        changeWindow.value ?? DEFAULT_CHANGE_WINDOW,
+      ),
+    },
   ]
 })
 </script>
@@ -113,7 +132,7 @@ const sealedStats = computed(() => {
     </div>
 
     <!-- The section's own unique / total / value stats, under its heading. -->
-    <HoldingStatList :items="sealedStats" class="mb-4" />
+    <HoldingStatList v-model:change-window="changeWindow" :items="sealedStats" class="mb-4" />
 
     <!-- One tile per held-product set (server order = newest set first), each linking to the
          surface's set-scoped products list — matching the card landing's held-sets grid. -->

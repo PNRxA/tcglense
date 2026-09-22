@@ -16,6 +16,7 @@ import { loadCardDetailDialog } from '@/components/cards/detailDialogLoader'
 import { useCurrency } from '@/composables/useCurrency'
 import { prefetchRouteChunks } from '@/lib/prefetch'
 import { productTypeLabel } from '@/lib/productType'
+import { changeDirection, formatSignedMoney, formatSignedPct } from '@/lib/valueChange'
 
 // One card or sealed-product row in the collection's "Biggest movers" panel. Card clicks
 // preserve the landing under the shared detail modal; product clicks use the sealed detail
@@ -81,21 +82,16 @@ function warmDetail() {
   }
 }
 
-// Gain/loss is read off the change itself (gainers are positive, losers negative).
-// `change_usd` is a SIGNED decimal string, so the sign is stripped before formatUsd
-// (which would otherwise render "$-3.50") and re-applied as a real minus (U+2212),
-// whose glyph width matches the plus.
-const change = computed(() => Number(props.mover.change_usd))
-const isGain = computed(() => change.value >= 0)
-const changeText = computed(() => {
-  if (!Number.isFinite(change.value)) return props.mover.change_usd
-  return `${isGain.value ? '+' : '−'}${money.formatUsd(String(Math.abs(change.value)))}`
-})
-const pctText = computed(() => {
-  const pct = props.mover.change_pct
-  if (pct == null) return null
-  return `${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%`
-})
+// Gain/loss is read off the change itself (gainers are positive, losers negative — a mover is
+// by definition never flat). `change_usd` is a SIGNED decimal string; the shared
+// `lib/valueChange` seam strips the sign before formatUsd (which would otherwise render
+// "$-3.50") and re-applies it as a `+` or a real minus (U+2212), exactly as the landing's
+// daily-change lines do, so the two surfaces can't drift apart in wording.
+const isGain = computed(() => changeDirection(props.mover.change_usd) !== 'down')
+const changeText = computed(
+  () => formatSignedMoney(props.mover.change_usd, money.formatUsd) ?? props.mover.change_usd,
+)
+const pctText = computed(() => formatSignedPct(props.mover.change_pct))
 // The represented finish's single-copy price today; `foil` marks the rows whose movement is
 // the foil printing's, so a $25 figure over a $5 regular isn't read as a data error.
 const priceNow = computed(() => money.formatUsd(props.mover.price_now))

@@ -1017,6 +1017,306 @@ async fn export_requires_auth_and_produces_provider_csv() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+// ---------- Collection daily value change ----------
+//
+// The pure fold is unit-tested in `handlers::collection::value_change`; these drive the real
+// `/value-change` endpoint end-to-end with controlled price history so the handler glue — the
+// per-kind reference date, the carry-forward baseline, the both-anchors rule, the auth/empty
+// paths — is exercised too. The sealed and rolled-up halves live in
+// `security_tests::collection_products`, beside the product helpers.
+
+#[tokio::test]
+async fn value_change_requires_auth_and_handles_empty_and_unknown_game() {
+    let app = test_app_with_catalog().await;
+
+    // Per-user data: no token -> 401, and never shared-cached.
+    let (status, headers, _) = send(&app, get("/api/collection/mtg/value-change")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+
+    let (token, _) = register(&app, "value-change-empty@example.com", "password123").await;
+
+    // Owns nothing -> every figure null for every kind (and still no-store, per-user); the
+    // window is echoed, defaulting to a week.
+    let (status, headers, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["window"], "week", "absent window -> the week default");
+    for kind in ["cards", "sealed", "total"] {
+        for field in [
+            "as_of",
+            "value_usd",
+            "previous_usd",
+            "change_usd",
+            "change_pct",
+        ] {
+            assert!(
+                body[kind][field].is_null(),
+                "no holdings -> null {kind}.{field}: {body:?}"
+            );
+        }
+    }
+
+    // Unknown game -> 404 (require_game), like the sibling collection reads.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/nope/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An unknown window is a 422 (the movers' vocabulary), never a silent default.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change?window=bogus", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// The card figures: quantity-weighted (unlike the movers), per finish, anchored at the newest
+/// owned snapshot against the day before, with a printing first priced today counted in the
+/// value but not the movement, and a holding with no history at all ignored.
+#[tokio::test]
+async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "value-change-cards@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 5).await;
+    let (a, b, c, d, e) = (&ids[0], &ids[1], &ids[2], &ids[3], &ids[4]);
+
+    // A: 2 regular + 1 foil. Regular 10 -> 12 (×2 = +4.00), foil 30 -> 25 (×1 = -5.00).
+    own_card_finishes(&app, &token, a, 2, 1).await;
+    // B: 1 regular, 3.25 -> 3.00 (-0.25); its foil price moves too but no foil is owned.
+    own_card(&app, &token, b, 1).await;
+    // C: 3 regular, history begins today at 100.00 -> value 300.00, no movement.
+    own_card(&app, &token, c, 3).await;
+    // D: 5 regular, last captured five days ago at 2.00 and never since -> its stale price is
+    // carried forward into the value (10.00) and, being the same row at both anchors, it
+    // contributes a zero movement — while the kind's `as_of` stays today's.
+    own_card(&app, &token, d, 5).await;
+    // E: owned but never captured -> contributes nothing anywhere.
+    own_card(&app, &token, e, 7).await;
+
+    let (d0, d1, d5) = (day_offset(0), day_offset(1), day_offset(5));
+    set_price_history(
+        db,
+        internal_card_id(db, a).await,
+        &[
+            (d1.clone(), Some("10.00"), Some("30.00")),
+            (d0.clone(), Some("12.00"), Some("25.00")),
+        ],
+    )
+    .await;
+    set_price_history(
+        db,
+        internal_card_id(db, b).await,
+        &[
+            (d1.clone(), Some("3.25"), Some("1.00")),
+            (d0.clone(), Some("3.00"), Some("99.00")),
+        ],
+    )
+    .await;
+    set_price_history(
+        db,
+        internal_card_id(db, c).await,
+        &[(d0.clone(), Some("100.00"), None)],
+    )
+    .await;
+    set_price_history(
+        db,
+        internal_card_id(db, d).await,
+        &[(d5.clone(), Some("2.00"), None)],
+    )
+    .await;
+    set_price_history(db, internal_card_id(db, e).await, &[]).await;
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["window"], "day");
+    let cards = &body["cards"];
+    assert_eq!(cards["as_of"], d0, "anchored at the newest owned snapshot");
+    assert_eq!(
+        cards["value_usd"], "362.00",
+        "24 + 25 + 3 + 300 + D's carried-forward 5 × 2.00"
+    );
+    assert_eq!(
+        cards["change_usd"], "-1.25",
+        "+4 - 5 - 0.25; C's $300 is not a gain and D's stale row moves nothing"
+    );
+    assert_eq!(cards["previous_usd"], "363.25", "value - change");
+    let pct = cards["change_pct"].as_f64().expect("pct");
+    assert!((pct - (-125.0 / 36325.0 * 100.0)).abs() < 1e-9, "{pct}");
+
+    // No sealed products -> the sealed kind is all null, and the total is the cards alone.
+    assert!(body["sealed"]["as_of"].is_null());
+    assert!(body["sealed"]["value_usd"].is_null());
+    assert_eq!(body["total"]["as_of"], d0);
+    assert_eq!(body["total"]["value_usd"], "362.00");
+    assert_eq!(body["total"]["change_usd"], "-1.25");
+    assert_eq!(body["total"]["previous_usd"], "363.25");
+}
+
+/// The baseline carries forward across a capture gap: with no snapshot on the day before the
+/// newest one, the movement is measured against the last capture before it. And with a single
+/// captured day there is a value but no movement (`change_usd` null, never a fabricated zero).
+#[tokio::test]
+async fn value_change_carries_the_baseline_forward_and_nulls_without_one() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "value-change-gap@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 1).await;
+    let id = &ids[0];
+    own_card(&app, &token, id, 2).await;
+
+    let (d0, d3) = (day_offset(0), day_offset(3));
+    // Captured three days ago and today; yesterday is missing -> carry the d3 price forward.
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[
+            (d3.clone(), Some("8.00"), None),
+            (d0.clone(), Some("9.50"), None),
+        ],
+    )
+    .await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["cards"]["as_of"], d0);
+    assert_eq!(body["cards"]["value_usd"], "19.00");
+    assert_eq!(body["cards"]["change_usd"], "3.00", "2 × (9.50 - 8.00)");
+    assert_eq!(body["cards"]["previous_usd"], "16.00");
+
+    // A second user with the same card but only today's capture: value, no baseline.
+    let (other, _) = register(&app, "value-change-single@example.com", "password123").await;
+    own_card(&app, &other, id, 1).await;
+    set_price_history(
+        db,
+        internal_card_id(db, id).await,
+        &[(d0.clone(), Some("9.50"), None)],
+    )
+    .await;
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &other),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["cards"]["as_of"], d0);
+    assert_eq!(body["cards"]["value_usd"], "9.50");
+    assert!(
+        body["cards"]["change_usd"].is_null(),
+        "one captured day has no movement: {body:?}"
+    );
+    assert!(body["cards"]["previous_usd"].is_null());
+    assert!(body["cards"]["change_pct"].is_null());
+    assert!(body["total"]["change_usd"].is_null());
+}
+
+/// The window picks the baseline exactly as the movers do: a fixed window carries forward the
+/// newest snapshot at or before `as_of - N`, all-time compares each finish with its own first
+/// captured price, and a window longer than an item's history leaves it out of the movement
+/// (a null change when nothing at all reaches back that far).
+#[tokio::test]
+async fn value_change_windows_anchor_like_the_movers() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "value-change-windows@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 2).await;
+    let (a, b) = (&ids[0], &ids[1]);
+    own_card(&app, &token, a, 2).await;
+    own_card_finishes(&app, &token, b, 0, 1).await;
+
+    let (d0, d1, d7, d30, d40) = (
+        day_offset(0),
+        day_offset(1),
+        day_offset(7),
+        day_offset(30),
+        day_offset(40),
+    );
+    // A (2 regular): 10 forty days ago, 11 a month ago, 12 a week ago, 14 yesterday, 15 today.
+    set_price_history(
+        db,
+        internal_card_id(db, a).await,
+        &[
+            (d40.clone(), Some("10.00"), None),
+            (d30.clone(), Some("11.00"), None),
+            (d7.clone(), Some("12.00"), None),
+            (d1.clone(), Some("14.00"), None),
+            (d0.clone(), Some("15.00"), None),
+        ],
+    )
+    .await;
+    // B (1 foil): the foil price began a week ago at 20 and is 22 today; the regular price
+    // (unowned) began earlier and is ignored throughout.
+    set_price_history(
+        db,
+        internal_card_id(db, b).await,
+        &[
+            (d30.clone(), Some("1.00"), None),
+            (d7.clone(), Some("1.00"), Some("20.00")),
+            (d0.clone(), Some("1.00"), Some("22.00")),
+        ],
+    )
+    .await;
+
+    async fn change(app: &Router, token: &str, window: &str) -> Value {
+        let (status, _, body) = send(
+            app,
+            get_with_bearer(
+                &format!("/api/collection/mtg/value-change?window={window}"),
+                token,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{window}: {body:?}");
+        assert_eq!(body["window"], window);
+        assert_eq!(body["cards"]["value_usd"], "52.00", "{window}: 2 × 15 + 22");
+        body["cards"].clone()
+    }
+
+    // day: A 14 -> 15 (×2 = +2), B 22 -> carried-forward 20 (+2) => +4.
+    assert_eq!(change(&app, &token, "day").await["change_usd"], "4.00");
+    // week: A 12 -> 15 (+6), B's foil first priced exactly at the target (+2) => +8.
+    assert_eq!(change(&app, &token, "week").await["change_usd"], "8.00");
+    // month: A 11 -> 15 (+8); B's foil has no price at or before d30 -> held flat.
+    let month = change(&app, &token, "month").await;
+    assert_eq!(month["change_usd"], "8.00");
+    assert_eq!(
+        month["previous_usd"], "44.00",
+        "52 - 8: B's $22 is carried into the baseline"
+    );
+    // year: nothing reaches back that far -> a value, no movement.
+    let year = change(&app, &token, "year").await;
+    assert!(year["change_usd"].is_null(), "{year:?}");
+    assert!(year["previous_usd"].is_null());
+    // all_time: A from its first price 10 (+10), B's foil from its own first price 20 (+2).
+    let all = change(&app, &token, "all_time").await;
+    assert_eq!(all["change_usd"], "12.00");
+    assert_eq!(all["previous_usd"], "40.00");
+    // The default is the week window.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["window"], "week");
+    assert_eq!(body["cards"]["change_usd"], "8.00");
+}
+
 // ---------- Collection price movers ----------
 //
 // The pure ranking helpers are unit-tested in `handlers::collection::price_movements`; these
@@ -1056,6 +1356,10 @@ async fn set_price_history(
         .exec(db)
         .await
         .expect("wipe seeded history");
+    // An empty `rows` means "no history at all" — and SQLite rejects an empty INSERT.
+    if rows.is_empty() {
+        return;
+    }
     let now = Utc::now();
     let models: Vec<card_price_history::ActiveModel> = rows
         .iter()

@@ -126,6 +126,7 @@ export function makeProductHoldingQueries(cfg: ProductHoldingQueriesConfig) {
     })
     if (cfg.invalidateAnalytics) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
+      qc.invalidateQueries({ queryKey: ['collection-value-change', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
     }
   }

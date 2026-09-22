@@ -14,10 +14,11 @@ import {
   getCollectionSets,
   getCollectionSetSubtypes,
   getCollectionSummary,
+  getCollectionValueChange,
   setCollectionEntry,
   setCollectionProductEntry,
 } from '@/lib/api'
-import type { CollectionMovers, MoverWindow } from '@/lib/api'
+import type { CollectionMovers, CollectionValueChange, MoverWindow } from '@/lib/api'
 import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
 import {
   makeProductHoldingQueries,
@@ -132,4 +133,24 @@ export function useCollectionMoversQuery(
     enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionMovers>(options)
+}
+
+/** The collection's movement over `window` — the signed delta the landing shows under its
+ * total, card and sealed values. One request per window (two point-seeks per held item
+ * server-side, analytics-cached between edits and captures), cached per window so switching
+ * back is instant; the caller gates it on something being held so an empty collection never
+ * pays for it. Invalidated with the other collection analytics after any holdings write. */
+export function useCollectionValueChangeQuery(
+  game: Ref<string>,
+  window: Ref<MoverWindow>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
+  const options = {
+    // `window` is a ref inside the key (not `.value`) so a change refetches — see the footgun
+    // note in `lib/queries.ts`.
+    queryKey: ['collection-value-change', game, window],
+    queryFn: (token: string) => getCollectionValueChange(token, game.value, window.value),
+    enabled: opts.enabled,
+  }
+  return useAuthedQuery<CollectionValueChange>(options)
 }

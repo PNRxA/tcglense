@@ -165,6 +165,7 @@ the collection, wish-list, and API-key endpoints authenticate with a personal AP
         crate::handlers::collection::collection_set_drops,
         crate::handlers::collection::collection_set_subtypes,
         crate::handlers::collection::collection_value_history,
+        crate::handlers::collection::collection_value_change,
         crate::handlers::collection::collection_movers,
         crate::handlers::collection::collection_breakdown,
         crate::handlers::collection::owned_counts,

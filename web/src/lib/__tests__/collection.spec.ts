@@ -14,6 +14,7 @@ import {
   collectionProductSummaryPath,
   collectionCardExportPath,
   collectionSetDropsPath,
+  collectionValueChangePath,
   collectionValueHistoryPath,
   exportCollectionCards,
   exportCollectionCsv,
@@ -224,6 +225,22 @@ describe('collectionValueHistoryPath', () => {
   it('appends and encodes the range', () => {
     expect(collectionValueHistoryPath('mtg', '30d')).toBe(
       '/api/collection/mtg/value-history?range=30d',
+    )
+  })
+})
+
+describe('collectionValueChangePath', () => {
+  it('builds the value-change path, encoding the game', () => {
+    expect(collectionValueChangePath('mtg')).toBe('/api/collection/mtg/value-change')
+    expect(collectionValueChangePath('a/b')).toBe('/api/collection/a%2Fb/value-change')
+  })
+
+  it('appends the window when given', () => {
+    expect(collectionValueChangePath('mtg', 'week')).toBe(
+      '/api/collection/mtg/value-change?window=week',
+    )
+    expect(collectionValueChangePath('mtg', 'all_time')).toBe(
+      '/api/collection/mtg/value-change?window=all_time',
     )
   })
 })

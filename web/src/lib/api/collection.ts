@@ -9,6 +9,7 @@ import type {
   CollectionMovers,
   CollectionQuantities,
   CollectionSubtypeGroup,
+  CollectionValueChange,
   CollectionValuePoint,
   Page,
 } from './generated'
@@ -25,7 +26,8 @@ import type {
 // batched counts fetcher, and the single-entry get/set) is shared with the wish list
 // via `makeHoldingApi` — the collection is just the `'collection'` instance whose
 // batch-counts leaf is `/owned`. The re-exported names below keep their exact
-// signatures. Collection-only surfaces (value history, CSV export) stay local.
+// signatures. Collection-only surfaces (value history, the daily value change, movers, CSV
+// export) stay local.
 
 export type {
   BreakdownBucket,
@@ -41,9 +43,11 @@ export type {
   CollectionSet,
   CollectionSubtypeGroup,
   CollectionSummary,
+  CollectionValueChange,
   CollectionVisibility,
   HoldingBreakdown,
   TopHolding,
+  ValueChange,
 } from './generated'
 
 import type { CollectionVisibility } from './generated'
@@ -255,8 +259,31 @@ export async function getCollectionValueHistory(
   }
 }
 
-/** One movers window key — matches the API's response fields and its `?window=` tokens. */
+/** One price-movement window key — the `?window=` token the movers and value-change endpoints
+ * share (and the movers' response field names). */
 export type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
+
+/** Relative `/api/collection/{game}/value-change` path, optionally scoped to one window
+ * (absent = the server's week default). */
+export function collectionValueChangePath(game: string, window?: MoverWindow): string {
+  const base = `/api/collection/${encodeURIComponent(game)}/value-change`
+  return window ? `${base}?window=${window}` : base
+}
+
+/**
+ * How much the signed-in user's collection moved over a window: the card, sealed-product and
+ * rolled-up values at the latest captured day plus the signed difference from the window's
+ * baseline — the delta the landing shows beside each total. `window` takes the movers'
+ * tokens and defaults to a week server-side. Every figure is null when nothing owned has
+ * captured price history. Per-user + authenticated.
+ */
+export function getCollectionValueChange(
+  token: string,
+  game: string,
+  window?: MoverWindow,
+): Promise<CollectionValueChange> {
+  return request<CollectionValueChange>(collectionValueChangePath(game, window), { token })
+}
 
 /** Relative `/api/collection/{game}/movers` path, optionally scoped to one window. */
 export function collectionMoversPath(game: string, window?: MoverWindow): string {

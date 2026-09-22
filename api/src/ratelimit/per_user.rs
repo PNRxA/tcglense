@@ -35,7 +35,8 @@ pub(super) enum UserRoute {
     /// batch owned-count lookups, `me`. A generous ceiling for a signed-in human.
     General,
     /// The whole-collection analytics reads that scan every held card/product
-    /// against its full captured daily price history (`value-history`, `movers`), fold
+    /// against its full captured daily price history (`value-history`, `movers`), seek
+    /// every held item's two daily anchors (`value-change`), fold
     /// every held card into the `breakdown` (the wish-list twin included), or
     /// stream the entire holding as a file (the CSV `export` and the uncapped
     /// card-list `cards/export` drains, the wish-list twin included). Each is far
@@ -69,7 +70,12 @@ impl UserRoute {
             // as Import.
             if matches!(
                 tail,
-                "value-history" | "movers" | "breakdown" | "export" | "cards/export"
+                "value-history"
+                    | "value-change"
+                    | "movers"
+                    | "breakdown"
+                    | "export"
+                    | "cards/export"
             ) {
                 return Self::Analytics;
             }
@@ -471,6 +477,7 @@ mod tests {
         // import). A deck export is bounded to one deck, so it stays general.
         for analytics in [
             "/api/collection/mtg/value-history",
+            "/api/collection/mtg/value-change",
             "/api/collection/mtg/movers",
             "/api/collection/mtg/breakdown",
             "/api/wishlist/mtg/breakdown",
