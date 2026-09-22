@@ -95,9 +95,10 @@ pub struct MoversParams {
 }
 
 /// One requested movers window. `None` at the call sites below means "every window" — the
-/// original all-windows response.
+/// original all-windows response. Shared with [`super::value_change`], whose `?window=` takes
+/// the same tokens so the two surfaces speak one vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MoverWindowSel {
+pub(super) enum MoverWindowSel {
     Day,
     Week,
     Month,
@@ -111,7 +112,7 @@ impl MoverWindowSel {
     /// Parse a wire token into a window, or a `422` for anything else (mirrors
     /// `PriceRange::parse`). The tokens match the response field names, so the SPA passes the
     /// window it already keys on with no mapping.
-    fn parse(value: &str) -> Result<Self, AppError> {
+    pub(super) fn parse(value: &str) -> Result<Self, AppError> {
         Ok(match value {
             "day" => Self::Day,
             "week" => Self::Week,
@@ -131,7 +132,7 @@ impl MoverWindowSel {
 
     /// The wire token, reused as the analytics-cache params segment (an absent window keeps the
     /// empty segment the pre-windowing cache used).
-    fn token(self) -> &'static str {
+    pub(super) fn token(self) -> &'static str {
         match self {
             Self::Day => "day",
             Self::Week => "week",
@@ -748,23 +749,24 @@ async fn movers_payload(
     })
 }
 
-/// Calendar baselines measured back from one holding kind's own latest snapshot.
-struct WindowTargets {
-    day: String,
+/// Calendar baselines measured back from one holding kind's own latest snapshot (shared with
+/// [`super::value_change`], which anchors its fixed windows to the same targets).
+pub(super) struct WindowTargets {
+    pub(super) day: String,
     /// The 1D fallback's baseline, not a window of its own. The previous available snapshot
     /// is by definition at or before `day`, and on a daily feed it *is* `day` — so the retry
     /// then measures `day` against `previous_day(day)`, which is exactly this target. Loading
     /// it with the other anchors keeps that retry free of a second pass over the price index.
     prev_day: String,
-    week: String,
-    month: String,
-    year: String,
-    two_year: String,
-    three_year: String,
+    pub(super) week: String,
+    pub(super) month: String,
+    pub(super) year: String,
+    pub(super) two_year: String,
+    pub(super) three_year: String,
 }
 
 impl WindowTargets {
-    fn from_latest(latest: &str) -> Result<Self, AppError> {
+    pub(super) fn from_latest(latest: &str) -> Result<Self, AppError> {
         let latest_date = NaiveDate::parse_from_str(latest, "%Y-%m-%d").map_err(|e| {
             AppError::Internal(format!("unparseable snapshot date {latest:?}: {e}"))
         })?;
@@ -1094,7 +1096,7 @@ where
 /// selects for the anchors it doesn't need, so those sub-selects are never evaluated. It reads
 /// back as `None` into [`PriceAnchorSnapshots`], indistinguishable from a held item that has no
 /// such row, and both the ranker and the fallback then skip it.
-fn null_snapshot() -> SimpleExpr {
+pub(super) fn null_snapshot() -> SimpleExpr {
     SimpleExpr::Keyword(Keyword::Null)
 }
 
@@ -1213,7 +1215,7 @@ impl SnapshotSeek {
     }
 
     /// The item's earliest snapshot on which `price_col` is non-null.
-    fn first_priced<P>(&self, price_col: P) -> SimpleExpr
+    pub(super) fn first_priced<P>(&self, price_col: P) -> SimpleExpr
     where
         P: IntoColumnRef,
     {

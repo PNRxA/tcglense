@@ -952,7 +952,7 @@ surface.
 | `GET /api/collection/{game}?…&set&include_related&min_copies&max_copies&finish` | — | page of `CollectionEntry`, most-recently-updated first (`?page`/`?page_size`, default 60 / max 200) — `{ data, page, page_size, total, has_more }`. Optional `?set=<code>` scopes to one set (ANDed with `q`) — the per-set collection view; with `?include_related=true` the scope spans the set's whole **group** (root + related sub-sets), the collection mirror of the catalog's `include_related` (resolved via the same `group_set_codes`). `min_copies`/`max_copies`/`finish` narrow by how many copies are held — see **Copy-count filter** below |
 | `GET /api/collection/{game}/summary?set&include_related` | — | `CollectionSummary` `{ unique_cards, total_cards, total_value_usd, bulk_value_usd }` (see below). Optional `?set=<code>` scopes the stats to one set; `?include_related=true` (with a set) spans the set's whole **group** (root + related sub-sets, same `group_set_codes` as the list) so the value matches the include-related browse view. Backs the scoped collection value shown next to the browse count (issue #119) |
 | `GET /api/collection/{game}/value-history?range` | — | `{ data: CollectionValuePoint[] }`, oldest first, with separate card and sealed-product value lines (see below). No `range` = the full daily series; `7d`/`30d`/`1y`/`2y`/`3y`/`all` windows and downsamples like item price history; unknown range `422`. |
-| `GET /api/collection/{game}/value-change` | — | `CollectionValueChange` `{ cards, sealed, total }` — the collection's **daily movement**: each a `ValueChange` `{ as_of, value_usd, previous_usd, change_usd, change_pct }` giving the holdings' value at the newest captured snapshot and the signed difference from the day before (see below). Cards and sealed products are anchored to their **own** newest snapshot; `total` sums the two and reports the later date. Quantity-weighted (the whole basket, unlike the movers' single-copy figures); a finish counts toward the movement only when priced at both anchors. All fields `null` when nothing owned has captured history; `change_usd`, `previous_usd` and `change_pct` are `null` when there is no baseline capture yet (the value is still reported). Analytics-cached and in the per-user `analytics` bucket like its siblings. Backs the delta lines under the landing's combined and cards "Total value" stats and the sealed section's "Products value" stat (`total`, `cards`, `sealed` respectively); "Bulk value" carries none |
+| `GET /api/collection/{game}/value-change?window` | — | `CollectionValueChange` `{ window, cards, sealed, total }` — the collection's **movement over a window**: each kind a `ValueChange` `{ as_of, value_usd, previous_usd, change_usd, change_pct }` giving the holdings' value at the newest captured snapshot and the signed difference from the window's baseline (see below). `window` takes the movers' tokens (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`), defaults to `week`, is echoed in the response, and `422`s on anything else. A fixed window's baseline is `as_of - N` days carried forward; `all_time` measures each finish from its own earliest captured price. Cards and sealed products are anchored to their **own** newest snapshot; `total` sums the two and reports the later date. Quantity-weighted (the whole basket, unlike the movers' single-copy figures); a finish counts toward the movement only when priced at both anchors. All fields `null` when nothing owned has captured history; `change_usd`, `previous_usd` and `change_pct` are `null` when no capture reaches back to the baseline (the value is still reported). Analytics-cached per window and in the per-user `analytics` bucket like its siblings. Backs the delta lines under the landing's combined and cards "Total value" stats and the sealed section's "Products value" stat (`total`, `cards`, `sealed` respectively), all scoped by the landing's one window picker; "Bulk value" carries none |
 | `GET /api/collection/{game}/movers?window` | — | `CollectionMovers` keeps the card series and a parallel `sealed` series with the same windows — each contains its own five biggest single-copy price gainers/losers (never scaled by the counts held) for 1d / 7d / 30d / 1y / 2y / 3y / all captured history (see below). An empty latest-day comparison retries from the previous available snapshot. No `window` = every window (the original response); an optional `window` (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`) computes only that date range on demand — the requested window is populated for both the card and `sealed` series while the rest come back empty (the `as_of` reference dates are always returned); unknown `window` `422`. |
 | `GET /api/collection/{game}/breakdown?bulk_max_cents` | — | `HoldingBreakdown` — **where the collection's value sits** (issue #680): copies + estimated USD value by rarity, by colour-identity bucket, by card type and by finish, plus the ten most valuable holdings by **held** value (price × copies — not a single copy's price, which is the list's `sort=price`). Cards only (sealed products have none of these facets). The embedded `summary` is `/summary`'s own answer over the same rows, so every bucket is a slice of that total; `bulk_max_cents` sets the cutoff for its bulk slice exactly as it does there. `AuthUser` — a read-only key may call it. Rides the analytics response cache under the collection's holdings version + the price epoch + the UTC date (an edit through any handler invalidates it) and the per-user `analytics` bucket. See `HoldingBreakdown` below |
 | `GET /api/collection/{game}/sets` | — | `{ data: CollectionSet[] }`, newest set first — the sets the user owns cards in, each the catalog `Set` shape plus owned aggregates (see `CollectionSet` below). Powers the collection's per-set landing (mirrors the catalog's game → sets view) |
@@ -1010,26 +1010,33 @@ regardless of when the holding was added. Quantity changes before today are not 
 graph intentionally answers what the current basket would have been worth at historic prices,
 not what the user actually owned on each date.
 
-`CollectionValueChange = { cards, sealed, total }`, each a
+`CollectionValueChange = { window, cards, sealed, total }`, each kind a
 `ValueChange = { as_of, value_usd, previous_usd, change_usd, change_pct }`
-(`api/src/handlers/collection/value_change.rs`): the collection's movement since the previous
-daily price capture. Per holding kind, `as_of` is the newest `YYYY-MM-DD` snapshot across the
-user's held items of that kind (cards and sealed products are captured on independent cadences,
-so each is anchored on its own; `total.as_of` is the later of the two) and the baseline is the
-calendar day before it, **carried forward** — an item's baseline price is its newest snapshot at
-or before that day, so a capture gap never blanks the figure. `value_usd` is the current basket
+(`api/src/handlers/collection/value_change.rs`): the collection's movement over `window` (the
+requested token echoed; `week` when absent). Per holding kind, `as_of` is the newest
+`YYYY-MM-DD` snapshot across the user's held items of that kind (cards and sealed products are
+captured on independent cadences, so each is anchored on its own; `total.as_of` is the later of
+the two) and the baseline is picked exactly as the movers pick theirs: a fixed window's is the
+calendar day `as_of - N` (1 / 7 / 30 / 365 / 730 / 1095), **carried forward** — an item's
+baseline price is its newest snapshot at or before that day, so a capture gap never blanks the
+figure — and `all_time`'s is each finish's own earliest captured non-null price, so a newer
+printing is measured across all of *its* history. `value_usd` is the current basket
 at `as_of`, each held finish valued at its newest snapshot at or before `as_of` (an item whose
 feed stopped keeps its last captured price, as in the chart and the movers), quantity-weighted
 (regular copies × `usd`, foil copies × `usd_foil`); `change_usd` is the signed `Σ (price_now − price_prev) × copies` over the
-finishes priced at **both** anchors — a printing whose history began today is worth its price
-but did not *gain* it overnight (the movers apply the same both-anchors rule; the value-history
-chart is where such a step shows) — so `previous_usd = value_usd − change_usd` by construction
+finishes priced at **both** anchors — a printing whose history began inside the window is worth
+its price but did not *gain* it within the window (the movers apply the same both-anchors rule;
+the value-history chart is where such a step shows) — so `previous_usd = value_usd − change_usd`
+by construction
 and `change_pct = change_usd / previous_usd × 100` (`null` on a zero baseline). Every money
 field is `null` for a kind with nothing priced — `as_of` is still reported whenever that kind has
 any captured history, and all five fields are `null` only when nothing of that kind is held or
 nothing held has any captured history; `change_usd`/`previous_usd`/`change_pct` alone are `null`
-when no held finish has a baseline capture (a single captured day) — the SPA then shows the value
-without a delta rather than a fabricated `0.00`. An unchanged capture is an honest `"0.00"`.
+when no held finish has a capture reaching back to the baseline (history shorter than the window)
+— the SPA then shows the value without a delta rather than a fabricated `0.00`. An unchanged
+capture is an honest `"0.00"`. Each window caches independently under the same holdings/price
+version keys; the SPA passes the window its picker holds (persisted per device, opening on a
+week).
 `total.as_of` is donated only by a kind that contributed a value, so it always names a capture
 one of the reported figures was measured to.
 Like value history and the movers this re-prices the **current** basket: quantity history is not

@@ -234,6 +234,15 @@ describe('collectionValueChangePath', () => {
     expect(collectionValueChangePath('mtg')).toBe('/api/collection/mtg/value-change')
     expect(collectionValueChangePath('a/b')).toBe('/api/collection/a%2Fb/value-change')
   })
+
+  it('appends the window when given', () => {
+    expect(collectionValueChangePath('mtg', 'week')).toBe(
+      '/api/collection/mtg/value-change?window=week',
+    )
+    expect(collectionValueChangePath('mtg', 'all_time')).toBe(
+      '/api/collection/mtg/value-change?window=all_time',
+    )
+  })
 })
 
 describe('getCollectionValueHistory', () => {

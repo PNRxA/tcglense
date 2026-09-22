@@ -23,8 +23,8 @@ import {
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
-import type { CardSet, ValueChange } from '@/lib/api'
-import { describeValueChange } from '@/lib/valueChange'
+import type { CardSet, MoverWindow, ValueChange } from '@/lib/api'
+import { DEFAULT_CHANGE_WINDOW, describeValueChange } from '@/lib/valueChange'
 
 // The sealed-products slice of the collection / wish-list / public landing: like the CARDS
 // side, it shows the set tiles you click into (a set-scoped products list) rather than
@@ -33,14 +33,15 @@ import { describeValueChange } from '@/lib/valueChange'
 // (the token-less handle-keyed queries) — the read-only mirror. `handle` + `list='wishlist'`
 // selects the public *wish list*, `handle` alone the public collection; the tiles and "View
 // all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`. The
-// collection landing also hands in the sealed holdings' `valueChange` — their movement since
-// the previous daily capture — for a delta line under the value stat; the wish list (a
-// shopping list) and the public mirrors pass nothing and show the value alone.
+// collection landing also hands in the sealed holdings' `valueChange` — their movement over
+// the landing's picked `changeWindow` — for a delta line under the value stat; the wish list
+// (a shopping list) and the public mirrors pass nothing and show the value alone.
 const props = defineProps<{
   game: string
   list?: CardListTarget
   handle?: string
   valueChange?: ValueChange | null
+  changeWindow?: MoverWindow
 }>()
 const game = toRef(props, 'game')
 const money = useCurrency()
@@ -102,7 +103,11 @@ const sealedStats = computed(() => {
     {
       label: 'Products value',
       value: money.formatUsd(s.total_value_usd),
-      change: describeValueChange(props.valueChange, money.formatUsd),
+      change: describeValueChange(
+        props.valueChange,
+        money.formatUsd,
+        props.changeWindow ?? DEFAULT_CHANGE_WINDOW,
+      ),
     },
   ]
 })

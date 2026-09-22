@@ -299,11 +299,11 @@ async fn sealed_holdings_feed_value_history_and_movers() {
     );
 }
 
-/// The sealed half of the daily value change is anchored at the **product** series' own newest
+/// The sealed half of the value change is anchored at the **product** series' own newest
 /// snapshot (a day behind the cards here), and the rolled-up total sums the two kinds' figures
 /// while taking the later reference date.
 #[tokio::test]
-async fn sealed_holdings_feed_the_daily_value_change_and_roll_into_the_total() {
+async fn sealed_holdings_feed_the_value_change_and_roll_into_the_total() {
     let app = test_app().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "sealed-value-change@example.com", "password123").await;
@@ -325,7 +325,7 @@ async fn sealed_holdings_feed_the_daily_value_change_and_roll_into_the_total() {
     // Cards only: nothing owned -> null; the total is the sealed figures alone.
     let (status, _, body) = send(
         &app,
-        get_with_bearer("/api/collection/mtg/value-change", &token),
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -381,7 +381,7 @@ async fn sealed_holdings_feed_the_daily_value_change_and_roll_into_the_total() {
 
     let (status, _, body) = send(
         &app,
-        get_with_bearer("/api/collection/mtg/value-change", &token),
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");

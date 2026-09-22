@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
 import { TrendingDown, TrendingUp } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import ChangeWindowToggle from '@/components/collection/ChangeWindowToggle.vue'
 import MoverRow from '@/components/collection/MoverRow.vue'
 import SetsScopeToggle from '@/components/collection/SetsScopeToggle.vue'
 import CollapsibleSection from '@/components/shared/CollapsibleSection.vue'
@@ -32,15 +32,6 @@ const expanded = ref(false)
 const activeWindow = ref<MoverWindow>('week')
 const showSealed = ref(false)
 const query = useCollectionMoversQuery(gameId, activeWindow, { enabled: expanded })
-const WINDOW_OPTIONS: { value: MoverWindow; label: string }[] = [
-  { value: 'day', label: '1D' },
-  { value: 'week', label: '7D' },
-  { value: 'month', label: '30D' },
-  { value: 'year', label: '1Y' },
-  { value: 'two_year', label: '2Y' },
-  { value: 'three_year', label: '3Y' },
-  { value: 'all_time', label: 'All' },
-]
 
 const movers = computed(() => query.data.value)
 const activeSeries = computed(() => (showSealed.value ? movers.value?.sealed : movers.value))
@@ -79,24 +70,7 @@ const asOfText = computed(() => {
       <span v-if="asOfText" class="text-muted-foreground text-xs">as of {{ asOfText }}</span>
       <div class="flex max-w-full flex-wrap items-center justify-end gap-2">
         <SetsScopeToggle v-model="showSealed" collected-label="Singles" second-label="Sealed" />
-        <div
-          class="bg-muted/50 flex max-w-full flex-wrap items-center justify-end gap-1 rounded-lg p-0.5"
-          role="group"
-          aria-label="Biggest movers window"
-        >
-          <Button
-            v-for="opt in WINDOW_OPTIONS"
-            :key="opt.value"
-            type="button"
-            :variant="activeWindow === opt.value ? 'secondary' : 'ghost'"
-            size="sm"
-            class="h-8 px-2.5 text-xs font-medium"
-            :aria-pressed="activeWindow === opt.value"
-            @click="activeWindow = opt.value"
-          >
-            {{ opt.label }}
-          </Button>
-        </div>
+        <ChangeWindowToggle v-model="activeWindow" label="Biggest movers window" />
       </div>
     </div>
     <!-- Loading: placeholder rows shaped like the loaded grid (Skeleton is

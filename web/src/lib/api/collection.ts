@@ -259,26 +259,31 @@ export async function getCollectionValueHistory(
   }
 }
 
-/** Relative `/api/collection/{game}/value-change` path. */
-export function collectionValueChangePath(game: string): string {
-  return `/api/collection/${encodeURIComponent(game)}/value-change`
+/** One price-movement window key — the `?window=` token the movers and value-change endpoints
+ * share (and the movers' response field names). */
+export type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
+
+/** Relative `/api/collection/{game}/value-change` path, optionally scoped to one window
+ * (absent = the server's week default). */
+export function collectionValueChangePath(game: string, window?: MoverWindow): string {
+  const base = `/api/collection/${encodeURIComponent(game)}/value-change`
+  return window ? `${base}?window=${window}` : base
 }
 
 /**
- * How much the signed-in user's collection moved since the previous daily price capture:
- * the card, sealed-product and rolled-up values at the latest captured day plus the signed
- * day-over-day difference — the delta the landing shows beside each total. Every figure is
- * null when nothing owned has captured price history. Per-user + authenticated.
+ * How much the signed-in user's collection moved over a window: the card, sealed-product and
+ * rolled-up values at the latest captured day plus the signed difference from the window's
+ * baseline — the delta the landing shows beside each total. `window` takes the movers'
+ * tokens and defaults to a week server-side. Every figure is null when nothing owned has
+ * captured price history. Per-user + authenticated.
  */
 export function getCollectionValueChange(
   token: string,
   game: string,
+  window?: MoverWindow,
 ): Promise<CollectionValueChange> {
-  return request<CollectionValueChange>(collectionValueChangePath(game), { token })
+  return request<CollectionValueChange>(collectionValueChangePath(game, window), { token })
 }
-
-/** One movers window key — matches the API's response fields and its `?window=` tokens. */
-export type MoverWindow = 'day' | 'week' | 'month' | 'year' | 'two_year' | 'three_year' | 'all_time'
 
 /** Relative `/api/collection/{game}/movers` path, optionally scoped to one window. */
 export function collectionMoversPath(game: string, window?: MoverWindow): string {

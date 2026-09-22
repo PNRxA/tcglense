@@ -424,18 +424,22 @@ catalog) is planned but not implemented.
   anchor selected and re-reads the price index. The fallback is deliberately single-step — a
   feed that stalls for several captures shows an empty 1d rather than walking back through the
   history.
-- **The daily value change (`…/value-change`) is a third read, not a client-side subtraction
-  of the chart's last two points or a sum over the movers.** The landing shows the delta beside
+- **The value change (`…/value-change?window=`) is a third read, not a client-side
+  subtraction of two chart points or a sum over the movers.** The landing shows the delta beside
   its totals on every visit, while the chart and the movers rest collapsed and fetch nothing —
   so it must not cost a windowed value-history fetch (`O(cards × days)`), and the movers are
   top-5 single-copy lists, not totals. It is the cheapest shape the anchors allow: two
-  `SnapshotSeek` point-seeks per held item (newest, and at-or-before the day before it), summed
-  quantity-weighted in Rust. Three deliberate choices: (1) each kind is anchored to **its own**
+  `SnapshotSeek` point-seeks per held item (newest, and at-or-before the window's target day;
+  all-time swaps the second for the two `first_priced` walks the movers already pay), summed
+  quantity-weighted in Rust. The windows are the movers' seven, chosen by one picker that scopes
+  all three lines (they are one request, cached per window) and persisted per device, opening on
+  a **week** for the same reason the movers panel does — daily moves are often tiny or empty on a
+  young collection. Three deliberate choices: (1) each kind is anchored to **its own**
   newest snapshot, as the movers are — one shared axis would read a sealed feed that lags the
   cards by a day as a permanent `0.00`; the `total` sums the two and reports the later date;
   (2) a finish counts toward the movement only when priced at **both** anchors, so a printing
-  whose history began today is counted in the value but not as a gain (the chart, which shows
-  every priced day, is where that step belongs), and `previous_usd` is defined as
+  whose history began inside the window is counted in the value but not as a gain (the chart,
+  which shows every priced day, is where that step belongs), and `previous_usd` is defined as
   `value − change` so the three figures can never disagree; (3) there is **no** flat-capture
   fallback — an unchanged capture is an honest `0.00`, not yesterday's movement relabelled: the
   movers fall back because an *empty list* reads as "no data", whereas a zero delta is the

@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Minus, TrendingDown, TrendingUp } from '@lucide/vue'
-import { formatAsOfDate, type StatChange } from '@/lib/valueChange'
+import {
+  changeWindowLabel,
+  changeWindowSentence,
+  formatAsOfDate,
+  type StatChange,
+} from '@/lib/valueChange'
 
-// The one-line daily movement under a summary stat: a trend glyph, the signed money change,
-// the percentage chip and a muted `1D` window tag — the vocabulary the movers panel's window
-// selector already uses. Gains take the success token, losses destructive, and an unchanged
-// capture stays muted (a flat day is information, not good or bad news). The full sentence
-// — what the window is and which capture it is measured to — is the line's accessible text:
-// a visually-hidden span carries it while every visible fragment is `aria-hidden`, so a
-// screen reader hears one sentence ("+$3.50, +2.8% since the previous day's captured prices
+// The one-line movement under a summary stat: a trend glyph, the signed money change, the
+// percentage chip and a muted window tag (`7D`, `1D`, `All`…) — the vocabulary the shared
+// window picker and the movers panel use. Gains take the success token, losses destructive,
+// and an unchanged capture stays muted (a flat window is information, not good or bad news).
+// The full sentence — what the window is and which capture it is measured to — is the line's
+// accessible text: a visually-hidden span carries it while every visible fragment is
+// `aria-hidden`, so a screen reader hears one sentence ("+$3.50, +2.8% over the last 7 days
 // (as of Sep 22)") instead of a bare signed number; the same sentence is the mouse tooltip.
 // (Not `aria-label`: a paragraph/div role prohibits an author name, so AT would drop it.)
 // The root is a `<div>` so it can sit inside the stat's `<dd>` — flow content is valid there,
@@ -46,10 +51,11 @@ const Icon = computed(() => {
       return Minus
   }
 })
+const windowLabel = computed(() => changeWindowLabel(props.change.window))
 const description = computed(() => {
   const asOf = props.change.asOf ? ` (as of ${formatAsOfDate(props.change.asOf)})` : ''
   const pct = props.change.pctText ? `, ${props.change.pctText}` : ''
-  return `${props.change.text}${pct} since the previous day's captured prices${asOf}`
+  return `${props.change.text}${pct} ${changeWindowSentence(props.change.window)}${asOf}`
 })
 </script>
 
@@ -74,7 +80,7 @@ const description = computed(() => {
       class="text-muted-foreground text-[0.65rem] font-semibold tracking-wide"
       aria-hidden="true"
     >
-      1D
+      {{ windowLabel }}
     </span>
   </div>
 </template>

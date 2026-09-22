@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { formatUsd } from '../money'
 import {
+  CHANGE_WINDOW_OPTIONS,
+  DEFAULT_CHANGE_WINDOW,
   changeDirection,
+  changeWindowLabel,
+  changeWindowSentence,
   describeValueChange,
   formatAsOfDate,
   formatSignedMoney,
   formatSignedPct,
+  isChangeWindow,
 } from '../valueChange'
 import type { ValueChange } from '@/lib/api'
 
@@ -93,47 +98,53 @@ describe('formatSignedPct', () => {
 
 describe('describeValueChange', () => {
   it('shapes a gain with its percentage and reference date', () => {
-    expect(describeValueChange(change(), formatUsd)).toEqual({
+    expect(describeValueChange(change(), formatUsd, 'week')).toEqual({
       text: `+${usd(3.5)}`,
       pctText: '+2.8%',
       direction: 'up',
+      window: 'week',
       asOf: '2026-09-22',
     })
   })
 
   it('shapes a loss and a flat day', () => {
     expect(
-      describeValueChange(change({ change_usd: '-10.25', change_pct: -7.6 }), formatUsd),
+      describeValueChange(change({ change_usd: '-10.25', change_pct: -7.6 }), formatUsd, 'day'),
     ).toEqual({
       text: `−${usd(10.25)}`,
       pctText: '−7.6%',
       direction: 'down',
+      window: 'day',
       asOf: '2026-09-22',
     })
-    expect(describeValueChange(change({ change_usd: '0.00', change_pct: 0 }), formatUsd)).toEqual({
+    expect(
+      describeValueChange(change({ change_usd: '0.00', change_pct: 0 }), formatUsd, 'all_time'),
+    ).toEqual({
       text: usd(0),
       pctText: '0.0%',
       direction: 'flat',
+      window: 'all_time',
       asOf: '2026-09-22',
     })
   })
 
   it('omits the percentage chip when the baseline was zero', () => {
-    const described = describeValueChange(change({ change_pct: null }), formatUsd)
+    const described = describeValueChange(change({ change_pct: null }), formatUsd, 'week')
     expect(described?.pctText).toBeNull()
     expect(described?.text).toBe(`+${usd(3.5)}`)
   })
 
   it('is null when there is nothing to show', () => {
     // No response yet / nothing held.
-    expect(describeValueChange(undefined, formatUsd)).toBeNull()
-    expect(describeValueChange(null, formatUsd)).toBeNull()
+    expect(describeValueChange(undefined, formatUsd, 'week')).toBeNull()
+    expect(describeValueChange(null, formatUsd, 'week')).toBeNull()
     // A value but no baseline capture yet (a single captured day): the stat shows its value
     // alone rather than a fabricated zero.
     expect(
       describeValueChange(
         change({ change_usd: null, previous_usd: null, change_pct: null }),
         formatUsd,
+        'week',
       ),
     ).toBeNull()
     // Nothing priced at all.
@@ -147,8 +158,52 @@ describe('describeValueChange', () => {
           change_pct: null,
         },
         formatUsd,
+        'week',
       ),
     ).toBeNull()
+  })
+})
+
+describe('change windows', () => {
+  it('offers the seven windows in picker order with the movers panel labels', () => {
+    expect(CHANGE_WINDOW_OPTIONS.map((opt) => opt.value)).toEqual([
+      'day',
+      'week',
+      'month',
+      'year',
+      'two_year',
+      'three_year',
+      'all_time',
+    ])
+    expect(CHANGE_WINDOW_OPTIONS.map((opt) => opt.label)).toEqual([
+      '1D',
+      '7D',
+      '30D',
+      '1Y',
+      '2Y',
+      '3Y',
+      'All',
+    ])
+    expect(DEFAULT_CHANGE_WINDOW).toBe('week')
+  })
+
+  it('validates stored tokens and labels each window', () => {
+    expect(isChangeWindow('week')).toBe(true)
+    expect(isChangeWindow('all_time')).toBe(true)
+    expect(isChangeWindow('7d')).toBe(false)
+    expect(isChangeWindow(null)).toBe(false)
+    expect(changeWindowLabel('week')).toBe('7D')
+    expect(changeWindowLabel('all_time')).toBe('All')
+  })
+
+  it('reads each window as a sentence clause', () => {
+    expect(changeWindowSentence('day')).toBe("since the previous day's captured prices")
+    expect(changeWindowSentence('week')).toBe('over the last 7 days')
+    expect(changeWindowSentence('month')).toBe('over the last 30 days')
+    expect(changeWindowSentence('year')).toBe('over the last year')
+    expect(changeWindowSentence('two_year')).toBe('over the last 2 years')
+    expect(changeWindowSentence('three_year')).toBe('over the last 3 years')
+    expect(changeWindowSentence('all_time')).toBe('since the earliest captured prices')
   })
 })
 

@@ -2,11 +2,16 @@
 import type { ValueChange } from "./ValueChange";
 
 /**
- * The collection's movement since the previous daily price capture, per holding kind and
- * rolled up. Each kind is anchored to its own newest snapshot (`as_of`) — cards and sealed
- * products are captured on independent cadences.
+ * The collection's movement over a window, per holding kind and rolled up. Each kind is
+ * anchored to its own newest snapshot (`as_of`) — cards and sealed products are captured on
+ * independent cadences.
  */
 export type CollectionValueChange = { 
+/**
+ * The window the figures cover, echoed as its wire token
+ * (`day`/`week`/`month`/`year`/`two_year`/`three_year`/`all_time`).
+ */
+window: string, 
 /**
  * The card holdings' movement, anchored to the newest captured card snapshot.
  */
@@ -17,6 +22,6 @@ cards: ValueChange,
 sealed: ValueChange, 
 /**
  * Cards + sealed products rolled together: the sums of the two kinds' figures, each
- * measured to its own `as_of`; this `as_of` is the later of the two.
+ * measured to its own `as_of`; this `as_of` is the later of the kinds that contributed.
  */
 total: ValueChange, };

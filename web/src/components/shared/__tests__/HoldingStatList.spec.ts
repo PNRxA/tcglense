@@ -4,7 +4,14 @@ import HoldingStatList from '../HoldingStatList.vue'
 import type { StatChange } from '@/lib/valueChange'
 
 function gain(overrides: Partial<StatChange> = {}): StatChange {
-  return { text: '+$3.50', pctText: '+2.8%', direction: 'up', asOf: '2026-09-22', ...overrides }
+  return {
+    text: '+$3.50',
+    pctText: '+2.8%',
+    direction: 'up',
+    window: 'day',
+    asOf: '2026-09-22',
+    ...overrides,
+  }
 }
 
 describe('HoldingStatList', () => {
@@ -90,6 +97,23 @@ describe('HoldingStatList', () => {
     expect(flat!.classes()).toContain('text-muted-foreground')
     // No date known → no "(as of …)" suffix.
     expect(flat!.attributes('title')).not.toContain('as of')
+  })
+
+  it('tags the line with the window it covers and words the sentence for it', () => {
+    const wrapper = mount(HoldingStatList, {
+      props: {
+        items: [
+          { label: 'Total value', value: '$128.50', change: gain({ window: 'week' }) },
+          { label: 'Cards', value: '$1.00', change: gain({ window: 'all_time' }) },
+        ],
+      },
+    })
+    const [week, all] = wrapper.findAll('.stat-change')
+    expect(week!.text()).toContain('7D')
+    expect(week!.text()).not.toContain('1D')
+    expect(week!.find('.sr-only').text()).toMatch(/over the last 7 days \(as of .*22\)/)
+    expect(all!.text()).toContain('All')
+    expect(all!.find('.sr-only').text()).toContain('since the earliest captured prices')
   })
 
   it('omits the percentage chip when there is none', () => {

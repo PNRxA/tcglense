@@ -1036,7 +1036,8 @@ async fn value_change_requires_auth_and_handles_empty_and_unknown_game() {
 
     let (token, _) = register(&app, "value-change-empty@example.com", "password123").await;
 
-    // Owns nothing -> every figure null for every kind (and still no-store, per-user).
+    // Owns nothing -> every figure null for every kind (and still no-store, per-user); the
+    // window is echoed, defaulting to a week.
     let (status, headers, body) = send(
         &app,
         get_with_bearer("/api/collection/mtg/value-change", &token),
@@ -1044,6 +1045,7 @@ async fn value_change_requires_auth_and_handles_empty_and_unknown_game() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cache_control(&headers), Some("no-store"));
+    assert_eq!(body["window"], "week", "absent window -> the week default");
     for kind in ["cards", "sealed", "total"] {
         for field in [
             "as_of",
@@ -1066,6 +1068,14 @@ async fn value_change_requires_auth_and_handles_empty_and_unknown_game() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An unknown window is a 422 (the movers' vocabulary), never a silent default.
+    let (status, _, _) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change?window=bogus", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 /// The card figures: quantity-weighted (unlike the movers), per finish, anchored at the newest
@@ -1127,10 +1137,11 @@ async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() 
 
     let (status, _, body) = send(
         &app,
-        get_with_bearer("/api/collection/mtg/value-change", &token),
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["window"], "day");
     let cards = &body["cards"];
     assert_eq!(cards["as_of"], d0, "anchored at the newest owned snapshot");
     assert_eq!(
@@ -1179,7 +1190,7 @@ async fn value_change_carries_the_baseline_forward_and_nulls_without_one() {
     .await;
     let (status, _, body) = send(
         &app,
-        get_with_bearer("/api/collection/mtg/value-change", &token),
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &token),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -1199,7 +1210,7 @@ async fn value_change_carries_the_baseline_forward_and_nulls_without_one() {
     .await;
     let (status, _, body) = send(
         &app,
-        get_with_bearer("/api/collection/mtg/value-change", &other),
+        get_with_bearer("/api/collection/mtg/value-change?window=day", &other),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -1212,6 +1223,98 @@ async fn value_change_carries_the_baseline_forward_and_nulls_without_one() {
     assert!(body["cards"]["previous_usd"].is_null());
     assert!(body["cards"]["change_pct"].is_null());
     assert!(body["total"]["change_usd"].is_null());
+}
+
+/// The window picks the baseline exactly as the movers do: a fixed window carries forward the
+/// newest snapshot at or before `as_of - N`, all-time compares each finish with its own first
+/// captured price, and a window longer than an item's history leaves it out of the movement
+/// (a null change when nothing at all reaches back that far).
+#[tokio::test]
+async fn value_change_windows_anchor_like_the_movers() {
+    let app = test_app_with_catalog().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "value-change-windows@example.com", "password123").await;
+    let ids = sample_card_ids(&app, 2).await;
+    let (a, b) = (&ids[0], &ids[1]);
+    own_card(&app, &token, a, 2).await;
+    own_card_finishes(&app, &token, b, 0, 1).await;
+
+    let (d0, d1, d7, d30, d40) = (
+        day_offset(0),
+        day_offset(1),
+        day_offset(7),
+        day_offset(30),
+        day_offset(40),
+    );
+    // A (2 regular): 10 forty days ago, 11 a month ago, 12 a week ago, 14 yesterday, 15 today.
+    set_price_history(
+        db,
+        internal_card_id(db, a).await,
+        &[
+            (d40.clone(), Some("10.00"), None),
+            (d30.clone(), Some("11.00"), None),
+            (d7.clone(), Some("12.00"), None),
+            (d1.clone(), Some("14.00"), None),
+            (d0.clone(), Some("15.00"), None),
+        ],
+    )
+    .await;
+    // B (1 foil): the foil price began a week ago at 20 and is 22 today; the regular price
+    // (unowned) began earlier and is ignored throughout.
+    set_price_history(
+        db,
+        internal_card_id(db, b).await,
+        &[
+            (d30.clone(), Some("1.00"), None),
+            (d7.clone(), Some("1.00"), Some("20.00")),
+            (d0.clone(), Some("1.00"), Some("22.00")),
+        ],
+    )
+    .await;
+
+    async fn change(app: &Router, token: &str, window: &str) -> Value {
+        let (status, _, body) = send(
+            app,
+            get_with_bearer(
+                &format!("/api/collection/mtg/value-change?window={window}"),
+                token,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{window}: {body:?}");
+        assert_eq!(body["window"], window);
+        assert_eq!(body["cards"]["value_usd"], "52.00", "{window}: 2 × 15 + 22");
+        body["cards"].clone()
+    }
+
+    // day: A 14 -> 15 (×2 = +2), B 22 -> carried-forward 20 (+2) => +4.
+    assert_eq!(change(&app, &token, "day").await["change_usd"], "4.00");
+    // week: A 12 -> 15 (+6), B's foil first priced exactly at the target (+2) => +8.
+    assert_eq!(change(&app, &token, "week").await["change_usd"], "8.00");
+    // month: A 11 -> 15 (+8); B's foil has no price at or before d30 -> held flat.
+    let month = change(&app, &token, "month").await;
+    assert_eq!(month["change_usd"], "8.00");
+    assert_eq!(
+        month["previous_usd"], "44.00",
+        "52 - 8: B's $22 is carried into the baseline"
+    );
+    // year: nothing reaches back that far -> a value, no movement.
+    let year = change(&app, &token, "year").await;
+    assert!(year["change_usd"].is_null(), "{year:?}");
+    assert!(year["previous_usd"].is_null());
+    // all_time: A from its first price 10 (+10), B's foil from its own first price 20 (+2).
+    let all = change(&app, &token, "all_time").await;
+    assert_eq!(all["change_usd"], "12.00");
+    assert_eq!(all["previous_usd"], "40.00");
+    // The default is the week window.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["window"], "week");
+    assert_eq!(body["cards"]["change_usd"], "8.00");
 }
 
 // ---------- Collection price movers ----------
