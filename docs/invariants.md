@@ -58,8 +58,12 @@ and add the one-line summary to `AGENTS.md`.
   TCGplayer ids on the wire, same both-zero-deletes rule) through the lower shared seams:
   `handlers/shared/product_holdings.rs`, `lib/api/product-holdings.ts`, and
   `composables/productHoldingQueries.ts`. Collection import/export
-  remain card-only; collection value history and movers include both card and sealed-product
-  holdings. **Public sharing exposes sealed products too:** the read-only
+  remain card-only; collection value history, the daily value change (`…/value-change`) and
+  movers include both card and sealed-product holdings, and every new collection analytics
+  read must both ride `analytics_cache` under the Collection surface **and** be listed in
+  `UserRoute::from_path`'s analytics class — the SPA invalidates its query key alongside
+  `collection-value-history`/`collection-movers` in **both** `holdingQueries.ts` and
+  `productHoldingQueries.ts` (a sealed write moves the same totals). **Public sharing exposes sealed products too:** the read-only
   `/api/u/{handle}/{game}/products{,/summary,/sets}` reads mirror the authed collection product
   endpoints (`collection::owned_product_{summary,sets}`/`owned_products_page` wrap the same
   `CollectionProductRepository`), gated by the identical per-game visibility flag; the public

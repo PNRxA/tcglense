@@ -9,6 +9,7 @@ import type {
   CollectionMovers,
   CollectionQuantities,
   CollectionSubtypeGroup,
+  CollectionValueChange,
   CollectionValuePoint,
   Page,
 } from './generated'
@@ -25,7 +26,8 @@ import type {
 // batched counts fetcher, and the single-entry get/set) is shared with the wish list
 // via `makeHoldingApi` — the collection is just the `'collection'` instance whose
 // batch-counts leaf is `/owned`. The re-exported names below keep their exact
-// signatures. Collection-only surfaces (value history, CSV export) stay local.
+// signatures. Collection-only surfaces (value history, the daily value change, movers, CSV
+// export) stay local.
 
 export type {
   BreakdownBucket,
@@ -41,9 +43,11 @@ export type {
   CollectionSet,
   CollectionSubtypeGroup,
   CollectionSummary,
+  CollectionValueChange,
   CollectionVisibility,
   HoldingBreakdown,
   TopHolding,
+  ValueChange,
 } from './generated'
 
 import type { CollectionVisibility } from './generated'
@@ -253,6 +257,24 @@ export async function getCollectionValueHistory(
       usd_foil: point.sealed_value_usd,
     })),
   }
+}
+
+/** Relative `/api/collection/{game}/value-change` path. */
+export function collectionValueChangePath(game: string): string {
+  return `/api/collection/${encodeURIComponent(game)}/value-change`
+}
+
+/**
+ * How much the signed-in user's collection moved since the previous daily price capture:
+ * the card, sealed-product and rolled-up values at the latest captured day plus the signed
+ * day-over-day difference — the delta the landing shows beside each total. Every figure is
+ * null when nothing owned has captured price history. Per-user + authenticated.
+ */
+export function getCollectionValueChange(
+  token: string,
+  game: string,
+): Promise<CollectionValueChange> {
+  return request<CollectionValueChange>(collectionValueChangePath(game), { token })
 }
 
 /** One movers window key — matches the API's response fields and its `?window=` tokens. */

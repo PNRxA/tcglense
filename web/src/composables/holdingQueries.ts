@@ -233,6 +233,7 @@ export function makeHoldingQueries(cfg: HoldingQueriesConfig) {
     qc.invalidateQueries({ queryKey: [`${prefix}-breakdown`, game] })
     if (cfg.invalidateCollectionAnalytics) {
       qc.invalidateQueries({ queryKey: ['collection-value-history', game] })
+      qc.invalidateQueries({ queryKey: ['collection-value-change', game] })
       qc.invalidateQueries({ queryKey: ['collection-movers', game] })
       qc.invalidateQueries({ queryKey: ['deck-suggestions', game] })
     }

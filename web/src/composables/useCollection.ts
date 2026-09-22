@@ -14,10 +14,11 @@ import {
   getCollectionSets,
   getCollectionSetSubtypes,
   getCollectionSummary,
+  getCollectionValueChange,
   setCollectionEntry,
   setCollectionProductEntry,
 } from '@/lib/api'
-import type { CollectionMovers, MoverWindow } from '@/lib/api'
+import type { CollectionMovers, CollectionValueChange, MoverWindow } from '@/lib/api'
 import { makeHoldingQueries, type SetHoldingVars } from '@/composables/holdingQueries'
 import {
   makeProductHoldingQueries,
@@ -132,4 +133,21 @@ export function useCollectionMoversQuery(
     enabled: opts.enabled,
   }
   return useAuthedQuery<CollectionMovers>(options)
+}
+
+/** The collection's movement since the previous daily price capture — the signed day-over-day
+ * delta the landing shows under its total, card and sealed values. One request per landing
+ * visit (two point-seeks per held item server-side, analytics-cached between edits and
+ * captures); the caller gates it on something being held so an empty collection never pays
+ * for it. Invalidated with the other collection analytics after any holdings write. */
+export function useCollectionValueChangeQuery(
+  game: Ref<string>,
+  opts: { enabled?: Ref<boolean> } = {},
+) {
+  const options = {
+    queryKey: ['collection-value-change', game],
+    queryFn: (token: string) => getCollectionValueChange(token, game.value),
+    enabled: opts.enabled,
+  }
+  return useAuthedQuery<CollectionValueChange>(options)
 }

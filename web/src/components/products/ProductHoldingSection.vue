@@ -23,7 +23,8 @@ import {
 import { useSetsQuery } from '@/composables/useCatalog'
 import { useCurrency } from '@/composables/useCurrency'
 import type { CardListTarget } from '@/composables/useOwnedCountEditor'
-import type { CardSet } from '@/lib/api'
+import type { CardSet, ValueChange } from '@/lib/api'
+import { describeValueChange } from '@/lib/valueChange'
 
 // The sealed-products slice of the collection / wish-list / public landing: like the CARDS
 // side, it shows the set tiles you click into (a set-scoped products list) rather than
@@ -31,8 +32,16 @@ import type { CardSet } from '@/lib/api'
 // first. Authed surfaces pass `list` (their token'd queries); a public surface passes `handle`
 // (the token-less handle-keyed queries) — the read-only mirror. `handle` + `list='wishlist'`
 // selects the public *wish list*, `handle` alone the public collection; the tiles and "View
-// all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`.
-const props = defineProps<{ game: string; list?: CardListTarget; handle?: string }>()
+// all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`. The
+// collection landing also hands in the sealed holdings' `valueChange` — their movement since
+// the previous daily capture — for a delta line under the value stat; the wish list (a
+// shopping list) and the public mirrors pass nothing and show the value alone.
+const props = defineProps<{
+  game: string
+  list?: CardListTarget
+  handle?: string
+  valueChange?: ValueChange | null
+}>()
 const game = toRef(props, 'game')
 const money = useCurrency()
 
@@ -90,7 +99,11 @@ const sealedStats = computed(() => {
   return [
     { label: 'Unique products', value: s.unique_products.toLocaleString() },
     { label: 'Total products', value: s.total_products.toLocaleString() },
-    { label: 'Products value', value: money.formatUsd(s.total_value_usd) },
+    {
+      label: 'Products value',
+      value: money.formatUsd(s.total_value_usd),
+      change: describeValueChange(props.valueChange, money.formatUsd),
+    },
   ]
 })
 </script>

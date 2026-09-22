@@ -25,6 +25,7 @@ import {
   useCollectionProductSummaryQuery,
   useCollectionSetsQuery,
   useCollectionSummaryQuery,
+  useCollectionValueChangeQuery,
 } from '@/composables/useCollection'
 import { useCollectionVisibilityQuery } from '@/composables/useCollectionVisibility'
 import { useCurrency } from '@/composables/useCurrency'
@@ -32,6 +33,7 @@ import { useHoldingsLanding } from '@/composables/useHoldingsLanding'
 import { getCollectionValueHistory } from '@/lib/api'
 import { sumUsd } from '@/lib/money'
 import { usePageMeta } from '@/lib/seo'
+import { describeValueChange } from '@/lib/valueChange'
 import { useAuthStore } from '@/stores/auth'
 import type { PriceRange } from '@/lib/api'
 
@@ -43,8 +45,8 @@ import type { PriceRange } from '@/lib/api'
 // have any. The shared landing pipeline (scope toggle, filter + grouping, sectioning,
 // ownership map, header stats) lives in `useHoldingsLanding`; this view layers on the
 // collection-only extras (import/export controls, camera scan, value-history chart, bulk-value
-// stat). The actual card grids live on CollectionBrowseView (`/collection/:game/cards` +
-// `.../sets/:code`).
+// stat, the daily value change under each total). The actual card grids live on
+// CollectionBrowseView (`/collection/:game/cards` + `.../sets/:code`).
 const props = defineProps<{ game: string }>()
 const money = useCurrency()
 
@@ -86,10 +88,23 @@ const productSummaryQuery = useCollectionProductSummaryQuery(game)
 const productSummary = computed(() => productSummaryQuery.data.value)
 const hasProductStats = computed(() => (productSummary.value?.unique_products ?? 0) > 0)
 
+// The daily movement under each total (the combined overview's, the cards section's and the
+// sealed section's): how much the current basket moved between the two latest daily price
+// captures, per holding kind and rolled up. One request, gated on something being held so an
+// empty collection never pays for it; each line self-hides until a baseline capture exists.
+// The change rides the snapshot-day figures while the totals beside it are the live summary,
+// so on a day the capture lags the live prices the two can differ by that lag — the line says
+// which capture it is measured to.
+const hasAnyHoldings = computed(() => hasStats.value || hasProductStats.value)
+const valueChangeQuery = useCollectionValueChangeQuery(game, { enabled: hasAnyHoldings })
+const valueChange = computed(() => valueChangeQuery.data.value)
+const totalChange = computed(() => describeValueChange(valueChange.value?.total, money.formatUsd))
+const cardsChange = computed(() => describeValueChange(valueChange.value?.cards, money.formatUsd))
+
 // Top-of-page combined overview (cards + sealed rolled together), the headline above the
 // per-section breakdowns; empty (so it self-hides) until at least one holding exists.
 const combinedStats = computed(() => {
-  if (!hasStats.value && !hasProductStats.value) return []
+  if (!hasAnyHoldings.value) return []
   const cards = summary.value
   const products = productSummary.value
   return [
@@ -104,6 +119,7 @@ const combinedStats = computed(() => {
     {
       label: 'Total value',
       value: money.formatUsd(sumUsd(cards?.total_value_usd, products?.total_value_usd)),
+      change: totalChange.value,
     },
   ]
 })
@@ -114,7 +130,7 @@ const cardStats = computed(() =>
     ? [
         { label: 'Unique cards', value: summary.value?.unique_cards.toLocaleString() ?? null },
         { label: 'Total copies', value: summary.value?.total_cards.toLocaleString() ?? null },
-        { label: 'Total value', value: totalValue.value },
+        { label: 'Total value', value: totalValue.value, change: cardsChange.value },
         // The bulk (< $1/card) slice of the total, so it's clear how much of the
         // collection's value is chaff vs. real money.
         { label: 'Bulk value', value: bulkValue.value },
@@ -239,7 +255,12 @@ function fetchValueHistory(range: PriceRange) {
       />
 
       <!-- Keep the sealed holdings grid directly below the collection analytics. -->
-      <ProductHoldingSection :game="game" list="collection" class="mt-8 mb-8" />
+      <ProductHoldingSection
+        :game="game"
+        list="collection"
+        :value-change="valueChange?.sealed"
+        class="mt-8 mb-8"
+      />
 
       <!-- Cards section heading + its own unique / total / value (+ bulk) stats, matching
            the sealed section's heading + stats above. -->

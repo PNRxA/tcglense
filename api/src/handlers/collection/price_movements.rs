@@ -81,7 +81,7 @@ use crate::state::AppState;
 /// How many card ids to bind per `IN (...)` chunk — kept well under SQLite's
 /// bound-parameter cap so an arbitrarily large collection still fetches in a handful of
 /// queries (mirrors [`super::value_history`]).
-const PRICE_ID_CHUNK: usize = 10_000;
+pub(super) const PRICE_ID_CHUNK: usize = 10_000;
 
 /// How many movers to return per direction, per window.
 const TOP_N: usize = 5;
@@ -1269,14 +1269,14 @@ impl SnapshotSeek {
     }
 
     /// The item's most recent captured snapshot (newest row).
-    fn latest(&self) -> SimpleExpr {
+    pub(super) fn latest(&self) -> SimpleExpr {
         let mut sub = self.base();
         sub.order_by(self.date_col.clone(), Order::Desc);
         Self::scalar(sub)
     }
 
     /// The item's most recent snapshot at or before a fixed target (carry-forward baseline).
-    fn at_or_before(&self, target: &str) -> SimpleExpr {
+    pub(super) fn at_or_before(&self, target: &str) -> SimpleExpr {
         let mut sub = self.base();
         sub.and_where(Expr::col(self.date_col.clone()).lte(target))
             .order_by(self.date_col.clone(), Order::Desc);
@@ -1569,7 +1569,7 @@ fn shape_sealed_window(
 /// Format a signed cent delta as a 2-dp USD string that always carries a leading `-` for a
 /// negative value — including the `(-100, 0)` range where [`format_cents`] alone drops the
 /// sign (its dollar part is a signless zero, so `-50` would render as `"0.50"`).
-fn format_signed_cents(cents: i128) -> String {
+pub(super) fn format_signed_cents(cents: i128) -> String {
     if cents < 0 {
         format!("-{}", format_cents(-cents))
     } else {

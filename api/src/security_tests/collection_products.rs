@@ -3,7 +3,7 @@
 use super::harness::*;
 use crate::entities::prelude::{Product, ProductPriceHistory};
 use crate::entities::{product, product_price_history};
-use crate::test_support::{insert_card_set, insert_product};
+use crate::test_support::{insert_card, insert_card_set, insert_product};
 use chrono::{Duration, Utc};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
@@ -297,6 +297,107 @@ async fn sealed_holdings_feed_value_history_and_movers() {
         week_loser["change_usd"], "-15.00",
         "one box lost $15 since d10"
     );
+}
+
+/// The sealed half of the daily value change is anchored at the **product** series' own newest
+/// snapshot (a day behind the cards here), and the rolled-up total sums the two kinds' figures
+/// while taking the later reference date.
+#[tokio::test]
+async fn sealed_holdings_feed_the_daily_value_change_and_roll_into_the_total() {
+    let app = test_app().await;
+    let db = &app.state.db;
+    let (token, _) = register(&app, "sealed-value-change@example.com", "password123").await;
+    insert_product(db, "300", "Moving Box", "mkm", "bundle", Some("33.00")).await;
+    own_product(&app, &token, "300", 3).await;
+
+    // Sealed captures lag the cards by a day: newest is yesterday, baseline two days ago.
+    let (today, yesterday, two_days_ago) = (day_offset(0), day_offset(1), day_offset(2));
+    set_product_price_history(
+        db,
+        internal_product_id(db, "300").await,
+        &[
+            (two_days_ago.clone(), Some("30.00")),
+            (yesterday.clone(), Some("33.00")),
+        ],
+    )
+    .await;
+
+    // Cards only: nothing owned -> null; the total is the sealed figures alone.
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        body["cards"]["as_of"].is_null(),
+        "no cards -> null cards kind"
+    );
+    let sealed = &body["sealed"];
+    assert_eq!(
+        sealed["as_of"], yesterday,
+        "the product series' own newest snapshot"
+    );
+    assert_eq!(sealed["value_usd"], "99.00", "3 × 33");
+    assert_eq!(sealed["change_usd"], "9.00", "3 × (33 - 30)");
+    assert_eq!(sealed["previous_usd"], "90.00");
+    assert_eq!(sealed["change_pct"].as_f64().expect("pct"), 10.0);
+    assert_eq!(body["total"]["as_of"], yesterday);
+    assert_eq!(body["total"]["value_usd"], "99.00");
+    assert_eq!(body["total"]["change_usd"], "9.00");
+
+    // Now add a card captured today: the total takes the later `as_of` and sums both kinds.
+    let internal_card_id = insert_card(db, "value-change-card").await;
+    let (status, _, put) = send(
+        &app,
+        json_with_bearer(
+            "PUT",
+            "/api/collection/mtg/cards/value-change-card",
+            &token,
+            json!({ "quantity": 1, "foil_quantity": 0 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "own card failed: {put:?}");
+    let now = Utc::now();
+    crate::entities::prelude::CardPriceHistory::insert_many(
+        [(yesterday.clone(), "5.00"), (today.clone(), "4.00")].map(|(date, usd)| {
+            crate::entities::card_price_history::ActiveModel {
+                game: Set("mtg".to_string()),
+                card_id: Set(internal_card_id),
+                as_of_date: Set(date),
+                price_usd: Set(Some(usd.to_string())),
+                price_usd_foil: Set(None),
+                price_eur: Set(None),
+                price_tix: Set(None),
+                created_at: Set(now),
+                ..Default::default()
+            }
+        }),
+    )
+    .exec(db)
+    .await
+    .expect("insert card history");
+
+    let (status, _, body) = send(
+        &app,
+        get_with_bearer("/api/collection/mtg/value-change", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["cards"]["as_of"], today);
+    assert_eq!(body["cards"]["value_usd"], "4.00");
+    assert_eq!(body["cards"]["change_usd"], "-1.00");
+    // Each kind measured to its own newest snapshot; the total reports the later date.
+    assert_eq!(body["sealed"]["as_of"], yesterday);
+    assert_eq!(body["sealed"]["change_usd"], "9.00");
+    let total = &body["total"];
+    assert_eq!(total["as_of"], today);
+    assert_eq!(total["value_usd"], "103.00", "4 + 99");
+    assert_eq!(total["change_usd"], "8.00", "-1 + 9");
+    assert_eq!(total["previous_usd"], "95.00");
+    let pct = total["change_pct"].as_f64().expect("pct");
+    assert!((pct - (800.0 / 9500.0 * 100.0)).abs() < 1e-9, "{pct}");
 }
 
 #[tokio::test]

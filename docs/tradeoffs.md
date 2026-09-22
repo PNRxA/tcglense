@@ -424,6 +424,24 @@ catalog) is planned but not implemented.
   anchor selected and re-reads the price index. The fallback is deliberately single-step — a
   feed that stalls for several captures shows an empty 1d rather than walking back through the
   history.
+- **The daily value change (`…/value-change`) is a third read, not a client-side subtraction
+  of the chart's last two points or a sum over the movers.** The landing shows the delta beside
+  its totals on every visit, while the chart and the movers rest collapsed and fetch nothing —
+  so it must not cost a windowed value-history fetch (`O(cards × days)`), and the movers are
+  top-5 single-copy lists, not totals. It is the cheapest shape the anchors allow: two
+  `SnapshotSeek` point-seeks per held item (newest, and at-or-before the day before it), summed
+  quantity-weighted in Rust. Three deliberate choices: (1) each kind is anchored to **its own**
+  newest snapshot, as the movers are — one shared axis would read a sealed feed that lags the
+  cards by a day as a permanent `0.00`; the `total` sums the two and reports the later date;
+  (2) a finish counts toward the movement only when priced at **both** anchors, so a printing
+  whose history began today is counted in the value but not as a gain (the chart, which shows
+  every priced day, is where that step belongs), and `previous_usd` is defined as
+  `value − change` so the three figures can never disagree; (3) there is **no** flat-capture
+  fallback — an unchanged capture is an honest `0.00`, not yesterday's movement relabelled: the
+  movers fall back because an *empty list* reads as "no data", whereas a zero delta is the
+  answer. The figures ride the snapshot day while the totals beside them are the live summary,
+  so on a day the capture lags the live prices the two can differ by that lag; the line's
+  tooltip names the capture it is measured to.
 - **Foil-variant consolidation (issue #209):** some sets (Secret Lair especially) print
   the **foil** of a card as a *separate* Scryfall object whose collector number is the
   nonfoil's plus a star — `sld` `741` (nonfoil) and `741★` (foil). Left alone, importing

@@ -14,8 +14,8 @@
 //!
 //! The handlers are split across submodules by concern — [`read`] (list / summary /
 //! owned-count reads), [`sets`] (per-set landing + by-drop), [`write`] (the owned-count
-//! upsert), [`import`] (one-off external import), and the analytics trio
-//! [`value_history`] / [`price_movements`] / [`breakdown`] — with the
+//! upsert), [`import`] (one-off external import), and the analytics quartet
+//! [`value_history`] / [`value_change`] / [`price_movements`] / [`breakdown`] — with the
 //! import-specific DTOs kept here. The entity-agnostic wire DTOs, params, and helpers
 //! live in [`crate::handlers::shared::holdings`], shared with the wish list (its
 //! same-shaped "want" twin), and are re-exported below so the submodules and their
@@ -38,6 +38,7 @@ mod price_movements;
 mod products;
 mod read;
 mod sets;
+mod value_change;
 mod value_history;
 mod write;
 
@@ -56,6 +57,7 @@ pub use products::{
 };
 pub use read::{collection_summary, get_collection_entry, list_collection, owned_counts};
 pub use sets::{collection_set_drops, collection_set_subtypes, collection_sets};
+pub use value_change::collection_value_change;
 pub use value_history::collection_value_history;
 pub use write::set_collection_entry;
 
@@ -88,6 +90,7 @@ pub use read::{
 pub use sets::{
     __path_collection_set_drops, __path_collection_set_subtypes, __path_collection_sets,
 };
+pub use value_change::__path_collection_value_change;
 pub use value_history::__path_collection_value_history;
 pub use write::__path_set_collection_entry;
 

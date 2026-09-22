@@ -28,6 +28,7 @@ describe('product holding invalidation', () => {
       typeof filters === 'object' && filters !== null ? [filters.queryKey] : [],
     )
     expect(keys).toContainEqual(['collection-value-history', 'mtg'])
+    expect(keys).toContainEqual(['collection-value-change', 'mtg'])
     expect(keys).toContainEqual(['collection-movers', 'mtg'])
   })
 
@@ -40,6 +41,7 @@ describe('product holding invalidation', () => {
       typeof filters === 'object' && filters !== null ? [filters.queryKey] : [],
     )
     expect(keys).not.toContainEqual(['collection-value-history', 'mtg'])
+    expect(keys).not.toContainEqual(['collection-value-change', 'mtg'])
     expect(keys).not.toContainEqual(['collection-movers', 'mtg'])
   })
 })

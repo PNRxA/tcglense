@@ -43,6 +43,8 @@ describe('holding invalidation', () => {
 
   it('keeps the price-history analytics collection-only', () => {
     expect(invalidatedKeys('collection')).toContainEqual(['collection-value-history', 'mtg'])
+    expect(invalidatedKeys('collection')).toContainEqual(['collection-value-change', 'mtg'])
     expect(invalidatedKeys('wishlist')).not.toContainEqual(['collection-value-history', 'mtg'])
+    expect(invalidatedKeys('wishlist')).not.toContainEqual(['collection-value-change', 'mtg'])
   })
 })
