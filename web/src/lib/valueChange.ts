@@ -13,15 +13,20 @@ import type { MoverWindow, ValueChange } from '@/lib/api'
  * the same way). */
 export const DEFAULT_CHANGE_WINDOW: MoverWindow = 'week'
 
-/** The seven movement windows in picker order, with the short label each shows. */
-export const CHANGE_WINDOW_OPTIONS: readonly { value: MoverWindow; label: string }[] = [
-  { value: 'day', label: '1D' },
-  { value: 'week', label: '7D' },
-  { value: 'month', label: '30D' },
-  { value: 'year', label: '1Y' },
-  { value: 'two_year', label: '2Y' },
-  { value: 'three_year', label: '3Y' },
-  { value: 'all_time', label: 'All' },
+/** The seven movement windows in picker order, with the short label each shows and the
+ * plain description a menu lists beside it. */
+export const CHANGE_WINDOW_OPTIONS: readonly {
+  value: MoverWindow
+  label: string
+  description: string
+}[] = [
+  { value: 'day', label: '1D', description: 'Since the previous day' },
+  { value: 'week', label: '7D', description: 'Last 7 days' },
+  { value: 'month', label: '30D', description: 'Last 30 days' },
+  { value: 'year', label: '1Y', description: 'Last year' },
+  { value: 'two_year', label: '2Y', description: 'Last 2 years' },
+  { value: 'three_year', label: '3Y', description: 'Last 3 years' },
+  { value: 'all_time', label: 'All', description: 'All captured history' },
 ]
 
 /** Whether a stored/URL value is one of the seven window tokens. */

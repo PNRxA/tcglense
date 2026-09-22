@@ -431,9 +431,10 @@ catalog) is planned but not implemented.
   top-5 single-copy lists, not totals. It is the cheapest shape the anchors allow: two
   `SnapshotSeek` point-seeks per held item (newest, and at-or-before the window's target day;
   all-time swaps the second for the two `first_priced` walks the movers already pay), summed
-  quantity-weighted in Rust. The windows are the movers' seven, chosen by one picker that scopes
-  all three lines (they are one request, cached per window) and persisted per device, opening on
-  a **week** for the same reason the movers panel does — daily moves are often tiny or empty on a
+  quantity-weighted in Rust. The windows are the movers' seven, one shared choice scoping all
+  three lines (they are one request, cached per window) — picked from any line's own window
+  tag, which opens a menu, rather than a standing control that would crowd the header — and
+  persisted per device, opening on a **week** for the same reason the movers panel does — daily moves are often tiny or empty on a
   young collection. Three deliberate choices: (1) each kind is anchored to **its own**
   newest snapshot, as the movers are — one shared axis would read a sealed feed that lags the
   cards by a day as a permanent `0.00`; the `total` sums the two and reports the later date;

@@ -34,15 +34,16 @@ import { DEFAULT_CHANGE_WINDOW, describeValueChange } from '@/lib/valueChange'
 // selects the public *wish list*, `handle` alone the public collection; the tiles and "View
 // all" link under `/u/{handle}[/wishlist]` rather than `/collection` | `/wishlist`. The
 // collection landing also hands in the sealed holdings' `valueChange` — their movement over
-// the landing's picked `changeWindow` — for a delta line under the value stat; the wish list
-// (a shopping list) and the public mirrors pass nothing and show the value alone.
+// the landing's shared window, bound as `v-model:change-window` so this line's window tag is
+// a picker for it too — for a delta line under the value stat; the wish list (a shopping
+// list) and the public mirrors pass nothing and show the value alone.
 const props = defineProps<{
   game: string
   list?: CardListTarget
   handle?: string
   valueChange?: ValueChange | null
-  changeWindow?: MoverWindow
 }>()
+const changeWindow = defineModel<MoverWindow>('changeWindow')
 const game = toRef(props, 'game')
 const money = useCurrency()
 
@@ -106,7 +107,7 @@ const sealedStats = computed(() => {
       change: describeValueChange(
         props.valueChange,
         money.formatUsd,
-        props.changeWindow ?? DEFAULT_CHANGE_WINDOW,
+        changeWindow.value ?? DEFAULT_CHANGE_WINDOW,
       ),
     },
   ]
@@ -131,7 +132,7 @@ const sealedStats = computed(() => {
     </div>
 
     <!-- The section's own unique / total / value stats, under its heading. -->
-    <HoldingStatList :items="sealedStats" class="mb-4" />
+    <HoldingStatList v-model:change-window="changeWindow" :items="sealedStats" class="mb-4" />
 
     <!-- One tile per held-product set (server order = newest set first), each linking to the
          surface's set-scoped products list — matching the card landing's held-sets grid. -->

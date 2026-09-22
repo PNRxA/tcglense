@@ -9,7 +9,6 @@ import PriceChart from '@/components/cards/PriceChart.vue'
 import SetGridSkeleton from '@/components/cards/SetGridSkeleton.vue'
 import SetGroupGrid from '@/components/cards/SetGroupGrid.vue'
 import StickySearchBar from '@/components/cards/StickySearchBar.vue'
-import ChangeWindowToggle from '@/components/collection/ChangeWindowToggle.vue'
 import CollectionMovers from '@/components/collection/CollectionMovers.vue'
 import CollectionSettingsMenu from '@/components/collection/CollectionSettingsMenu.vue'
 import CollectionSignInPrompt from '@/components/collection/CollectionSignInPrompt.vue'
@@ -92,9 +91,10 @@ const hasProductStats = computed(() => (productSummary.value?.unique_products ??
 
 // The movement under each total (the combined overview's, the cards section's and the sealed
 // section's): how much the current basket moved over the picked window, per holding kind and
-// rolled up. One picker drives all three lines (they are one request), fetched per window and
-// cached so switching back is instant; the choice persists per device (a display preference,
-// like the theme and card size) and opens on a week. Gated on something being held so an
+// rolled up. One shared window drives all three lines (they are one request) — each line's
+// window tag opens the picker, and a pick on any of them moves them all — fetched per window
+// and cached so switching back is instant; the choice persists per device (a display
+// preference, like the theme and card size) and opens on a week. Gated on something being held so an
 // empty collection never pays for it; each line self-hides until a capture reaches back to
 // the window's baseline. The change rides the snapshot-day figures while the totals beside it
 // are the live summary, so on a day the capture lags the live prices the two can differ by
@@ -214,21 +214,14 @@ function fetchValueHistory(range: PriceRange) {
         </div>
 
         <!-- Combined cards + sealed overview; the detailed per-section breakdowns live under
-             the sealed and cards headings further down. The window picker beside it scopes
-             every value-change line on the page (this total's, the cards' and the sealed
-             section's) at once. -->
-        <div
-          v-if="combinedStats.length"
-          class="mt-4 flex flex-wrap items-end justify-between gap-4"
-        >
-          <HoldingStatList :items="combinedStats" size="lg" />
-          <div class="flex flex-col items-end gap-1">
-            <span class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-              Change over
-            </span>
-            <ChangeWindowToggle v-model="changeWindow" label="Collection value change window" />
-          </div>
-        </div>
+             the sealed and cards headings further down. The total's change line carries the
+             window picker (its tag), bound to the one window every line on the page shares. -->
+        <HoldingStatList
+          v-model:change-window="changeWindow"
+          :items="combinedStats"
+          size="lg"
+          class="mt-4"
+        />
 
         <div class="mt-5 grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
@@ -291,15 +284,15 @@ function fetchValueHistory(range: PriceRange) {
       <ProductHoldingSection
         :game="game"
         list="collection"
+        v-model:change-window="changeWindow"
         :value-change="valueChange?.sealed"
-        :change-window="changeWindow"
         class="mt-8 mb-8"
       />
 
       <!-- Cards section heading + its own unique / total / value (+ bulk) stats, matching
            the sealed section's heading + stats above. -->
       <h2 class="mb-4 text-lg font-semibold">Cards</h2>
-      <HoldingStatList :items="cardStats" class="mb-6" />
+      <HoldingStatList v-model:change-window="changeWindow" :items="cardStats" class="mb-6" />
 
       <!-- Where the cards' value sits (issue #680): by rarity / colour / type / finish, and
            the top holdings by held value. Beside the stats it slices; gated like them, and

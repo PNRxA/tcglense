@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import HoldingStatList from '../HoldingStatList.vue'
 import type { StatChange } from '@/lib/valueChange'
+import type { MoverWindow } from '@/lib/api'
 
 function gain(overrides: Partial<StatChange> = {}): StatChange {
   return {
@@ -114,6 +115,32 @@ describe('HoldingStatList', () => {
     expect(week!.find('.sr-only').text()).toMatch(/over the last 7 days \(as of .*22\)/)
     expect(all!.text()).toContain('All')
     expect(all!.find('.sr-only').text()).toContain('since the earliest captured prices')
+  })
+
+  it('renders the window tag as plain text when no window is bound', () => {
+    const wrapper = mount(HoldingStatList, {
+      props: { items: [{ label: 'Total value', value: '$128.50', change: gain() }] },
+    })
+    expect(wrapper.find('.stat-change button').exists()).toBe(false)
+    expect(wrapper.find('.stat-change').text()).toContain('1D')
+  })
+
+  it('makes the window tag a picker when a window is bound', () => {
+    const wrapper = mount(HoldingStatList, {
+      props: {
+        items: [
+          { label: 'Total value', value: '$128.50', change: gain({ window: 'week' }) },
+          { label: 'Cards', value: '$1.00', change: gain({ window: 'week' }) },
+        ],
+        changeWindow: 'week' as MoverWindow,
+      },
+    })
+    const triggers = wrapper.findAll('.stat-change button')
+    expect(triggers).toHaveLength(2)
+    const trigger = triggers[0]!
+    expect(trigger.text()).toContain('7D')
+    expect(trigger.attributes('aria-label')).toBe('Change window: 7D')
+    expect(trigger.attributes('aria-haspopup')).toBe('menu')
   })
 
   it('omits the percentage chip when there is none', () => {
