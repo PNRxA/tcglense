@@ -1076,8 +1076,8 @@ async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() 
     let app = test_app_with_catalog().await;
     let db = &app.state.db;
     let (token, _) = register(&app, "value-change-cards@example.com", "password123").await;
-    let ids = sample_card_ids(&app, 4).await;
-    let (a, b, c, d) = (&ids[0], &ids[1], &ids[2], &ids[3]);
+    let ids = sample_card_ids(&app, 5).await;
+    let (a, b, c, d, e) = (&ids[0], &ids[1], &ids[2], &ids[3], &ids[4]);
 
     // A: 2 regular + 1 foil. Regular 10 -> 12 (×2 = +4.00), foil 30 -> 25 (×1 = -5.00).
     own_card_finishes(&app, &token, a, 2, 1).await;
@@ -1085,10 +1085,14 @@ async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() 
     own_card(&app, &token, b, 1).await;
     // C: 3 regular, history begins today at 100.00 -> value 300.00, no movement.
     own_card(&app, &token, c, 3).await;
-    // D: owned but never captured -> contributes nothing anywhere.
+    // D: 5 regular, last captured five days ago at 2.00 and never since -> its stale price is
+    // carried forward into the value (10.00) and, being the same row at both anchors, it
+    // contributes a zero movement — while the kind's `as_of` stays today's.
     own_card(&app, &token, d, 5).await;
+    // E: owned but never captured -> contributes nothing anywhere.
+    own_card(&app, &token, e, 7).await;
 
-    let (d0, d1) = (day_offset(0), day_offset(1));
+    let (d0, d1, d5) = (day_offset(0), day_offset(1), day_offset(5));
     set_price_history(
         db,
         internal_card_id(db, a).await,
@@ -1113,7 +1117,13 @@ async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() 
         &[(d0.clone(), Some("100.00"), None)],
     )
     .await;
-    set_price_history(db, internal_card_id(db, d).await, &[]).await;
+    set_price_history(
+        db,
+        internal_card_id(db, d).await,
+        &[(d5.clone(), Some("2.00"), None)],
+    )
+    .await;
+    set_price_history(db, internal_card_id(db, e).await, &[]).await;
 
     let (status, _, body) = send(
         &app,
@@ -1123,22 +1133,25 @@ async fn value_change_weights_finishes_by_copies_and_holds_new_printings_flat() 
     assert_eq!(status, StatusCode::OK, "{body:?}");
     let cards = &body["cards"];
     assert_eq!(cards["as_of"], d0, "anchored at the newest owned snapshot");
-    assert_eq!(cards["value_usd"], "352.00", "24 + 25 + 3 + 300");
+    assert_eq!(
+        cards["value_usd"], "362.00",
+        "24 + 25 + 3 + 300 + D's carried-forward 5 × 2.00"
+    );
     assert_eq!(
         cards["change_usd"], "-1.25",
-        "+4 - 5 - 0.25; C's $300 is not a gain"
+        "+4 - 5 - 0.25; C's $300 is not a gain and D's stale row moves nothing"
     );
-    assert_eq!(cards["previous_usd"], "353.25", "value - change");
+    assert_eq!(cards["previous_usd"], "363.25", "value - change");
     let pct = cards["change_pct"].as_f64().expect("pct");
-    assert!((pct - (-125.0 / 35325.0 * 100.0)).abs() < 1e-9, "{pct}");
+    assert!((pct - (-125.0 / 36325.0 * 100.0)).abs() < 1e-9, "{pct}");
 
     // No sealed products -> the sealed kind is all null, and the total is the cards alone.
     assert!(body["sealed"]["as_of"].is_null());
     assert!(body["sealed"]["value_usd"].is_null());
     assert_eq!(body["total"]["as_of"], d0);
-    assert_eq!(body["total"]["value_usd"], "352.00");
+    assert_eq!(body["total"]["value_usd"], "362.00");
     assert_eq!(body["total"]["change_usd"], "-1.25");
-    assert_eq!(body["total"]["previous_usd"], "353.25");
+    assert_eq!(body["total"]["previous_usd"], "363.25");
 }
 
 /// The baseline carries forward across a capture gap: with no snapshot on the day before the

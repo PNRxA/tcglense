@@ -32,6 +32,7 @@ describe('HoldingStatList', () => {
     const terms = wrapper.findAll('dt').map((dt) => dt.text())
     expect(terms).toEqual(['Unique cards', 'Total value'])
     expect(wrapper.findAll('dd').map((dd) => dd.text())).toEqual(['12', '$128.50'])
+    expect(wrapper.find('.stat-change').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('1D')
   })
 
@@ -44,17 +45,27 @@ describe('HoldingStatList', () => {
         ],
       },
     })
-    const lines = wrapper.findAll('p')
+    const lines = wrapper.findAll('.stat-change')
     expect(lines).toHaveLength(1)
     const line = lines[0]!
     expect(line.text()).toContain('+$3.50')
     expect(line.text()).toContain('+2.8%')
     expect(line.text()).toContain('1D')
     expect(line.classes()).toContain('text-success')
-    // The full sentence rides the tooltip / accessible name, with the capture it measures to.
-    expect(line.attributes('title')).toMatch(
-      /since the previous day's captured prices \(as of .*22\)/,
-    )
+    // The line sits inside the value's <dd> (a <dl> wrapper may only hold <dt>/<dd>), and no
+    // <p> is emitted.
+    expect(wrapper.find('dd .stat-change').exists()).toBe(true)
+    expect(wrapper.find('p').exists()).toBe(false)
+    // The full sentence — with the capture it measures to — is the line's accessible text
+    // (a visually-hidden span; every visible fragment is aria-hidden) and the mouse tooltip.
+    const sentence = /since the previous day's captured prices \(as of .*22\)/
+    expect(line.attributes('title')).toMatch(sentence)
+    expect(line.find('.sr-only').text()).toMatch(sentence)
+    expect(line.find('.sr-only').text()).toContain('+2.8%')
+    expect(line.attributes('aria-label')).toBeUndefined()
+    const visible = line.findAll('span:not(.sr-only)')
+    expect(visible.length).toBeGreaterThan(0)
+    for (const span of visible) expect(span.attributes('aria-hidden')).toBe('true')
   })
 
   it('uses the destructive token for a loss and the muted one for a flat day', () => {
@@ -74,7 +85,7 @@ describe('HoldingStatList', () => {
         ],
       },
     })
-    const [loss, flat] = wrapper.findAll('p')
+    const [loss, flat] = wrapper.findAll('.stat-change')
     expect(loss!.classes()).toContain('text-destructive')
     expect(flat!.classes()).toContain('text-muted-foreground')
     // No date known → no "(as of …)" suffix.

@@ -31,6 +31,7 @@ use crate::entities::prelude::CollectionItem;
 use crate::error::AppError;
 use crate::state::AppState;
 
+mod analytics_inputs;
 mod breakdown;
 mod export;
 mod import;

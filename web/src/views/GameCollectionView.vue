@@ -94,11 +94,17 @@ const hasProductStats = computed(() => (productSummary.value?.unique_products ??
 // empty collection never pays for it; each line self-hides until a baseline capture exists.
 // The change rides the snapshot-day figures while the totals beside it are the live summary,
 // so on a day the capture lags the live prices the two can differ by that lag — the line says
-// which capture it is measured to.
+// which capture it is measured to. The combined total is the sum of *both* summaries, so its
+// rolled-up delta shows only once both have answered: with one summary missing (an error or a
+// retry in flight) the figure above it would be one kind's value under both kinds' movement.
 const hasAnyHoldings = computed(() => hasStats.value || hasProductStats.value)
 const valueChangeQuery = useCollectionValueChangeQuery(game, { enabled: hasAnyHoldings })
 const valueChange = computed(() => valueChangeQuery.data.value)
-const totalChange = computed(() => describeValueChange(valueChange.value?.total, money.formatUsd))
+const totalChange = computed(() =>
+  summary.value && productSummary.value
+    ? describeValueChange(valueChange.value?.total, money.formatUsd)
+    : null,
+)
 const cardsChange = computed(() => describeValueChange(valueChange.value?.cards, money.formatUsd))
 
 // Top-of-page combined overview (cards + sealed rolled together), the headline above the

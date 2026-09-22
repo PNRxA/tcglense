@@ -61,7 +61,10 @@ and add the one-line summary to `AGENTS.md`.
   remain card-only; collection value history, the daily value change (`…/value-change`) and
   movers include both card and sealed-product holdings, and every new collection analytics
   read must both ride `analytics_cache` under the Collection surface **and** be listed in
-  `UserRoute::from_path`'s analytics class — the SPA invalidates its query key alongside
+  `UserRoute::from_path`'s analytics class, starting from the shared preamble in
+  `collection/analytics_inputs.rs` (the holdings reduction + a kind's newest snapshot date,
+  so the three surfaces can never disagree about which capture is "the latest") — the SPA
+  invalidates its query key alongside
   `collection-value-history`/`collection-movers` in **both** `holdingQueries.ts` and
   `productHoldingQueries.ts` (a sealed write moves the same totals). **Public sharing exposes sealed products too:** the read-only
   `/api/u/{handle}/{game}/products{,/summary,/sets}` reads mirror the authed collection product

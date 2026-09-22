@@ -147,6 +147,7 @@ area**; rationale: `docs/tradeoffs.md`; wire shapes: `docs/api-contracts.md`.
 - A filter on *what is held* is a `ListParams` field resolved in `resolve_holdings_list`, **never a `q:` leaf** — the search compiler is shared with the CDN-cached catalog.
 - The breakdown (`handlers/shared/breakdown.rs`) rides `analytics_cache` per surface — every wish-list card write must `bump_surface_holdings(Wishlist, …)`.
 - Sealed-product holdings and public sharing ride the lower shared seams (`shared/product_holdings.rs`, `ProductHoldingSection`), gated by the same visibility flag.
+- A collection analytics read (`value-history`, `value-change`, `movers`, `breakdown`) rides `analytics_cache` under the Collection surface, joins `UserRoute::from_path`'s analytics rate class, starts from `collection/analytics_inputs.rs`, and gets its query key invalidated in **both** `holdingQueries.ts` and `productHoldingQueries.ts`.
 
 **[Sealed products & booster odds](./docs/invariants.md#sealed-products-and-booster-odds)**
 - **No number on a sealed product's page is a count of a copy's physical cards** (a per-pack expectation and one seeded simulation are the only exceptions, both qualified). `lib/productCounts.ts` is the one wording seam and mirrors `CardSection::classify`; sections split by source at ingest; exclusivity is a stored column stamped per sync tick, never re-derived in a read.

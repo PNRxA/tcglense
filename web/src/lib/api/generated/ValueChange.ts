@@ -13,7 +13,9 @@ export type ValueChange = {
  */
 as_of: string | null, 
 /**
- * The holdings' total USD value at `as_of` (every finish priced that day), 2-dp string.
+ * The holdings' total USD value at `as_of`, each held finish carried forward from its
+ * newest snapshot at or before that day (an item whose feed stopped keeps its last
+ * captured price, as in the chart and the movers), 2-dp string.
  */
 value_usd: string | null, 
 /**

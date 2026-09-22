@@ -35,10 +35,12 @@ const shown = computed(() => props.items.filter((item) => item.value != null))
   <dl v-if="shown.length" class="flex flex-wrap gap-x-8 gap-y-3">
     <div v-for="item in shown" :key="item.label">
       <dt class="text-muted-foreground text-xs tracking-wide uppercase">{{ item.label }}</dt>
+      <!-- The movement lives inside the <dd>: it is part of the value's definition (and a
+           <dl> wrapper <div> may hold nothing but <dt>/<dd> children). -->
       <dd class="font-semibold tabular-nums" :class="size === 'lg' ? 'text-2xl' : 'text-xl'">
-        {{ item.value }}
+        <span>{{ item.value }}</span>
+        <StatChangeLine v-if="item.change" :change="item.change" />
       </dd>
-      <StatChangeLine v-if="item.change" :change="item.change" />
     </div>
   </dl>
 </template>

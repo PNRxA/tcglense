@@ -7,8 +7,13 @@ import { formatAsOfDate, type StatChange } from '@/lib/valueChange'
 // the percentage chip and a muted `1D` window tag — the vocabulary the movers panel's window
 // selector already uses. Gains take the success token, losses destructive, and an unchanged
 // capture stays muted (a flat day is information, not good or bad news). The full sentence
-// — what the window is and which capture it is measured to — rides the title/aria-label so
-// the row itself stays scannable.
+// — what the window is and which capture it is measured to — is the line's accessible text:
+// a visually-hidden span carries it while every visible fragment is `aria-hidden`, so a
+// screen reader hears one sentence ("+$3.50, +2.8% since the previous day's captured prices
+// (as of Sep 22)") instead of a bare signed number; the same sentence is the mouse tooltip.
+// (Not `aria-label`: a paragraph/div role prohibits an author name, so AT would drop it.)
+// The root is a `<div>` so it can sit inside the stat's `<dd>` — flow content is valid there,
+// whereas a `<p>` beside the `<dd>` is not a legal child of a `<dl>`'s wrapper `<div>`.
 const props = defineProps<{ change: StatChange }>()
 
 const toneClass = computed(() => {
@@ -49,14 +54,14 @@ const description = computed(() => {
 </script>
 
 <template>
-  <p
-    class="mt-0.5 flex items-center gap-1.5 text-xs font-medium tabular-nums"
+  <div
+    class="stat-change mt-0.5 flex items-center gap-1.5 text-xs font-medium tabular-nums"
     :class="toneClass"
     :title="description"
-    :aria-label="description"
   >
+    <span class="sr-only">{{ description }}</span>
     <component :is="Icon" class="size-3.5 shrink-0" aria-hidden="true" />
-    <span>{{ change.text }}</span>
+    <span aria-hidden="true">{{ change.text }}</span>
     <span
       v-if="change.pctText"
       class="rounded-md px-1.5 py-0.5 text-[0.65rem] leading-none font-semibold"
@@ -71,5 +76,5 @@ const description = computed(() => {
     >
       1D
     </span>
-  </p>
+  </div>
 </template>

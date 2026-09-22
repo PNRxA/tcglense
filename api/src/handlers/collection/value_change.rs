@@ -19,8 +19,10 @@
 //! two tiny index descents per held item, never a scan of anyone's whole history.
 //!
 //! The fold is deliberately conservative about what counts as movement. A finish contributes
-//! to `value_usd` whenever it is priced at `as_of`; it contributes to `change_usd` only when it
-//! is priced at **both** anchors — a printing whose history began today is worth its price,
+//! to `value_usd` whenever its newest snapshot prices it (that snapshot is at or before `as_of`
+//! by construction — an item whose feed stopped is carried forward at its last capture, as the
+//! movers and the chart carry it); it contributes to `change_usd` only when it is priced at
+//! **both** anchors — a printing whose history began today is worth its price,
 //! but it did not *gain* that price overnight (the movers apply the same both-anchors rule,
 //! and the value-history chart, which shows every priced day, is the place to see such a step).
 //! `previous_usd` is then `value_usd - change_usd`: what today's basket was worth a day earlier
@@ -50,7 +52,10 @@ use crate::handlers::shared::valuation::{format_cents, price_cents};
 use crate::scryfall::format_date;
 use crate::state::AppState;
 
-use super::price_movements::{PRICE_ID_CHUNK, SnapshotSeek, decode_snapshot, format_signed_cents};
+use super::analytics_inputs::{
+    HistoryTable, HoldingRow, latest_snapshot_date, load_card_holdings, load_product_holdings,
+};
+use super::price_movements::{SnapshotSeek, decode_snapshot, format_signed_cents};
 
 /// The collection's movement since the previous daily price capture, per holding kind and
 /// rolled up. Each kind is anchored to its own newest snapshot (`as_of`) — cards and sealed
@@ -77,7 +82,9 @@ pub struct ValueChange {
     /// across the held items of this kind, `"YYYY-MM-DD"`. The baseline is the calendar day
     /// before it, carried forward across capture gaps.
     pub as_of: Option<String>,
-    /// The holdings' total USD value at `as_of` (every finish priced that day), 2-dp string.
+    /// The holdings' total USD value at `as_of`, each held finish carried forward from its
+    /// newest snapshot at or before that day (an item whose feed stopped keeps its last
+    /// captured price, as in the chart and the movers), 2-dp string.
     pub value_usd: Option<String>,
     /// What today's basket was worth at the baseline: `value_usd - change_usd`, so a finish
     /// first priced at `as_of` is held flat rather than read as a gain. 2-dp USD string.
@@ -161,45 +168,19 @@ async fn value_change_payload(
     user: crate::entities::user::Model,
     game: String,
 ) -> Result<CollectionValueChange, AppError> {
-    // The user's current card + sealed holdings, reduced to ids/counts — the counts scale each
-    // finish's price into a held value (unlike the movers, this *is* a quantity-weighted read:
-    // it answers what the whole basket did, not what one copy did).
-    let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
-        .select_only()
-        .column(collection_item::Column::CardId)
-        .column(collection_item::Column::Quantity)
-        .column(collection_item::Column::FoilQuantity)
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-    let product_holdings: Vec<(i32, i32, i32)> = CollectionProductItem::find()
-        .select_only()
-        .column(collection_product_item::Column::ProductId)
-        .column(collection_product_item::Column::Quantity)
-        .column(collection_product_item::Column::FoilQuantity)
-        .filter(collection_product_item::Column::UserId.eq(user.id))
-        .filter(collection_product_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
+    // The user's current card + sealed holdings, reduced to ids/counts (the shared analytics
+    // preamble) — the counts scale each finish's price into a held value (unlike the movers,
+    // this *is* a quantity-weighted read: it answers what the whole basket did, not what one
+    // copy did).
+    let card_holdings = load_card_holdings(&state.db, user.id, &game).await?;
+    let product_holdings = load_product_holdings(&state.db, user.id, &game).await?;
 
-    let to_holding = |(item_id, quantity, foil_quantity): (i32, i32, i32)| HoldingRow {
-        item_id,
-        quantity,
-        foil_quantity,
-    };
-    let card_holdings: Vec<HoldingRow> = card_holdings.into_iter().map(to_holding).collect();
-    let product_holdings: Vec<HoldingRow> = product_holdings.into_iter().map(to_holding).collect();
-
-    // Each kind's reference date: the newest snapshot across its held items (a cheap
-    // `MAX(as_of_date)` per id chunk on the history index, as the movers do). `None` = this
-    // kind has nothing priced, so its figures are all null.
+    // Each kind's reference date: the newest snapshot across its held items, as the movers
+    // anchor. `None` = this kind has nothing captured, so its figures are all null.
     let card_latest =
-        latest_snapshot_date(&state, &game, &card_holdings, HistoryTable::Cards).await?;
+        latest_snapshot_date(&state.db, &game, &card_holdings, HistoryTable::Cards).await?;
     let product_latest =
-        latest_snapshot_date(&state, &game, &product_holdings, HistoryTable::Products).await?;
+        latest_snapshot_date(&state.db, &game, &product_holdings, HistoryTable::Products).await?;
 
     let cards = match &card_latest {
         None => ValueChange::empty(),
@@ -270,59 +251,6 @@ async fn value_change_payload(
     })
 }
 
-/// Which price-history table a reference-date lookup reads.
-#[derive(Clone, Copy)]
-enum HistoryTable {
-    Cards,
-    Products,
-}
-
-/// The newest captured snapshot date across the held items of one kind, or `None` when none
-/// of them has any history (or nothing is held). Chunked so the `IN (...)` never exceeds the
-/// bound-parameter cap; each chunk is a `MAX` over the history index.
-async fn latest_snapshot_date(
-    state: &AppState,
-    game: &str,
-    holdings: &[HoldingRow],
-    table: HistoryTable,
-) -> Result<Option<String>, AppError> {
-    let ids: Vec<i32> = holdings.iter().map(|h| h.item_id).collect();
-    let mut latest: Option<String> = None;
-    for chunk in ids.chunks(PRICE_ID_CHUNK) {
-        let chunk_latest = match table {
-            HistoryTable::Cards => {
-                CardPriceHistory::find()
-                    .select_only()
-                    .column_as(card_price_history::Column::AsOfDate.max(), "latest")
-                    .filter(card_price_history::Column::Game.eq(game))
-                    .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-                    .into_tuple::<Option<String>>()
-                    .one(&state.db)
-                    .await?
-            }
-            HistoryTable::Products => {
-                ProductPriceHistory::find()
-                    .select_only()
-                    .column_as(product_price_history::Column::AsOfDate.max(), "latest")
-                    .filter(product_price_history::Column::Game.eq(game))
-                    .filter(product_price_history::Column::ProductId.is_in(chunk.iter().copied()))
-                    .into_tuple::<Option<String>>()
-                    .one(&state.db)
-                    .await?
-            }
-        }
-        .flatten();
-        if let Some(candidate) = chunk_latest
-            && latest
-                .as_ref()
-                .is_none_or(|current| candidate.as_str() > current.as_str())
-        {
-            latest = Some(candidate);
-        }
-    }
-    Ok(latest)
-}
-
 /// The calendar day before a stored `"YYYY-MM-DD"` snapshot date — the carry-forward
 /// baseline target. A malformed date is an internal invariant failure (these dates are
 /// ours), so it surfaces as a 500.
@@ -330,13 +258,6 @@ fn previous_day(latest: &str) -> Result<String, AppError> {
     let date = NaiveDate::parse_from_str(latest, "%Y-%m-%d")
         .map_err(|e| AppError::Internal(format!("unparseable snapshot date {latest:?}: {e}")))?;
     Ok(format_date(date - Duration::days(1)))
-}
-
-/// A holding reduced to what the fold needs: the item and its current counts.
-struct HoldingRow {
-    item_id: i32,
-    quantity: i32,
-    foil_quantity: i32,
 }
 
 /// One held item's two anchor snapshots as the compact `date|usd|foil` strings the
@@ -479,9 +400,14 @@ fn roll_up(cards: &ValueChange, sealed: &ValueChange) -> ValueChange {
         price_cents(cards.change_usd.as_deref()),
         price_cents(sealed.change_usd.as_deref()),
     );
-    let as_of = match (&cards.as_of, &sealed.as_of) {
-        (Some(a), Some(b)) => Some(if a >= b { a.clone() } else { b.clone() }),
-        (a, b) => a.clone().or_else(|| b.clone()),
+    // The reference date names the capture the *reported* figures are measured to, so only
+    // a kind that contributed a value may donate it (a kind with history but nothing priced
+    // carries an `as_of` and no figures); with neither contributing, keep whichever exists.
+    let contributed = |k: &ValueChange| k.value_usd.is_some().then(|| k.as_of.clone()).flatten();
+    let as_of = match (contributed(cards), contributed(sealed)) {
+        (Some(a), Some(b)) => Some(if a >= b { a } else { b }),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => cards.as_of.clone().or_else(|| sealed.as_of.clone()),
     };
     shape_change(as_of, value, change)
 }
@@ -631,6 +557,24 @@ mod tests {
         assert_eq!(total.previous_usd.as_deref(), Some("142.50"));
         let pct = total.change_pct.expect("pct");
         assert!((pct - (750.0 / 14250.0 * 100.0)).abs() < 1e-9, "{pct}");
+    }
+
+    #[test]
+    fn roll_up_never_takes_the_date_of_a_kind_that_contributed_nothing() {
+        // Cards have history (so an `as_of`) but nothing priced; sealed carries the figures.
+        // The total's date must be the sealed capture the figures were measured to, not the
+        // newer card date that contributed no number.
+        let cards = shape_change(Some("2026-09-22".into()), None, None);
+        let sealed = shape_change(Some("2026-09-20".into()), Some(9_900), Some(900));
+        let total = roll_up(&cards, &sealed);
+        assert_eq!(total.as_of.as_deref(), Some("2026-09-20"));
+        assert_eq!(total.value_usd.as_deref(), Some("99.00"));
+        assert_eq!(total.change_usd.as_deref(), Some("9.00"));
+
+        // Neither contributing: the date still survives (matching the per-kind shape).
+        let neither = roll_up(&cards, &ValueChange::empty());
+        assert_eq!(neither.as_of.as_deref(), Some("2026-09-22"));
+        assert_eq!(neither.value_usd, None);
     }
 
     #[test]

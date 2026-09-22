@@ -78,10 +78,9 @@ use crate::handlers::shared::valuation::{format_cents, price_cents};
 use crate::scryfall::format_date;
 use crate::state::AppState;
 
-/// How many card ids to bind per `IN (...)` chunk — kept well under SQLite's
-/// bound-parameter cap so an arbitrarily large collection still fetches in a handful of
-/// queries (mirrors [`super::value_history`]).
-pub(super) const PRICE_ID_CHUNK: usize = 10_000;
+use super::analytics_inputs::{
+    HistoryTable, HoldingRow, latest_snapshot_date, load_card_holdings, load_product_holdings,
+};
 
 /// How many movers to return per direction, per window.
 const TOP_N: usize = 5;
@@ -410,95 +409,23 @@ async fn movers_payload(
     let needs = AnchorNeeds::for_window(window);
     let day_requested = window.is_none() || window == Some(MoverWindowSel::Day);
 
-    // The user's current card + sealed holdings, reduced to ids/counts. The counts decide
-    // which finishes are movement candidates (and ride the response as context); the reported
-    // movement itself is always a single copy's price change.
-    let card_holdings: Vec<(i32, i32, i32)> = CollectionItem::find()
-        .select_only()
-        .column(collection_item::Column::CardId)
-        .column(collection_item::Column::Quantity)
-        .column(collection_item::Column::FoilQuantity)
-        .filter(collection_item::Column::UserId.eq(user.id))
-        .filter(collection_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
-
-    let product_holdings: Vec<(i32, i32, i32)> = CollectionProductItem::find()
-        .select_only()
-        .column(collection_product_item::Column::ProductId)
-        .column(collection_product_item::Column::Quantity)
-        .column(collection_product_item::Column::FoilQuantity)
-        .filter(collection_product_item::Column::UserId.eq(user.id))
-        .filter(collection_product_item::Column::Game.eq(game.as_str()))
-        .into_tuple()
-        .all(&state.db)
-        .await?;
+    // The user's current card + sealed holdings, reduced to ids/counts (the shared analytics
+    // preamble). The counts decide which finishes are movement candidates (and ride the
+    // response as context); the reported movement itself is always a single copy's price
+    // change.
+    let card_holdings = load_card_holdings(&state.db, user.id, &game).await?;
+    let product_holdings = load_product_holdings(&state.db, user.id, &game).await?;
 
     if card_holdings.is_empty() && product_holdings.is_empty() {
         return Ok(CollectionMovers::empty());
     }
 
-    let card_holdings: Vec<HoldingRow> = card_holdings
-        .into_iter()
-        .map(|(item_id, quantity, foil_quantity)| HoldingRow {
-            item_id,
-            quantity,
-            foil_quantity,
-        })
-        .collect();
-    let product_holdings: Vec<HoldingRow> = product_holdings
-        .into_iter()
-        .map(|(item_id, quantity, foil_quantity)| HoldingRow {
-            item_id,
-            quantity,
-            foil_quantity,
-        })
-        .collect();
-
-    let card_ids: Vec<i32> = card_holdings.iter().map(|h| h.item_id).collect();
-    let product_ids: Vec<i32> = product_holdings.iter().map(|h| h.item_id).collect();
-
     // Find independent reference dates so the existing card series keeps its exact
     // semantics while sealed products can have a newer/older capture cadence.
-    let mut card_latest: Option<String> = None;
-    for chunk in card_ids.chunks(PRICE_ID_CHUNK) {
-        let chunk_latest = CardPriceHistory::find()
-            .select_only()
-            .column_as(card_price_history::Column::AsOfDate.max(), "latest")
-            .filter(card_price_history::Column::Game.eq(game.as_str()))
-            .filter(card_price_history::Column::CardId.is_in(chunk.iter().copied()))
-            .into_tuple::<Option<String>>()
-            .one(&state.db)
-            .await?
-            .flatten();
-        if let Some(candidate) = chunk_latest
-            && card_latest
-                .as_ref()
-                .map_or(true, |current| candidate.as_str() > current.as_str())
-        {
-            card_latest = Some(candidate);
-        }
-    }
-    let mut product_latest: Option<String> = None;
-    for chunk in product_ids.chunks(PRICE_ID_CHUNK) {
-        let chunk_latest = ProductPriceHistory::find()
-            .select_only()
-            .column_as(product_price_history::Column::AsOfDate.max(), "latest")
-            .filter(product_price_history::Column::Game.eq(game.as_str()))
-            .filter(product_price_history::Column::ProductId.is_in(chunk.iter().copied()))
-            .into_tuple::<Option<String>>()
-            .one(&state.db)
-            .await?
-            .flatten();
-        if let Some(candidate) = chunk_latest
-            && product_latest
-                .as_ref()
-                .map_or(true, |current| candidate.as_str() > current.as_str())
-        {
-            product_latest = Some(candidate);
-        }
-    }
+    let card_latest =
+        latest_snapshot_date(&state.db, &game, &card_holdings, HistoryTable::Cards).await?;
+    let product_latest =
+        latest_snapshot_date(&state.db, &game, &product_holdings, HistoryTable::Products).await?;
     if card_latest.is_none() && product_latest.is_none() {
         return Ok(CollectionMovers::empty());
     }
@@ -1115,13 +1042,6 @@ impl PriceAnchorSnapshots {
         rows.dedup();
         Ok(rows)
     }
-}
-
-/// A holding reduced to what the ranking needs: item kind/id and current counts.
-struct HoldingRow {
-    item_id: i32,
-    quantity: i32,
-    foil_quantity: i32,
 }
 
 /// One item's snapshot for a day: the date and its regular/foil price already in integer

@@ -1,7 +1,8 @@
 import type { ValueChange } from '@/lib/api'
 
 // The wording seam for a signed money movement — the collection landing's daily-change lines
-// (under each "Total value" stat) and the movers panel's per-row deltas both format a signed
+// (under the combined and cards "Total value" stats and the sealed section's "Products value"
+// stat) and the movers panel's per-row deltas both format a signed
 // USD string and a percentage the same way, so the sign glyphs, the neutral zero and the
 // "which token colours this" decision live here once rather than in two templates.
 
