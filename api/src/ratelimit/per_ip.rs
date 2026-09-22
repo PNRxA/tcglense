@@ -53,6 +53,16 @@ pub(super) enum IpRoute {
     /// reads plus the body-keyed owned-counts POST — the latter is uncacheable at
     /// every HTTP layer, so this limiter is its only shield).
     PublicHoldings,
+    /// The guest-facing half of the play table (`/api/tools/{game}/play/…` room
+    /// reads, deck loads, ready toggles and the socket upgrade). A guest has no
+    /// account, so the per-user limiter these would otherwise ride cannot key them —
+    /// this is the only quota they have. The live traffic is the socket, not these,
+    /// so a lobby's HTTP chatter is small and the quota can be tight.
+    PlayPublic,
+    /// Taking a seat specifically. Split out of [`Self::PlayPublic`] because it is the
+    /// one route that *writes a row per call* — without its own tighter quota, one IP
+    /// could fill every table on the instance with junk seats at the read rate.
+    PlayJoin,
 }
 
 impl IpRoute {
@@ -98,6 +108,22 @@ impl IpRoute {
             return Some(Self::PublicHoldings);
         }
 
+        // The play table's guest half. Matched structurally rather than by suffix: the
+        // room code is attacker-chosen, so a code spelling `join` must not let a read
+        // land in the write class (or the reverse).
+        if let Some(rest) = path.strip_prefix("/api/tools/")
+            && let Some((_game, rest)) = rest.split_once('/')
+            && let Some(rest) = rest.strip_prefix("play/rooms")
+        {
+            let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+            return match segments.as_slice() {
+                // `/rooms` itself is the host's session-only list/create — per-user limited.
+                [] => None,
+                [_code, "join"] => Some(Self::PlayJoin),
+                _ => Some(Self::PlayPublic),
+            };
+        }
+
         None
     }
 
@@ -123,6 +149,13 @@ impl IpRoute {
             // landing and 2-3 per browse page, so this is roomy for a human and a
             // hard wall for scraping someone's shared collection.
             Self::PublicHoldings => Quota::per_minute(nonzero!(120u32)),
+            // ~60/min: a lobby is a handful of calls plus one socket, and the socket
+            // (which carries the actual play traffic) has its own per-connection
+            // bucket, so this only has to cover human clicking.
+            Self::PlayPublic => Quota::per_minute(nonzero!(60u32)),
+            // ~20/min: joining is a row per call, and nobody legitimately sits down
+            // twenty times a minute.
+            Self::PlayJoin => Quota::per_minute(nonzero!(20u32)),
         }
     }
 
@@ -136,6 +169,8 @@ impl IpRoute {
             Self::Token => "token",
             Self::PublicCatalog => "public_catalog",
             Self::PublicHoldings => "public_holdings",
+            Self::PlayPublic => "play_public",
+            Self::PlayJoin => "play_join",
         }
     }
 }
@@ -150,6 +185,8 @@ pub struct RateLimiters {
     token: KeyedLimiter,
     public_catalog: KeyedLimiter,
     public_holdings: KeyedLimiter,
+    play_public: KeyedLimiter,
+    play_join: KeyedLimiter,
     clock: DefaultClock,
 }
 
@@ -165,6 +202,8 @@ impl Default for RateLimiters {
             token: RateLimiter::keyed(IpRoute::Token.quota()),
             public_catalog: RateLimiter::keyed(IpRoute::PublicCatalog.quota()),
             public_holdings: RateLimiter::keyed(IpRoute::PublicHoldings.quota()),
+            play_public: RateLimiter::keyed(IpRoute::PlayPublic.quota()),
+            play_join: RateLimiter::keyed(IpRoute::PlayJoin.quota()),
             clock: DefaultClock::default(),
         }
     }
@@ -179,6 +218,8 @@ impl RateLimiters {
             IpRoute::Token => &self.token,
             IpRoute::PublicCatalog => &self.public_catalog,
             IpRoute::PublicHoldings => &self.public_holdings,
+            IpRoute::PlayPublic => &self.play_public,
+            IpRoute::PlayJoin => &self.play_join,
         }
     }
 
@@ -203,6 +244,8 @@ impl RateLimiters {
         self.token.retain_recent();
         self.public_catalog.retain_recent();
         self.public_holdings.retain_recent();
+        self.play_public.retain_recent();
+        self.play_join.retain_recent();
     }
 }
 
@@ -396,6 +439,36 @@ mod tests {
                 "{holdings} should be the public-holdings class"
             );
         }
+
+        // The play table's guest half is limited, with joining (a row per call) in its
+        // own tighter class; the host's session-only list/create is per-user limited
+        // instead, so it stays out of here.
+        for play in [
+            "/api/tools/mtg/play/rooms/ABC234",
+            "/api/tools/mtg/play/rooms/ABC234/ws",
+            "/api/tools/mtg/play/rooms/ABC234/seats/7/deck",
+            "/api/tools/mtg/play/rooms/ABC234/seats/7/ready",
+            "/api/tools/mtg/play/rooms/ABC234/seats/7",
+        ] {
+            assert_eq!(
+                IpRoute::from_path(play),
+                Some(IpRoute::PlayPublic),
+                "{play} should be the play-public class"
+            );
+        }
+        assert_eq!(
+            IpRoute::from_path("/api/tools/mtg/play/rooms/ABC234/join"),
+            Some(IpRoute::PlayJoin)
+        );
+        assert_eq!(IpRoute::from_path("/api/tools/mtg/play/rooms"), None);
+        // The life counter is authenticated end to end, so it has no per-IP class.
+        assert_eq!(IpRoute::from_path("/api/tools/mtg/life/sessions"), None);
+        // A room code spelling a static segment stays in the read class — the match is
+        // structural, so it can't be talked into the write one.
+        assert_eq!(
+            IpRoute::from_path("/api/tools/mtg/play/rooms/join"),
+            Some(IpRoute::PlayPublic)
+        );
 
         // Sitemaps / OpenAPI / config / mirror stay un-limited (crawler-driven or
         // DB-free; the CDN owns their caching story).

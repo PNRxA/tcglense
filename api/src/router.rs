@@ -96,6 +96,10 @@ use crate::{
             get_session, list_sessions, remove_player, reorder_players, undo_life_event,
             update_player, update_session,
         },
+        tools::play::{
+            create_room, delete_room, get_room, join_room, leave_seat, list_rooms, load_seat_deck,
+            room_socket, set_seat_ready,
+        },
         wishlist::{
             export_wishlist_cards, get_wishlist_entry, get_wishlist_product_entry, list_wishlist,
             list_wishlist_product_sets, list_wishlist_products, set_wishlist_entry,
@@ -121,7 +125,16 @@ fn cors_layer() -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        // `X-Play-Seat` is the play table's per-seat credential (`tokens::SEAT_HEADER`): a
+        // guest's seat is proved by a header, not a cookie or a bearer, so the direct
+        // cross-origin dev mode (`VITE_API_URL` at a different origin — see
+        // `docs/operations.md`) cannot join a table or load a deck without it being allowed
+        // on the preflight.
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-play-seat"),
+        ])
         .allow_credentials(true)
 }
 
@@ -586,6 +599,26 @@ pub fn build_router(state: AppState) -> Router {
             "/api/tools/{game}/life/sessions/{session_id}/events/{event_id}",
             delete(undo_life_event),
         )
+        // The **play table** (`/api/tools/{game}/play/...`): an online manual game of Magic.
+        // Its routes are split across two groups, which is unusual and deliberate — the tool
+        // is half account feature and half guest feature.
+        //
+        // These two are the host's: opening a table and listing the ones you're at.
+        // Session-only (`SessionUser`, like `/api/alerts`) because a live table is an
+        // interactive SPA feature an API key has no business driving, so they sit here for the
+        // per-user limiter + `no-store`. Everything a *seat* does — join, load a deck, ready
+        // up, leave, and the socket itself — is in `public_holdings_owned` below, per-IP
+        // limited instead, because a guest has no account to key a per-user limit on.
+        //
+        // Closing a table (`DELETE .../rooms/{code}`) is the odd one out: it takes the host's
+        // session like these do, but it lives in that public group because axum wires one
+        // method router per path and its path is the *public* by-code read's. Being per-IP
+        // limited rather than per-user costs it nothing — it is a host-session route either
+        // way, and a caller who isn't the host gets the by-code read's 404.
+        .route(
+            "/api/tools/{game}/play/rooms",
+            get(list_rooms).post(create_room),
+        )
         // Per-user price alerts (issue #525): notify a signed-in user when a card / sealed
         // product crosses a below/above price threshold, over their configured channels
         // (Discord / Telegram / optional email). Session-only (SessionUser) — the channel
@@ -948,6 +981,40 @@ pub fn build_router(state: AppState) -> Router {
             "/api/u/{handle}/wishlist/{game}/owned",
             post(public_wishlist_owned_counts),
         )
+        // The guest-facing half of the play table (see the host half in `private` above).
+        // Reading a room, taking a seat, loading a deck into it, readying up, leaving, and the
+        // room socket are all reachable without an account — a friend who was sent an invite
+        // link is a first-class player here — so they're authorized by the per-seat token
+        // (`X-Play-Seat`) rather than a session, and per-IP limited like every other
+        // unauthenticated DB-touching route. `no-store` throughout: a room's seats change by
+        // the second, and the whole point of the lobby is that it is live.
+        //
+        // The static `join` / `seats` / `ws` segments win over nothing here (the dynamic
+        // `{code}` is their parent, not their sibling), so the shapes can't collide.
+        // The public read and the host's delete share one path, so they share one method
+        // router — and therefore this group's per-IP limiter (see the note in `private`).
+        // `delete_room` is still `SessionUser` + host-only, answering 404 to everyone else.
+        .route(
+            "/api/tools/{game}/play/rooms/{code}",
+            get(get_room).delete(delete_room),
+        )
+        .route("/api/tools/{game}/play/rooms/{code}/join", post(join_room))
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}",
+            delete(leave_seat),
+        )
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/deck",
+            post(load_seat_deck),
+        )
+        .route(
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/ready",
+            post(set_seat_ready),
+        )
+        // The live table. A WebSocket upgrade, not JSON: the credential rides the first frame
+        // (there is no way to set a header on a browser WebSocket), so the upgrade itself is
+        // unauthenticated and `ws.rs` does the handshake.
+        .route("/api/tools/{game}/play/rooms/{code}/ws", get(room_socket))
         // Per-IP rate limiting (issue #413): as a body-keyed, unauthenticated POST
         // this was the one wholly-unthrottled, uncacheable DB endpoint in the app.
         .layer(from_fn_with_state(

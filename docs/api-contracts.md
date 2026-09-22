@@ -1961,6 +1961,196 @@ only would either be rejected by the API or render as something other than its n
 only *seeds* a seat's rotation; the stored `rotation` is the truth afterwards, so one player at an
 unexpected side of the table can be turned without changing the layout.
 
+## Tools API contract — the online table (play)
+
+The second tool in the namespace: an **online manual table**. A host opens a *room*, shares
+its six-character invite code, friends take *seats* and load a deck, and the host starts the
+game — from which point the table lives on **one WebSocket per tab** and the REST routes only
+get you from "nobody has a seat" to "everybody has a deck". Handlers in
+`api/src/handlers/tools/play/`, the table itself in `api/src/play/` (a pure engine), rules in
+`docs/invariants.md`, rationale in `docs/tradeoffs.md`.
+
+Unlike the life counter this is **half an account feature and half a guest feature**, and the
+route groups say so. Opening and listing rooms take `SessionUser` and sit in the router's
+`private` group (per-user limited). Everything a *seat* does — reading a room by code,
+joining, loading a deck, readying, leaving, and the socket upgrade — is reachable with no
+account at all, authorized by the **seat token** rather than a session, and per-IP limited
+(`IpRoute::PlayPublic` ~60/min; `join` gets its own `IpRoute::PlayJoin` ~20/min because it
+writes a row per call). `DELETE .../rooms/{code}` sits in that **public** group too, despite
+being host-session-only: axum wires one method router per path and it shares the public
+by-code read's path, so it is per-IP rather than per-user limited — which changes nothing
+about who may call it. The seat token's header is in the CORS allow-list alongside
+`Authorization` (`router::cors_layer`), or a cross-origin SPA could not present it at all. Everything is `Cache-Control: no-store`, and nothing is in the OpenAPI
+document (`INTENTIONALLY_UNDOCUMENTED`): an API key is refused outright, and the socket isn't
+JSON at all.
+
+Two tables. `entities/play_room.rs` (`play_rooms` — `code` [the public identity, unique,
+stored upper-case], `game`, `host_user_id` [FK-less], `label`, `format`, `starting_life`,
+`max_players`, `status`, `state` [the whole `RoomState` as JSON, NULL while the room is a
+lobby], `created_at`/`updated_at`) and `entities/play_seat.rs` (`play_seats` — `room_id` [FK,
+`ON DELETE CASCADE`], `seat_index`, `user_id` [NULL for a guest], `display_name`,
+`token_hash`, `deck_source`/`deck_ref`/`deck_name`/`deck_json`, `ready`). Migration
+`m20240101_000086_create_play_tables.rs`.
+
+**The two opaque strings are not the same thing.** The **invite code** is six characters from
+`ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no `0`/`O`/`1`/`I`, so a code read aloud can't be mistyped
+into a different live room), normalised upper-case on every lookup, and **public** — it is not
+a credential, which is why the routes keyed by it authorize on something else. The **seat
+token** is the credential: 32 CSPRNG bytes through `auth::secret`, stored only as its SHA-256
+digest, returned exactly once by a join, and presented in the `X-Play-Seat` header. A missing
+token, a wrong one, and a seat id from another room all answer the same
+**`401 invalid_seat_token`**.
+
+| Method & path | Auth | Body | Returns |
+|---------------|------|------|---------|
+| `POST /api/tools/{game}/play/rooms` | session | `{ label?, format, starting_life?, max_players? }` | **`201`** `PlayJoinResponse` — open a table. The host is seated immediately at `seat_index` 0 (named from their username, `Host` when they have none), so the answer already carries a seat and its token. `format` is `commander` (40 life) or `constructed` (20) — `422` otherwise, and `422` for `starting_life` outside `1..=999`, `max_players` outside `2..=6` (default 4) or a `label` over 60 chars. `409` when the host already has `MAX_OPEN_ROOMS_PER_HOST` (20) rooms that aren't `finished` — each open room is an in-memory table, so the cap counts what is *open* and closing one frees a slot |
+| `GET /api/tools/{game}/play/rooms` | session | — | `{ data: PlayRoomSummary[] }` — the tables you host **or** hold a seat in (one query over both), most recently active first. `?status=lobby\|playing\|finished` narrows (`422` otherwise); `?limit` clamps to `1..=50` |
+| `GET /api/tools/{game}/play/rooms/{code}` | none (optional session) | — | `PlayRoomSummary` — **public**: the join page has to render the table before the visitor has any credential. Nothing secret rides it (a seat's token hash, decklist and hand are all elsewhere). `viewer_seat` is filled in when the caller is signed in and holds a seat. `404` unknown code |
+| `DELETE /api/tools/{game}/play/rooms/{code}` | session (host), per-IP limited | — | `204` — close the table. **Anyone else, seated or not, gets a `404`**, so a shared code never confirms a room's existence to someone who can't act on it. The row is deleted (seats cascade) *before* the sockets are told, each of which receives a `closed` frame and is closed `4004` |
+| `POST /api/tools/{game}/play/rooms/{code}/join` | none (optional session) | `{ name?, seat_token? }` | `PlayJoinResponse` — take (or re-take) a seat, in a fixed resolution order: (1) a `seat_token` matching a seat of this room re-takes **that** seat with the token unchanged (a reload must not cost you your chair); (2) otherwise a signed-in caller who already holds a seat re-takes it with a **rotated** token (a new device: the old token stops *authenticating*, but a socket already open on the other device is **not** closed — a socket authenticates once, at `hello`, so that tab plays on and only fails when it next reconnects, `4003`, after which the SPA re-joins); (3) otherwise a new seat, which needs the room to still be a lobby (`409`), a free chair below `max_players` (`409` "this table is full", the lowest free `seat_index`, re-read inside the transaction) and a name. A guest must send `name`; a signed-in caller falls back to their username, but an explicit name always wins. Names are trimmed, `1..=32` characters and profanity-checked like a username (`422`) |
+| `POST .../rooms/{code}/seats/{seat_id}/deck` | seat token (+ session for `source: "deck"`) | `{ source: "deck", deck_id }` \| `{ source: "precon", slug }` \| `{ source: "text", text }` | `PlaySeatView` — resolve a decklist into `CardDef`s **once** and store it on the seat, so starting the game needs no catalog query. Lobby only (`409`). `source: "deck"` needs the caller's session *and* the seat to be that same account (`404`, never a 403 — `load_deck`'s own rule); `precon` is any published slug (`404`); `text` goes through the shared `deck_import` text grammar, resolving each name to the newest printing. A deck contributes `quantity + foil_quantity` copies (both finishes are the same card at a table); maybeboard, sideboard and companion sections are **skipped first** — not counted, not looked up, and an unknown name inside one does not fail the load — and the command zone is filled only in a `commander` room. `422` an empty list, more than `MAX_DECK_CARDS` (400) cards (counted from the **quantities**, before any card is built, so `9999x Island` is refused by arithmetic), or **unresolved names — listed, up to ten, with the rest counted** rather than silently shrinking the deck. Loading always clears `ready` |
+| `POST .../rooms/{code}/seats/{seat_id}/ready` | seat token | `{ ready }` | `PlaySeatView` — readying without a deck is a `422` ("ready" is a promise about a list); un-readying is always allowed. Lobby only (`409`) |
+| `DELETE .../rooms/{code}/seats/{seat_id}` | seat token **or** host session | — | `204` — get up, or (as the host) ask someone to. Lobby only (`409`); the host may not remove their **own** seat (`409` — close the table instead). That seat's sockets get a `closed` frame and close `4004` |
+| `GET .../rooms/{code}/ws` | first frame | — | **WebSocket upgrade** (below). The room must exist (`404` before the upgrade); nothing else is checked here, because a browser WebSocket can carry no headers |
+
+Every write that changes who is at the table pushes a fresh `lobby` frame at everyone watching
+the room socket, so a lobby page never polls.
+
+`PlayRoomSummary = { id, code, game, label, format, starting_life, max_players, status,
+seats, viewer_seat, created_at, updated_at }` and `PlaySeatView = { id, seat_index,
+display_name, is_host, is_user, ready, connected, deck_source, deck_name, deck_card_count,
+commanders }` are **one shape for both transports** — the REST reads and the socket's `lobby`
+frame build them through the same `summary_from`, so a page that polled and a page that was
+pushed can't disagree. `viewer_seat` is the seat held by whoever the summary was built for
+(`null` for a stranger or a spectator) and is the only per-reader field; `connected` and
+`is_user` are the live socket count and "backed by an account"; `commanders` names what is
+going to the command zone. `PlayJoinResponse = { room, seat, seat_token }` — the token is shown
+**once**. `status` is `lobby` / `playing` / `finished` (`PlayRoomStatus`).
+
+### Room socket
+
+`GET /api/tools/{game}/play/rooms/{code}/ws` — JSON text frames both ways, every shape ts-rs
+exported as `Play*` from `api/src/play/types.rs`, which *is* this protocol's contract (there is
+no OpenAPI for it). Client frames are `PlayClientMessage`, server frames `PlayServerMessage`,
+both `#[serde(tag = "type", rename_all = "snake_case")]`.
+
+**The handshake.** The first frame must be `hello` within 10s (`HELLO_TIMEOUT`) or the socket
+closes `4001`. A `seat_token` that names a seat of this room makes the connection **that
+seat**; one that names none closes `4003` (a stale token must be visible to the player, not
+silently demote them); **no token at all is a spectator** — a first-class thing here, which
+sees exactly the public view and is refused any action (`error { code: "spectator" }`). Two
+tabs of the same seat are two connections: presence is a seat property (`connected`) and only
+the 0↔1 transitions are logged, but a private `peek` goes back to the *socket that asked*.
+
+| Client → server | Meaning |
+|-----------------|---------|
+| `hello { seat_token }` | The credential. Answered with `lobby` while the room hasn't started, otherwise `snapshot`. A second `hello` is a no-op that re-sends that opening frame — and, being a snapshot request, shares `resync`'s throttle |
+| `action { id, action }` | One `PlayAction` (below). `id` is echoed on the matching `error` so a client can attribute a rejection; the server does not ack a success — the `patch` is the ack |
+| `start` | Host only, lobby only. Its own frame rather than an action because it needs the database (the seat rows and their stored decklists); everything after it is pure |
+| `resync` | "I saw a version gap" — answered with a fresh `snapshot`, at most one per 2s (`RESYNC_INTERVAL`) per connection; a second inside that window is answered `error { code: "too_fast" }` instead, because a snapshot is the most expensive thing the cheapest frame can ask for |
+| `ping` | Answered `pong`. The server's own keepalive is a **protocol-level WebSocket ping** every `PING_INTERVAL` (30s), which the peer's stack answers without the page seeing it — the server never sends an unsolicited `pong` |
+
+| Server → client | Meaning |
+|-----------------|---------|
+| `lobby { room, viewer_seat }` | The room as `PlayRoomSummary`, on hello, after **every** REST write that changes the table while it is still a lobby, and when a seated socket connects or disconnects while it is still a lobby (a lobby has no table to record presence on, so the `connected` dots move only with a fresh summary) |
+| `snapshot { snapshot }` | `PlaySnapshot` — the whole table for this viewer: `{ version, status, format, starting_life, viewer_seat, seats, cards, turn, log, winner }`, with the last `SNAPSHOT_LOG` (100) log entries. Sent on hello once playing, on `resync`, and to everyone on `start`. Built and queued under the table lock, so a `patch` can never arrive ahead of the snapshot it is a delta from |
+| `patch { patch }` | `PlayPatch` — one applied action as this viewer sees it: `{ version, status, seats, cards, removed, turn, log, winner }`. `seats` carries every changed seat in full, `cards` every changed card this viewer may see, `removed` every changed card they may *no longer* see (left the table, or went somewhere hidden — indistinguishable on purpose) |
+| `peek { peek }` | `PlayPeek { cards, kind }` — the private answer to `look_top` (top first) or `search_library` (library order). To the one socket that asked, never to the seat |
+| `error { id, code, message }` | A rejected action or a protocol error (codes below). Never fatal on its own |
+| `pong` | — |
+| `closed { reason }` | Sent just before a server-initiated close, so the SPA can say *why* |
+
+**What one viewer may see** is decided in `play/view.rs` and nowhere else. A **library** is a
+count (`library_count`) to everyone, its owner included — the order is the secret, and a
+`peek` is a one-off, not a change in visibility. A **hand** is `hand` (ids, in order) + its
+count for its own seat, and `hand_count` plus only the cards that seat has `revealed` for
+everyone else. **Battlefield / graveyard / exile / command** are public, except a face-down
+battlefield card, which its controller sees whole and everyone else receives as a `PlayCardView`
+with **`def: null`** — an id with no identity. A spectator sees what "everyone else" sees. Card
+ids (`PlayCardView.id`) are random `u32`s minted per room, **never catalog ids**; the catalog id
+is on `PlayCardDef.card_id`, which is what the image URL is built from (`has_image` false, or no
+`card_id` at all, means the client renders a text card). The **log is public and leak-free**: a
+card the table was never shown is "a card", a face-down permanent is "a face-down card", a draw
+says how many and not what, and a scry logs only that it happened.
+
+**Versions and resync.** `PlaySnapshot.version` is the table's version; every applied action
+bumps it by **exactly one** and produces one `patch` per connection. A client that receives a
+patch whose version isn't its own `+ 1` must send `resync` and adopt the snapshot rather than
+guess — that ordering rule is the whole reason there are no acks and no replay buffer.
+
+`PlayAction` is `{ "type": "<snake_case>", … }`. The engine validates **ownership and shape,
+never Magic's rules**: a seat acts only on cards it controls (the battlefield by `controller`,
+every other zone by `owner`), changes only its own totals, and everything but `chat` requires
+`status: playing` (`not_playing`) and a seat that hasn't conceded (`seat_out`).
+
+| Action | Rules & bounds |
+|--------|----------------|
+| `draw { n }` | `1..=30` (`MAX_DRAW`), clamped to what the library holds |
+| `shuffle` | Fisher–Yates over the actor's library |
+| `mulligan { hand_size }` | Hand back into the library, shuffle, draw `hand_size` (`<= MAX_HAND_SIZE`, 30) |
+| `move_card { card, zone, placement?, x?, y?, face_down? }` | A card the actor controls, **not** one in a library (that is the next action). Ordered zones take `placement` (`top` default / `bottom`; `library[0]` and `graveyard[0]` are the tops, a hand appends); the battlefield takes `x`/`y` fractions. Only the battlefield is the controller's — **every other destination is the owner's zone**, so a borrowed permanent goes to its owner's graveyard. Entering or leaving the battlefield untaps, detaches (both ways), resets to face 0 unless `face_down`, and clears counters on the way out. **A token leaving the battlefield is deleted** |
+| `move_library_card { … }` | The same, for a card the actor was shown by `look_top` / `search_library` — it must still be in their library (`wrong_zone` / `not_your_card`) |
+| `reorder_top { cards }` | Put those cards back on top in that order — they must be exactly the current top *n*, each once |
+| `set_position { card, x, y }` | Battlefield only, fractions clamped to `0..=1`, **not logged** (a drag must not narrate itself) |
+| `tap { card, tapped }` / `untap_all` | Battlefield only; `untap_all` covers everything the actor controls |
+| `toggle_face { card }` | Flip to the other `def.faces` entry (a single-faced card is unchanged) |
+| `set_face_down { card, face_down }` | Battlefield only |
+| `counter { card, name, delta }` | Free-text counter name, `1..=24` chars (`MAX_COUNTER_NAME`), non-zero delta; a result `<= 0` removes the key |
+| `reveal { card, revealed }` | Hand only — shows a card to the table while it stays there |
+| `attach { card, to }` | Battlefield to battlefield, any controller (`to: null` detaches). Refuses self-attachment and a loop |
+| `take_control { card, x, y }` | The one legal reach across the table: a battlefield card another seat controls moves to the actor's battlefield. Ownership doesn't move with it |
+| `create_token { name, card_id?, type_line?, power_toughness?, colors, x, y, count }` | `1..=20` copies (`MAX_TOKEN_COUNT`), each nudged apart; `name`/`type_line` bounded at 120 chars. `card_id` is a catalog token printing when one was picked from the search, otherwise the token renders as a text card |
+| `clone_card { card }` | Copy a battlefield card the actor controls as a token beside it |
+| `life { delta }` | The actor's **own** life. Non-zero, `\|delta\| <= 1000`, total clamped to `-999..=9999` |
+| `player_counter { name, delta }` | `poison` / `energy` / `experience` only (`PLAYER_COUNTERS`); floors at 0 |
+| `commander_damage { from_seat, delta }` | Damage the actor **took** from `from_seat`'s commander — stored on, and written by, the seat that took it, keyed by source (as at a real table); floors at 0, and deliberately does not move life |
+| `pass_turn` | To the next seat still in the game; turn number up, phase back to `untap` |
+| `set_phase { phase }` | `untap` / `upkeep` / `draw` / `main1` / `combat` / `main2` / `end` — a shared pointer, never a gate |
+| `set_active { seat }` | **Host only** |
+| `roll { sides }` / `flip_coin` | `2..=1000` sides; the result goes to the log, where the whole table reads it |
+| `chat { text }` | `1..=500` chars after trimming (`MAX_CHAT`). The one action the engine allows outside `playing` and from a seat that is out — which in practice means **after** the game ends: a lobby has no `RoomState` for an action to reach, so a `chat` sent before `start` is answered `not_playing` on the wire. If chat in the lobby is ever wanted, it needs a frame of its own, not a rule change here |
+| `look_top { n }` / `search_library` | Answered with a private `peek`; the log says only that it happened |
+| `concede` | The actor drops out (still watching). With one seat left the game **finishes** with that seat as winner |
+| `end_game { winner? }` | **Host only**; `status` becomes `finished` and the table is read-only apart from chat |
+
+`error.code` is the engine's `ActionError::code()` — `not_playing`, `not_lobby`, `host_only`,
+`no_such_seat`, `no_such_card`, `not_your_card`, `wrong_zone`, `seat_out`, `no_deck` (a `start`
+naming the seat that hasn't loaded one), `too_few_seats`, `invalid` — plus the socket's own
+`bad_frame` (unreadable JSON), `spectator`, `too_fast` and `no_such_room`. `message` is the
+same error's `Display`, written to be shown to a player as-is.
+
+**Close codes.** The `4xxx` application codes are what the SPA
+(`web/src/lib/playSocket.ts`) reads as "final, do not reconnect"; anything else is a transport
+drop and is retried with backoff, which is exactly why the two failures that are the
+*server's* fault sit outside that range:
+
+| Code | Why |
+|------|-----|
+| `4001` | No `hello` within 10s, or a first frame that wasn't one |
+| `4003` | A seat token that names no seat of this room |
+| `4004` | The room was deleted, or this seat was removed (`CLOSE_ROOM_GONE`) |
+| `4008` | Flooding — `MAX_CONSECUTIVE_REJECTS` (200) refused frames in a row |
+| `1011` | A database error behind the `hello` lookup. Deliberately **not** `4003`: the token may be perfectly good, and the SPA must come back rather than drop the seat. Preceded by `closed { reason: "internal" }` |
+| `1001` | Nothing received for `IDLE_TIMEOUT` (90s), so the peer is gone and must stop holding its seat "connected". The SPA's own ping every 25s keeps a live tab well clear of it |
+
+Every server-initiated close sends its `closed { reason }` frame first, and the socket keeps
+**reading** the peer until that has flushed — a socket closed with unread bytes in its receive
+queue is reset, and a reset would take the close code with it.
+
+**Throttle.** The per-IP and per-user HTTP limiters run on the upgrade request and never again,
+so the socket carries its own per-connection token bucket over **every inbound frame** —
+`action`, `hello`, `resync`, `ping`, a binary frame, and text that doesn't parse alike:
+`FRAME_RATE` 20 frames/second sustained, `FRAME_BURST` 40 at once. Over it the frame is
+**refused with `error { code: "too_fast" }`** (echoing the action's `id` when it had one)
+rather than dropped silently, and a client that ignores that 200 consecutive times is closed
+`4008`. On top of the bucket, a snapshot request (`resync`, or a repeated `hello`) is limited
+to one per 2s per connection, because it is the one frame whose answer is the whole table.
+Inbound messages and frames are capped at 64 KiB (`MAX_FRAME_BYTES`) by the upgrade itself —
+tungstenite's default is 64 MiB, which is not a bound a socket outside both HTTP limiters may
+keep. A peer that has gone away without a close frame is noticed by the write failing, by its
+missing answer to the 30s protocol ping, or at the latest by the 90s idle close; its seat's
+presence clears either way.
+
 ## Dataset mirror
 
 Optional public endpoints (`handlers::mirror`), wired **only when `MIRROR_ENABLED=true`**

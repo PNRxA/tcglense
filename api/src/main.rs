@@ -22,6 +22,7 @@ mod mtgjson;
 mod notifications;
 mod openapi;
 mod phash;
+mod play;
 mod ratelimit;
 mod release_alerts;
 mod router;

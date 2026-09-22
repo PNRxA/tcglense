@@ -15,9 +15,9 @@ in its area:
 **TCGLense** tracks trading-card games: a card catalog (MTG first, via Scryfall),
 singles + sealed-product price history (TCGCSV, MTGJSON), per-user collections and a
 wish list (Archidekt/Moxfield/CSV import), decks with server-side analysis, preconstructed
-decks, price alerts, play-aid tools, email-first auth (Turnstile + rate limiting), and a
-public API with scoped `tcgl_` API keys (OpenAPI at `/api/openapi.json`, Scalar UI at the
-SPA's `/docs`).
+decks, price alerts, play-aid tools (a life counter and an online manual table),
+email-first auth (Turnstile + rate limiting), and a public API with scoped `tcgl_` API keys
+(OpenAPI at `/api/openapi.json`, Scalar UI at the SPA's `/docs`).
 
 | Dir    | App                     | Stack |
 |--------|-------------------------|-------|
@@ -176,6 +176,13 @@ area**; rationale: `docs/tradeoffs.md`; wire shapes: `docs/api-contracts.md`.
 
 **[Tools: the life counter](./docs/invariants.md#tools-the-life-counter)**
 - Seats/events hang off `session_id` (`load_session` first, foreign = 404); a finished session is immutable (409); `life` is written in exactly two places (tap + replay fold); `deck_id` xor `commander_card_id` (both = 422); links are FK-less and orphan-tolerant; extra counters ride `life_events.counter`, never new columns; layout + counter vocabularies are mirrored in `lib/lifeLayout.ts` / `lib/lifeCounters.ts`.
+
+**[Tools: the online table](./docs/invariants.md#tools-the-online-table-play)**
+- The engine (`api/src/play/`) is pure and the only writer of `RoomState`: every success bumps `version` by exactly one, appends at most one log line, and reports a `Changes` whose `log_from` is post-trim.
+- Hidden information is filtered in `view.rs` alone, per connection (library = count, other hands = count unless revealed, face-down = an id with no `def`, spectators get the public view) — and the log says "a card"; `CardId`s are random per room, never catalog ids.
+- Control on the battlefield, owner everywhere else (a non-battlefield move lands in the **owner's** zone); own life/counters only; `Start`/`SetActive`/`EndGame` are the host's; a token off the battlefield is deleted; Magic's rules are **not** enforced.
+- A seat token (hashed at rest, `X-Play-Seat`) authorizes a seat — one 401 for every wrong case, guests via `MaybeUser` (API key = 403), host routes `SessionUser`, foreign/unknown room = 404; rooms live in the registry (2s dirty sweep, 10-min eviction) and the lobby is `RoomSummary` through one `summary_from`.
+- The socket bypasses both HTTP limiters (its own per-connection bucket, 20/s burst 40); close codes are `4001`/`4003`/`4004`/`4008`, and a patch that isn't `version + 1` means `resync`.
 
 **[External ids, shopping lists & exports](./docs/invariants.md#external-ids-shopping-lists-and-exports)**
 - Provider ids ride `CardDetailResponse` only; a buy list is rows with `tcgplayer_id` (stores in `lib/bulkBuy.ts`); the deck buy list reuses the `needed_rows` fold.

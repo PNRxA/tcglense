@@ -24,6 +24,17 @@ describe('router catch-all (404)', () => {
     expect(router.resolve('/cards/mtg/sets/zzz').name).toBe('set')
   })
 
+  it('routes the play hub and a room code apart, statics first', async () => {
+    const router = (await import('@/router')).default
+    // The hub's own path must not be swallowed by the `:code` sibling — a static segment
+    // outranks a param at the same depth, and this pins that ordering stays that way.
+    expect(router.resolve('/tools/mtg/play').name).toBe('play-hub')
+    expect(router.resolve('/tools/mtg/play/ABC234').name).toBe('play-room')
+    // Neither page requires an account: a guest with an invite link is the point.
+    const room = router.resolve('/tools/mtg/play/ABC234')
+    expect(room.matched[room.matched.length - 1]?.meta.requiresAuth).toBeUndefined()
+  })
+
   it('keeps the card scanner on an authenticated route', async () => {
     const router = (await import('@/router')).default
     const resolved = router.resolve('/scan')

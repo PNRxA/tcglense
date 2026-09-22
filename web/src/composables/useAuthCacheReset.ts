@@ -1,11 +1,12 @@
 import { watch } from 'vue'
 import { useQueryClient, type QueryClient } from '@tanstack/vue-query'
+import { forgetAllSeatTokens } from '@/lib/playSeat'
 import { useAuthStore } from '@/stores/auth'
 
 /**
  * Whether a query key addresses per-user data. Every per-user family is namespaced under
- * a `collection*` / `wishlist*` / `life*` prefix (or the `import-job` poll); no public
- * catalog key uses those, so this never matches shared data.
+ * a `collection*` / `wishlist*` / `life*` / `play*` prefix (or the `import-job` poll); no
+ * public catalog key uses those, so this never matches shared data.
  *
  * This is a belt to the `meta.authed` tag's braces: `useAuthedQuery` tags every per-user
  * *read*, but the per-card entry mutations write their result straight into the cache with
@@ -21,6 +22,10 @@ function isPerUserQueryKey(key: readonly unknown[]): boolean {
     (head.startsWith('collection') ||
       head.startsWith('wishlist') ||
       head.startsWith('life') ||
+      // The play table's room list is per-user (rooms you host or hold a seat in); the
+      // single-room read is public, but it shares the family head, and dropping a public
+      // room summary on an identity change costs one refetch and keeps the rule one line.
+      head.startsWith('play') ||
       head === 'import-job')
   )
 }
@@ -52,6 +57,10 @@ export function clearAuthedQueries(qc: QueryClient) {
  * for the same user), so a routine token refresh never clobbers the cache. The watcher
  * is not `immediate`: on first load there's nothing cached to clear, and the restored
  * session is the same identity. Mounted once, from App.vue.
+ *
+ * The play table's seat tokens go with it: they live in `localStorage`, not in the query
+ * cache, but they are the same kind of datum — per-identity proof that outlives a logout
+ * unless something drops it (`lib/playSeat.ts`).
  */
 export function useAuthCacheReset() {
   const qc = useQueryClient()
@@ -66,7 +75,11 @@ export function useAuthCacheReset() {
       // populated caches (that double-fetched every per-user query). A signed-out user
       // can't populate per-user cache anyway (useAuthedQuery is disabled while signed
       // out), so null→id never needs a wipe.
-      if (prevId !== null) clearAuthedQueries(qc)
+      if (prevId === null) return
+      clearAuthedQueries(qc)
+      // Seats are held by token, not by session, so a token left behind would seat the next
+      // identity in the previous one's chair the moment they open that room's link.
+      forgetAllSeatTokens()
     },
   )
 }

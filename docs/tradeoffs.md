@@ -2025,3 +2025,132 @@ interesting decisions are the ones *not* taken:
   accident. A unit spec (`useCardScanner.spec.ts`) locks the
   explicit-paths contract so a refactor can't silently fall back to the CDN. Bonus: the
   scanner now works where jsdelivr is blocked and leaks no usage/IP to a CDN.
+
+## The online table (play)
+
+The second tool beside the life counter: a room of seats playing a **manual** game of Magic
+over one WebSocket per tab, with the table itself in `api/src/play/` (pure engine) and the
+rooms, seats, decks and socket in `api/src/handlers/tools/play/`. Wire shapes in
+`docs/api-contracts.md`, the rules a change must keep in `docs/invariants.md`. The decisions
+worth knowing before changing anything:
+
+- **Peer-to-peer (WebRTC / a host-authoritative client) — rejected.** The feature's whole
+  value is that a library stays shuffled and a hand stays yours; a peer topology puts the
+  authoritative state in somebody's browser, where "the client shouldn't look" is the only
+  thing protecting it. So the server holds the table, applies every action, and each client
+  knows exactly what it was sent — which is also why the socket tests
+  (`security_tests/play_ws.rs`) assert on `hand` / `hand_count` / library ids from the
+  outside: a bug that puts an opponent's hand in a patch is not a rendering mistake, it is
+  the game being unplayable. The cost is a server round trip per tap. At a four-player
+  kitchen-table pace that is invisible, and the client optimises nothing locally (no
+  prediction, no rollback) precisely so that "what the server said" is the only state there
+  is.
+- **A full snapshot per action — rejected; patches, with one version per step.** A
+  Commander table is ~400 card instances across four seats, and a snapshot of it is tens of
+  kilobytes; sending one per tap would be a megabyte a turn. So `engine::apply` reports a
+  `Changes` set and the socket sends only the changed seats, the changed cards and the new
+  log lines. That trades a resend for an **ordering** problem, which is answered the cheapest
+  way possible: `version` bumps by exactly one per applied action, a client that receives
+  anything else asks for a `resync`, and the full snapshot exists only as that fallback (and
+  as the opening frame). No acks, no per-client queues, no replay buffer — a gap costs one
+  snapshot, and gaps essentially don't happen on a socket that either delivers in order or
+  dies.
+- **Broadcasting one patch and filtering in the client — rejected, obviously; but filtering
+  *per connection under the state lock* is the non-obvious half.** `registry::apply_action`
+  holds the table mutex, calls the engine, and then builds a separate `view::patch_for` for
+  every open connection before it lets go. It would be cheaper to compute one patch and mask
+  it afterwards, but then the masking lives somewhere other than `view.rs` and "who may see
+  this" has two implementations. The per-connection loop is O(connections × changed cards)
+  with both numbers tiny (six seats, a handful of cards), and the frames it produces go to
+  unbounded per-connection channels drained by writer tasks — so the expensive part (a slow
+  client's socket) is never done under the lock.
+- **Normalised `play_cards` / `play_zones` tables — rejected; the state is one JSON blob.**
+  `play_rooms.state` holds the whole `RoomState`, written back by a 2-second sweeper rather
+  than by the request path. Normalised, one `Shuffle` would be a hundred row updates and one
+  `Draw` a transaction, on the hot path of a live game — and **nothing ever queries a play
+  card**: there is no "which rooms contain Sol Ring", no per-card history, no analytics. The
+  table is read whole, written whole, and belongs to exactly one process at a time. Same
+  call as `booster_sheets`' JSON card list and `cards.token_parts`, and the same acceptance
+  of its cost: the blob is rebuilt wholesale on every start, a schema change under a
+  persisted table is unreadable rather than half-readable (`room_for` discards it and the
+  host starts a new game), and a crash loses at most one sweep — a couple of seconds of a
+  manual game, which is less than a dropped connection already costs. The one thing that
+  price does **not** cover is a write-back that fails: an idle room is evicted only after it
+  has actually been persisted, because dropping a live table in favour of a row minutes stale
+  turns "lose two seconds" into "lose the game" — and the same reasoning makes `start`
+  install its table only after the `playing` status has reached the row.
+- **Requiring an account to sit down — rejected; a seat is held by a token.** The feature is
+  "send your friend a link", and every field between that link and the table is a friend who
+  doesn't arrive. So a seat needs only a display name, and the credential is a per-seat token
+  (hashed at rest, `X-Play-Seat`) rather than a session. The consequences are deliberate and
+  paid for in full: `MaybeUser` had to exist (optional auth that still 401s a *bad* header,
+  and 403s an API key); the guest-facing routes needed their own per-IP rate-limit class,
+  since there is no user to key a per-user limit on; and the token lives in `localStorage`
+  per `(game, code)`, because a guest who refreshes has nothing else to re-derive their seat
+  from. Signing in buys exactly two things — the room appears in your list, and you can play
+  one of *your* decks — and re-joining as a signed-in player rotates the token rather than
+  minting a second seat. Rotation is **not** a kick, and it was tempting to describe it as
+  one: a socket authenticates once, at `hello`, so the tab that holds the old token plays on
+  until it next reconnects (and then fails `4003`, at which point the SPA re-joins). Making
+  rotation close live sockets would mean a reconnect race between two tabs of the same
+  player, each re-joining and rotating the other out; the seat is a chair, and the honest
+  behaviour is that the device already sitting in it keeps playing until it gets up.
+- **A separate lobby DTO — rejected; `RoomSummary` is one shape for REST and the socket.**
+  The same room is read three ways (the hub's list, the join page before you have any
+  credential, and the `lobby` frames pushed at everyone watching), and they all go through
+  one `summary_from`. Two shapes would mean two renderings of "who is at this table" that can
+  disagree the moment one of them is updated. `viewer_seat` is the only per-reader field, and
+  it is stamped at the edge (per REST caller, per connection) rather than being a second
+  payload.
+- **Polling the lobby — rejected; it rides the socket that is already open.** Every REST
+  write that changes the table ends in a `push_lobby`, so a seat joining or a deck landing
+  arrives in the same frame stream the game will later use, on a connection that already
+  exists. The by-code poll survives only as the fallback for the seconds before the socket
+  connects (and while it is reconnecting), and `usePlayRoomQuery` turns it off while the
+  socket is open — one live source at a time, never two racing each other.
+- **`Start` as an engine action — rejected; it is a socket frame.** Everything else the
+  table does is pure, and the engine is pure because that is what makes it testable against a
+  `RoomState` literal. Starting a game is the one step that needs the database: it reads the
+  seat rows and the decklists stored on them. Making it an `Action` would have dragged a
+  connection handle into the reducer for exactly one arm. So `ClientMessage::Start` is its own
+  frame, `ws::handle_start` does the host check and the reads, and `engine::start_game` stays
+  a pure `(state, rng, now)` function.
+- **`rand` from OS entropy, not the shared SplitMix64 — and that is not an inconsistency.**
+  `handlers/shared/rng.rs` is hand-rolled precisely because the goldfish's and the pack
+  opener's seeds are **wire contracts**: a shared URL must deal the same hand next year, so
+  the stream cannot be allowed to drift with a dependency bump. Nothing about a play table is
+  seeded or shareable — a shuffle has to be fair, not reproducible — so `play/rng.rs` wraps
+  `StdRng` from OS entropy, isn't persisted, and a hydrated room simply gets a fresh one. The
+  test-only `PlayRng::seeded` exists for the engine's own tests, not for the wire.
+- **Enforcing Magic's rules — rejected, permanently.** No stack, no priority, no legality
+  checks, no "you can't attack with that"; phases are a shared pointer the table walks
+  through, not a gate. Two reasons, and the second is the real one. A rules engine is a
+  multi-year project whose failure mode is *blocking a legal play* — at which point a table
+  of four people is stuck with no way out — where a manual table's failure mode is someone
+  noticing and fixing it, exactly as on paper. And the audience for "play your own decks with
+  your friends" already knows the rules; what they lack is a shared board. So the log is the
+  record (it is the only thing that remembers the die came up 17), the client refuses to
+  *offer* actions the server would reject (`menuActionsFor`), and the server validates
+  ownership and shape and nothing else.
+- **A per-connection token bucket, not the shared limiter — and it meters frames, not
+  actions.** The per-IP and per-user middlewares are request middlewares; after the upgrade
+  the socket is outside both of them, and one tab could otherwise drive the room's mutex at
+  wire speed. `governor` keyed by IP would be wrong here anyway — four players behind one
+  household NAT are one key, and the thing being limited is a *connection*, which dies with
+  its bucket. So `ws.rs` carries its own: 20 frames/second sustained, burst 40 (a flurry of
+  taps in a combat step is legitimate), an explicit `too_fast` error rather than a silent
+  drop, and a close at 200 consecutive refusals, because a client that ignores the answer 200
+  times is not a client. Metering only `action` — the obvious reading of "limit what changes
+  the table" — is the wrong one: the *cheapest* frame to send is `resync`, whose answer is the
+  entire table, so an unmetered `resync` is an amplifier pointed at the server by anyone who
+  can open a socket. Hence every frame costs a token, a snapshot request costs an additional
+  two-second cooldown, and the upgrade caps a message at 64 KiB rather than letting
+  tungstenite's 64 MiB default stand behind a connection no HTTP limiter can see.
+- **`has_image` on the card definition, rather than letting the image 404.** A table renders
+  a hundred thumbnails through the catalog image proxy, and a printing the catalog has no art
+  for would be a hundred failed requests and a hundred broken frames. So the flag is resolved
+  once, when the deck is loaded, and travels with the definition: no `card_id` or no
+  `has_image` means the card renders as a **text card** — name, type line, mana cost, P/T —
+  which is the same rendering an ad-hoc token typed in at the table gets, and is legible
+  rather than empty. It is one bool on a `CardDef` instead of a per-card probe at render
+  time, which is the only shape that works when the same card is drawn in four browsers.

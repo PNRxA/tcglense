@@ -41,6 +41,8 @@ mod mirror;
 mod openapi;
 mod pagination;
 mod password_reset;
+mod play;
+mod play_ws;
 mod precons;
 mod products;
 mod public_collection;

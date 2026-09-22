@@ -15,6 +15,7 @@ use crate::currency::CurrencyRates;
 use crate::email::Emailer;
 use crate::error::AppError;
 use crate::handlers::catalog::product_index_cache::ProductCardIndexCache;
+use crate::handlers::tools::play::registry::PlayRegistry;
 use crate::ratelimit::{AuthRateLimiter, UserRateLimiter};
 
 /// The fixed plaintext whose Argon2 hash backs the login timing-equalizer (see
@@ -73,6 +74,12 @@ pub struct AppState {
     /// cold product page computes it twice, concurrently. See
     /// [`crate::handlers::catalog::product_index_cache`].
     pub product_card_index: Arc<ProductCardIndexCache>,
+    /// The live **play tables**: every online room with a socket on it, plus the state the
+    /// socket loop mutates. Process-local by design — a table is a live conversation between
+    /// the tabs connected to *this* instance, and the authoritative copy is written back to
+    /// `play_rooms.state` by a background sweeper rather than read per action. See
+    /// [`crate::handlers::tools::play::registry`].
+    pub play: Arc<PlayRegistry>,
     /// The visual scanner's in-memory perceptual-hash match index. Empty until loaded
     /// from the `card_fingerprint` table at startup (and rebuilt after each build /
     /// sync pass) by [`crate::tasks`]. Read behind the lock — each scan clones the
@@ -163,6 +170,7 @@ impl AppState {
             user_rate_limiters,
             analytics_cache,
             product_card_index: Arc::new(ProductCardIndexCache::default()),
+            play: Arc::new(PlayRegistry::default()),
             fingerprint_index: Arc::new(RwLock::new(Arc::new(FingerprintIndex::default()))),
             // Gate open by default (harnesses build over a migrated DB); `main.rs`
             // closes it while the boot migrations run.

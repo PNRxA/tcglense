@@ -511,6 +511,37 @@ mod coverage_drift {
             "/api/alerts/{id}",
             "price alert edit/delete: session-only SPA account feature",
         ),
+        // --- The play table (the online manual game): session-only for the host's routes and
+        //     token-authorized (never an API key) for the guest's, so — like the price alerts
+        //     above — it is SPA surface rather than public API. The socket isn't JSON at all. ---
+        (
+            "/api/tools/{game}/play/rooms",
+            "play table: session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}",
+            "play table: session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}/join",
+            "play table: seat-token authorized, session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}",
+            "play table: seat-token authorized, session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/deck",
+            "play table: seat-token authorized, session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}/seats/{seat_id}/ready",
+            "play table: seat-token authorized, session-only SPA feature",
+        ),
+        (
+            "/api/tools/{game}/play/rooms/{code}/ws",
+            "WebSocket upgrade, not JSON",
+        ),
         // --- Binary image proxies: return image/SVG bytes, not JSON. ---
         (
             "/api/games/{game}/sets/{code}/icon",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, defineComponent, h, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import AppFooter from '@/components/AppFooter.vue'
 import MaintenanceMode from '@/components/MaintenanceMode.vue'
@@ -16,6 +16,7 @@ import { useAuthCacheReset } from '@/composables/useAuthCacheReset'
 import { useMaintenanceMode } from '@/composables/useMaintenanceMode'
 import { scheduleIdleWarm } from '@/lib/prefetch'
 import { useAccentStore } from '@/stores/accent'
+import { usePlayRoomStore } from '@/stores/playRoom'
 
 // Session restore happens once in the router guard (see router/index.ts).
 
@@ -31,6 +32,11 @@ useAccentStore()
 
 const route = useRoute()
 const router = useRouter()
+// The play table owns the whole viewport (`PlayRoomView` mounts it `fixed inset-0`), so the
+// shell's header and footer come out of the document while a game is on screen — otherwise
+// the footer keeps the page scrollable underneath a table that cannot be scrolled to.
+const playRoom = usePlayRoomStore()
+const tableFullscreen = computed(() => route.name === 'play-room' && playRoom.hasTable)
 
 // Instant feedback for a click that races a chunk warm: a bare fixed backdrop with a
 // card- or product-shaped skeleton. Self-contained (no reka) so it needs nothing from the
@@ -122,7 +128,7 @@ onMounted(() => {
     <template v-else>
       <!-- Top-of-page navigation progress bar, shown only when a route change runs long. -->
       <NavigationProgressBar />
-      <header class="border-b">
+      <header v-if="!tableFullscreen" class="border-b">
         <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
           <div class="flex min-w-0 items-center gap-1">
             <!-- Below lg the nav items don't fit alongside the brand and display/account
@@ -158,7 +164,7 @@ onMounted(() => {
       </main>
       <!-- Site-wide footer (data-source credits, GitHub, Terms/Privacy, WotC disclaimer). The
          flex-1 main above pins it to the viewport bottom on short pages. -->
-      <AppFooter />
+      <AppFooter v-if="!tableFullscreen" />
       <!-- URL-driven detail modals for card and sealed-product browse grids. Each remains
          mounted after its first load so reopening is instant; ProductTile/CardTile remove
          the opposite key when transitioning between the two surfaces. -->
