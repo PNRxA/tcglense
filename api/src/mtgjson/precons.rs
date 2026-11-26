@@ -51,7 +51,13 @@ pub(super) const UNTYPED: &str = "Preconstructed Deck";
 /// listing: the facets, the landing's per-set tile, the browse totals and the group headings
 /// all count the same rows. The sealed side already models a drop properly — it's a product
 /// with `sealed_contents`, browsable at `/sealed/{game}`.
-pub(crate) const NOT_A_DECK_TYPES: [&str; 1] = ["Secret Lair Drop"];
+pub(crate) const NOT_A_DECK_TYPES: [&str; 1] = [SECRET_LAIR_DROP];
+
+/// Upstream's `decks[].type` for a Secret Lair drop. One string, two readers: the precon
+/// browser drops these entries ([`NOT_A_DECK_TYPES`]), and the sealed-contents walk
+/// ([`super::model`]) is the one place a deck's `tokens` count as contents — a drop's token
+/// is a headline card of the drop, where every other deck's tokens are accessories.
+pub(crate) const SECRET_LAIR_DROP: &str = "Secret Lair Drop";
 
 /// One resolved precon deck: its metadata plus every board's cards, keyed by **external**
 /// ids (Scryfall id for cards, TCGplayer product id for the sealed products that ship it) so

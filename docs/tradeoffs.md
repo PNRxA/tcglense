@@ -1267,6 +1267,20 @@ catalog) is planned but not implemented.
   in our DB may already be authored upstream; if it's empty there too, the gap is genuinely
   unauthored (the Secret Lair superdrop bundles below were, as of #279). (taw's
   `magic-sealed-data` is a *different* repo — booster-pack collation only, no Secret Lair.)
+- **Secret Lair drop tokens count as contents; other decks' tokens don't:** MTGJSON lists a
+  deck's tokens in a separate `tokens` board (`{uuid, count, isFoil}`, the uuid naming a row in
+  a set's `tokens[]`, not `cards[]`), and the walk used to read only the main board + commander,
+  so "Secret Lair Drop: Featuring: Not a Wolf" listed SLD 1608–1612 but not the drop's Wolf
+  token (SLD #1613) — a card the drop is sold on, with its own collector number and a real
+  price, and already in our catalog. A Commander/other precon's tokens are the opposite: punch-out
+  accessories nobody buys the box for, so listing them as "cards in this product" would pad the
+  guaranteed section with filler. The line is drawn on upstream's deck `type` (`Secret Lair
+  Drop`) rather than on the token itself, because the same token printing means different things
+  in the two decks. The token bridge is deliberately **separate** from the card bridge and
+  uuid-only: merging it would also make token uuids resolve on booster sheets and in direct
+  `card` references (`SLD`'s `sealedProduct[]` already names 7 tokens that way), a wider change
+  than the bug, and a token's collector number has no business in the `(set, number)` map. The
+  rebuild is forced by `DERIVATION_VERSION`'s `contents-1`.
 - **Secret Lair drop contents — derived, not hand-authored (`mtgjson::sld`):** MTGJSON ships
   many `SLD` (Secret Lair Drop) products with `contents: null`, but unlike ordinary packaging
   a drop's meaningful contents is the specific *list of cards* in that drop — and the app
