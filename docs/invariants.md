@@ -137,6 +137,22 @@ and add the one-line summary to `AGENTS.md`.
   price, never a gain), `openingSummary` (past tense, singular to this run). Its spec pins that
   no such string reads as containment and that every money figure keeps its qualifier, and each
   response's server-authored `caveats` are meant to be **shown**.
+- **A token is contents only when its printing is a Secret Lair token (`setCode` `SLD`).** A
+  `deck` reference contributes its main board + commander plus the Secret Lair token printings
+  on its `tokens` board, **whatever the deck's type** — a drop's token (SLD #1613, the Wolf in
+  "Featuring: Not a Wolf") and a Secret Lair Commander deck's numbered tokens ("Everyone's
+  Invited!"'s Shapeshifters SLD 1906–1909) alike, each at the finish the entry states
+  (`isFoil`). A direct `contents.card` reference resolves a Secret Lair token by **uuid** too
+  (the Garfield Lasagna Food token promo, SLD #918), as `variable` inside a `variable` config.
+  Every other token — an ordinary precon's, a bundle's AFR/CLB dungeon or Initiative card, a
+  prerelease kit's Wolf, the generic `VOW`/`STX`/`MKC`/`PLST` tokens on "Odds and Ends" and
+  Hatsune Miku — stays out, pinned by `non_secret_lair_deck_tokens_are_excluded` and
+  `direct_card_refs_resolve_only_secret_lair_tokens`. The gate **is** the bridge:
+  `Indexes::sl_token_uuid_to_scryfall` holds only token printings whose own `setCode` is
+  `sld::SET_CODE`, uuid-only, consulted after the card bridge (a card always wins) by the
+  `tokens` board and `card_ref`'s uuid leg alone — the `(set, number)` leg, booster sheets and
+  the precon builder (`scryfall_by_uuid`) stay card-only. Changing which tokens count is a
+  derivation change (`DERIVATION_VERSION`'s `contents-N`).
 - **Booster odds** — a sealed product's expected value (`GET .../products/{id}/ev`) and its
   seeded pack opener (`.../open?seed&copies`), issue #682 — are three catalog tables plus two
   pure engines (`handlers/catalog/boosters/{ev,open}.rs`). The tables are **rebuilt wholesale**
