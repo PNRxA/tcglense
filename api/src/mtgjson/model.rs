@@ -20,7 +20,7 @@ use serde::Deserialize;
 use crate::entities::sealed_component::ComponentKind;
 use crate::entities::sealed_content::Membership;
 
-use super::precons::SECRET_LAIR_DROP;
+use super::sld;
 
 // ---------- Serde shapes (trimmed to what we consume) ----------
 
@@ -34,16 +34,15 @@ pub struct AllPrintings {
 }
 
 /// One set's data. We keep its cards (for the `uuid`/`(set,number)` -> Scryfall bridge),
-/// its tokens (a separate, uuid-only bridge — see [`Indexes`]), its sealed products,
+/// its tokens (the Secret Lair token bridge — see [`Indexes`]), its sealed products,
 /// booster configs, and precon decks.
 #[derive(Debug, Default, Deserialize)]
 pub struct SetData {
     #[serde(default)]
     pub cards: Vec<CardEntry>,
     /// The set's token printings (`data.<SET>.tokens[]`, the same row shape as `cards`). Read
-    /// only so a Secret Lair drop deck's `tokens` board can resolve (see
-    /// [`Resolver::deck_cards`]); tolerant of a stated `null`, since one null here would
-    /// otherwise fail the whole document.
+    /// only to build the Secret Lair token bridge (see [`Indexes`]); tolerant of a stated
+    /// `null`, since one null here would otherwise fail the whole document.
     #[serde(default, deserialize_with = "null_as_empty")]
     pub tokens: Vec<CardEntry>,
     #[serde(default, rename = "sealedProduct")]
@@ -388,10 +387,13 @@ where
 /// category, release date, and the sealed products that ship it.
 ///
 /// Sealed-contents resolution reads `main_board` + `commander` (a deck reference means
-/// "this product physically holds these cards"), plus `tokens` **only** when the deck's type
-/// is [`SECRET_LAIR_DROP`]: a drop's token is one of the drop's headline cards, with its own
-/// collector number and a real price, while a Commander/other precon's tokens are punch-out
-/// accessories and stay out. The side board is the browser's alone.
+/// "this product physically holds these cards"), plus the entries of `tokens` whose printing
+/// is a **Secret Lair** token (set `sld`) — a numbered printing of the drop or Secret Lair
+/// Commander deck it ships in, with its own collector number and a real price. Any other
+/// token on the board (an ordinary precon's, or a generic reprint such as the `VOW`/`STX`/`MKC`
+/// tokens in `SLD`'s "Odds and Ends") is an accessory and stays out; the gate is the
+/// printing, decided by [`Indexes`]' token bridge, not the deck's type. The side board is the
+/// browser's alone.
 #[derive(Debug, Deserialize)]
 pub struct Deck {
     #[serde(default)]
@@ -421,7 +423,8 @@ pub struct Deck {
     #[serde(default, deserialize_with = "commander_or_empty")]
     pub commander: Vec<DeckCard>,
     /// The tokens packed with the deck (`{ uuid, count, isFoil }`, the uuid naming a row in
-    /// some set's `tokens[]`). Contents only for a Secret Lair drop — see the type doc.
+    /// some set's `tokens[]`). Contents only for a Secret Lair token printing — see the type
+    /// doc.
     #[serde(default, deserialize_with = "tokens_or_empty")]
     pub tokens: Vec<DeckCard>,
     /// `uuid`s of the sealed products that contain this deck (resolved to a
@@ -508,7 +511,7 @@ where
 }
 
 /// The `tokens` board is a board like the others — upstream never states it `null` today,
-/// and a null one costs a Secret Lair drop its token rows — so it warns the same way.
+/// and a null one costs a Secret Lair product its token rows — so it warns the same way.
 fn tokens_or_empty<'de, D>(de: D) -> Result<Vec<DeckCard>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -717,13 +720,17 @@ pub(super) struct Indexes<'a> {
     sets: HashMap<String, &'a SetData>,
     uuid_to_scryfall: HashMap<&'a str, &'a str>,
     setnum_to_scryfall: HashMap<(String, String), &'a str>,
-    /// Token `uuid` -> Scryfall id, over every set's `tokens[]`. Kept **apart** from
-    /// `uuid_to_scryfall` and consulted only for a Secret Lair drop's `tokens` board
-    /// ([`Resolver::deck_cards`]), so a token can neither shadow a card nor quietly start
-    /// resolving anywhere else a uuid is crossed (booster sheets, direct `card` refs, the
-    /// precon builder). No `(set, number)` entry either: a token's collector number lives in
-    /// its own numbering, and nothing that names cards by number needs a token.
-    token_uuid_to_scryfall: HashMap<&'a str, &'a str>,
+    /// **Secret Lair** token `uuid` -> Scryfall id: only token printings whose `setCode` is
+    /// [`sld::SET_CODE`] enter it, so it is the gate as well as the bridge. Consulted, after
+    /// the card bridge, by a deck's `tokens` board ([`Resolver::deck_cards`]) and a direct
+    /// `card` reference's uuid ([`Self::card_ref`]) — never by booster sheets or the precon
+    /// builder ([`Self::scryfall_by_uuid`] stays card-only), and with no `(set, number)`
+    /// entry. Kept apart from `uuid_to_scryfall` so a token can never shadow a card. Only
+    /// Secret Lair tokens, because those are headline cards of the product; elsewhere in
+    /// `AllPrintings` 28 direct refs name generic tokens (AFR/CLB dungeons and Initiative,
+    /// prerelease-kit Wolves, Day // Night) and Secret Lair Commander decks carry generic
+    /// other-set tokens too — accessories, not contents.
+    sl_token_uuid_to_scryfall: HashMap<&'a str, &'a str>,
     product_by_uuid: HashMap<&'a str, &'a SealedProduct>,
 }
 
@@ -753,15 +760,23 @@ impl<'a> Indexes<'a> {
             }
         }
 
-        // token uuid -> scryfallId, uuid-only and in its own map (see the field doc).
-        let mut token_uuid_to_scryfall: HashMap<&str, &str> = HashMap::new();
+        // Secret Lair token uuid -> scryfallId, uuid-only and in its own map (see the field
+        // doc). The token's own `setCode` decides, not the set it's filed under.
+        let mut sl_token_uuid_to_scryfall: HashMap<&str, &str> = HashMap::new();
         for data in all.data.values() {
             for token in &data.tokens {
+                let is_secret_lair = token
+                    .set_code
+                    .as_deref()
+                    .is_some_and(|set| set.eq_ignore_ascii_case(sld::SET_CODE));
+                if !is_secret_lair {
+                    continue;
+                }
                 if let (Some(uuid), Some(scryfall)) = (
                     token.uuid.as_deref(),
                     token.identifiers.scryfall_id.as_deref(),
                 ) {
-                    token_uuid_to_scryfall.insert(uuid, scryfall);
+                    sl_token_uuid_to_scryfall.insert(uuid, scryfall);
                 }
             }
         }
@@ -780,17 +795,18 @@ impl<'a> Indexes<'a> {
             sets,
             uuid_to_scryfall,
             setnum_to_scryfall,
-            token_uuid_to_scryfall,
+            sl_token_uuid_to_scryfall,
             product_by_uuid,
         }
     }
 
-    /// Resolve a deck `tokens` entry's `uuid`: a real card's entry always wins (should
-    /// upstream ever list a card on the board), else the token bridge.
-    fn scryfall_by_token_uuid(&self, uuid: &str) -> Option<&'a str> {
+    /// Resolve a `uuid` that may name a card **or** a Secret Lair token: the card bridge
+    /// always wins, else the Secret Lair token bridge. A non-Secret-Lair token resolves to
+    /// nothing.
+    fn scryfall_by_card_or_sl_token(&self, uuid: &str) -> Option<&'a str> {
         self.uuid_to_scryfall
             .get(uuid)
-            .or_else(|| self.token_uuid_to_scryfall.get(uuid))
+            .or_else(|| self.sl_token_uuid_to_scryfall.get(uuid))
             .copied()
     }
 
@@ -821,10 +837,12 @@ impl<'a> Indexes<'a> {
             .and_then(|p| p.identifiers.tcgplayer_product_id.as_deref())
     }
 
-    /// Resolve a direct card reference to a Scryfall id (by `uuid`, else `(set, number)`).
+    /// Resolve a direct card reference to a Scryfall id: by `uuid` (a card, else a Secret
+    /// Lair token — e.g. the Garfield Lasagna Food token product, whose only content is SLD
+    /// #918), else by `(set, number)`, which stays card-only.
     fn card_ref(&self, cr: &ContentCard) -> Option<&str> {
         if let Some(uuid) = cr.uuid.as_deref()
-            && let Some(&scryfall) = self.uuid_to_scryfall.get(uuid)
+            && let Some(scryfall) = self.scryfall_by_card_or_sl_token(uuid)
         {
             return Some(scryfall);
         }
@@ -865,9 +883,8 @@ impl Resolver<'_> {
     }
 
     /// Resolve a deck reference to `(scryfall_id, is_foil)` for its main-board + commander
-    /// cards, plus its `tokens` board when the deck is a [`SECRET_LAIR_DROP`] (a drop's
-    /// token is part of the drop; any other deck's tokens are accessories — see [`Deck`]).
-    /// Unresolvable uuids are dropped.
+    /// cards, plus the Secret Lair token printings on its `tokens` board (whatever the deck's
+    /// type; any other token is an accessory — see [`Deck`]). Unresolvable uuids are dropped.
     fn deck_cards(&self, dr: &ContentDeck) -> Vec<(&str, bool)> {
         let (Some(set_code), Some(name)) = (&dr.set, &dr.name) else {
             return Vec::new();
@@ -891,13 +908,10 @@ impl Resolver<'_> {
                 Some((scryfall, dc.is_foil))
             })
             .collect();
-        let is_drop = deck.deck_type.as_deref().map(str::trim) == Some(SECRET_LAIR_DROP);
-        if is_drop {
-            cards.extend(deck.tokens.iter().filter_map(|dc| {
-                let scryfall = self.idx.scryfall_by_token_uuid(dc.uuid.as_deref()?)?;
-                Some((scryfall, dc.is_foil))
-            }));
-        }
+        cards.extend(deck.tokens.iter().filter_map(|dc| {
+            let scryfall = self.idx.scryfall_by_card_or_sl_token(dc.uuid.as_deref()?)?;
+            Some((scryfall, dc.is_foil))
+        }));
         cards
     }
 
@@ -1325,10 +1339,12 @@ mod tests {
         assert!(has(&rows, "1003", "sf-promo", "contains", true));
     }
 
-    /// A Secret Lair drop and a Commander precon side by side, each shipping a token — the
-    /// real shape of `SLD.json`: the drop decks list the token in `tokens` (the foil
-    /// edition states `isFoil: true` on it, the non-foil one omits the key), and the token
-    /// itself lives in the set's `tokens[]`, not `cards[]`.
+    /// Secret Lair products beside an ordinary precon — the real shapes of `SLD.json` /
+    /// `AllPrintings`: token printings live in a set's `tokens[]`, not `cards[]`; a deck
+    /// lists them on its `tokens` board (the foil edition states `isFoil: true`, the
+    /// non-foil one omits the key); a product can also name a token directly in
+    /// `contents.card`. `SLD` Commander decks carry numbered `SLD` tokens **and** generic
+    /// other-set ones (`XYZ` here, like "Odds and Ends"' `VOW`/`STX`/`MKC` tokens).
     fn token_fixture() -> AllPrintings {
         let json = serde_json::json!({
             "data": {
@@ -1336,14 +1352,18 @@ mod tests {
                     "cards": [
                         { "uuid": "u-card", "number": "1608", "setCode": "SLD",
                           "identifiers": { "scryfallId": "sf-card" } },
-                        { "uuid": "u-cmdr", "number": "900", "setCode": "SLD",
-                          "identifiers": { "scryfallId": "sf-cmdr" } }
+                        { "uuid": "u-sl-cmdr", "number": "900", "setCode": "SLD",
+                          "identifiers": { "scryfallId": "sf-sl-cmdr" } }
                     ],
                     "tokens": [
                         { "uuid": "u-wolf", "number": "1613", "setCode": "SLD",
                           "identifiers": { "scryfallId": "sf-wolf" } },
-                        { "uuid": "u-soldier", "number": "7", "setCode": "SLD",
-                          "identifiers": { "scryfallId": "sf-soldier" } }
+                        { "uuid": "u-shifter", "number": "1906", "setCode": "SLD",
+                          "identifiers": { "scryfallId": "sf-shifter" } },
+                        { "uuid": "u-food", "number": "918", "setCode": "SLD",
+                          "identifiers": { "scryfallId": "sf-food" } },
+                        { "uuid": "u-elf", "number": "7168", "setCode": "SLD",
+                          "identifiers": { "scryfallId": "sf-elf" } }
                     ],
                     "decks": [
                         { "name": "Featuring: Not a Wolf", "type": "Secret Lair Drop",
@@ -1352,9 +1372,10 @@ mod tests {
                         { "name": "Featuring: Not a Wolf Foil Edition", "type": "Secret Lair Drop",
                           "mainBoard": [ { "count": 1, "uuid": "u-card", "isFoil": true } ],
                           "tokens": [ { "count": 1, "uuid": "u-wolf", "isFoil": true } ] },
-                        { "name": "Some Commander Deck", "type": "Commander Deck",
-                          "commander": [ { "count": 1, "uuid": "u-cmdr" } ],
-                          "tokens": [ { "count": 2, "uuid": "u-soldier" } ] }
+                        { "name": "Everyone's Invited!", "type": "Commander Deck", "code": "SLD",
+                          "commander": [ { "count": 1, "uuid": "u-sl-cmdr" } ],
+                          "tokens": [ { "count": 1, "uuid": "u-shifter", "isFoil": true },
+                                      { "count": 1, "uuid": "u-generic" } ] }
                     ],
                     "sealedProduct": [
                         { "uuid": "p-wolf", "identifiers": { "tcgplayerProductId": "556834" },
@@ -1363,8 +1384,56 @@ mod tests {
                           "contents": { "deck": [
                               { "name": "Featuring: Not a Wolf Foil Edition", "set": "sld" }
                           ] } },
+                        { "uuid": "p-sl-cmdr", "identifiers": { "tcgplayerProductId": "631564" },
+                          "contents": { "deck": [ { "name": "Everyone's Invited!", "set": "sld" } ] } },
+                        { "uuid": "p-food", "identifiers": { "tcgplayerProductId": "710672" },
+                          "contents": { "card": [
+                              { "uuid": "u-food", "set": "sld", "number": "918", "foil": true,
+                                "name": "Food" }
+                          ] } },
+                        { "uuid": "p-elf", "identifiers": { "tcgplayerProductId": "704918" },
+                          "contents": { "variable": [ { "configs": [
+                              { "card": [ { "uuid": "u-elf", "foil": true } ] }
+                          ] } ] } },
+                        { "uuid": "p-drop-variable", "identifiers": { "tcgplayerProductId": "880" },
+                          "contents": { "variable": [ { "configs": [
+                              { "deck": [ { "name": "Featuring: Not a Wolf", "set": "sld" } ] }
+                          ] } ] } }
+                    ]
+                },
+                "SLC": {
+                    "decks": [
+                        { "name": "Countdown Drop", "type": "Secret Lair Drop", "code": "SLC",
+                          "tokens": [ { "count": 1, "uuid": "u-wolf" } ] }
+                    ],
+                    "sealedProduct": [
+                        { "uuid": "p-slc", "identifiers": { "tcgplayerProductId": "990" },
+                          "contents": { "deck": [ { "name": "Countdown Drop", "set": "slc" } ] } }
+                    ]
+                },
+                "XYZ": {
+                    "cards": [
+                        { "uuid": "u-cmdr", "number": "1", "setCode": "XYZ",
+                          "identifiers": { "scryfallId": "sf-cmdr" } }
+                    ],
+                    "tokens": [
+                        { "uuid": "u-generic", "number": "6", "setCode": "XYZ",
+                          "identifiers": { "scryfallId": "sf-generic" } },
+                        { "uuid": "u-dungeon", "number": "20", "setCode": "XYZ",
+                          "identifiers": { "scryfallId": "sf-dungeon" } }
+                    ],
+                    "decks": [
+                        { "name": "Some Commander Deck", "type": "Commander Deck",
+                          "commander": [ { "count": 1, "uuid": "u-cmdr" } ],
+                          "tokens": [ { "count": 2, "uuid": "u-generic" } ] }
+                    ],
+                    "sealedProduct": [
                         { "uuid": "p-cmdr", "identifiers": { "tcgplayerProductId": "777" },
-                          "contents": { "deck": [ { "name": "Some Commander Deck", "set": "sld" } ] } }
+                          "contents": { "deck": [ { "name": "Some Commander Deck", "set": "xyz" } ] } },
+                        { "uuid": "p-bundle", "identifiers": { "tcgplayerProductId": "778" },
+                          "contents": { "card": [
+                              { "uuid": "u-dungeon", "set": "xyz", "number": "20", "name": "Dungeon" }
+                          ] } }
                     ]
                 }
             }
@@ -1372,8 +1441,14 @@ mod tests {
         serde_json::from_value(json).expect("token fixture parses")
     }
 
-    /// A Secret Lair drop's token is one of the drop's cards: it resolves through the set's
-    /// `tokens[]` bridge as a `contains` row, at the finish the deck states for it.
+    fn rows_for<'r>(rows: &'r [RawMembership], tcg: &str) -> Vec<&'r RawMembership> {
+        rows.iter()
+            .filter(|r| r.tcgplayer_product_id == tcg)
+            .collect()
+    }
+
+    /// A Secret Lair drop's token is one of the drop's cards: it resolves through the
+    /// Secret Lair token bridge as a `contains` row, at the finish the deck states for it.
     #[test]
     fn secret_lair_drop_tokens_are_contains() {
         let rows = build_memberships(&token_fixture());
@@ -1385,37 +1460,89 @@ mod tests {
         assert!(!has(&rows, "556833", "sf-wolf", "contains", false));
     }
 
-    /// Any other deck's tokens are punch-out accessories, never contents — a Commander
-    /// precon keeps exactly the cards it had before the `tokens` board was read.
+    /// A Secret Lair **Commander deck** (type "Commander Deck", filed under `SLD`) keeps its
+    /// numbered `SLD` token — the gate is the token printing, not the deck type — while the
+    /// generic other-set token on the same board stays out.
     #[test]
-    fn non_drop_deck_tokens_are_excluded() {
+    fn secret_lair_commander_deck_keeps_only_its_sld_tokens() {
         let rows = build_memberships(&token_fixture());
-        let cmdr: Vec<&RawMembership> = rows
-            .iter()
-            .filter(|r| r.tcgplayer_product_id == "777")
-            .collect();
+        assert!(has(&rows, "631564", "sf-sl-cmdr", "contains", false));
+        assert!(has(&rows, "631564", "sf-shifter", "contains", true));
+        assert!(!rows.iter().any(|r| r.scryfall_id == "sf-generic"));
+        assert_eq!(rows_for(&rows, "631564").len(), 2);
+    }
+
+    /// An ordinary precon's tokens are accessories, never contents — a Commander precon
+    /// keeps exactly the cards it had before the `tokens` board was read.
+    #[test]
+    fn non_secret_lair_deck_tokens_are_excluded() {
+        let rows = build_memberships(&token_fixture());
+        let cmdr = rows_for(&rows, "777");
         assert_eq!(cmdr.len(), 1, "{cmdr:?}");
         assert_eq!(cmdr[0].scryfall_id, "sf-cmdr");
-        assert!(!rows.iter().any(|r| r.scryfall_id == "sf-soldier"));
+    }
+
+    /// A product naming a Secret Lair token directly in `contents.card` lists it (the Food
+    /// token promo, whose only content it is), and under a `variable` config the row is
+    /// `variable`. A direct ref to a generic token (a bundle's dungeon) still resolves to
+    /// nothing, as a row or as a component link.
+    #[test]
+    fn direct_card_refs_resolve_only_secret_lair_tokens() {
+        let all = token_fixture();
+        let rows = build_memberships(&all);
+        assert!(has(&rows, "710672", "sf-food", "contains", true));
+        assert!(has(&rows, "704918", "sf-elf", "variable", true));
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.scryfall_id == "sf-elf" && r.membership != "variable")
+        );
+        assert!(rows_for(&rows, "778").is_empty());
+
+        let idx = Indexes::build(&all);
+        let card = |uuid: &str, set: &str, number: &str| ContentCard {
+            uuid: Some(uuid.into()),
+            set: Some(set.into()),
+            number: Some(number.into()),
+            foil: false,
+            name: None,
+        };
+        // The composition builder's `child_card` link goes through the same `card_ref`.
+        assert_eq!(idx.card_ref(&card("u-food", "sld", "918")), Some("sf-food"));
+        assert_eq!(idx.card_ref(&card("u-dungeon", "xyz", "20")), None);
+    }
+
+    /// A drop deck inside a `variable` config yields its token as `variable`, and a deck
+    /// filed under another set (`SLC`) resolves a token that lives in `SLD`'s `tokens[]`.
+    #[test]
+    fn drop_tokens_follow_variable_and_cross_set_lookups() {
+        let rows = build_memberships(&token_fixture());
+        assert!(has(&rows, "880", "sf-wolf", "variable", false));
+        assert!(!has(&rows, "880", "sf-wolf", "contains", false));
+        assert!(has(&rows, "990", "sf-wolf", "contains", false));
     }
 
     /// The token bridge is separate and subordinate: a token sharing a uuid or a
-    /// `(set, number)` with a card never displaces the card in either card bridge, and a
-    /// token uuid never resolves where a *card* uuid is expected.
+    /// `(set, number)` with a card never displaces the card in either card bridge, a token
+    /// uuid never resolves where only a *card* uuid is expected (booster sheets, the precon
+    /// builder), and only a Secret Lair token printing enters it at all — decided by the
+    /// token's own `setCode`, not the set it is filed under.
     #[test]
     fn token_never_shadows_a_card_in_the_bridge() {
         let json = serde_json::json!({
             "data": {
-                "AAA": {
-                    "cards": [ { "uuid": "u-shared", "number": "1", "setCode": "AAA",
+                "SLD": {
+                    "cards": [ { "uuid": "u-shared", "number": "1", "setCode": "SLD",
                                  "identifiers": { "scryfallId": "sf-card" } } ]
                 },
                 "ZZZ": {
                     "tokens": [
-                        { "uuid": "u-shared", "number": "1", "setCode": "AAA",
+                        { "uuid": "u-shared", "number": "1", "setCode": "SLD",
                           "identifiers": { "scryfallId": "sf-token" } },
-                        { "uuid": "u-only-token", "number": "2", "setCode": "AAA",
-                          "identifiers": { "scryfallId": "sf-token-2" } }
+                        { "uuid": "u-only-token", "number": "2", "setCode": "SLD",
+                          "identifiers": { "scryfallId": "sf-token-2" } },
+                        { "uuid": "u-generic", "number": "3", "setCode": "ZZZ",
+                          "identifiers": { "scryfallId": "sf-generic" } }
                     ]
                 }
             }
@@ -1423,16 +1550,20 @@ mod tests {
         let all: AllPrintings = serde_json::from_value(json).unwrap();
         let idx = Indexes::build(&all);
         assert_eq!(idx.scryfall_by_uuid("u-shared"), Some("sf-card"));
-        assert_eq!(idx.scryfall_by_token_uuid("u-shared"), Some("sf-card"));
         assert_eq!(
-            idx.scryfall_by_token_uuid("u-only-token"),
+            idx.scryfall_by_card_or_sl_token("u-shared"),
+            Some("sf-card")
+        );
+        assert_eq!(
+            idx.scryfall_by_card_or_sl_token("u-only-token"),
             Some("sf-token-2")
         );
-        // Not reachable through the card bridges.
+        assert_eq!(idx.scryfall_by_card_or_sl_token("u-generic"), None);
+        // Not reachable through the card-only bridges.
         assert_eq!(idx.scryfall_by_uuid("u-only-token"), None);
         let by_number = |number: &str| ContentCard {
             uuid: None,
-            set: Some("aaa".into()),
+            set: Some("sld".into()),
             number: Some(number.into()),
             foil: false,
             name: None,

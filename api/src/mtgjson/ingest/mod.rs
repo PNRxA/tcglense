@@ -101,7 +101,8 @@ const VERSION_SEP: char = '\u{1f}';
 /// stores for a card the catalog can't name — `packs-2` is the fixed-sheet placeholder,
 /// without which an already-synced instance would keep serving position-shifted sheets
 /// until upstream's ETag happened to move). The membership walk itself is versioned too:
-/// `contents-1` is a Secret Lair drop deck's `tokens` board counting as `contains`.
+/// `contents-1` is Secret Lair token printings (set `sld`) counting as contents, from a
+/// deck's `tokens` board or a direct `contents.card` uuid.
 const DERIVATION_VERSION: &str = "booster-pool-2+precon-3+packs-2+contents-1";
 
 /// [`DERIVATION_VERSION`] with the committed precon overlay's content hash folded in.
